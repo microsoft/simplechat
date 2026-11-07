@@ -59,6 +59,22 @@ param deployNativePythonWebApp bool = false
 - Used only when deployNativePythonWebApp is true.''')
 param nativeWebAppName string = toLower('${appName}-${environment}-native-app')
 
+@description('''Deploy the V2 React UI to its own App Service instead of serving it from the primary app.
+- Default is false. By default the Flask App Service serves the compiled V2 bundle at /v2,
+  which keeps the SPA same-origin so the Entra session cookie, the same-origin CSRF check
+  and the default-src 'self' CSP all apply unchanged.
+- Enabling this splits the SPA onto its own origin, which requires cross-origin
+  configuration: V2_UI_ALLOWED_ORIGIN on the API app, a VITE_API_BASE build argument for
+  the bundle, and an extra Entra redirect URI. The session cookie becomes a third-party
+  cookie, so browsers that block those will break this topology.''')
+param deployV2FrontendAppService bool = false
+
+@minLength(2)
+@maxLength(60)
+@description('''Optional name for the standalone V2 React UI Web App.
+- Used only when deployV2FrontendAppService is true.''')
+param v2WebAppName string = toLower('${appName}-${environment}-v2-app')
+
 @description('''Azure AD Application Client ID for enterprise authentication.
 - Should be the client ID of the registered Azure AD application''')
 param enterpriseAppClientId string
@@ -169,6 +185,9 @@ param enableDiagLogging bool
 - Default is false''')
 param enablePrivateNetworking bool
 
+@description('Opt in to private-only Application Insights and Log Analytics through AMPLS. Requires enablePrivateNetworking and private DNS/routing for all monitoring clients.')
+param enableAzureMonitorPrivateLink bool = false
+
 @description('''Optional existing virtual network resource ID to reuse when private networking is enabled.
 - May reference a virtual network in the same or another resource group or subscription
 - Leave blank to create a new virtual network''')
@@ -189,7 +208,7 @@ param existingPrivateEndpointSubnetId string = ''
 - For each supported key, provide:
   - zoneResourceId: Optional existing private DNS zone resource ID to reuse
   - createVNetLink: Optional bool, defaults to true. Set to false if the customer manages the VNet link separately
-- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites''')
+- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites, redis, videoIndexer, monitor, monitorOms, monitorOds, monitorAgent, monitorAdx''')
 param privateDnsZoneConfigs object = {}
 
 @description('''Optional existing Azure OpenAI or Azure AI Foundry OpenAI-compatible endpoint.
@@ -265,6 +284,24 @@ var allowedIpAddressesArray = [for ip in allowedIpAddressesSplit: trim(ip)]
 
 // optional services
 
+@allowed(['preserve', 'none', 'foundry', 'web_iq'])
+@description('Missing old AZD selections preserve configured services. Foundry reuses a compatible classic project/agent.')
+param webSearchProvider string = 'preserve'
+@allowed(['create', 'reuse'])
+param webIqResourceMode string = 'create'
+param existingWebIqName string = ''
+param existingWebIqResourceGroup string = ''
+param existingWebIqSubscriptionId string = subscription().subscriptionId
+@allowed(['preserve', 'none', 'create', 'reuse'])
+param contentUnderstandingMode string = 'preserve'
+param contentUnderstandingLocation string = location
+param existingContentUnderstandingName string = ''
+param existingContentUnderstandingResourceGroup string = ''
+param existingContentUnderstandingSubscriptionId string = subscription().subscriptionId
+param contentUnderstandingModels array = []
+@description('Object ID of the deployment runner for Content Understanding defaults/readiness data-plane access.')
+param optionalServicesDeploymentPrincipalId string = ''
+
 @description('''Enable deployment of Content Safety service and related resources.
 - Default is false''')
 param deployContentSafety bool
@@ -312,6 +349,14 @@ param deploySpeechService bool
 @description('''Enable deployment of Azure Video Indexer service and related resources.
 - Default is false''')
 param deployVideoIndexerService bool
+
+@minLength(1)
+@description('''Optional Azure region override for Azure Video Indexer.
+- Defaults to the deployment location.
+- Use when the primary app region does not offer Video Indexer, for example northcentralus.
+- A region that differs from the deployment location gets a dedicated Video Indexer storage account in that region.
+- Set this before the first deployment that enables Video Indexer; an existing account cannot move regions.''')
+param videoIndexerLocation string = location
 
 //=========================================================
 // variable declarations for the main deployment 
@@ -362,6 +407,14 @@ var resolvedVideoIndexerEndpoint = scCloudEnvironment == 'usgovernment'
   : (scCloudEnvironment == 'custom' && !empty(customVideoIndexerEndpoint) ? customVideoIndexerEndpoint : 'https://api.videoindexer.ai')
 var videoIndexerSupportsOpenAiIntegration = resolvedVideoIndexerArmApiVersion == '2025-04-01'
 var videoIndexerSupportsPrivateEndpoints = resolvedVideoIndexerArmApiVersion == '2025-04-01'
+var normalizedVideoIndexerLocation = toLower(replace(videoIndexerLocation, ' ', ''))
+// Video Indexer keeps its media in a storage account in its own region.
+var videoIndexerUsesDedicatedStorage = normalizedVideoIndexerLocation != normalizedLocation
+// The app identity needs generateAccessToken. Video Indexer Account Contributor is the least-privilege
+// built-in role; Contributor is used where that newer role has not been confirmed.
+var videoIndexerAppRoleDefinitionId = scCloudEnvironment == 'public'
+  ? '3f99eaab-6f59-4877-adf5-1cacd22e20b0'
+  : 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 var hasExistingAppServiceSubnetId = !empty(existingAppServiceSubnetId)
 var hasExistingPrivateEndpointSubnetId = !empty(existingPrivateEndpointSubnetId)
 var inferredVirtualNetworkId = hasExistingAppServiceSubnetId ? split(existingAppServiceSubnetId, '/subnets/')[0] : (hasExistingPrivateEndpointSubnetId ? split(existingPrivateEndpointSubnetId, '/subnets/')[0] : '')
@@ -390,6 +443,68 @@ resource rg 'Microsoft.Resources/resourceGroups@2022-09-01' = {
   location: location
   tags: tags
 }
+
+// Cloud incompatibility is rejected by preprovision before any external service write.
+// Direct Bicep callers must run the same preflight; resource creation never silently changes clouds.
+var createWebIq = webSearchProvider == 'web_iq' && webIqResourceMode == 'create' && scCloudEnvironment == 'public'
+var createCu = contentUnderstandingMode == 'create' && scCloudEnvironment == 'public'
+var useCu = contains(['create', 'reuse'], contentUnderstandingMode) && scCloudEnvironment == 'public'
+var cuName = contentUnderstandingMode == 'reuse' ? existingContentUnderstandingName : toLower('${appName}-${environment}-cu')
+var cuGroup = contentUnderstandingMode == 'reuse' ? existingContentUnderstandingResourceGroup : rg.name
+var cuSubscription = contentUnderstandingMode == 'reuse' && !empty(existingContentUnderstandingSubscriptionId) ? existingContentUnderstandingSubscriptionId : subscription().subscriptionId
+
+module webIq 'modules/webIq.bicep' = if (createWebIq) {
+  name: 'webIq'
+  scope: rg
+  params: {
+    accountName: toLower('${appName}-${environment}-webiq')
+    tags: tags
+  }
+}
+module contentUnderstanding 'modules/contentUnderstanding.bicep' = if (createCu) {
+  name: 'contentUnderstanding'
+  scope: rg
+  params: {
+    accountName: cuName
+    location: contentUnderstandingLocation
+    models: contentUnderstandingModels
+    tags: tags
+  }
+}
+resource existingContentUnderstanding 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (contentUnderstandingMode == 'reuse') {
+  name: existingContentUnderstandingName
+  scope: resourceGroup(cuSubscription, cuGroup)
+}
+module contentUnderstandingAccess 'modules/contentUnderstandingAccess.bicep' = if (useCu) {
+  name: 'contentUnderstandingAccess'
+  scope: resourceGroup(cuSubscription, cuGroup)
+  params: {
+    accountName: cuName
+    webAppName: appService.outputs.name
+    webAppResourceGroup: rg.name
+    webAppSubscriptionId: subscription().subscriptionId
+    deploymentPrincipalId: optionalServicesDeploymentPrincipalId
+  }
+  dependsOn: [contentUnderstanding]
+}
+module nativeContentUnderstandingAccess 'modules/contentUnderstandingAccess.bicep' = if (useCu && deployNativePythonWebApp) {
+  name: 'nativeContentUnderstandingAccess'
+  scope: resourceGroup(cuSubscription, cuGroup)
+  params: {
+    accountName: cuName
+    webAppName: nativeAppService.outputs.name
+    webAppResourceGroup: rg.name
+    webAppSubscriptionId: subscription().subscriptionId
+    deploymentPrincipalId: ''
+  }
+  dependsOn: [contentUnderstanding]
+}
+
+output var_webSearchProvider string = webSearchProvider
+output var_webIqResourceId string = webSearchProvider == 'web_iq' ? (createWebIq ? webIq.outputs.resourceId : resourceId(empty(existingWebIqSubscriptionId) ? subscription().subscriptionId : existingWebIqSubscriptionId, existingWebIqResourceGroup, 'Microsoft.WebIQ/accounts', existingWebIqName)) : ''
+output var_webIqOnboardingUrl string = webSearchProvider == 'web_iq' ? 'https://webiq.microsoft.ai/profiles' : ''
+output var_webIqOnboardingState string = webSearchProvider == 'web_iq' ? 'pending_admin_connection_test_and_consent' : ''
+output var_contentUnderstandingEndpoint string = useCu ? (contentUnderstandingMode == 'reuse' ? 'https://${existingContentUnderstanding.properties.customSubDomainName}.services.ai.azure.com' : contentUnderstanding.outputs.endpoint) : ''
 
 module rgDeleteLock 'modules/resourceGroupLock.bicep' = {
   scope: rg
@@ -439,6 +554,7 @@ module logAnalytics 'modules/logAnalyticsWorkspace.bicep' = {
     appName: appName
     environment: environment
     tags: tags
+    enableAzureMonitorPrivateLink: enableAzureMonitorPrivateLink
   }
 }
 
@@ -454,6 +570,7 @@ module applicationInsights 'modules/applicationInsights.bicep' = {
     environment: environment
     tags: tags
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    enableAzureMonitorPrivateLink: enableAzureMonitorPrivateLink
   }
 }
 
@@ -713,6 +830,27 @@ module nativeAppService 'modules/appServiceNativePython.bicep' = if (deployNativ
 }
 
 //=========================================================
+// Create Optional App Service (V2 React UI, standalone)
+//=========================================================
+// Off by default: the primary App Service already serves the V2 bundle at /v2, same-origin.
+// See modules/v2FrontendAppService.bicep for what enabling this requires.
+module v2FrontendAppService 'modules/v2FrontendAppService.bicep' = if (deployV2FrontendAppService) {
+  name: 'v2FrontendAppService'
+  scope: rg
+  params: {
+    location: location
+    v2WebAppName: v2WebAppName
+    tags: tags
+    appServicePlanId: appServicePlan.outputs.appServicePlanId
+    enableDiagLogging: enableDiagLogging
+    logAnalyticsId: logAnalytics.outputs.logAnalyticsId
+    appInsightsName: applicationInsights.outputs.appInsightsName
+    enablePrivateNetworking: enablePrivateNetworking
+    appServiceSubnetId: resolvedAppServiceSubnetId
+  }
+}
+
+//=========================================================
 // configure optional services
 //=========================================================
 
@@ -782,7 +920,7 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
   name: 'videoIndexerService'
   scope: rg
   params: {
-    location: location
+    location: videoIndexerLocation
     appName: appName
     environment: environment
     tags: tags
@@ -790,6 +928,7 @@ module videoIndexerService 'modules/videoIndexer.bicep' = if (deployVideoIndexer
     logAnalyticsId: logAnalytics.outputs.logAnalyticsId
 
     storageAccount: storageAccount.outputs.name
+    useDedicatedStorageAccount: videoIndexerUsesDedicatedStorage
     openAiServiceName: openAI.outputs.openAIName
     videoIndexerArmApiVersion: resolvedVideoIndexerArmApiVersion
 
@@ -828,6 +967,9 @@ module setPermissions 'modules/setPermissions.bicep' = if (configureApplicationP
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
     #disable-next-line BCP318 // expect one value to be null
     videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerStorageAccountName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerStorageAccountName : ''
+    videoIndexerAppRoleDefinitionId: videoIndexerAppRoleDefinitionId
     videoIndexerSupportsOpenAiIntegration: videoIndexerSupportsOpenAiIntegration
   }
 }
@@ -855,6 +997,9 @@ module setNativeWebAppPermissions 'modules/setNativeWebAppPermissions.bicep' = i
     redisCacheKind: redisCacheKind
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
+    #disable-next-line BCP318 // expect one value to be null
+    videoIndexerName: deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
+    videoIndexerAppRoleDefinitionId: videoIndexerAppRoleDefinitionId
   }
   dependsOn: [
     setPermissions
@@ -864,7 +1009,7 @@ module setNativeWebAppPermissions 'modules/setNativeWebAppPermissions.bicep' = i
 //=========================================================
 // configure private networking
 //=========================================================
-module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNetworking) {
+module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNetworking || enableAzureMonitorPrivateLink) {
   name: 'privateNetworking'
   scope: rg
   params: {
@@ -872,6 +1017,8 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
     virtualNetworkId: resolvedVirtualNetworkId
     privateEndpointSubnetId: resolvedPrivateEndpointSubnetId
     privateDnsZoneConfigs: privateDnsZoneConfigs
+    enableAzureMonitorPrivateLink: enableAzureMonitorPrivateLink
+    monitoringResourceIds: [logAnalytics.outputs.logAnalyticsId, applicationInsights.outputs.appInsightsId]
 
     location: location
     appName: appName
@@ -888,6 +1035,8 @@ module privateNetworking 'modules/privateNetworking.bicep' = if (enablePrivateNe
     openAIResourceGroupName: openAI.outputs.openAIResourceGroup
     openAISubscriptionId: openAI.outputs.openAISubscriptionId
     webAppName: appService.outputs.name
+    redisCacheResourceId: deployRedisCache ? redisCache!.outputs.redisCacheResourceId : ''
+    redisCacheKind: redisCacheKind
     
     #disable-next-line BCP318 // expect one value to be null
     contentSafetyName: deployContentSafety ? contentSafety.outputs.contentSafetyName : ''
@@ -927,6 +1076,7 @@ output var_openAISubscriptionId string = openAI.outputs.openAISubscriptionId
 #disable-next-line BCP318 // expect one value to be null
 output var_redisCacheHostName string = deployRedisCache ? redisCache.outputs.redisCacheHostName : ''
 output var_redisCacheKind string = deployRedisCache ? redisCacheKind : ''
+output var_redisCacheResourceId string = deployRedisCache ? redisCache!.outputs.redisCacheResourceId : ''
 #disable-next-line BCP318 // expect one value to be null
 output var_redisCachePort string = deployRedisCache ? string(redisCache.outputs.redisCachePort) : ''
 output var_rgName string = rgName
@@ -938,6 +1088,8 @@ output var_videoIndexerArmApiVersion string = resolvedVideoIndexerArmApiVersion
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerAccountId string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerAccountId : ''
 output var_videoIndexerEndpoint string = resolvedVideoIndexerEndpoint
+#disable-next-line BCP318 // expect one value to be null
+output var_videoIndexerLocation string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerLocation : ''
 #disable-next-line BCP318 // expect one value to be null
 output var_videoIndexerName string = deployVideoIndexerService ? videoIndexerService.outputs.videoIndexerServiceName : ''
 
@@ -952,6 +1104,12 @@ output var_imageTag string = contains(imageName, ':')
 output var_webService string = appService.outputs.name
 #disable-next-line BCP318 // expect one value to be null
 output var_nativeWebService string = deployNativePythonWebApp ? nativeAppService.outputs.name : ''
+#disable-next-line BCP318 // expect one value to be null
+output var_v2WebService string = deployV2FrontendAppService ? v2FrontendAppService.outputs.name : ''
+
+// Origin to set as V2_UI_ALLOWED_ORIGIN on the API app when the split topology is used.
+#disable-next-line BCP318 // expect one value to be null
+output var_v2WebServiceOrigin string = deployV2FrontendAppService ? v2FrontendAppService.outputs.origin : ''
 
 // output values required for postup script in azure.yaml
 output var_enablePrivateNetworking bool = enablePrivateNetworking

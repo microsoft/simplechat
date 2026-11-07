@@ -7,6 +7,7 @@ audience: admin
 admin_tab: security
 redirect_from:
   - /admin/safety/
+  - /admin/workspace-identities/
 ---
 
 
@@ -34,96 +35,277 @@ This group protects who can enter the app, what secrets the app can use, what co
 
 ## Access & Roles {#access-roles}
 
+Everything on this tab decides who gets in and what they can reach once they are in. It is deliberately separate from Content Safety, which governs what may be said by someone already inside.
+
+{% include media.html id="slide-identity-and-access" %}
+
+Signing in does not confer access to every workspace, model endpoint, or
+external source. Application roles, workspace membership, governance, and
+the connected service's own permissions each retain their part of the decision.
+
+SimpleChat recognises a general `Admin` role and a set of narrower Entra app roles. By default the narrower roles are not required, so anyone holding `Admin` can reach every admin surface and signed-in users can use enabled features subject to workspace, source, and governance permissions. Requiring a role further narrows that access.
+
 ### Permissions {#permissions-section}
 
-The Permissions section belongs to the Access & Roles tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+### Permissions {#permissions-section}
 
-### App Role Requirements {#app-role-requirements-section}
+Two administrative reports can be narrowed beyond the general Admin role: Safety Violations,
+which shows flagged message text, and User Feedback. Both are readable by any Admin unless a
+dedicated role is required here, so these are the settings to reach for when "administrator"
+and "may read what users typed" should not be the same group of people.
 
-The App Role Requirements section belongs to the Access & Roles tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+The FeedbackAdmin requirement only governs the User Feedback report, so it does nothing until
+User Feedback is enabled under Chat.
 
-### Access Denied Message {#access-denied-message-section}
+Assign the role in the Enterprise App before enabling the requirement. Enabling it first locks
+out every administrator, including you.
 
-The Access Denied Message section belongs to the Access & Roles tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+**Enable AI Assist in the Review Center** gives whoever can open those reports AI-suggested reviews
+in the V2 Review center: an analysis of one record in its editor, and a triage of many records whose
+suggestions wait in an **AI suggestions** queue for a person to approve or dismiss. It sits here
+because it extends what those reviewers can do, and it is off by default because it sends the
+records' text, without names, email addresses or ids, to the instruction-drafting model that
+**Draft with AI** uses, one user's records at a time. The model never saves or acts: a warning is sent, or a suspension or block
+requested, only when a reviewer applies a suggestion, and a suspension or block still needs a
+second reviewer's approval. Turning it off stops suggestions being made, applied or dismissed;
+stored ones stay on their records.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Access Denied Message | Shown to signed-in users who lack the required roles. Use Enter for line breaks. | You are logged in but do not have the required permissions to access this application. Please contact an administrator for access. | `access_denied_message` |
-| Require SafetyViolationAdmin App Role | Requires the `SafetyViolationAdmin` app role before users can use this capability or view. | Off | `require_member_of_safety_violation_admin` |
+| Require SafetyViolationAdmin App Role | Narrows the Safety Violations report, including the flagged message text, to holders of the `SafetyViolationAdmin` role. Left off, any account with `Admin` can open it. | Off | `require_member_of_safety_violation_admin` |
+| Require FeedbackAdmin App Role | Narrows the User Feedback report to holders of the `FeedbackAdmin` role. Has no effect until User Feedback is enabled under Chat. | Off | `require_member_of_feedback_admin` |
+| Enable AI Assist in the Review Center | Lets feedback and safety reviewers ask AI to analyze one record or triage many, and lists its suggested reviews for a person to approve or dismiss. Each reviewer can send 60 assist requests per 10 minutes. | Off | `enable_admin_review_ai_assistant` |
+| Review Guidance for the AI Assistant | Your organization's review policy in plain language, such as when a first violation only gets a warning. The assistant follows it where it fits, but it can't override the built-in safeguards, such as never restricting a user over an AI-generated response. Sent to the model with each request, never to the Review center. | Empty | `admin_review_ai_guidance`; up to 2,000 characters |
+
+### App Role Requirements {#app-role-requirements-section}
+
+Every setting in the application that can demand an Entra app role, gathered in one place.
+Each switch is the same stored value as the one on the tab that owns the feature, not a copy
+of it, so changing it here changes it there.
+
+The reason for the duplication is that a role requirement read on its own tells you very
+little. Read together they are the deployment's access policy, and deciding whether that
+policy is coherent -- whether the same people can create groups, publish public workspaces,
+run workflows and read the Control Center -- means seeing all of them at once.
+
+Each row names the exact Entra app role value to assign, states what enforcing it restricts
+and who retains access when it is left off, and links to the tab that owns it. A requirement
+whose feature is currently switched off is marked as having no effect, because enforcing a
+role for a disabled feature looks like protection and is not.
+
+The eleven requirements cover the two admin reports above, Control Center access and its
+dashboard-only tier, group and public workspace creation, chat file uploads, personal
+workflows, URL Access, Deep Research, and personal workspace file sync.
+
+Assign a role in the Enterprise App before requiring it. Switching a requirement on before
+anyone holds the role removes the capability from everybody.
+
+### Access Denied Message {#access-denied-message-section}
+
+Someone who signs in successfully but holds none of the required roles reaches a dead end. They authenticated, so retrying will not help, and they cannot see which role they are missing. This message is the only thing standing between them and a support ticket, so it should name the team or process that grants access rather than restating the refusal.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Access Denied Message | Shown to a signed-in user who holds none of the roles the application requires. Line breaks are preserved. | You are logged in but do not have the required permissions to access this application. Please contact an administrator for access. | `access_denied_message` |
 
 ## Secrets {#secrets}
 
 ### Key Vault {#keyvault-section}
 
-The Key Vault section belongs to the Secrets tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Agents, actions, and AI Connections hold credentials: API keys for the services they call, subscription keys for gateways in front of them. By default those live in the settings document. Enabling Key Vault stores supported application-managed credentials in Azure Key Vault instead, leaving only a reference behind, which is what deployments with a policy against secrets at rest outside a vault need.
+
+Treat enabling this as one-way. Secrets saved afterwards are referenced by name, so turning it back off leaves those references pointing at values the application can no longer read, and every agent and action depending on them stops working.
+
+Assign **Key Vault Secrets Officer at the vault scope** to the application's selected managed identity. **Key Vault Secrets User is read-only**: it can read existing secrets but cannot save new credentials. Leave the managed identity client ID blank for the App Service system-assigned identity, or supply the client ID of the attached user-assigned identity. Permissions on the deploying administrator do not give the application access. A vault using legacy access policies needs **Get, List, Set, and Delete** secret permissions.
+
+**Permission test (0.261.125).** Before saving a vault change, run **Test Key Vault connection** in either interface. The test uses the draft vault and identity, lists secret properties, writes a uniquely named `simplechat-connection-test-*` secret containing a synthetic value, reads it back, and deletes it. Success requires every stage, including cleanup; it never changes existing secrets or purges deleted secrets.
+
+**Microsoft 365 workflow key (0.261.302).** Saved Microsoft 365 workflow connections, the sign-ins that workflows run as, are encrypted with one key for the whole deployment, not one per user. SimpleChat keeps it in this vault as the secret `simplechat-m365-workflow-token-key` and creates it itself: the first time anyone connects for workflows, and on any settings save while Key Vault storage is on. There is nothing to generate by hand. Creating it needs the same Secrets Officer access as other secrets; if that is missing, the save reports it beside the Key Vault settings and users see that workflow connections are not ready. Do not delete the secret or its older versions: each saved connection can only be read with the version that encrypted it, so deleting it forces every user to reconnect. The optional `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` app setting chooses a different secret name.
+
+Since **0.261.355**, saved **chat** connections use this same deployment key
+in separate encrypted records; they never reuse workflow credentials or Run as
+authorizations. A user's explicit chat reconnect saves the credential when
+Key Vault is configured. Without it, chat remains session-only and the user's
+connection card explains the limitation. Keep the key's historical versions
+for both connection types. Disabling Key Vault or a temporary key-access failure
+does not downgrade or overwrite an already saved chat connection.
+
+Saved chat connections have no application-imposed expiry and survive ordinary
+app sign-out. Microsoft/user revocation and organizational sign-in policies
+still govern refresh. Users can remove the saved credential with **Disconnect
+chat**, independently of their workflow connection.
+
+The temporary secret expires after ten minutes, but expiration is not deletion. If cleanup cannot be confirmed, the result identifies the generated secret for an administrator to remove. Soft-deleted test metadata remains under the vault's retention policy. Do not remove other application secrets when cleaning up a test.
+
+A denied-write result or save error names the missing permission rather than suggesting that a successful list operation proves write access. Check the identity, vault-scoped role or access policy, propagation of a recent role assignment, and network restrictions. A failed secret write does not fall back to storing the submitted credential as plaintext. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
+
+**Expiration reminders.** Secret names written by SimpleChat are content hashes, so a Key Vault expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. Reminder tracking records the missing half: which user or group owns each secret, which action and field it backs, and who to contact. The tracked secret inventory in this section is the lookup from an opaque secret name back to that context.
+
+SimpleChat does not send the reminder emails. It raises them in-app and emits an Application Insights event named `key_vault_expiration_reminder_triggered`. Route that to a recipient with an Azure Monitor scheduled query alert, a Logic App, a Function, or a webhook, and keep the vault's own expiry alerts configured in Azure Monitor or Event Grid as well.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Key Vault for Agent and Action Secrets | Places agent and action secrets in Azure Key Vault through the configured vault identity. | Off | `enable_key_vault_secret_storage`; capability toggle |
-| Key Vault Name | Provides the secret credential used when the selected authentication mode requires one. | Empty | `key_vault_name` |
-| Key Vault Managed Identity Client ID | Provides the secret credential used when the selected authentication mode requires one. | Empty | `key_vault_identity` |
-| Enable SimpleChat expiration reminder tracking | Tracks expiration metadata for stored secrets so admins can review or route reminders before secrets expire. | Off | `enable_key_vault_secret_expiration_reminders`; capability toggle |
-| Default lead days | Provides the secret credential used when the selected authentication mode requires one. | 30 | `key_vault_secret_expiration_default_lead_days` |
-| Default reminder email | Provides the secret credential used when the selected authentication mode requires one. | Empty | `key_vault_secret_expiration_default_contact_email` |
-| Admin notification roles | Comma-separated roles for global-scope reminder notifications. | Admin | `key_vault_secret_expiration_admin_roles` |
-| Scan interval seconds | Provides the secret credential used when the selected authentication mode requires one. | 21600 | `key_vault_secret_expiration_scan_interval_seconds` |
-| Require expiration dates when users enable tracking on new secrets | Provides the secret credential used when the selected authentication mode requires one. | Off | `key_vault_secret_expiration_require_expiration` |
-| Include reminder contact email in external telemetry | Default off. Enable only when Azure Monitor, Logic Apps, Functions, or webhook automation needs the email address to route notifications directly. | Off | `key_vault_secret_expiration_emit_contact_email_in_telemetry` |
-| Key Vault Reminders Search | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
-| Key Vault Reminders Status | Defines behavior for the related admin workflow; verify the affected feature after saving. | Empty | Runtime UI control |
+| Store agent and action secrets in Key Vault | Writes agent and action credentials to Azure Key Vault and keeps only a reference in the settings document. | Off | `enable_key_vault_secret_storage`; capability toggle |
+| Key Vault Name | The vault resource name, not a URL. The endpoint suffix comes from the `AZURE_ENVIRONMENT` App Service setting. | Empty | `key_vault_name` |
+| Key Vault Managed Identity Client ID | Selects the user-assigned identity granted vault-scoped Secrets Officer, or equivalent Get, List, Set, and Delete secret permissions. Blank uses the App Service system-assigned identity. | Empty | `key_vault_identity` |
+| Track secret expiration dates | Records owner, source and field for each tracked secret, and warns before it expires. | Off | `enable_key_vault_secret_expiration_reminders`; capability toggle |
+| Default lead days | How far ahead of expiry the first reminder is raised. Accepts 1 to 3650. | 30 | `key_vault_secret_expiration_default_lead_days` |
+| Default reminder email | Recorded against secrets that name no owner of their own, for downstream automation to route to. SimpleChat does not email it. | Empty | `key_vault_secret_expiration_default_contact_email` |
+| Admin notification roles | Roles notified in-app about global-scope reminders, meaning secrets with no individual owner. Comma separated. | Admin | `key_vault_secret_expiration_admin_roles` |
+| Scan interval (seconds) | How often the background sweep re-checks tracked secrets. Accepts 900 to 86400. | 21600 | `key_vault_secret_expiration_scan_interval_seconds` |
+| Require an expiration date when users enable tracking | Refuses to create a tracked secret with no expiry date, since it could never raise a reminder. | Off | `key_vault_secret_expiration_require_expiration` |
+| Include the contact email in external telemetry | Adds `contact_email` to the Application Insights reminder event. Enable only when downstream automation needs the address, since it puts an email address into telemetry. | Off | `key_vault_secret_expiration_emit_contact_email_in_telemetry` |
+
+## Global Identities {#workspace-identities}
+
+### Global Identities {#workspace-identities-section}
+
+A global identity is a credential for a system SimpleChat connects out to -- a SharePoint
+site, an HTTP API behind a key, a database -- saved once and referenced by name everywhere it
+is used. It is not an account for signing in to SimpleChat. Two things consume them: File
+Sync sources, which authenticate when they pull documents, and actions, which authenticate
+when an agent calls out.
+
+Storing the credential once and referencing it by name means the secret itself never travels
+with a source or action configuration, never appears in an export, and can be rotated in one
+place. Where Key Vault is configured, the secret is held there rather than in the settings
+document, which is why this sits next to Secrets rather than with the features that use it.
+
+An identity that is still referenced by a File Sync source or an action cannot be deleted;
+remove the reference first.
+
+{% include media.html src="admin-settings/global-identity.png" alt="Screenshot of the Global Identities tab in Admin Settings." title="Global Identities" %}
+
+## Content Screening {#content-screening}
+
+{% include media.html id="slide-safety-and-screening" %}
+
+This illustration combines distinct, optional controls. Configure the
+screening rules, Content Safety connection, input and output checkpoints,
+and failure behavior explicitly; turning on one scanner does not enable
+every check pictured.
+
+### Policies and scans {#content-screening-section}
+
+Content screening applies saved PII, regex, literal, and optional model rules at administrator-selected checkpoints. Workspace uploads retain their hold-and-review workflow. Submitted chat messages and AI reply text can use the same global baseline without inheriting workspace-specific additions.
+
+Workspace screening requires Enhanced Citations and reuses its storage account for private evidence and clean derivatives. Chat-only checks do not require that storage: turn off **Screen workspace uploads** before enabling the master for chat-only use. Administrators define required baseline rules; workspace managers can add document checks without weakening that baseline. This is separate from Azure AI Content Safety below.
+
+Open **Admin Settings > Security > Content Screening** in either interface. The tab and policy editor remain visible without Enhanced Citations. The storage prerequisite applies to uploads and explicit document scans, not to chat-text checkpoints. Content Screening does not depend on **Enable Content Safety**.
+
+You can enable Content Screening before choosing checks. First activation creates an enabled empty baseline if no policy has been saved; it never replaces an existing policy or activates a deliberately disabled baseline. In V2, change **Enable Content Screening**, then use **Save changes**. The classic master switch saves immediately with the current upload selection; other checkpoint and behavior controls use the main Save button.
+
+Use **Save screening policy** to persist rules and model criteria independently of the main Admin Settings save. An enabled policy with no checks is valid and stays enabled after saving. New uploads follow normal processing when their effective policy has no checks; no screening result or hold is created. Enabled workspace additions can supply checks even when the baseline is empty. Adding checks later screens subsequent uploads; use an explicit workspace scan for existing knowledge.
+
+Both editors provide **Add literal rule**, **Add regex rule**, and **Add PII rule**, plus the same four **Starter rule pack** choices. Deterministic rules run in code, not through a model. Adding a pack again leaves existing rules and their edits intact.
+
+**Enable AI checks** controls the actual scanner for that policy. Select one **Scanner model**, supply or adapt starter criteria, and choose its page/chunk window. When AI checks are off, those controls are disabled and their saved values are retained. This does not disable AI used independently for extraction, embeddings, or other application features.
+
+The separate **Models workspaces may use** section is a permission list, not additional scanners to execute. It remains editable while baseline AI checks are off. The baseline's saved scanner is automatically permitted; its marked checkbox does not create an additional explicit permission. Workspace managers must enable their own AI check to use a permitted model.
+
+The **Configured screening checks** summary describes the current draft and explicitly identifies an enabled policy with no active checks. Workspace summaries include required administrator checks even when local additions are off. A disabled baseline makes workspace additions inactive; emptying a policy or disabling future scans never releases an existing document hold. Sample testing requires a check to evaluate, but an empty policy can still be saved.
+
+Added in **0.261.106**; admin discovery and save feedback corrected in **0.261.107**; classic/V2 policy-editor alignment implemented in **0.261.108**; enabled-empty policy configuration implemented in **0.261.114**, tracked in `application\single_app\config.py`. See [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}) for policy selection, existing-workspace scans, reviewer roles, and remediation limits.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Enable Content Screening | Makes the selected checkpoints use the saved screening policies. Disabling it does not release document holds or restore removed replies. | Off | `enable_content_screening`; creates an enabled empty baseline if absent |
+| Screen workspace uploads | Keeps new workspace content out of knowledge use until its applicable checks and review finish. Existing holds stay enforced when this is disabled. | On beneath the master | `enable_content_screening_workspace_uploads`; requires Enhanced Citations and working storage |
+| Screen submitted chat messages | Checks submitted text against the global baseline before it reaches the answering model or chat actions. | Off | `enable_content_screening_chat_input`; includes chat retries and message edits |
+| Screen AI replies | Checks complete reply text against the global baseline and replaces replies with confirmed findings. | Off | `enable_content_screening_chat_output`; uses the shared chat behavior controls below |
+
+**Chat checkpoints implemented in version: 0.261.127**, tracked in `application/single_app/config.py`. Empty policies remain valid for document configuration, but an enabled chat checkpoint without usable checks records **not checked**, never a passing scan. Review the configured rules before enabling that checkpoint.
 
 ## Content Safety {#content-safety}
 
 ### Content Safety {#content-safety-section}
 
-The Content Safety section belongs to the Content Safety tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Choose whether submitted messages, AI replies, or both are sent to Azure AI Content Safety. A category severity of 4 or higher, or a returned blocklist match, is a finding. Submitted-message findings stop the request; reply findings replace the answer with a neutral content-check notice.
+
+Content Safety can reach the service directly or through Azure API Management. Route it through APIM when the rest of your Azure AI traffic already goes that way, so this traffic is subject to the same policy, quota and logging. Direct connections authenticate with a key or with the App Service managed identity; managed identity avoids storing a key and needs the Cognitive Services User role on the resource.
+
+Test the connection before saving. By default, a check that cannot finish allows chat to continue without a technical warning to the user and records private **not checked** metadata for administrators. Choose the stricter failure action below when an unavailable check should stop the request instead.
+
+**Trigger information** appends safe category and severity information to blocked-input notices. The expanded chat checks do not echo matched sensitive values, and removed-output notices do not repeat the rejected answer. AI-generated findings are not user misconduct and cannot be used to warn, suspend, or block the user through the remediation actions.
+
+Reviewers act on a user's findings from the Safety Violations review. A warning is sent as soon as the reviewer saves it, and the user must acknowledge it. A suspension or block waits for a second eligible reviewer, and the restricted user then sees an **Access restricted** screen at sign-in that explains why, instead of an error. See [Review safety violations]({{ '/guides/admin-review-safety-violations/' | relative_url }}).
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Content Safety | Routes chat content through Azure AI Content Safety so blocked messages use the configured violation message instead of continuing through the normal chat flow. | Off | `enable_content_safety`; capability toggle |
-| Use APIM instead of direct Content Safety endpoint | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_content_safety_apim`; capability toggle |
+| Enable Content Safety | Makes Azure AI Content Safety available at the selected chat checkpoints. Its existing document-metadata behavior is unchanged; this does not add full-file safety scans. | Off | `enable_content_safety`; master switch |
+| Check submitted messages with Content Safety | Screens typed requests before they reach a model or action. | On beneath the master | `enable_content_safety_chat_input`; preserves existing input coverage |
+| Check AI replies with Content Safety | Inspects the complete reply text and removes confirmed violations. | Off | `enable_content_safety_chat_output`; optional output checkpoint |
+| Route through Azure API Management | Sends Content Safety calls to an APIM front end rather than the service endpoint. | Off | `enable_content_safety_apim`; capability toggle |
 | Prompt Category Block Thresholds | Sets per-category Azure Content Safety prompt thresholds for Violence, Hate, Sexual, and Self-harm. Low blocks Low, Medium, and High; Medium allows Low and blocks Medium and High; High allows Low and Medium and blocks High. | Medium (4) for every category | `content_safety_category_thresholds`; category values are 2, 4, or 6 |
-| Content Safety Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `content_safety_endpoint` |
-| Authentication Type | Chooses whether SimpleChat authenticates to this service with a key, managed identity, or another supported method. | key | `content_safety_authentication_type` |
-| Content Safety Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `content_safety_key` |
-| Azure APIM Content Safety Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_content_safety_endpoint` |
-| Azure APIM Content Safety Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_content_safety_subscription_key` |
-| Safety Violation Message (Markdown supported) | Displayed when Content Safety blocks a chat message. | Not specified in defaults | `content_safety_violation_message` |
-| Include Trigger Information | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `content_safety_include_trigger_information` |
+| Content Safety Endpoint | The resource endpoint from the Content Safety resource in Azure. Used for direct connections. | Empty | `content_safety_endpoint` |
+| Authentication Type | Whether a direct connection authenticates with a key or the App Service managed identity. | key | `content_safety_authentication_type` |
+| Content Safety Key | Either key from the Content Safety resource. Stored write-only: the admin surface shows whether a value is stored, never the value. | Empty | `content_safety_key` |
+| APIM Content Safety Endpoint | The APIM API base URL fronting the Content Safety resource. | Empty | `azure_apim_content_safety_endpoint` |
+| APIM Subscription Key | The APIM subscription key authorised for that API. Stored write-only. | Empty | `azure_apim_content_safety_subscription_key` |
+| Safety Violation Message | Markdown that replaces the blocked message in the conversation. Say what to do next, since the user cannot see the cause unless trigger information is on. | Your message was blocked by Content Safety. | `content_safety_violation_message` |
+| Show what triggered the block | Appends safe detected-category and severity details to blocked-input notices. Output notices remain generic. | On | `content_safety_include_trigger_information` |
+
+## Chat check behavior
+
+These controls live under **Content Screening > Chat check behavior (both scanners)** and apply to both scanners. Content Safety links to the same controls; there are not two competing copies.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| When to show AI replies | Streams provisional text and checks it at completion, or holds reply text until checking finishes. A confirmed finding replaces the entire reply, not just matching characters. | Stream first, then remove flagged replies | `chat_content_output_mode`: `stream_then_check` or `check_before_display` |
+| When a chat check cannot finish | Allows content without a technical warning and queues private metadata for review, or stops messages/removes unchecked replies. A finding always wins over allow-on-error. | Allow quietly and mark not checked for admins | `chat_content_scan_failure_action`: `allow_unchecked` or `block`; does not change document holds or access controls |
+
+Streaming first is **post-response moderation**. Removing an answer cannot undo text already read, copied, downloaded, or sent elsewhere. Checking before display avoids showing provisional reply text, but still follows the failure action when a check cannot finish.
+
+Use **Review unchecked chat content** to open the protected report. It lists incomplete checks without duplicating message bodies, and offers a revision-bound **Recheck** action. A later finding automatically removes an AI reply from stored chat and shared representations. Outages remain retryable; old submitted-message findings are recorded for review rather than pretending earlier model calls can be undone.
+
+See [Recheck chat content]({{ '/guides/recheck-chat-content/' | relative_url }}) for the workflow and [Content Safety]({{ '/features/content-safety/' | relative_url }}) for the coverage boundary.
 
 ## Session {#session}
 
 ### Idle Session Timeout {#idle-timeout-section}
 
-The Idle Session Timeout section belongs to the Session tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+An unattended browser on a shared or kiosk machine stays signed in indefinitely. This ends the local session after a period without interaction, with a warning first so nobody loses a message mid-compose.
+
+This is a client-side timer, not a token lifetime. It closes the "walked away from the desk" gap; it does not shorten how long an issued token remains valid, which is an Entra Conditional Access decision.
+
+The warning has to arrive before the sign-out it warns about. Set the two values equal to skip the warning entirely; a warning time beyond the sign-out time is lowered to match on save.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Idle Session Timeout and Warning | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_idle_timeout`; capability toggle |
-| Idle Logout Timeout (Minutes) | Users are logged out locally after this many minutes of inactivity. Minimum value: 10 minutes. | 30 | `idle_timeout_minutes` |
-| Idle Warning Time (Minutes) | Show the warning modal after this many minutes of inactivity. Set this equal to the logout timeout to disable the warning dialog window. | 28 | `idle_warning_minutes` |
-| Idle Warning Message | Custom text shown at the top of the idle warning dialog. | You've been inactive for a while. | `idle_warning_message` |
+| Sign out inactive users | Ends the local session after a period without interaction. | Off | `enable_idle_timeout`; capability toggle |
+| Sign out after (minutes) | Inactivity before sign-out. Minimum 10, since anything shorter interrupts people reading a long response. | 30 | `idle_timeout_minutes` |
+| Warn after (minutes) | When the warning dialog appears. Equal to the sign-out time disables the warning. | 28 | `idle_warning_minutes` |
+| Idle Warning Message | Heading of the dialog offering to keep the session alive. | You've been inactive for a while. | `idle_warning_message` |
 
 ## Network {#network}
 
 ### Azure Front Door {#front-door-section}
 
-The Azure Front Door section belongs to the Network tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Behind Front Door or a load balancer, the App Service sees its own internal hostname rather than the one users typed. Sign-in redirects built from that hostname send people back to a host they cannot reach, so authentication completes at Entra and then fails on the return trip with a Microsoft error page and nothing in your logs.
+
+Enabling this makes the configured origin the base of every generated redirect. Two URIs are derived from it and both must be registered as redirect URIs on the Entra app registration before you save, or sign-in fails with a redirect mismatch:
+
+- the origin itself, for the post-sign-in landing redirect
+- the origin plus `/getAToken`, for the MSAL callback
+
+Enter the origin only, with no path or query string.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Front Door Support | Generates user-facing and OAuth redirect URLs using the configured Front Door or load-balancer base URL. | Off | `enable_front_door`; capability toggle |
-| Front Door URL | The base URL of your Front Door or load balancer. The system will automatically generate: Home redirect: https://your-frontdoor.azurefd.net OAuth2 redirect: https://your-frontdoor.azurefd.net/getAToken | Empty | `front_door_url` |
+| Behind Azure Front Door or a load balancer | Builds sign-in and redirect URLs from the configured public origin instead of the App Service hostname. | Off | `enable_front_door`; capability toggle |
+| Front Door URL | The public origin, scheme and host only. Must match a redirect URI registered on the Entra app registration. | Empty | `front_door_url` |
 
 ## Rate Limiting {#rate-limiting}
 
@@ -144,16 +326,26 @@ The message is Markdown, so it can carry a link to an internal runbook or reques
 
 ## Common tasks
 
-1. **Require roles.** Enable a role requirement and test with assigned and unassigned users. Outcome to verify: Only assigned users can enter the protected surface.
-2. **Move secrets to Key Vault.** Enable Key Vault storage, set access details, and rotate a low-risk secret. Outcome to verify: The app reads the secret from Key Vault.
-3. **Turn on Content Safety.** Set routing, authentication, and violation message, then submit a blocked test prompt. Outcome to verify: Blocked content shows the configured message.
+1. **Require a role.** Assign the role in the Enterprise App first, then enable the requirement and sign in as both an assigned and an unassigned account. Outcome to verify: only the assigned account reaches the protected surface, and the unassigned one sees your Access Denied Message.
+2. **Read the access policy.** Open App Role Requirements and check the enforced count against what you expect. Outcome to verify: no requirement is marked as having no effect unless you intended the feature it guards to be off.
+3. **Move secrets to Key Vault.** Grant the identity Get, Set and List, enable Key Vault storage, run Test Key Vault connection, then rotate one low-risk secret. Outcome to verify: the test succeeds and the rotated secret still works in its agent or action.
+4. **Turn on Content Safety.** Choose direct or APIM routing, supply credentials, run Test Content Safety connection, then send a prompt you expect to be blocked. Outcome to verify: the test succeeds and the blocked prompt shows your violation message.
+5. **Move to a Front Door hostname.** Register both generated redirect URIs on the app registration, then enable Front Door support and sign in through the routed domain. Outcome to verify: sign-in completes and lands on the Front Door hostname.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| Sign-in redirects use the wrong host | Front Door support is off or the base URL is wrong. | Correct the URL and test sign-in through the routed domain. |
-| Throttled users still see the built-in rate limit wording | The custom message toggle is off, or the message field was saved empty. | Turn on the custom message and save non-empty Markdown. |
+| Every administrator is locked out of a report | The role requirement was enabled before anyone was assigned the role. | Assign the role in the Enterprise App. The requirement itself can only be changed by an account that still holds admin access. |
+| A role requirement is marked as having no effect | The feature it guards is switched off, so nothing is being restricted. | Enable the feature, or leave the requirement off until you do. |
+| Sign-in returns a redirect mismatch error from Microsoft | One of the two generated redirect URIs is not registered on the Entra app registration. | Copy both from the Azure Front Door section and register them, then retry. |
+| Sign-in redirects use the wrong host | Front Door support is off, or the origin is wrong or carries a path. | Enter the origin only and test sign-in through the routed domain. |
+| An expiry alert names a secret nobody recognises | Secret names are content hashes, so the alert alone cannot identify an owner. | Look the secret name up in the tracked secret inventory under Key Vault. |
+| Chat fails for everyone right after enabling Content Safety | The endpoint or credential is wrong, so every message fails the safety check. | Run Test Content Safety connection and correct the connection details. |
+| A saved secret appears to have been cleared | The field was opened for replacement, a value was typed and then deleted, and the empty value was saved. | Re-enter the credential. Leaving the field blank without typing keeps the stored value untouched. |
+| Throttled users still see the built-in rate limit wording | The custom message toggle is off, or the message was saved empty. | Turn on the custom message and save non-empty Markdown. |
+| Reviewers don't see **Ask AI** or **Triage with AI** in the Review center | AI assist is off, or the reviewer can't open that section. | Turn on **Enable AI Assist in the Review Center**, and check the section's role requirement above. |
+| A triage stops with "too many requests" | A reviewer can send 60 assist requests, of up to ten records each, per 10 minutes. | Wait, then select **Triage with AI** again: the records that didn't get a suggestion stay checked. |
 
 ## Related
 

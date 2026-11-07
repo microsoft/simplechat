@@ -18,6 +18,18 @@
                     <div class="alert alert-warning mt-3" role="alert">
                         <strong>Note:</strong> Changing this setting requires an application restart to take effect.
                     </div>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" type="checkbox" role="switch" id="enable_mixed_source_development_telemetry" name="enable_mixed_source_development_telemetry" aria-describedby="enable_mixed_source_development_telemetry_help" {% if settings.enable_mixed_source_development_telemetry %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_mixed_source_development_telemetry">
+                            Record mixed document and spreadsheet metrics
+                        </label>
+                        <div class="form-text" id="enable_mixed_source_development_telemetry_help">
+                            Logs aggregate counts, timings and token totals for the processing behind Chat, Search, Analyze and Compare over workspace
+                            documents and spreadsheets: how many sources completed, were partial, failed, were skipped or were canceled, plus authorization
+                            failures and background exports. Never records prompts, content, file names, document IDs or storage paths. Turn it on while
+                            checking how these requests behave; each request adds several log entries.
+                        </div>
+                    </div>
                 </div>
 
                 <div class="card p-3 mb-3" id="debug-logging-section">

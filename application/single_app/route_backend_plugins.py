@@ -16,7 +16,9 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     DEFAULT_SQL_SERVER_ODBC_DRIVER,
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
+    resolve_sql_auth_type,
 )
+from semantic_kernel_plugins.sql_connection_diagnostics import SqlConnectionContext, classify_sql_connection_error
 from semantic_kernel_plugins.rocksdb_plugin import (
     AUTH_SCHEME_API_KEY,
     AUTH_SCHEME_BEARER,
@@ -49,7 +51,27 @@ from semantic_kernel_plugins.base_plugin import BasePlugin
 
 from functions_global_actions import *
 from functions_personal_actions import *
-from functions_group import require_active_group, assert_group_role
+from functions_group import (
+    require_active_group,
+    assert_group_role,
+    find_group_by_id,
+    get_user_role_in_group,
+)
+from functions_group_action_policy import (
+    group_action_management_operations,
+    group_action_write_roles,
+    group_actions_available,
+)
+from functions_settings import is_action_assistant_enabled
+from functions_editor_assist import EditorAssistError
+from functions_editor_assist_runtime import (
+    authorize_group_editor_scope,
+    editor_assist_error_response,
+    handle_editor_assist_request,
+    is_session_admin,
+)
+# Action Ask AI uses the same deployment as agent instruction drafting.
+from route_backend_agents import _resolve_agent_instruction_client
 from functions_group_actions import (
     get_group_actions,
     get_governed_group_actions,
@@ -143,6 +165,10 @@ from functions_mcp_operations import (
     get_mcp_error_http_status,
     normalize_mcp_additional_fields,
 )
+from functions_mcp_tool_pinning import (
+    build_mcp_tool_fingerprints,
+    validate_mcp_tool_pinning_for_save,
+)
 from functions_mcp_destinations import (
     McpDestinationPolicyError,
     assert_mcp_destination_allowed,
@@ -162,6 +188,17 @@ from functions_msgraph_operations import (
 )
 from functions_m365_operations import M365_PLUGIN_TYPES, get_m365_action_definition, get_m365_default_config
 from functions_simplechat_operations import SIMPLECHAT_DEFAULT_ENDPOINT, SIMPLECHAT_PLUGIN_TYPE
+from functions_control_center_dashboard import (
+    CONTROL_CENTER_ACTION_DEFAULT_DESCRIPTION,
+    CONTROL_CENTER_ACTION_DEFAULT_ENDPOINT,
+    CONTROL_CENTER_ACTION_TYPE,
+)
+from functions_agent_delegation import (
+    AGENT_DEFAULT_ENDPOINT,
+    AGENT_PLUGIN_TYPE,
+    build_agent_delegation_catalog,
+    resolve_delegation_group_scope,
+)
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
     WORKSPACE_IDENTITY_SCOPE_GROUP,
@@ -180,6 +217,15 @@ from functions_legacy_action_management import (
     LegacyActionConflictError,
     LegacyActionSourceUpdateError,
     is_unchanged_retired_action,
+)
+from functions_workspace_authoring import (
+    WorkspaceAuthoringValidation,
+    build_action_editor_types,
+    clear_editor_test_secrets,
+    editor_error_response,
+    ensure_editor_access,
+    personal_editor_response,
+    validate_editor_action_manifest,
 )
 
 
@@ -356,6 +402,20 @@ def _apply_plugin_runtime_defaults(plugin_payload):
         auth['type'] = 'user'
         plugin_payload['auth'] = auth
 
+    elif plugin_type == CONTROL_CENTER_ACTION_TYPE:
+        # Runs as the signed-in Control Center viewer; there is no connection to configure.
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = CONTROL_CENTER_ACTION_DEFAULT_ENDPOINT
+        plugin_payload['auth'] = {'type': 'user'}
+        # Orchestration chooses actions by their description, so a blank one is never saved.
+        if not str(plugin_payload.get('description') or '').strip():
+            plugin_payload['description'] = CONTROL_CENTER_ACTION_DEFAULT_DESCRIPTION
+
+    elif plugin_type == AGENT_PLUGIN_TYPE:
+        if not str(plugin_payload.get('endpoint') or '').strip():
+            plugin_payload['endpoint'] = AGENT_DEFAULT_ENDPOINT
+        plugin_payload.setdefault('auth', {'type': 'user'})
+
     return plugin_payload
 
 def discover_plugin_types(include_legacy=False):
@@ -380,7 +440,7 @@ def discover_plugin_types(include_legacy=False):
                     isinstance(obj, type)
                     and issubclass(obj, BasePlugin)
                     and obj is not BasePlugin
-                    and (module_name.replace('_plugin', '') not in M365_PLUGIN_TYPES or obj.__module__ == module.__name__)
+                    and obj.__module__ == module.__name__
                     and not getattr(obj, 'internal_only', False)
                 ):
                     # Use the type string as in the manifest (e.g., 'blob_storage')
@@ -399,10 +459,37 @@ def discover_plugin_types(include_legacy=False):
                         types.add(module_name.replace('_plugin', ''))
     return types if include_legacy else {plugin_type for plugin_type in types if not is_legacy_msgraph_type(plugin_type)}
 
+HIDDEN_NEW_ACTION_PLUGIN_TYPES = {
+    DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
+    'embedding_model',
+    'queue_storage',
+    'ui_test',
+    'sql_schema',
+}
+
+
+def _catalog_graph_endpoint():
+    return get_graph_base_url().removesuffix('/v1.0')
+
+
+def _catalog_entry(plugin_type, class_name, display, description, **extra):
+    entry = {
+        'type': plugin_type,
+        'class': class_name,
+        'display': display,
+        'description': description,
+    }
+    if plugin_type in HIDDEN_NEW_ACTION_PLUGIN_TYPES:
+        entry['hidden'] = True
+        entry['legacy'] = True
+    entry.update(extra)
+    return entry
+
+
 def get_plugin_types(allowed_type_filter=None):
     # Path to the plugin types directory (semantic_kernel_plugins)
     plugintypes_dir = os.path.join(current_app.root_path, 'semantic_kernel_plugins')
-    types = []
+    type_entries = {}
     debug_log = []
     for fname in os.listdir(plugintypes_dir):
         if fname.endswith('_plugin.py') and fname != 'base_plugin.py' and not fname.startswith('_'):
@@ -428,32 +515,36 @@ def get_plugin_types(allowed_type_filter=None):
                     isinstance(obj, type)
                     and issubclass(obj, BasePlugin)
                     and obj is not BasePlugin
-                    and (module_type not in M365_PLUGIN_TYPES or obj.__module__ == module.__name__)
+                    and obj.__module__ == module.__name__
                     and not getattr(obj, 'internal_only', False)
                 ):
                     found = True
+                    if module_type in type_entries:
+                        debug_log.append(f"Skipping duplicate plugin type entry: {module_type}")
+                        continue
                     if module_type in M365_PLUGIN_TYPES:
                         definition = get_m365_action_definition(module_type)
-                        types.append({
-                            'type': module_type,
-                            'class': definition['class_name'],
-                            'display': definition['display_name'],
-                            'description': definition['description'],
-                            'source': definition['source'],
-                            'capabilities': definition['capabilities'],
-                            'defaults': get_m365_default_config(module_type)['additionalFields'],
-                        })
+                        type_entries[module_type] = _catalog_entry(
+                            module_type,
+                            definition['class_name'],
+                            definition['display_name'],
+                            definition['description'],
+                            source=definition['source'],
+                            capabilities=definition['capabilities'],
+                            defaults=get_m365_default_config(module_type)['additionalFields'],
+                            graph_endpoint=_catalog_graph_endpoint(),
+                        )
                         continue
                     # Special handling for OpenAPI plugin that requires spec path
                     if 'openapi' in module_name.lower():
                         display_name = "OpenAPI"
-                        description = "Plugin for integrating with external APIs using OpenAPI specifications. Supports file upload, URL download, and various authentication methods."
-                        types.append({
-                            'type': module_type,
-                            'class': attr,
-                            'display': display_name,
-                            'description': description
-                        })
+                        description = "Connect to an API using OpenAPI JSON/YAML content and configurable authentication. Download hosted specifications before uploading them."
+                        type_entries[module_type] = _catalog_entry(
+                            module_type,
+                            attr,
+                            display_name,
+                            description,
+                        )
                         continue
                     
                     # Try to get display name from plugin instance
@@ -662,15 +753,27 @@ def get_plugin_types(allowed_type_filter=None):
                         description = f"Plugin for {display_name.lower()} functionality"
                         debug_log.append(f"Complete failure to instantiate {attr}: {e}. Using final fallback.")
                     
-                    types.append({
-                        'type': module_type,
-                        'class': attr,
-                        'display': display_name,
-                        'description': description
-                    })
+                    if module_type == 'sql_query':
+                        display_name = 'SQL Database'
+                        description = (
+                            'Query a SQL database with governed read controls. '
+                            'Schema discovery is included automatically for agents that need table context.'
+                        )
+                    elif module_type == DATABRICKS_PLUGIN_TYPE:
+                        description = (
+                            'Run governed read-only SQL Warehouse queries against Azure Databricks, '
+                            'including catalog and schema defaults for agent context.'
+                        )
+                    elif module_type == DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE:
+                        description = (
+                            'Legacy Databricks table action retained for existing configurations. '
+                            'Create new Databricks actions with the Databricks SQL Warehouse connector.'
+                        )
+                    type_entries[module_type] = _catalog_entry(module_type, attr, display_name, description)
             if not found:
                 debug_log.append(f"No valid plugin class found in {fname}")
     # Log the debug output to the server log
+    types = list(type_entries.values())
     if callable(allowed_type_filter):
         types = [plugin_type for plugin_type in types if allowed_type_filter(plugin_type.get('type'))]
 
@@ -703,6 +806,33 @@ def _handle_legacy_action_error(exc):
     return jsonify({'success': False, 'error': exc.public_message, 'error_type': exc.code}), status
 
 
+@bpap.route('/api/plugins/agent-targets', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+def get_agent_action_targets():
+    """List authorized, scope-compatible targets without exposing agent configuration."""
+    user_id = get_current_user_id()
+    try:
+        catalog = build_agent_delegation_catalog(
+            user_id, request.args.get('scope', 'personal'), request.args.get('group_id'),
+        )
+        return jsonify(catalog)
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to configure agent calls in this workspace.'}), 403
+    except LookupError:
+        return jsonify({'error': 'The requested agent workspace is unavailable.'}), 404
+    except ValueError:
+        return jsonify({'error': 'Invalid agent action scope.'}), 400
+    except CosmosHttpResponseError as exc:
+        log_event(
+            "[AGENT_DELEGATION] Unable to load the target catalogue.",
+            level=logging.ERROR, extra={'error_type': type(exc).__name__},
+        )
+        return jsonify({'error': 'Unable to load available agents.'}), 503
+
+
 def _redact_plugin_for_logging(plugin):
     """Return a plugin manifest with secret-bearing values redacted for logging."""
     if not isinstance(plugin, dict):
@@ -723,6 +853,30 @@ def _resolve_plugin_secret_context(plugin_manifest, fallback_scope_value, fallba
     return origin.scope_id, "user" if origin.scope_type == "personal" else "group"
 
 
+def _resolve_group_for_test(user_id, requested_group_id):
+    """Resolve and authorize the group a group-scoped action test targets.
+
+    When a group action test carries a top-level ``group_id`` it is authoritative
+    for the whole request — saved-action load, identity, origin and secret context
+    — and the active group is never a fallback. The caller must currently hold the
+    ``test`` capability in that group, which routes through one policy predicate:
+    Owner/Admin (Owner-only when governed), an ``active`` status, and the group
+    action availability gate. So a stale active group can never redirect a
+    credentialed test, and a reader can never trigger one.
+    """
+    group_id = str(requested_group_id or "").strip()
+    if not group_id:
+        raise PermissionError("A group is required for this action test.")
+    group = find_group_by_id(group_id)
+    if not group:
+        raise PermissionError("The requested group was not found.")
+    role = get_user_role_in_group(group, user_id)
+    settings = get_settings()
+    if "test" not in group_action_management_operations(user_id, group, role, settings):
+        raise PermissionError("You do not have permission to test this group's actions.")
+    return group_id
+
+
 def _resolve_action_identity_context(data, existing_plugin, user_id):
     """Resolve the authoritative identity scope for an action test or save request."""
     aliases = {
@@ -734,6 +888,10 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
     if requested_value not in aliases:
         raise ValueError("Action scope is invalid.")
     requested_scope = aliases[requested_value]
+    # A top-level group_id makes this an explicit group-targeted test; it is
+    # authoritative and never falls back to the active group. Its presence is the
+    # single switch between the tightened V2 path and unchanged V1 legacy behaviour.
+    requested_group_id = str((data or {}).get("group_id") or "").strip()
     if isinstance(existing_plugin, dict):
         origin = get_action_origin(existing_plugin)
         if origin is None:
@@ -741,35 +899,53 @@ def _resolve_action_identity_context(data, existing_plugin, user_id):
         if (data or {}).get("action_scope") and requested_scope != origin.scope_type:
             raise PermissionError("Action scope does not match the existing action.")
         if origin.scope_type == "group":
-            active_group = require_active_group(user_id)
-            if active_group != origin.scope_id:
+            if requested_group_id:
+                target_group = _resolve_group_for_test(user_id, requested_group_id)
+            else:
+                # Legacy (no group_id): the active group, with the Owner/Admin
+                # (Owner-only when governed) edit roles a saved group test needs (M4 §2).
+                target_group = require_active_group(user_id)
+                app_settings = get_settings()
+                allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+                assert_group_role(user_id, target_group, allowed_roles=allowed_roles)
+            if target_group != origin.scope_id:
                 raise PermissionError("Action does not belong to the selected group.")
-            assert_group_role(
-                user_id,
-                active_group,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-            )
-            return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
+            return WORKSPACE_IDENTITY_SCOPE_GROUP, target_group
         if origin.scope_type == "global":
+            if requested_group_id:
+                raise PermissionError("A group cannot be supplied for a non-group action.")
             if "Admin" not in session.get("user", {}).get("roles", []):
                 raise PermissionError("Admin role required for global action identities")
             return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+        if requested_group_id:
+            raise PermissionError("A group cannot be supplied for a non-group action.")
         if origin.scope_id != user_id:
             raise PermissionError("Action does not belong to the current user.")
         return WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id
 
     if requested_scope == "group":
-        active_group = require_active_group(user_id)
-        assert_group_role(
-            user_id,
-            active_group,
-            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-        )
-        return WORKSPACE_IDENTITY_SCOPE_GROUP, active_group
+        if requested_group_id:
+            target_group = _resolve_group_for_test(user_id, requested_group_id)
+        else:
+            # Legacy transient group test (V1 sends no group_id): the active group,
+            # with the Owner/Admin (Owner-only when governed) edit roles a group
+            # test needs. Members can read an identity_id, and all four callers that
+            # reach this branch hydrate that identity's stored credentials with
+            # SecretReturnType.VALUE, so a reader must not be able to trigger one
+            # (M4 §9.1). Classic only reaches these callers inside the editor.
+            target_group = require_active_group(user_id)
+            app_settings = get_settings()
+            allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+            assert_group_role(user_id, target_group, allowed_roles=allowed_roles)
+        return WORKSPACE_IDENTITY_SCOPE_GROUP, target_group
     if requested_scope == "global":
+        if requested_group_id:
+            raise PermissionError("A group cannot be supplied for a non-group action.")
         if "Admin" not in session.get("user", {}).get("roles", []):
             raise PermissionError("Admin role required for global action identities")
         return WORKSPACE_IDENTITY_SCOPE_GLOBAL, WORKSPACE_IDENTITY_SCOPE_GLOBAL
+    if requested_group_id:
+        raise PermissionError("A group cannot be supplied for a non-group action.")
     return WORKSPACE_IDENTITY_SCOPE_PERSONAL, user_id
 
 
@@ -865,6 +1041,7 @@ def _hydrate_sql_test_identity(data, existing_plugin, user_id):
             "server": data.get("server", ""),
             "database": data.get("database", ""),
             "driver": data.get("driver", ""),
+            "managed_identity_client_id": data.get("managed_identity_client_id", ""),
         },
     }
     return hydrate_action_identity_reference(
@@ -873,6 +1050,159 @@ def _hydrate_sql_test_identity(data, existing_plugin, user_id):
         scope_id,
         return_type=SecretReturnType.VALUE,
     )
+
+
+def _flatten_editor_test_fields(data, field_names):
+    """Bridge complete editor manifests to the existing flat connector test inputs."""
+    additional_fields = data.get('additionalFields', {})
+    if not isinstance(additional_fields, dict):
+        raise ValueError('Additional fields must be an object.')
+    result = dict(data)
+    result.update({field: additional_fields[field] for field in field_names if field in additional_fields})
+    return result
+
+
+def _is_personal_editor_test_request(data):
+    scope = str(data.get('action_scope') or 'personal').strip().lower()
+    context = data.get('existing_plugin') or {}
+    context_scope = str(context.get('scope') or 'user').strip().lower() if isinstance(context, dict) else ''
+    return scope in {'personal', 'user'} and context_scope in {'personal', 'user'}
+
+
+def _assert_personal_editor_test_access(data, existing_plugin, user_id, action_type):
+    ensure_editor_access('actions', user_id, get_settings())
+    if not _is_personal_editor_test_request(data):
+        raise PermissionError('This editor test is available only in My Workspace.')
+    if existing_plugin:
+        if (
+            existing_plugin.get('user_id') != user_id or existing_plugin.get('is_global')
+            or existing_plugin.get('is_group') or existing_plugin.get('group_id')
+            or existing_plugin.get('scope') not in (None, '', 'personal', 'user')
+        ):
+            raise PermissionError('This action does not belong to the personal workspace.')
+        ensure_action_type_access('governance_user_actions', user_id, existing_plugin.get('type'), 'personal')
+    ensure_action_type_access('governance_user_actions', user_id, action_type, 'personal')
+
+
+def _prepare_editor_sql_test_data(data, existing_plugin, user_id):
+    action_type = data.get('type') or (existing_plugin or {}).get('type')
+    if action_type not in {'sql_query', 'sql_schema'}:
+        action_type = 'sql_query' if is_action_type_access_allowed(
+            'governance_user_actions', user_id, 'sql_query', 'personal',
+        ) else 'sql_schema'
+    _assert_personal_editor_test_access(data, existing_plugin, user_id, action_type)
+    result = _flatten_editor_test_fields(data, (
+        'database_type', 'connection_method', 'connection_string', 'server', 'database',
+        'port', 'driver', 'username', 'password', 'auth_type', 'timeout',
+        'managed_identity_client_id',
+    ))
+    auth = result.get('auth', {})
+    if not isinstance(auth, dict):
+        raise ValueError('Authentication must be an object.')
+    identity_manifest = _hydrate_sql_test_identity(result, existing_plugin, user_id)
+    if identity_manifest:
+        auth = identity_manifest.get('auth') or {}
+        result['auth'] = auth
+        fields = identity_manifest.get('additionalFields') or {}
+        for field in (
+            'connection_string', 'username', 'password', 'auth_type', 'identity_auth_type',
+            'managed_identity_client_id',
+        ):
+            if field in fields:
+                result[field] = fields[field]
+
+    auth_type = str(auth.get('type') or result.get('auth_type') or '').strip()
+    declared_mode = '' if identity_manifest else str(result.get('auth_type') or result.get('identity_auth_type') or '').strip()
+    if auth_type.lower() in {'serviceprincipal', 'service_principal', 'client_secret'} or declared_mode.lower() in {
+        'serviceprincipal', 'service_principal', 'client_secret',
+    }:
+        # The shared SQL runtime has no SP credential path. A test-only token
+        # implementation would misleadingly validate an action the runtime cannot use.
+        raise WorkspaceAuthoringValidation(
+            'SQL service-principal fields are not supported by the SQL action runtime. '
+            'Use a supported SQL authentication mode or a complete connection string.'
+        )
+
+    stored_auth = (existing_plugin or {}).get('auth') or {}
+    scope_value, scope = _resolve_plugin_secret_context(existing_plugin, user_id)
+    auth_key = None
+    target_field = 'connection_string' if auth_type == 'connection_string' else 'password'
+    if 'key' in auth and target_field not in result:
+        auth_key = auth['key'] if identity_manifest else _rehydrate_action_test_secret(
+            auth['key'], stored_auth.get('key'), 'SQL', 'auth.key',
+        )
+        if not identity_manifest:
+            auth_key = _resolve_secret_value_for_action_test(
+                auth_key, 'auth.key', 'SQL', scope_value, scope, ACTION_AUTH_SECRET_SOURCES,
+            )
+    if auth_type == 'connection_string':
+        if auth_key is not None:
+            result['connection_string'] = auth_key
+        result['connection_method'] = 'connection_string'
+        result['auth_type'] = 'connection_string_only'
+        if not result.get('connection_string'):
+            raise ValueError('A connection string is required.')
+    elif auth_type == 'identity' and auth.get('identity') == 'managed_identity':
+        result['auth_type'] = 'managed_identity'
+    elif auth_type in {'user', 'username_password', 'basic'}:
+        if identity_manifest or declared_mode not in {'integrated', 'none'}:
+            result['auth_type'] = 'username_password'
+        if auth.get('identity') and 'username' not in result:
+            result['username'] = auth['identity']
+        if auth_key is not None:
+            result['password'] = auth_key
+    return result
+
+
+def _prepare_editor_yamcs_test_data(data, existing_plugin, user_id):
+    _assert_personal_editor_test_access(data, existing_plugin, user_id, YAMCS_PLUGIN_TYPE)
+    result = _flatten_editor_test_fields(data, (
+        'server_url', 'instance', 'auth_method', 'username', 'tls_verify', 'timeout',
+    ))
+    auth = result.get('auth', {})
+    if not isinstance(auth, dict):
+        raise ValueError('Authentication must be an object.')
+    identity_id = str(result.get('identity_id') or '').strip()
+    fields = dict(result.get('additionalFields') or {})
+    fields.update({
+        field: result[field] for field in ('server_url', 'instance', 'auth_method', 'tls_verify', 'timeout')
+        if field in result
+    })
+    if not auth:
+        method = result.get('auth_method')
+        auth = {
+            'type': 'NoAuth' if method == YAMCS_AUTH_METHOD_NONE else (
+                'key' if method in {YAMCS_AUTH_METHOD_API_KEY, YAMCS_AUTH_METHOD_BEARER_TOKEN} else 'username_password'
+            ),
+            'key': result.get('auth_key', ''),
+            'identity': result.get('username', ''),
+        }
+    manifest = {
+        'name': 'yamcs_connection_test', 'type': YAMCS_PLUGIN_TYPE,
+        'endpoint': result.get('endpoint') or result.get('server_url', ''),
+        'auth': dict(auth), 'additionalFields': fields,
+    }
+    if identity_id:
+        scope_type, scope_id = _resolve_action_identity_context(result, existing_plugin, user_id)
+        manifest['identity_id'] = identity_id
+        manifest['auth'] = {'type': 'identity', 'identity': identity_id}
+        manifest = hydrate_action_identity_reference(
+            manifest, scope_type, scope_id, return_type=SecretReturnType.VALUE,
+        )
+        auth = manifest['auth']
+        if not auth.get('key'):
+            raise ValueError('The selected identity does not provide a Yamcs credential.')
+        if auth.get('type') == 'username_password' and not auth.get('identity'):
+            raise ValueError('The selected identity does not provide a Yamcs username.')
+    _apply_plugin_runtime_defaults(manifest)
+    auth = manifest['auth']
+    result['auth_method'] = manifest['additionalFields']['auth_method']
+    result['server_url'] = manifest['endpoint']
+    if 'key' in auth:
+        result['auth_key'] = auth['key']
+    if 'identity' in auth:
+        result['username'] = auth['identity']
+    return result
 
 
 ACTION_CONNECTION_TEST_AUTH_SECRET_FIELDS = ('key', 'identity', 'tenantId')
@@ -896,6 +1226,8 @@ def _resolve_secret_value_for_action_test(value, field_name, plugin_label, scope
     """
     if not isinstance(value, str) or not value:
         return value
+    if value == "***REDACTED***":
+        raise ValueError("A stored credential could not be resolved for testing. Re-enter its value.")
     if not validate_secret_name_dynamic(value):
         return value
 
@@ -928,9 +1260,9 @@ def _hydrate_mcp_custom_headers_for_test(discovery_manifest, existing_plugin, sc
     hydrated_headers = {}
     for header_name, header_value in custom_headers.items():
         resolved_header_value = header_value
-        if resolved_header_value in ('', None, ui_trigger_word):
+        if resolved_header_value in ('', None, ui_trigger_word, "***REDACTED***"):
             resolved_header_value = existing_headers.get(header_name)
-        if resolved_header_value == ui_trigger_word:
+        if resolved_header_value in (ui_trigger_word, "***REDACTED***"):
             raise ValueError(f"Stored MCP custom header '{header_name}' could not be resolved. Re-enter the header value.")
         if not resolved_header_value:
             continue
@@ -964,7 +1296,7 @@ def _resolve_secret_value_for_sql_test(value, field_name, scope_value=None, scop
     )
 
 
-def _load_existing_plugin_for_test(plugin_context, user_id):
+def _load_existing_plugin_for_test(plugin_context, user_id, requested_group_id=None):
     """Load an existing plugin manifest with Key Vault reference names for edit-time plugin tests."""
     if plugin_context is None:
         return None
@@ -985,12 +1317,23 @@ def _load_existing_plugin_for_test(plugin_context, user_id):
         return None
 
     if plugin_scope == 'group':
-        active_group = require_active_group(user_id)
-        assert_group_role(
-            user_id,
-            active_group,
-            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-        )
+        group_id = str(requested_group_id or "").strip()
+        if group_id:
+            # A group_id makes the target group authoritative: load the saved action
+            # from that group, authorized by the one 'test' capability predicate, and
+            # never from a stale active group.
+            active_group = _resolve_group_for_test(user_id, group_id)
+        else:
+            active_group = require_active_group(user_id)
+            # A saved group action test loads stored credentials, so it requires the group
+            # edit roles (Owner/Admin, Owner-only when governed), not the reader set (M4 §2).
+            app_settings = get_settings()
+            allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
+            assert_group_role(
+                user_id,
+                active_group,
+                allowed_roles=allowed_roles,
+            )
         plugin = get_group_action(active_group, plugin_identifier, return_type=SecretReturnType.NAME)
         scope_type, scope_id = "group", active_group
 
@@ -1027,9 +1370,9 @@ def _action_origin_secret_context(origin):
     return origin.scope_id, "user" if origin.scope_type == "personal" else "group"
 
 
-def _load_existing_plugin_for_sql_test(plugin_context, user_id):
+def _load_existing_plugin_for_sql_test(plugin_context, user_id, requested_group_id=None):
     """Load an existing plugin manifest with Key Vault reference names for edit-time SQL tests."""
-    return _load_existing_plugin_for_test(plugin_context, user_id)
+    return _load_existing_plugin_for_test(plugin_context, user_id, requested_group_id=requested_group_id)
 
 # === USER PLUGINS ENDPOINTS ===
 @bpap.route('/api/user/plugins', methods=['GET'])
@@ -1038,6 +1381,11 @@ def _load_existing_plugin_for_sql_test(plugin_context, user_id):
 @user_required
 def get_user_plugins():
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response(
+            'actions', user_id, _prepare_personal_action_for_editor,
+            migrate=ensure_migration_complete,
+        )
     # Ensure migration is complete (will migrate any remaining legacy data)
     try:
         ensure_migration_complete(user_id)
@@ -1081,16 +1429,405 @@ def get_user_plugins():
     else:
         return jsonify(plugins)
 
+def _prepare_personal_action_for_editor(user_id, plugin, settings, existing):
+    validate_legacy_action_update(plugin, existing, 'user_id', user_id)
+    return _prepare_personal_action_payload(user_id, plugin, editor=True, existing=existing)
+
+
+def _prepare_personal_action_payload(user_id, plugin, *, editor=False, existing=None):
+    """Clean, default and validate a single personal action.
+
+    This is the per-action half of the bulk save, factored out so the per-item create and
+    update routes apply exactly the same identity checks, manifest validation and MCP
+    destination policy. Returns ``(plugin_to_save, error_response)`` with exactly one set.
+    """
+    plugin_to_save = dict(plugin)
+    # Remove is_global if present
+    if 'is_global' in plugin_to_save:
+        del plugin_to_save['is_global']
+
+    # Ensure required fields have default values
+    plugin_to_save.setdefault('name', '')
+    plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
+    plugin_to_save.setdefault('description', '')
+    plugin_to_save.setdefault('metadata', {})
+    plugin_to_save.setdefault('additionalFields', {})
+
+    # Remove storage-managed fields that are not part of the plugin manifest schema,
+    # but preserve the action ID so existing records can be updated in place.
+    for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+        if field == 'id':
+            continue
+        plugin_to_save.pop(field, None)
+    for field in ('execution_status', 'is_legacy', 'legacy_source', 'legacy_locator', 'runtime_user_id'):
+        plugin_to_save.pop(field, None)
+
+    plugin_to_save.setdefault('endpoint', '')
+    _apply_plugin_runtime_defaults(plugin_to_save)
+    plugin_type = plugin_to_save['type']
+    try:
+        _validate_action_identity_for_scope(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+            user_id,
+        )
+    except (ValueError, LookupError, PermissionError):
+        return None, (jsonify({'error': 'Action identity configuration is invalid.'}), 400)
+
+    # Ensure auth has default structure
+    if 'auth' not in plugin_to_save:
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif not isinstance(plugin_to_save['auth'], dict):
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif 'type' not in plugin_to_save['auth']:
+        plugin_to_save['auth']['type'] = 'identity'
+
+    debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin_to_save)}")
+    validation_error = validate_editor_action_manifest(plugin_to_save) if editor else validate_plugin(plugin_to_save)
+    if validation_error:
+        return None, (jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400)
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+    if not is_valid:
+        return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+    try:
+        validate_mcp_tool_pinning_for_save(plugin_to_save, existing)
+    except ValueError:
+        return None, (jsonify({'error': 'Discover and approve MCP tools before saving this action.'}), 400)
+
+    try:
+        ensure_action_type_access('governance_user_actions', user_id, plugin_type, 'personal')
+        _enforce_mcp_destination_policy(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_PERSONAL,
+            user_id,
+            operation='personal_action_save',
+            user_id=user_id,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403)
+    except ValueError:
+        return None, (jsonify({'error': 'MCP destination configuration is invalid.'}), 400)
+
+    return plugin_to_save, None
+
+
+def _prepare_group_action_payload(user_id, group_id, plugin, settings, existing):
+    """Clean, default and validate one group action for the immutable editor routes.
+
+    Mirrors ``_prepare_personal_action_payload`` (editor variant) but binds every
+    scope-sensitive check to the named group: identity, action-type governance and
+    MCP destination policy all resolve against ``group_id`` rather than the caller's
+    personal scope. Returns ``(plugin_to_save, error_response)`` with exactly one set.
+    """
+    validate_legacy_action_update(plugin, existing, 'group_id', group_id)
+    plugin_to_save = dict(plugin)
+    if 'is_global' in plugin_to_save:
+        del plugin_to_save['is_global']
+    if 'is_group' in plugin_to_save:
+        del plugin_to_save['is_group']
+
+    plugin_to_save.setdefault('name', '')
+    plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
+    plugin_to_save.setdefault('description', '')
+    plugin_to_save.setdefault('metadata', {})
+    plugin_to_save.setdefault('additionalFields', {})
+
+    for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+        if field == 'id':
+            continue
+        plugin_to_save.pop(field, None)
+    for field in ('execution_status', 'is_legacy', 'legacy_source', 'legacy_locator', 'runtime_user_id'):
+        plugin_to_save.pop(field, None)
+
+    plugin_to_save.setdefault('endpoint', '')
+    _apply_plugin_runtime_defaults(plugin_to_save)
+    plugin_type = plugin_to_save['type']
+    try:
+        _validate_action_identity_for_scope(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            group_id,
+        )
+    except (ValueError, LookupError, PermissionError):
+        return None, (jsonify({'error': 'Action identity configuration is invalid.'}), 400)
+
+    if 'auth' not in plugin_to_save:
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif not isinstance(plugin_to_save['auth'], dict):
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif 'type' not in plugin_to_save['auth']:
+        plugin_to_save['auth']['type'] = 'identity'
+
+    validation_error = validate_editor_action_manifest(plugin_to_save)
+    if validation_error:
+        return None, (jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400)
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+    if not is_valid:
+        return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+    try:
+        validate_mcp_tool_pinning_for_save(plugin_to_save, existing)
+    except ValueError:
+        return None, (jsonify({'error': 'Discover and approve MCP tools before saving this action.'}), 400)
+
+    try:
+        ensure_action_type_access('governance_group_actions', user_id, plugin_type, 'group')
+        _enforce_mcp_destination_policy(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GROUP,
+            group_id,
+            operation='group_action_save',
+            user_id=user_id,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403)
+    except ValueError:
+        return None, (jsonify({'error': 'MCP destination configuration is invalid.'}), 400)
+
+    return plugin_to_save, None
+
+
+def _prepare_global_action_payload(user_id, plugin, settings, existing):
+    """Clean, default and validate one global action for the V2 admin editor routes.
+
+    Mirrors ``_prepare_group_action_payload`` with the checks the classic
+    ``/api/admin/plugins`` routes apply to a global action: the type must be one the
+    deployment provides (a legacy type only when editing a record that already has
+    it), the identity and the MCP destination policy resolve against the global
+    scope, and per-type workspace governance does not apply, because an administrator
+    authors the organisation's actions. Returns ``(plugin_to_save, error_response)``
+    with exactly one set; the signature matches ``apply_global_action_write``.
+    """
+    validate_legacy_action_update(plugin, existing)
+    plugin_to_save = dict(plugin)
+    if 'is_global' in plugin_to_save:
+        del plugin_to_save['is_global']
+    if 'is_group' in plugin_to_save:
+        del plugin_to_save['is_group']
+
+    plugin_to_save.setdefault('name', '')
+    plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
+    plugin_to_save.setdefault('description', '')
+    plugin_to_save.setdefault('metadata', {})
+    plugin_to_save.setdefault('additionalFields', {})
+
+    for field in PLUGIN_STORAGE_MANAGED_FIELDS:
+        if field == 'id':
+            continue
+        plugin_to_save.pop(field, None)
+    for field in ('execution_status', 'is_legacy', 'legacy_source', 'legacy_locator', 'runtime_user_id'):
+        plugin_to_save.pop(field, None)
+
+    plugin_to_save.setdefault('endpoint', '')
+    _apply_plugin_runtime_defaults(plugin_to_save)
+    plugin_type = plugin_to_save['type']
+    allowed_types = discover_plugin_types(include_legacy=existing is not None)
+    if allowed_types is not None and plugin_type not in allowed_types:
+        return None, (jsonify({'error': 'This action type is not available.'}), 400)
+    try:
+        _validate_action_identity_for_scope(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+        )
+    except (ValueError, LookupError, PermissionError):
+        return None, (jsonify({'error': 'Action identity configuration is invalid.'}), 400)
+
+    if 'auth' not in plugin_to_save:
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif not isinstance(plugin_to_save['auth'], dict):
+        plugin_to_save['auth'] = {'type': 'identity'}
+    elif 'type' not in plugin_to_save['auth']:
+        plugin_to_save['auth']['type'] = 'identity'
+
+    validation_error = validate_editor_action_manifest(plugin_to_save)
+    if validation_error:
+        return None, (jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400)
+    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
+    if not is_valid:
+        return None, (jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400)
+    try:
+        validate_mcp_tool_pinning_for_save(plugin_to_save, existing)
+    except ValueError:
+        return None, (jsonify({'error': 'Discover and approve MCP tools before saving this action.'}), 400)
+
+    try:
+        _enforce_mcp_destination_policy(
+            plugin_to_save,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            WORKSPACE_IDENTITY_SCOPE_GLOBAL,
+            operation='global_action_save',
+            user_id=user_id,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403)
+    except ValueError:
+        return None, (jsonify({'error': 'MCP destination configuration is invalid.'}), 400)
+
+    return plugin_to_save, None
+
+
+def _save_personal_action_or_error(user_id, plugin_to_save, legacy_locator=None):
+    """Persist one personal action, mapping the storage failures onto HTTP responses."""
+    try:
+        if legacy_locator:
+            return reconfigure_legacy_personal_action(user_id, legacy_locator, plugin_to_save), None
+        return save_personal_action(user_id, plugin_to_save), None
+    except McpConfigurationError as exc:
+        return None, _handle_mcp_configuration_error(exc)
+    except LegacyActionCreationError:
+        return None, (jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400)
+    except (LegacyActionConflictError, LegacyActionSourceUpdateError) as exc:
+        return None, _handle_legacy_action_error(exc)
+    except (ValueError, LookupError) as exc:
+        debug_print(f"Validation error saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400)
+    except PermissionError as exc:
+        debug_print(f"Governance denied saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403)
+    except RuntimeError as exc:
+        debug_print(f"Key Vault error saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': ACTION_KEY_VAULT_ERROR_MESSAGE}), 500)
+    except Exception as exc:
+        debug_print(f"Error saving personal action for user {user_id}: {exc}")
+        return None, (jsonify({'error': 'Failed to save plugin'}), 500)
+
+
+def _create_personal_action(user_id, payload):
+    """Create one personal action from an object body."""
+    name = str(payload.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': 'Action name is required.'}), 400
+
+    global_plugin_names = set(
+        p['name'].lower() for p in get_global_actions() if 'name' in p
+    )
+    if name.lower() in global_plugin_names:
+        return jsonify({'error': f"'{name}' is the name of a global action."}), 409
+
+    if get_personal_action(user_id, name, return_type=SecretReturnType.NAME):
+        return jsonify({'error': f"An action named '{name}' already exists."}), 409
+
+    plugin_to_save, error = _prepare_personal_action_payload(user_id, payload)
+    if error:
+        return error
+
+    saved, error = _save_personal_action_or_error(user_id, plugin_to_save)
+    if error:
+        return error
+
+    saved = saved or plugin_to_save
+    log_action_creation(
+        user_id=user_id,
+        action_id=saved.get('id', ''),
+        action_name=saved.get('name', ''),
+        action_type=saved.get('type', ''),
+        scope='personal',
+    )
+    log_event("User plugin created", extra={"user_id": user_id, "plugin_name": saved.get('name', '')})
+    return jsonify(saved), 201
+
+
+@bpap.route('/api/user/plugins/<action_id>', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def get_user_plugin(action_id):
+    """Return one personal action, addressed by id or by name."""
+    user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor, action_id)
+    try:
+        if action_id.startswith(LEGACY_ACTION_PREFIX):
+            action = get_legacy_personal_action(user_id, action_id)
+        else:
+            action = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
+    if not action:
+        return jsonify({'error': 'Plugin not found.'}), 404
+    action['is_global'] = False
+    return jsonify(action), 200
+
+
+@bpap.route('/api/user/plugins/<action_id>', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required("allow_user_plugins")
+def update_user_plugin(action_id):
+    """Apply a partial update to one personal action.
+
+    Only the supplied keys change. The whole-collection POST cannot express this: a client
+    that does not know about a field has to send it back verbatim or lose it.
+    """
+    user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor, action_id)
+    updates = request.get_json(silent=True)
+    if not isinstance(updates, dict):
+        return jsonify({'error': 'Action payload must be an object.'}), 400
+
+    legacy_locator = action_id if action_id.startswith(LEGACY_ACTION_PREFIX) else None
+    try:
+        if legacy_locator:
+            existing = get_legacy_personal_action(user_id, legacy_locator)
+        else:
+            existing = get_personal_action(user_id, action_id, return_type=SecretReturnType.NAME)
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
+    if not existing:
+        return jsonify({'error': 'Plugin not found.'}), 404
+
+    merged = dict(existing)
+    merged.update(updates)
+    # The stored document is keyed on id, so it is carried over rather than taken from the
+    # body; that keeps a rename from orphaning the existing record.
+    merged['id'] = existing.get('id')
+
+    plugin_to_save, error = _prepare_personal_action_payload(user_id, merged, existing=existing)
+    if error:
+        return error
+
+    saved, error = _save_personal_action_or_error(user_id, plugin_to_save, legacy_locator)
+    if error:
+        return error
+
+    saved = saved or plugin_to_save
+    log_action_update(
+        user_id=user_id,
+        action_id=saved.get('id', ''),
+        action_name=saved.get('name', ''),
+        action_type=saved.get('type', ''),
+        scope='personal',
+    )
+    log_event("User plugin updated", extra={"user_id": user_id, "plugin_name": saved.get('name', '')})
+    return jsonify(saved), 200
+
+
 @bpap.route('/api/user/plugins', methods=['POST'])
 @swagger_route(security=get_auth_security())
 @login_required
 @user_required
 @enabled_required("allow_user_plugins")
 def set_user_plugins():
+    """Create one action, or replace the whole collection.
+
+    An object body creates a single action and is the supported form. An array body
+    replaces every personal action at once; it is retained because the classic interface
+    still saves that way, but it is deprecated -- concurrent editors overwrite each other,
+    and an omitted element is an unintended delete.
+    """
     user_id = get_current_user_id()
-    plugins = request.get_json(silent=True)
-    if not isinstance(plugins, list):
-        raise McpConfigurationError("Actions must be provided as a list.")
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor)
+    payload = request.get_json(silent=True)
+
+    if isinstance(payload, dict):
+        return _create_personal_action(user_id, payload)
+
+    if not isinstance(payload, list):
+        raise McpConfigurationError("Actions must be provided as an object or a list.")
+    plugins = payload
     
     # Get global plugin names (case-insensitive)
     global_plugins = get_global_actions()
@@ -1163,69 +1900,10 @@ def set_user_plugins():
             and legacy_action is None
         ):
             continue  # Skip global plugins
-        plugin_to_save = dict(plugin)
-        # Remove is_global if present
-        if 'is_global' in plugin_to_save:
-            del plugin_to_save['is_global']
-        
-        # Ensure required fields have default values
-        plugin_to_save.setdefault('name', '')
-        plugin_to_save.setdefault('displayName', plugin_to_save.get('name', ''))
-        plugin_to_save.setdefault('description', '')
-        plugin_to_save.setdefault('metadata', {})
-        plugin_to_save.setdefault('additionalFields', {})
-        
-        # Remove storage-managed fields that are not part of the plugin manifest schema,
-        # but preserve the action ID so existing records can be updated in place.
-        for field in PLUGIN_STORAGE_MANAGED_FIELDS:
-            if field == 'id':
-                continue
-            plugin_to_save.pop(field, None)
-        for field in ('execution_status', 'is_legacy', 'legacy_source', 'legacy_locator', 'runtime_user_id'):
-            plugin_to_save.pop(field, None)
-        
-        # Handle endpoint based on plugin type
-        plugin_to_save.setdefault('endpoint', '')
-        _apply_plugin_runtime_defaults(plugin_to_save)
-        plugin_type = plugin_to_save['type']
-        try:
-            _validate_action_identity_for_scope(
-                plugin_to_save,
-                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
-                user_id,
-            )
-        except (ValueError, LookupError, PermissionError):
-            return jsonify({'error': 'Action identity configuration is invalid.'}), 400
-        
-        # Ensure auth has default structure
-        if 'auth' not in plugin_to_save:
-            plugin_to_save['auth'] = {'type': 'identity'}
-        elif not isinstance(plugin_to_save['auth'], dict):
-            plugin_to_save['auth'] = {'type': 'identity'}
-        elif 'type' not in plugin_to_save['auth']:
-            plugin_to_save['auth']['type'] = 'identity'
-        
-        debug_print(f"Plugin build: {_redact_plugin_for_logging(plugin_to_save)}")
-        validation_error = validate_plugin(plugin_to_save)
-        if validation_error:
-            return jsonify({'error': f'Plugin validation failed: {validation_error}'}), 400
-        is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(plugin_to_save, plugin_type)
-        if not is_valid:
-            return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
-
-        try:
-            ensure_action_type_access('governance_user_actions', user_id, plugin_type, 'personal')
-            _enforce_mcp_destination_policy(
-                plugin_to_save,
-                WORKSPACE_IDENTITY_SCOPE_PERSONAL,
-                user_id,
-                operation='personal_action_save',
-                user_id=user_id,
-            )
-        except PermissionError:
-            return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
-        except ValueError:
-            return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
+        existing_action = current_actions_by_id.get(submitted_id) if submitted_id else None
+        plugin_to_save, error = _prepare_personal_action_payload(user_id, plugin, existing=existing_action)
+        if error:
+            return error
 
         if legacy_action is not None:
             prepare_legacy_personal_action_reconfiguration(user_id, submitted_id, plugin_to_save)
@@ -1294,28 +1972,73 @@ def set_user_plugins():
     log_event("User plugins updated", extra={"user_id": user_id, "plugins_count": len(filtered_plugins)})
     return jsonify({'success': True})
 
-@bpap.route('/api/user/plugins/<plugin_name>', methods=['DELETE'])
+@bpap.route('/api/user/plugins/<action_id>', methods=['DELETE'])
 @swagger_route(security=get_auth_security())
 @login_required
 @user_required
-def delete_user_plugin(plugin_name):
+def delete_user_plugin(action_id):
+    """Delete one personal action, addressed by id or by name.
+
+    Deliberately not gated on ``allow_user_plugins``. Creating and editing are, but removing
+    an action only reduces what a user has configured, and gating it would strand existing
+    actions with no way to clean them up after an administrator turns the capability off.
+    Governance is still enforced, inside ``delete_personal_action``.
+    """
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('actions', user_id, _prepare_personal_action_for_editor, action_id)
 
     # Try to delete from personal_actions container
     try:
-        if plugin_name.startswith(LEGACY_ACTION_PREFIX):
-            deleted = delete_legacy_personal_action(user_id, plugin_name)
+        if action_id.startswith(LEGACY_ACTION_PREFIX):
+            deleted = delete_legacy_personal_action(user_id, action_id)
         else:
-            deleted = delete_personal_action(user_id, plugin_name)
+            deleted = delete_personal_action(user_id, action_id)
     except PermissionError:
         return jsonify({'error': 'You are not authorized to delete this action.'}), 403
     
     if not deleted:
         return jsonify({'error': 'Plugin not found.'}), 404
     
-    log_action_deletion(user_id=user_id, action_id=plugin_name, action_name=plugin_name, scope='personal')
-    log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": plugin_name})
+    log_action_deletion(user_id=user_id, action_id=action_id, action_name=action_id, scope='personal')
+    log_event("User plugin deleted", extra={"user_id": user_id, "plugin_name": action_id})
     return jsonify({'success': True})
+
+
+@bpap.route('/api/actions/assist', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def assist_action_editor():
+    """Ask AI for the action editor: propose edits to the caller's unsaved action draft.
+
+    Nothing is saved, and secret fields are never sent to or set by the assistant.
+    """
+    settings = get_settings()
+    user_id = get_current_user_id()
+    if not is_action_assistant_enabled(settings):
+        return editor_assist_error_response(EditorAssistError('action_assistant_disabled'), user_id=user_id)
+
+    def authorize(scope, group_id):
+        if scope == 'global':
+            if not is_session_admin(session.get('user')):
+                raise EditorAssistError('scope_forbidden')
+        elif scope == 'group':
+            authorize_group_editor_scope(
+                user_id, group_id,
+                write_roles=group_action_write_roles(settings),
+                available=group_actions_available(user_id, settings),
+            )
+        elif not settings.get('allow_user_plugins', False):
+            raise EditorAssistError('scope_forbidden')
+
+    return handle_editor_assist_request(
+        kind='action',
+        user_id=user_id,
+        settings=settings,
+        authorize=authorize,
+        client_factory=lambda: _resolve_agent_instruction_client(settings),
+    )
 
 
 # === GROUP ACTION ENDPOINTS ===
@@ -1328,7 +2051,7 @@ def delete_user_plugin(plugin_name):
 def get_group_actions_route():
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1367,7 +2090,7 @@ def get_group_actions_route():
 def get_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1399,7 +2122,7 @@ def get_group_action_route(action_id):
 def create_group_action_route():
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
@@ -1459,7 +2182,7 @@ def create_group_action_route():
 
     try:
         saved = save_group_action(active_group, payload, user_id=user_id)
-    except ValueError as exc:
+    except (ValueError, LookupError) as exc:
         debug_print('Validation error saving group action: %s', exc)
         return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
     except PermissionError as exc:
@@ -1484,7 +2207,7 @@ def create_group_action_route():
 def update_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
@@ -1555,7 +2278,7 @@ def update_group_action_route(action_id):
 
     try:
         saved = save_group_action(active_group, merged, user_id=user_id)
-    except ValueError as exc:
+    except (ValueError, LookupError) as exc:
         debug_print('Validation error updating group action %s: %s', action_id, exc)
         return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
     except PermissionError as exc:
@@ -1580,7 +2303,7 @@ def update_group_action_route(action_id):
 def delete_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
         assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
@@ -1613,6 +2336,19 @@ def delete_group_action_route(action_id):
 @user_required
 def get_user_plugin_types():
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        try:
+            ensure_editor_access('actions', user_id, get_settings(), operation='read')
+            discovered = get_plugin_types(
+                allowed_type_filter=lambda action_type: is_action_type_access_allowed(
+                    'governance_user_actions', user_id, action_type, 'personal',
+                ),
+            )
+            response = jsonify(build_action_editor_types(discovered.get_json()))
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except Exception as exc:
+            return editor_error_response(exc)
     return get_plugin_types(
         allowed_type_filter=lambda action_type: is_action_type_access_allowed(
             'governance_user_actions',
@@ -1683,7 +2419,11 @@ def get_core_plugin_settings():
 @admin_required
 def update_core_plugin_settings():
     data = request.get_json(force=True)
-    logging.info("Received plugin settings update request: %s", data)
+    # Plugin settings payloads can carry secrets, so only their size is logged.
+    log_event(
+        "[PLUGINS] Received plugin settings update request.",
+        extra={"field_count": len(data) if isinstance(data, dict) else 0},
+    )
     # Validate input
     expected_keys = [
         'enable_time_plugin',
@@ -1880,9 +2620,11 @@ def add_plugin():
         return jsonify({'success': True})
     except McpConfigurationError as exc:
         return _handle_mcp_configuration_error(exc)
-    except ValueError as e:
+    except (ValueError, LookupError) as e:
         log_event(f"Validation error adding plugin: {e}", level=logging.WARNING)
         return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
     except RuntimeError as e:
         log_event(f"Key Vault error adding plugin: {e}", level=logging.ERROR)
         return jsonify({'error': PLUGIN_KEY_VAULT_ERROR_MESSAGE}), 500
@@ -2010,9 +2752,11 @@ def edit_plugin(plugin_name):
         return jsonify({'error': 'Plugin not found.'}), 404
     except McpConfigurationError as exc:
         return _handle_mcp_configuration_error(exc)
-    except ValueError as e:
+    except (ValueError, LookupError) as e:
         log_event(f"Validation error editing plugin: {e}", level=logging.WARNING)
         return jsonify({'error': PLUGIN_VALIDATION_ERROR_MESSAGE}), 400
+    except PermissionError:
+        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
     except RuntimeError as e:
         log_event(f"Key Vault error editing plugin: {e}", level=logging.ERROR)
         return jsonify({'error': PLUGIN_KEY_VAULT_ERROR_MESSAGE}), 500
@@ -2169,7 +2913,9 @@ def discover_mcp_tools():
     )
 
     try:
-        existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id)
+        existing_plugin = _load_existing_plugin_for_test(payload.get('plugin_context'), user_id, requested_group_id=payload.get('group_id'))
+        if payload.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, payload['clear_secret_paths'])
         scope_type, scope_id = _resolve_action_identity_context(payload, existing_plugin, user_id)
         origin = _action_test_origin(existing_plugin, scope_type, scope_id)
         plugin_scope_value, plugin_scope = _action_origin_secret_context(origin)
@@ -2199,10 +2945,11 @@ def discover_mcp_tools():
 
         auth = discovery_manifest.get('auth') if isinstance(discovery_manifest.get('auth'), dict) else {}
         existing_auth = existing_plugin.get('auth') if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict) else {}
-        if auth.get('key') in ('', None, ui_trigger_word) and existing_auth.get('key'):
-            auth['key'] = existing_auth.get('key')
-        if auth.get('identity') in ('', None) and existing_auth.get('identity'):
-            auth['identity'] = existing_auth.get('identity')
+        if auth.get('type') != 'NoAuth':
+            if auth.get('key') in ('', None, ui_trigger_word, "***REDACTED***") and existing_auth.get('key'):
+                auth['key'] = existing_auth.get('key')
+            if auth.get('identity') in ('', None) and existing_auth.get('identity'):
+                auth['identity'] = existing_auth.get('identity')
         discovery_manifest['auth'] = auth
 
         if discovery_manifest.get('identity_id'):
@@ -2266,6 +3013,10 @@ def discover_mcp_tools():
 
         probe_result = asyncio.run(McpPluginFactory.probe_server_from_config(discovery_manifest, origin=origin))
         tools = probe_result.get('tools', []) if isinstance(probe_result, dict) else []
+        prompts = probe_result.get('prompts', []) if isinstance(probe_result, dict) else []
+        fingerprints = probe_result.get('fingerprints') if isinstance(probe_result, dict) else None
+        if not fingerprints:
+            fingerprints = build_mcp_tool_fingerprints(tools, prompts)
         log_event(
             "[MCP_DISCOVERY] Completed",
             extra=_build_mcp_discovery_log_context(
@@ -2289,6 +3040,9 @@ def discover_mcp_tools():
             'mcp_operation_id': mcp_operation_id,
             'tool_count': len(tools),
             'tools': tools,
+            'prompt_count': len(prompts),
+            'prompts': prompts,
+            'fingerprints': fingerprints,
             'capabilities': probe_result.get('capabilities', {}) if isinstance(probe_result, dict) else {},
             'warnings': probe_result.get('warnings', []) if isinstance(probe_result, dict) else [],
             'transport': probe_result.get('transport') if isinstance(probe_result, dict) else None,
@@ -2327,6 +3081,23 @@ def discover_mcp_tools():
             'success': False,
             'error': exc.public_message,
             'error_type': exc.code,
+            'mcp_operation_id': mcp_operation_id,
+        }), 400
+    except WorkspaceAuthoringValidation as exc:
+        log_event(
+            "[MCP_DISCOVERY] Configuration rejected",
+            extra={
+                "error_type": "invalid_editor_configuration",
+                "failure_stage": "request_preparation",
+                "mcp_operation_id": mcp_operation_id,
+            },
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False,
+            'error': exc.public_message,
+            'error_type': 'invalid_editor_configuration',
+            'details': {'stage': 'request_preparation'},
             'mcp_operation_id': mcp_operation_id,
         }), 400
     except (LookupError, ValueError) as exc:
@@ -2381,7 +3152,7 @@ def discover_mcp_tools():
         }), http_status
     except Exception as exc:
         log_event(
-            f"[MCP_DISCOVERY] Failed unexpectedly: {exc}",
+            "[MCP_DISCOVERY] Failed unexpectedly",
             extra=_build_mcp_discovery_log_context(
                 mcp_operation_id,
                 user_id,
@@ -2396,7 +3167,6 @@ def discover_mcp_tools():
                 },
             ),
             level=logging.ERROR,
-            exceptionTraceback=True,
         )
         return jsonify({'error': 'Failed to discover MCP tools.', 'mcp_operation_id': mcp_operation_id}), 500
 
@@ -2462,8 +3232,45 @@ def _merge_group_and_global_actions(group_actions, global_actions):
 @user_required
 def test_sql_connection():
     """Test a SQL database connection using provided configuration."""
+    context = SqlConnectionContext("sql_connection_test")
+
+    def reject_configuration(message, status=400):
+        log_event(
+            '[SQL_CONNECTION] SQL connection check configuration was rejected.',
+            level=logging.WARNING,
+            extra={**context.log_properties(), 'failure_code': 'sql_configuration_rejected'},
+        )
+        return jsonify({
+            'success': False, 'error': message,
+            'details': {'diagnostic_reference': context.reference},
+        }), status
+
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return reject_configuration('SQL test configuration must be an object.')
+    if 'auth' in data and not isinstance(data['auth'], dict):
+        return reject_configuration('Authentication must be an object.')
+    editor_call = _is_personal_editor_test_request(data) and ('auth' in data or 'additionalFields' in data)
     user_id = get_current_user_id()
+
+    try:
+        context.stage = "identity_resolution"
+        existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
+        if data.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
+        if editor_call:
+            data = _prepare_editor_sql_test_data(data, existing_plugin, user_id)
+    except PermissionError:
+        return reject_configuration('You cannot use the selected SQL action or identity.', 403)
+    except LookupError:
+        return reject_configuration('The selected SQL action or identity is unavailable.', 404)
+    except ValueError as exc:
+        if editor_call:
+            message = exc.public_message if isinstance(exc, WorkspaceAuthoringValidation) else 'Invalid SQL connection configuration or identity.'
+            return reject_configuration(message)
+        return reject_configuration('Invalid SQL connection configuration or identity.')
+
+    context.stage = "configuration"
     database_type = (data.get('database_type') or 'sqlserver').lower()
     connection_method = data.get('connection_method', 'parameters')
     connection_string = data.get('connection_string', '')
@@ -2474,35 +3281,32 @@ def test_sql_connection():
     username = data.get('username', '')
     password = data.get('password', '')
     auth_type = data.get('auth_type', 'username_password')
-    timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
-
+    managed_identity_client_id = data.get('managed_identity_client_id')
     try:
-        existing_plugin = _load_existing_plugin_for_sql_test(data.get('existing_plugin'), user_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+        timeout = min(int(data.get('timeout', 10)), 15)  # Cap at 15 seconds for test
+    except (TypeError, ValueError):
+        return reject_configuration('SQL timeout must be an integer.')
 
     existing_additional_fields = {}
     if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('additionalFields'), dict):
         existing_additional_fields = existing_plugin['additionalFields']
 
-    if connection_string == ui_trigger_word:
+    if connection_string in (ui_trigger_word, "***REDACTED***"):
         connection_string = existing_additional_fields.get('connection_string', '')
-    if password == ui_trigger_word:
+    if password in (ui_trigger_word, "***REDACTED***"):
         password = existing_additional_fields.get('password', '')
 
     try:
-        identity_manifest = _hydrate_sql_test_identity(data, existing_plugin, user_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+        context.stage = "identity_resolution"
+        identity_manifest = None if editor_call else _hydrate_sql_test_identity(data, existing_plugin, user_id)
+    except PermissionError:
+        return reject_configuration('You cannot use the selected SQL action or identity.', 403)
+    except LookupError:
+        return reject_configuration('The selected SQL action or identity is unavailable.', 404)
+    except ValueError:
+        return reject_configuration('A stored SQL credential could not be resolved.')
 
+    context.stage = "configuration"
     if identity_manifest:
         identity_additional_fields = identity_manifest.get('additionalFields') or {}
         identity_auth = identity_manifest.get('auth') or {}
@@ -2517,15 +3321,23 @@ def test_sql_connection():
             auth_type = 'managed_identity'
         elif identity_auth.get('type') == 'user':
             auth_type = 'username_password'
+        managed_identity_client_id = identity_additional_fields.get('managed_identity_client_id', '')
+
+    if database_type in ('sqlserver', 'azure_sql', 'azuresql'):
+        effective_auth = identity_manifest.get('auth') if identity_manifest else data.get('auth')
+        auth_type = resolve_sql_auth_type(auth_type, effective_auth, database_type=database_type)
+        if auth_type == 'managed_identity' and not (connection_method == 'connection_string' and connection_string):
+            username = ''
+            password = ''
 
     unresolved_fields = []
-    if connection_string == ui_trigger_word:
+    if connection_string in (ui_trigger_word, "***REDACTED***"):
         unresolved_fields.append('connection string')
-    if password == ui_trigger_word:
+    if password in (ui_trigger_word, "***REDACTED***"):
         unresolved_fields.append('password')
     if unresolved_fields:
         field_list = ', '.join(unresolved_fields)
-        return jsonify({'success': False, 'error': f"Stored SQL secret could not be resolved for testing. Re-enter the {field_list}."}), 400
+        return reject_configuration(f"Stored SQL secret could not be resolved for testing. Re-enter the {field_list}.")
 
     plugin_scope_value, plugin_scope = _resolve_plugin_secret_context(existing_plugin, user_id)
 
@@ -2542,13 +3354,29 @@ def test_sql_connection():
             scope_value=plugin_scope_value,
             scope=plugin_scope,
         )
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    except ValueError:
+        return reject_configuration('A stored SQL credential could not be resolved.')
+
+    if (
+        editor_call and auth_type == 'username_password' and database_type != 'sqlite'
+        and not (connection_method == 'connection_string' and connection_string)
+        and (not username or not password)
+    ):
+        return reject_configuration('SQL username and password are required for this authentication mode.')
 
     # Map azure_sql to sqlserver
     if database_type in ('azure_sql', 'azuresql'):
         database_type = 'sqlserver'
 
+    context.configure(
+        database_type,
+        connection_string_used=bool(connection_method == 'connection_string' and connection_string),
+        auth_type=auth_type,
+        username_password=bool(username and password) if database_type != 'sqlserver'
+        else bool(auth_type == 'username_password' and username and password),
+        identity_selected=bool(data.get('identity_id')), environ=os.environ,
+    )
+    context.stage = "driver_import"
     try:
         if database_type == 'sqlserver':
             import pyodbc
@@ -2558,10 +3386,13 @@ def test_sql_connection():
                     connection_string,
                     connect_kwargs={"timeout": timeout},
                     log_source="PluginSqlConnectionTest",
+                    diagnostic_context=context, driver_module=pyodbc,
                 )
             else:
+                context.stage = "configuration"
                 if not server or not database:
-                    return jsonify({'success': False, 'error': 'Server and database are required for individual parameters connection.'}), 400
+                    context.stage = "configuration"
+                    return reject_configuration('Server and database are required for individual parameters connection.')
                 conn_str = build_sql_server_odbc_connection_string(
                     server=server,
                     database=database,
@@ -2570,13 +3401,16 @@ def test_sql_connection():
                     username=username if auth_type == 'username_password' else None,
                     password=password if auth_type == 'username_password' else None,
                     auth_type=auth_type,
+                    managed_identity_client_id=managed_identity_client_id,
                 )
                 conn = connect_with_sql_server_odbc_fallback(
                     pyodbc.connect,
                     conn_str,
                     connect_kwargs={"timeout": timeout},
                     log_source="PluginSqlConnectionTest",
+                    diagnostic_context=context, driver_module=pyodbc,
                 )
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -2585,11 +3419,15 @@ def test_sql_connection():
 
         elif database_type == 'postgresql':
             import psycopg2
+            context.stage = "configuration"
             if connection_method == 'connection_string' and connection_string:
+                context.stage = "connect"
+                context.attempts = 1
                 conn = psycopg2.connect(connection_string, connect_timeout=timeout)
             else:
                 if not server or not database:
-                    return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+                    context.stage = "configuration"
+                    return reject_configuration('Server and database are required.')
                 conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
                 if port:
                     conn_params['port'] = int(port)
@@ -2597,7 +3435,10 @@ def test_sql_connection():
                     conn_params['user'] = username
                 if password:
                     conn_params['password'] = password
+                context.stage = "connect"
+                context.attempts = 1
                 conn = psycopg2.connect(**conn_params)
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -2606,11 +3447,14 @@ def test_sql_connection():
 
         elif database_type == 'mysql':
             import pymysql
+            context.stage = "configuration"
             if connection_method == 'connection_string' and connection_string:
                 # pymysql doesn't natively parse connection strings, so use params
-                return jsonify({'success': False, 'error': 'MySQL test connection requires individual parameters, not a connection string.'}), 400
+                context.stage = "configuration"
+                return reject_configuration('MySQL test connection requires individual parameters, not a connection string.')
             if not server or not database:
-                return jsonify({'success': False, 'error': 'Server and database are required.'}), 400
+                context.stage = "configuration"
+                return reject_configuration('Server and database are required.')
             conn_params = {'host': server, 'database': database, 'connect_timeout': timeout}
             if port:
                 conn_params['port'] = int(port)
@@ -2618,7 +3462,10 @@ def test_sql_connection():
                 conn_params['user'] = username
             if password:
                 conn_params['password'] = password
+            context.stage = "connect"
+            context.attempts = 1
             conn = pymysql.connect(**conn_params)
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -2627,10 +3474,15 @@ def test_sql_connection():
 
         elif database_type == 'sqlite':
             import sqlite3
+            context.stage = "configuration"
             db_path = connection_string or database
             if not db_path:
-                return jsonify({'success': False, 'error': 'Database path is required for SQLite.'}), 400
+                context.stage = "configuration"
+                return reject_configuration('Database path is required for SQLite.')
+            context.stage = "connect"
+            context.attempts = 1
             conn = sqlite3.connect(db_path, timeout=timeout)
+            context.stage = "probe"
             cursor = conn.cursor()
             cursor.execute("SELECT 1")
             cursor.close()
@@ -2638,23 +3490,20 @@ def test_sql_connection():
             return jsonify({'success': True, 'message': f'Successfully connected to SQLite database.'})
 
         else:
-            return jsonify({'success': False, 'error': f'Unsupported database type: {database_type}'}), 400
+            context.stage = "configuration"
+            return reject_configuration('Unsupported SQL database type.')
 
-    except ImportError as e:
-        if database_type == 'sqlserver' and 'libodbc' in str(e):
-            return jsonify({
-                'success': False,
-                'error': 'Database driver not installed: the container image is missing the unixODBC runtime required for SQL Server connections.'
-            }), 400
-        return jsonify({'success': False, 'error': f'Database driver not installed: {str(e)}'}), 400
     except Exception as e:
-        error_msg = str(e)
-        if database_type == 'sqlserver' and "Can't open lib 'ODBC Driver 17 for SQL Server'" in error_msg:
-            error_msg = 'The selected ODBC Driver 17 is not installed in this container image. Select ODBC Driver 18 for SQL Server or rebuild the image with Driver 17.'
-        # Sanitize error message to avoid leaking sensitive details
-        if 'password' in error_msg.lower() or 'pwd' in error_msg.lower():
-            error_msg = 'Authentication failed. Please check your credentials.'
-        return jsonify({'success': False, 'error': f'Connection failed: {error_msg}'}), 400
+        diagnostic = classify_sql_connection_error(e, database_type)
+        log_event(
+            '[SQL_CONNECTION] SQL connection check failed.',
+            level=logging.WARNING,
+            extra={**diagnostic.log_properties(), **context.log_properties(), 'operation': 'sql_connection_test'},
+        )
+        return jsonify({
+            'success': False, 'error': diagnostic.message, 'error_code': diagnostic.code,
+            'details': {'diagnostic_reference': context.reference},
+        }), 400
 
 
 @bpap.route('/api/plugins/test-cosmos-connection', methods=['POST'])
@@ -2689,7 +3538,9 @@ def test_cosmos_connection():
         return jsonify({'success': False, 'error': 'Container name is required.'}), 400
 
     try:
-        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
+        if data.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     except PermissionError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 403
     except LookupError as exc:
@@ -2702,10 +3553,10 @@ def test_cosmos_connection():
         existing_auth = existing_plugin['auth']
 
     if auth_type == 'key':
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             auth_key = existing_auth.get('key', '')
 
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             return jsonify({'success': False, 'error': 'Stored Cosmos DB account key could not be resolved for testing. Re-enter the account key.'}), 400
 
         try:
@@ -2823,7 +3674,25 @@ def test_cosmos_connection():
 def test_yamcs_connection():
     """Test a Yamcs mission control server connection using the configured credentials."""
     data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({'success': False, 'error': 'Yamcs test configuration must be an object.'}), 400
     user_id = get_current_user_id()
+    editor_call = _is_personal_editor_test_request(data) and (
+        'auth' in data or 'additionalFields' in data or bool(data.get('identity_id'))
+    )
+    existing_plugin = None
+    if editor_call:
+        try:
+            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
+            if data.get('clear_secret_paths'):
+                existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
+            data = _prepare_editor_yamcs_test_data(data, existing_plugin, user_id)
+        except PermissionError:
+            return jsonify({'success': False, 'error': 'You cannot use the selected Yamcs action or identity.'}), 403
+        except LookupError:
+            return jsonify({'success': False, 'error': 'The selected Yamcs action or identity is unavailable.'}), 404
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid Yamcs connection configuration or identity.'}), 400
     server_url = normalize_yamcs_server_url(data.get('server_url') or data.get('endpoint') or '')
     instance = (data.get('instance') or '').strip()
     auth_method = (data.get('auth_method') or YAMCS_AUTH_METHOD_USERNAME_PASSWORD).strip().lower()
@@ -2857,23 +3726,26 @@ def test_yamcs_connection():
     if enable_basic_auth and yamcs_basic_auth_conflicts_with_auth_method(auth_method):
         return jsonify({'success': False, 'error': YAMCS_BASIC_AUTH_CONFLICT_MESSAGE}), 400
 
-    try:
-        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
-    except PermissionError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 403
-    except LookupError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 404
-    except ValueError as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 400
+    if not editor_call:
+        try:
+            existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
+            if data.get('clear_secret_paths'):
+                existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
+        except PermissionError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 403
+        except LookupError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 404
+        except ValueError as exc:
+            return jsonify({'success': False, 'error': str(exc)}), 400
 
     existing_auth = {}
     if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
         existing_auth = existing_plugin['auth']
 
     if auth_method != YAMCS_AUTH_METHOD_NONE:
-        if auth_key in ('', ui_trigger_word):
+        if auth_key in ('', ui_trigger_word, "***REDACTED***"):
             auth_key = existing_auth.get('key', '')
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             return jsonify({
                 'success': False,
                 'error': 'Stored Yamcs credential could not be resolved for testing. Re-enter the credential.'
@@ -2890,6 +3762,8 @@ def test_yamcs_connection():
                 ACTION_AUTH_SECRET_SOURCES,
             )
         except ValueError as exc:
+            if editor_call:
+                return jsonify({'success': False, 'error': 'The stored Yamcs credential could not be resolved.'}), 400
             return jsonify({'success': False, 'error': str(exc)}), 400
 
         if not auth_key:
@@ -3094,7 +3968,9 @@ def test_rocksdb_connection():
         return jsonify({'success': False, 'error': "Auth scheme must be one of 'none', 'bearer', or 'api_key'."}), 400
 
     try:
-        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id)
+        existing_plugin = _load_existing_plugin_for_test(data.get('existing_plugin'), user_id, requested_group_id=data.get('group_id'))
+        if data.get('clear_secret_paths'):
+            existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     except PermissionError:
         return jsonify({'success': False, 'error': 'You do not have access to the selected action.'}), 403
     except LookupError:
@@ -3107,9 +3983,9 @@ def test_rocksdb_connection():
         if isinstance(existing_plugin, dict) and isinstance(existing_plugin.get('auth'), dict):
             existing_auth = existing_plugin['auth']
 
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             auth_key = existing_auth.get('key', '')
-        if auth_key == ui_trigger_word:
+        if auth_key in (ui_trigger_word, "***REDACTED***"):
             return jsonify({
                 'success': False,
                 'error': 'The stored RocksDB service token could not be resolved for testing. Re-enter the token.'
@@ -3218,9 +4094,9 @@ def test_rocksdb_connection():
 def _rehydrate_action_test_secret(current_value, stored_value, plugin_label, field_label):
     """Restore a masked action secret from the stored manifest for a transient test."""
     resolved_value = current_value
-    if resolved_value in ('', None, ui_trigger_word) and stored_value:
+    if resolved_value in ('', None, ui_trigger_word, "***REDACTED***") and stored_value:
         resolved_value = stored_value
-    if resolved_value == ui_trigger_word:
+    if resolved_value in (ui_trigger_word, "***REDACTED***"):
         raise ValueError(
             f"The stored {plugin_label} value for '{field_label}' could not be resolved for testing. Re-enter the credential."
         )
@@ -3233,7 +4109,9 @@ def _prepare_action_test_manifest(data, plugin_type, plugin_label):
         raise ValueError('Invalid action connection test payload.')
 
     user_id = get_current_user_id()
-    existing_plugin = _load_existing_plugin_for_test(data.get('plugin_context'), user_id)
+    existing_plugin = _load_existing_plugin_for_test(data.get('plugin_context'), user_id, requested_group_id=data.get('group_id'))
+    if data.get('clear_secret_paths'):
+        existing_plugin = clear_editor_test_secrets(existing_plugin, data['clear_secret_paths'])
     scope_type, scope_id = _resolve_action_identity_context(data, existing_plugin, user_id)
     # Secret references are resolved against the loaded action's own Key Vault scope, never
     # against a scope derived from the request body.
@@ -3370,8 +4248,31 @@ def _run_action_connection_test(plugin_type, plugin_label, tester, before_test=N
         return jsonify({'success': False, 'error': 'This action connection test is not authorized.'}), 403
     except LookupError:
         return jsonify({'success': False, 'error': 'The requested action was not found.'}), 404
+    except WorkspaceAuthoringValidation as exc:
+        log_event(
+            '[ACTION_TEST] Configuration rejected',
+            extra={
+                'plugin_type': plugin_type, 'error_type': 'invalid_editor_configuration',
+                'failure_stage': 'request_preparation',
+                'plugin_context_present': isinstance(data.get('plugin_context'), dict),
+            },
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False, 'error': exc.public_message,
+            'error_type': 'invalid_editor_configuration',
+            'details': {'stage': 'request_preparation'},
+        }), 400
     except ValueError:
-        return jsonify({'success': False, 'error': 'Invalid action connection test configuration.'}), 400
+        log_event(
+            '[ACTION_TEST] Configuration rejected',
+            extra={'plugin_type': plugin_type, 'error_type': 'invalid_configuration', 'failure_stage': 'request_preparation'},
+            level=logging.WARNING,
+        )
+        return jsonify({
+            'success': False, 'error': 'Invalid action connection test configuration.',
+            'error_type': 'invalid_configuration', 'details': {'stage': 'request_preparation'},
+        }), 400
     except McpRuntimeError as exc:
         return jsonify({'success': False, 'error': 'MCP operation failed.', 'error_type': exc.category}), get_mcp_error_http_status(exc.category)
 
@@ -3382,10 +4283,9 @@ def _run_action_connection_test(plugin_type, plugin_label, tester, before_test=N
             result = tester(manifest)
     except Exception as exc:
         log_event(
-            f'[ACTION_TEST] {plugin_label} connection test raised an unexpected error: {exc}',
-            extra={'plugin_type': plugin_type},
+            '[ACTION_TEST] Connection test raised an unexpected error',
+            extra={'plugin_type': plugin_type, 'error_type': type(exc).__name__, 'failure_stage': 'connector_test'},
             level=logging.ERROR,
-            exceptionTraceback=True,
         )
         return jsonify({
             'success': False,

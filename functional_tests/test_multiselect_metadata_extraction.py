@@ -2,8 +2,9 @@
 # test_multiselect_metadata_extraction.py
 """
 Functional test for multi-select metadata extraction.
-Version: 0.250.106
+Version: 0.261.347
 Implemented in: 0.250.106
+Title changes reach search chunks through the background search metadata sync: 0.261.268
 
 This test ensures personal, group, and public workspace multi-select actions
 can queue metadata extraction and that the shared extraction path updates
@@ -15,6 +16,8 @@ import re
 import sys
 from pathlib import Path
 
+from test_support.app_source import run_definitions
+from test_support.versioning import assert_app_version_at_least
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 SINGLE_APP_DIR = ROOT_DIR / "application" / "single_app"
@@ -217,19 +220,37 @@ def test_metadata_extraction_updates_title():
     final_metadata_function = ast.unparse(get_function(module_ast, "_run_final_metadata_extraction"))
     update_document_function = ast.unparse(get_function(module_ast, "update_document"))
 
-    assert '"title": metadata.get(\'title\')' in source, (
-        "Manual metadata extraction must pass title into update_document"
-    )
+    writes = []
+    namespace = {
+        "get_settings": lambda: {"enable_extract_meta_data": True},
+        "update_document": lambda **values: writes.append(values),
+        "extract_document_metadata": lambda **values: {"title": "Analyzed title"},
+    }
+    run_definitions("functions_documents.py", {
+        "process_metadata_extraction_background", "_build_document_scope_args", "is_effectively_empty",
+    }, namespace)
+    namespace["process_metadata_extraction_background"]("document", "owner")
+    assert writes[-1]["title"] == "Analyzed title"
+    assert writes[-1]["metadata_extraction_status"] == "succeeded"
     assert "document_metadata.items()" in final_metadata_function, (
         "Final metadata extraction should not exclude title from update fields"
     )
     assert "update_callback(**update_fields)" in final_metadata_function, (
         "Final metadata extraction must persist extracted fields"
     )
-    assert "'title', 'authors', 'file_name', 'document_classification', 'tags'" in source, (
-        "Document updates must mark title changes for chunk sync"
+    field_map = next(
+        ast.literal_eval(node.value) for node in module_ast.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "DOCUMENT_SEARCH_METADATA_FIELD_MAP" for target in node.targets)
     )
-    assert "chunk_updates['title'] = existing_document.get('title')" in update_document_function, (
+    assert field_map.get("title") == "title", (
+        "Document updates must mark title changes for the search metadata sync"
+    )
+    assert "request_document_search_metadata_sync(" in update_document_function, (
+        "Title updates must request a search metadata sync"
+    )
+    sync_function = ast.unparse(get_function(module_ast, "run_document_search_metadata_sync"))
+    assert "build_document_search_metadata_fields(document_item, pending_fields)" in sync_function, (
         "Title updates must propagate to search chunks"
     )
 
@@ -241,12 +262,7 @@ def test_config_version_bumped_for_multiselect_metadata_extraction():
     """Verify config.py version was bumped for this change."""
     print("Testing config version bump...")
 
-    config_source = read_file(CONFIG_FILE)
-    version_match = re.search(r'VERSION = "([0-9.]+)"', config_source)
-    assert version_match, "Could not find VERSION in config.py"
-    assert version_match.group(1) == EXPECTED_VERSION, (
-        f"Expected config.py version {EXPECTED_VERSION}"
-    )
+    assert_app_version_at_least(EXPECTED_VERSION)
 
     print("Config version bump passed")
     return True

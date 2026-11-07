@@ -1,13 +1,12 @@
 # test_workspace_metadata_search_sync_toast.py
 """
 UI test for saving workspace document metadata with a queued search index sync.
-Version: 0.261.052
-Implemented in: 0.261.052
+Version: 0.261.419
+Implemented in: 0.261.268
 
-This test ensures the personal workspace Save Metadata dialog sends a single PATCH
-request (no browser-driven chunk sync continuation), closes immediately, and shows an
-informational toast only when the server reports that the search index update was
-queued in the background.
+This test ensures the classic personal workspace Save Metadata dialog sends a single PATCH
+request, closes immediately, and shows an informational toast only when the server reports
+that the search index update was queued in the background.
 """
 
 import json
@@ -67,7 +66,7 @@ def _large_document() -> dict:
     }
 
 
-def _save_metadata(search_sync_status, edit_field, edit_value):
+def _save_metadata(search_sync, edit_field, edit_value):
     """Open the metadata dialog, edit one field, save, and return the observed PATCH payloads."""
     playwright_context = sync_playwright().start()
     browser = playwright_context.chromium.launch()
@@ -90,7 +89,7 @@ def _save_metadata(search_sync_status, edit_field, edit_value):
             patch_payloads.append(json.loads(request.post_data or "{}"))
             _fulfill_json(route, {
                 "message": "Document metadata updated successfully",
-                "search_sync": {"status": search_sync_status, "revision": 1, "fields": ["title"]},
+                "search_sync": search_sync,
             })
             return
         if request.method == "GET" and document_url:
@@ -127,7 +126,7 @@ def _save_metadata(search_sync_status, edit_field, edit_value):
             """
         )
         pending_toast = page.get_by_text(PENDING_TOAST_TEXT, exact=False)
-        if search_sync_status == "pending":
+        if search_sync.get("status") == "pending":
             expect(pending_toast.first).to_be_visible()
         else:
             expect(pending_toast).to_have_count(0)
@@ -146,7 +145,9 @@ def test_workspace_metadata_save_reports_queued_search_sync():
     """A queued search index sync closes the dialog after one PATCH and shows an info toast."""
     _require_ui_env()
 
-    patch_payloads = _save_metadata("pending", "#doc-title", "Large XML Export (2026)")
+    patch_payloads = _save_metadata(
+        {"status": "pending", "revision": 1, "fields": ["title"]}, "#doc-title", "Large XML Export (2026)",
+    )
 
     assert len(patch_payloads) == 1, f"Expected one metadata PATCH, got {patch_payloads!r}."
     assert patch_payloads[0].get("title") == "Large XML Export (2026)"
@@ -160,7 +161,7 @@ def test_workspace_metadata_save_without_search_fields_shows_no_sync_toast():
     """Saving fields that are not mirrored on search chunks does not announce a search sync."""
     _require_ui_env()
 
-    patch_payloads = _save_metadata("not_required", "#doc-abstract", "Updated summary only.")
+    patch_payloads = _save_metadata({"status": "not_required"}, "#doc-abstract", "Updated summary only.")
 
     assert len(patch_payloads) == 1, f"Expected one metadata PATCH, got {patch_payloads!r}."
     assert patch_payloads[0].get("abstract") == "Updated summary only."

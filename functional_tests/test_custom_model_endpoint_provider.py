@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Custom model endpoint provider.
-Version: 0.250.172
+Version: 0.261.122
 Implemented in: 0.250.172
 
 This test validates canonical model identifiers, API-type precedence, Custom
@@ -190,10 +190,10 @@ def test_custom_endpoint_url_policy():
 
     for endpoint, expected_message in (
         ("http://models.example.com", "must use HTTPS"),
-        ("https://user:password@models.example.com", "embedded credentials"),
-        ("https://models.example.com?key=value", "query string or fragment"),
-        ("https://127.0.0.1", "fully qualified domain name"),
-        ("https://single-label", "fully qualified domain name"),
+        ("https://user:password@models.example.com", "credentials"),
+        ("https://models.example.com?key=value", "query parameters or a fragment"),
+        ("https://127.0.0.1", "IP addresses require private-host permission"),
+        ("https://single-label", "fully qualified hostname"),
         ("https://localhost", "hostname is blocked"),
     ):
         assert_validation_error(
@@ -303,7 +303,7 @@ def test_custom_endpoint_configuration_validation():
         )
         assert_validation_error(
             lambda: validate_custom_model_endpoint(missing_version),
-            "Azure OpenAI API version",
+            "API version",
         )
 
         wrong_model_field = build_custom_endpoint(
@@ -481,7 +481,7 @@ def test_custom_client_paths_headers_and_redirect_policy():
         assert "provider secret response" not in str(exc)
         assert str(exc).startswith("Custom model request failed.")
         assert re.search(r"\(reference [0-9a-f]{8}\)$", str(exc))
-        assert exc.__cause__ is None
+        assert isinstance(exc.__cause__, ValueError)
     else:
         raise AssertionError("Expected direct Custom SDK errors to be sanitized")
 
@@ -502,7 +502,7 @@ def test_custom_client_paths_headers_and_redirect_policy():
             assert "provider secret response" not in str(exc)
             assert str(exc).startswith("Custom model request failed.")
             assert re.search(r"\(reference [0-9a-f]{8}\)$", str(exc))
-            assert exc.__cause__ is None
+            assert isinstance(exc.__cause__, ValueError)
             return
         raise AssertionError("Expected direct Custom async SDK errors to be sanitized")
 
@@ -613,7 +613,7 @@ def test_custom_runtime_client_construction():
             assert anthropic_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
             assert anthropic_client.direct_custom is True
             assert anthropic_client.anthropic_version == "2024-01-01"
-            assert anthropic_client.allow_private_custom_endpoints is True
+            assert anthropic_client._transport_options["allow_private"] is True
 
             openai_endpoint = build_custom_endpoint(
                 MODEL_ENDPOINT_API_TYPE_OPENAI,
@@ -643,8 +643,9 @@ def test_custom_runtime_client_construction():
             )
             assert service_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
             assert service.ai_model_id == "anthropic-model"
-            assert service.direct_custom is True
-            assert service.allow_private_custom_endpoints is True
+            selected_client = service._build_client()
+            assert selected_client.direct_custom is True
+            assert selected_client._transport_options["allow_private"] is True
     finally:
         sys.modules.pop("functions_model_endpoint_runtime", None)
         _restore_modules(original_modules)

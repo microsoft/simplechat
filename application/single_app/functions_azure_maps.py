@@ -189,6 +189,9 @@ def refresh_azure_maps_function_result(function_result: Any) -> Any:
     parsed_result = function_result
     was_serialized = False
     if isinstance(function_result, str):
+        # Most tool results are not maps, and some are large, so only parse likely candidates.
+        if AZURE_MAPS_RENDER_TYPE not in function_result:
+            return function_result
         try:
             parsed_result = json.loads(function_result)
             was_serialized = True
@@ -232,6 +235,27 @@ def refresh_azure_maps_citation_payloads(citations: Any) -> Any:
         return citations
 
     return [refresh_azure_maps_citation_payload(citation) for citation in citations]
+
+
+def refresh_azure_maps_message_citations(messages: Any) -> Any:
+    """Return messages whose stored map citations carry a fresh tile proxy token.
+
+    Tile tokens expire, so a map in an older message only loads its tiles if the
+    token is reissued when the message is read.
+    """
+    if not isinstance(messages, list):
+        return messages
+
+    refreshed_messages = []
+    for message in messages:
+        if isinstance(message, dict) and isinstance(message.get("agent_citations"), list):
+            message = {
+                **message,
+                "agent_citations": refresh_azure_maps_citation_payloads(message["agent_citations"]),
+            }
+        refreshed_messages.append(message)
+
+    return refreshed_messages
 
 
 def _find_inline_map_block_end(message_content: str, start_index: int) -> Optional[int]:

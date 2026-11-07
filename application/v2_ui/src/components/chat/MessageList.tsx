@@ -1,0 +1,1859 @@
+// MessageList.tsx
+import { ReasoningAdjustmentNotice } from './ReasoningAdjustmentNotice';
+import { EvidenceStatusFooter } from './EvidenceStatus';
+import { readEvidenceStatus } from '../../lib/evidenceStatus';
+// Renders the message thread, the in-flight streaming bubble and the reasoning panel.
+
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { clsx } from 'clsx';
+import {
+    BookOpen,
+    Bot,
+    Brain,
+    ChevronDown,
+    EyeOff,
+    FileText,
+    Image as ImageIcon,
+    ImageOff,
+    Info,
+    PenLine,
+    RefreshCw,
+    Reply,
+    Sparkles,
+    TriangleAlert,
+} from 'lucide-react';
+import { useChatStore } from '../../stores/chatStore';
+import { useCollaborationStore } from '../../stores/collaborationStore';
+import { useBootstrapStore, useFeature } from '../../stores/bootstrapStore';
+import { useUiStore } from '../../stores/uiStore';
+import { bubbleWidthClass, chatWidthClass } from '../../lib/chatWidth';
+import { resolveImageSource, imageEndpointBase } from '../../lib/images';
+import { useImageEditCapability, useImageRevisions } from '../../lib/imageRevisions';
+import { stripLegacyMapBlocks } from '../../lib/inlineMaps';
+import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../ui/primitives';
+import { AssistantMarkdown } from './AssistantMarkdown';
+import { M365CitationProvider } from './M365CitationContext';
+import { WebCitationCards, WebCitationLinks, WebCitationProvider } from './WebCitationCards';
+import {
+    InlinePendingActions,
+    PendingActionPlacementProvider,
+    PendingActionsConversationSection,
+    StreamingPendingActions,
+} from './PendingActionSlots';
+import { InlineMapCards } from './InlineMapCard';
+import { ChatFilePreview } from './ChatFilePreview';
+import { GeneratedArtifactCard } from './GeneratedArtifactCard';
+import { AnalysisResult } from './AnalysisResult';
+import type { SavedAnalysisDescriptor } from '../../lib/types';
+import { IconButton, MessageActions } from './MessageActions';
+import { isCheckingFailureNotice, OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
+import { OrchestrationOutputs } from './OrchestrationOutputs';
+import { WorkflowProposalCards } from './WorkflowProposalCard';
+import { WorkflowRunLinks } from './WorkflowRunLinks';
+import { WorkflowRunCard } from './WorkflowRunCard';
+import { WorkflowHandoffCards } from './WorkflowHandoffCard';
+import { PlanReplaySaveCard } from './PlanReplaySaveCard';
+import { WorkflowDeliveryFooter } from './WorkflowDeliveryFooter';
+import { MessageInspector, type InspectorSection } from './MessageInspector';
+import { ThoughtsList, ThoughtsProgressCard } from './ThoughtsList';
+import { useMessageScroll } from './useMessageScroll';
+import { OrchestrationPlanCard } from './OrchestrationPlanCard';
+import { ElicitationCard } from './ElicitationCard';
+import { UserInputCards } from './UserInputCards';
+import { restorePendingQuestions } from '../../lib/orchestrationController';
+import { CredentialRequestCards } from './CredentialRequestCard';
+import {
+    selectActiveTurn,
+    selectActiveTurnRunInFlight,
+    selectElicitation,
+    selectPlan,
+    useOrchestrationStore,
+} from '../../stores/orchestrationStore';
+import { MaskedSpan, MaskSelectionPopup } from './MaskedSpan';
+import {
+    applyMasks,
+    canMask,
+    describeMask,
+    MASK_PLACEHOLDER_PATTERN,
+    readMaskState,
+} from '../../lib/masking';
+import { ImageLightbox } from './ImageLightbox';
+import { ImageEditor } from './ImageEditor';
+import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
+import { ImageProposalScope } from './ImageProposalContext';
+import { normalizeFoundryAuthUrl } from '../../lib/foundryAuth';
+import { initialPlanningState, messageOrchestrationTurn, savedResponseAttempt, selectedAttemptError } from '../../lib/chatRetryAttempts';
+import {
+    answerGeneratedImages,
+    extractProposalSpecs,
+    groupProposalImages,
+    resultForCard,
+} from '../../lib/imageProposalSpec';
+import {
+    isAiRequest,
+    isAgentPostedMessage,
+    isOwnMessage,
+    isSupersededByWorkflowReply,
+    messageAuthorName,
+    readMessageMentionPills,
+    resolveReplyContext,
+} from '../../lib/sharedMessage';
+import { stripMentionText } from '../../lib/mentions';
+import {
+    describeAiActivityRun,
+    formatAiActivityElapsed,
+    localAiRun,
+    visibleAiRuns,
+} from '../../lib/aiActivity';
+import { MessageMentionPills } from './MentionPills';
+import { readGeneratedArtifacts, suppressesAssistantText } from '../../lib/generatedArtifacts';
+import {
+    isSupersededOrchestrationAttempt, normalizeOrchestrationAttempt, supersededOrchestrationRunIds,
+} from '../../lib/orchestration';
+import { isOrchestrationOutputArtifact } from '../../lib/orchestrationOutputs';
+import { orchestrationProposedWorkflow } from '../../lib/workflowProposals';
+import { orchestrationStartedWorkflow } from '../../lib/orchestrationWorkflowRuns';
+import { orchestrationHandedOffWorkflow } from '../../lib/workflowHandoffs';
+import { readWorkflowDelivery } from '../../lib/workflowDelivery';
+import { workflowRunTrackerShouldRun } from '../../lib/workflowRunTracker';
+import { analysisUnavailableMessage, readSavedAnalyses, sameAnalysis } from '../../lib/savedAnalysis';
+import { readMessagePrompt } from '../../lib/messagePrompt';
+import { PromptCard } from './PromptCard';
+import {
+    buildChatImagePreviewUrl,
+    imagePreviewHintForFileName,
+    useChatImagePreview,
+    workspaceAttachmentDocumentId,
+    type WorkspaceAttachmentPreviewRef,
+} from '../../lib/chatImagePreview';
+import { isImageFileName } from '../../lib/chatUploads';
+import {
+    effectiveReferenceImageLimit,
+    imageReferencePreviewUrl,
+    isHeifFileName,
+    isReferenceImageFileName,
+    readImageReferenceProvenance,
+    type ImageReferenceRequest,
+} from '../../lib/imageReferences';
+import { storedConversationReferences } from '../../lib/conversationReferences';
+import { ConversationReferenceChips } from './ConversationReferences';
+import { ConversationHandoffCards } from './ConversationHandoffDialog';
+import type { ChatMessage, CollaborationMessage, ThoughtEntry } from '../../lib/types';
+import type { ReactNode } from 'react';
+import type { ChatWidth } from '../../stores/uiStore';
+
+function ThoughtsPanel({ thoughts, live = false }: { thoughts: ThoughtEntry[]; live?: boolean }) {
+    const [open, setOpen] = useState(false);
+
+    if (thoughts.length === 0) {
+        return null;
+    }
+
+    return (
+        <div className="mb-2">
+            {/* Staged work in flight shows its progress without being expanded: a run that
+                takes minutes should not need a click to prove it is still going. */}
+            {live && <ThoughtsProgressCard thoughts={thoughts} live />}
+            <button
+                type="button"
+                onClick={() => setOpen((isOpen) => !isOpen)}
+                aria-expanded={open}
+                className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs text-text-3 transition-colors hover:bg-surface-2 hover:text-text-2"
+            >
+                <Brain size={13} />
+                <span>
+                    {thoughts.length} reasoning step{thoughts.length === 1 ? '' : 's'}
+                </span>
+                <ChevronDown
+                    size={12}
+                    className={clsx('transition-transform', open && 'rotate-180')}
+                />
+            </button>
+
+            {open && (
+                <div className="mt-1.5">
+                    {!live && <ThoughtsProgressCard thoughts={thoughts} />}
+                    <ThoughtsList thoughts={thoughts} />
+                </div>
+            )}
+        </div>
+    );
+}
+
+function ImageMessage({ message }: { message: ChatMessage }) {
+    const [failed, setFailed] = useState(false);
+    const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [editorOpen, setEditorOpen] = useState(false);
+    const chatWidth = useUiStore((state) => state.chatWidth);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const source = resolveImageSource(message.content);
+    const userUpload = Boolean((message.metadata as Record<string, unknown> | undefined)?.is_user_upload);
+    const own = isOwnMessage(message, currentUserId);
+    const fileName = String(message.filename || message.prompt || 'Uploaded image');
+
+    const imageGenerationEnabled = useFeature('enable_image_generation');
+    const capability = useImageEditCapability();
+    const referenceLimit = effectiveReferenceImageLimit(capability);
+    const referencesAvailable = imageGenerationEnabled && referenceLimit > 0;
+    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const addComposerImageReference = useChatStore((state) => state.addComposerImageReference);
+    const revisions = useImageRevisions(
+        message.id,
+        String(message.prompt ?? ''),
+        imageEndpointBase(source),
+    );
+
+    // Stable so the lightbox's download callback is not rebuilt on every render.
+    const naming = useMemo(
+        () => ({ filename: message.filename, prompt: message.prompt, id: message.id }),
+        [message.filename, message.prompt, message.id],
+    );
+
+    // An unrecognised content shape, or an image that will not load, falls back to the
+    // prompt text. A broken image element tells the user nothing.
+    if ((!source || failed) && userUpload) {
+        return (
+            <div id={`message-${message.id}`} className={clsx('flex flex-col', own && 'items-end')}>
+                <FileAttachmentChip
+                    fileName={fileName}
+                    chatWidth={chatWidth}
+                    hint={imagePreviewHintForFileName(fileName) ?? 'Preview is unavailable.'}
+                />
+            </div>
+        );
+    }
+
+    if (!source || failed) {
+        return (
+            <div id={`message-${message.id}`} className="flex justify-start">
+                <div className={clsx('glass-flat rounded-2xl px-4 py-3', bubbleWidthClass(chatWidth))}>
+                    <p className="flex items-center gap-2 text-sm text-text-2">
+                        <ImageOff size={15} className="shrink-0 text-text-3" />
+                        {failed ? 'This image could not be loaded.' : 'Image unavailable.'}
+                    </p>
+                    {message.prompt ? (
+                        <p className="mt-1 text-xs text-text-3">{String(message.prompt)}</p>
+                    ) : null}
+                </div>
+            </div>
+        );
+    }
+
+    const alt = String(message.prompt || message.filename || 'Generated image');
+
+    // In-place revision is offered only for an image the app generated. A user's own upload is
+    // never rewritten; its Edit creates a new image with the upload as the reference instead.
+    const heif = isHeifFileName(fileName);
+    const editable =
+        imageGenerationEnabled &&
+        revisions.canPersist &&
+        !Boolean((message.metadata as Record<string, unknown> | undefined)?.is_user_upload);
+    const deriveEditable = userUpload && referencesAvailable && capability.editing && !heif && !collaborative;
+    const canUseAsReference = referencesAvailable && !collaborative
+        && !heif && (!userUpload || isReferenceImageFileName(fileName));
+    const reference: ImageReferenceRequest = { type: 'message', message_id: message.id };
+    const useAsReference = () => {
+        addComposerImageReference(reference);
+    };
+
+    return (
+        <div id={`message-${message.id}`} className={clsx('group/message flex flex-col', userUpload && own && 'items-end')}>
+            <div className={clsx('flex', userUpload && own ? 'justify-end' : 'justify-start')}>
+                {/*
+                  A button rather than a link: the image opens in a dialog, not a new
+                  document. It also keeps the thumbnail keyboard operable, which a plain
+                  clickable <img> would not be.
+                */}
+                <button
+                    type="button"
+                    onClick={() => setLightboxOpen(true)}
+                    title="View the full-size image"
+                    aria-label={`View the full-size image: ${alt}`}
+                    aria-haspopup="dialog"
+                    className="glass-flat block cursor-zoom-in overflow-hidden rounded-2xl p-1.5"
+                >
+                    <img
+                        src={source.src}
+                        alt={alt}
+                        onError={() => setFailed(true)}
+                        className="max-h-[28rem] max-w-md rounded-xl object-contain"
+                    />
+                </button>
+            </div>
+            <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover/message:opacity-100 focus-within:opacity-100">
+                <MessageActions message={message} />
+                {editable && (
+                    <button
+                        type="button"
+                        onClick={() => setEditorOpen(true)}
+                        title="Change this image"
+                        aria-haspopup="dialog"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <PenLine size={13} />
+                        Edit
+                        {revisions.isEdited && (
+                            <span
+                                title="This image has been changed"
+                                aria-label="Changed"
+                                className="size-1.5 rounded-full bg-accent"
+                            />
+                        )}
+                    </button>
+                )}
+                {canUseAsReference && (
+                    <button
+                        type="button"
+                        onClick={useAsReference}
+                        title="Use this image as a reference"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <ImageIcon size={13} />
+                        Use as reference
+                    </button>
+                )}
+                {deriveEditable && (
+                    <button
+                        type="button"
+                        onClick={() => setEditorOpen(true)}
+                        title="Edit this upload into a new image"
+                        aria-haspopup="dialog"
+                        className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <PenLine size={13} />
+                        Edit
+                    </button>
+                )}
+            </div>
+
+            {lightboxOpen && (
+                <ImageLightbox
+                    source={source}
+                    title={alt}
+                    naming={naming}
+                    onClose={() => setLightboxOpen(false)}
+                    onEdit={editable ? () => setEditorOpen(true) : undefined}
+                    onUseAsReference={canUseAsReference ? useAsReference : undefined}
+                />
+            )}
+
+            {editorOpen && (
+                <ImageEditor
+                    mode={deriveEditable && !editable ? 'derive' : 'revise'}
+                    title={alt}
+                    imageSrc={source.src}
+                    revisions={revisions}
+                    capability={capability}
+                    reference={reference}
+                    onClose={() => setEditorOpen(false)}
+                />
+            )}
+        </div>
+    );
+}
+
+function FileAttachmentChip({
+    fileName,
+    chatWidth,
+    hint,
+    onOpen,
+}: {
+    fileName: string;
+    chatWidth: ChatWidth;
+    hint?: string | null;
+    onOpen?: () => void;
+}) {
+    const body = (
+        <>
+            <FileText size={16} className="shrink-0 text-text-3" />
+            <span className="truncate">{fileName}</span>
+        </>
+    );
+
+    return (
+        <>
+            {onOpen ? (
+                <button
+                    type="button"
+                    onClick={onOpen}
+                    title={`Open ${fileName}`}
+                    className={clsx(
+                        bubbleWidthClass(chatWidth),
+                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-left text-[14px] text-text-1',
+                        'transition-colors hover:bg-surface-2',
+                    )}
+                >
+                    {body}
+                </button>
+            ) : (
+                <div
+                    className={clsx(
+                        bubbleWidthClass(chatWidth),
+                        'glass-flat flex items-center gap-2 rounded-2xl px-4 py-3 text-[14px] text-text-1',
+                    )}
+                >
+                    {body}
+                </div>
+            )}
+            {hint ? (
+                <p className={clsx(bubbleWidthClass(chatWidth), 'mt-1 px-1 text-xs text-text-3')}>
+                    {hint}
+                </p>
+            ) : null}
+        </>
+    );
+}
+
+export interface UploadedImageFileCardProps {
+    messageId: string;
+    fileName: string;
+    own?: boolean;
+    chatWidth: ChatWidth;
+    workspaceAttachment?: WorkspaceAttachmentPreviewRef | null;
+    localPreviewKeys?: readonly unknown[];
+    onOpenFile?: () => void;
+    onUseAsReference?: () => void;
+    /**
+     * Controls shown in the row below the image, revealed on hover or keyboard focus the same
+     * way a generated image's actions are. Only drawn while the image itself is shown.
+     */
+    actions?: ReactNode;
+    /** Keeps the action row visible, for instance while a panel it opened is showing. */
+    actionsPinned?: boolean;
+}
+
+export function UploadedImageFileCard({
+    messageId,
+    fileName,
+    own = false,
+    chatWidth,
+    workspaceAttachment = null,
+    localPreviewKeys = [],
+    onOpenFile,
+    onUseAsReference,
+    actions,
+    actionsPinned = false,
+}: UploadedImageFileCardProps) {
+    const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [decodeFailed, setDecodeFailed] = useState(false);
+    const preview = useChatImagePreview(messageId, {
+        enabled: !decodeFailed,
+        variant: 'thumbnail',
+        fileName,
+        localPreviewKeys,
+        workspaceAttachment,
+    });
+    const displaySource = useMemo(
+        () => ({ kind: 'endpoint' as const, src: buildChatImagePreviewUrl(messageId, 'display') }),
+        [messageId],
+    );
+    const visibleUrl = !decodeFailed ? preview.url ?? preview.localUrl : null;
+    const fallbackHint = decodeFailed
+        ? imagePreviewHintForFileName(fileName) ?? 'Preview is unavailable.'
+        : preview.status === 'held'
+            ? 'Unavailable pending review.'
+            : preview.status === 'unavailable' ? preview.reason : null;
+
+    if (!visibleUrl && (preview.status === 'unavailable' || preview.status === 'held' || decodeFailed)) {
+        return (
+            <FileAttachmentChip
+                fileName={fileName}
+                chatWidth={chatWidth}
+                onOpen={onOpenFile}
+                hint={fallbackHint}
+            />
+        );
+    }
+
+    // Sized to the image rather than to the message column, so an upload and a generated
+    // image sit in the thread the same way instead of the upload being letterboxed.
+    return (
+        <>
+            <div className={clsx('flex max-w-full', own ? 'justify-end' : 'justify-start')}>
+                <div className="glass-flat inline-flex max-w-full flex-col overflow-hidden rounded-2xl p-1.5">
+                    <button
+                        type="button"
+                        onClick={() => visibleUrl && setLightboxOpen(true)}
+                        disabled={!visibleUrl}
+                        title={visibleUrl ? 'View the full-size image' : undefined}
+                        aria-label={`View the full-size image: ${fileName}`}
+                        aria-haspopup="dialog"
+                        className={clsx(
+                            'block overflow-hidden rounded-xl',
+                            visibleUrl ? 'cursor-zoom-in' : 'cursor-default',
+                        )}
+                    >
+                        {visibleUrl ? (
+                            <img
+                                src={visibleUrl}
+                                alt={fileName}
+                                onError={() => setDecodeFailed(true)}
+                                className="max-h-[28rem] max-w-md rounded-xl object-contain"
+                            />
+                        ) : (
+                            <div className="flex h-40 w-72 max-w-full flex-col items-center justify-center gap-2 bg-surface-sunken px-6 text-center">
+                                <Skeleton className="h-24 w-full motion-reduce:animate-none" />
+                                <p className="text-xs text-text-3">
+                                    {preview.status === 'processing' ? 'Processing image…' : 'Loading image…'}
+                                </p>
+                            </div>
+                        )}
+                    </button>
+                    {/* Zero intrinsic width, so a long name is truncated to the image rather
+                        than stretching the card past it. */}
+                    <p className="mt-1 w-0 min-w-full truncate px-1 text-xs text-text-2" title={fileName}>
+                        {fileName}
+                    </p>
+                </div>
+            </div>
+            {actions ? (
+                <div
+                    className={clsx(
+                        'mt-1 flex flex-wrap items-center gap-1 transition-opacity',
+                        'group-hover/message:opacity-100 focus-within:opacity-100',
+                        actionsPinned ? 'opacity-100' : 'opacity-0',
+                        own ? 'justify-end' : 'justify-start',
+                    )}
+                >
+                    {actions}
+                </div>
+            ) : null}
+            {preview.status === 'processing' && !visibleUrl ? (
+                <p role="status" className="mt-1 px-1 text-xs text-text-3">Processing image…</p>
+            ) : null}
+            {lightboxOpen && visibleUrl ? (
+                <ImageLightbox
+                    source={displaySource}
+                    title={fileName}
+                    naming={{ filename: fileName, id: messageId }}
+                    onClose={() => setLightboxOpen(false)}
+                    onUseAsReference={onUseAsReference}
+                />
+            ) : null}
+        </>
+    );
+}
+
+/**
+ * A quotation of the message being replied to.
+ *
+ * Shared conversations are not linear the way a personal one is — several people write into
+ * the same thread — so a reply that does not show what it answers is frequently
+ * unintelligible by the time it is read.
+ */
+function ReplyQuote({ context }: { context: { display_name?: string; preview?: string } }) {
+    return (
+        <div className="mb-2 flex items-start gap-1.5 border-l-2 border-current/30 pl-2 text-[12px] opacity-70">
+            <Reply size={12} className="mt-0.5 shrink-0" />
+            <span className="min-w-0">
+                {context.display_name && (
+                    <span className="font-medium">{context.display_name}: </span>
+                )}
+                <span className="line-clamp-2">{context.preview}</span>
+            </span>
+        </div>
+    );
+}
+
+/**
+ * A file somebody attached to a shared conversation.
+ *
+ * `serialize_collaboration_message` gives an upload the display role `file`, which the
+ * personal endpoints never emit. Rendered as a named attachment rather than as message
+ * text, because `content` for one of these is extracted document text and can be the whole
+ * document.
+ */
+/**
+ * A file attached to a conversation.
+ *
+ * The name opens the file when it can. An attachment is usually the subject of everything
+ * said after it, so being unable to look at it means checking the assistant's answers
+ * against something you cannot see.
+ *
+ * An uploaded file stays inert in two cases, because the endpoint behind it would fail
+ * rather than explain. `/api/get_file_content` reads the *personal* conversations container and requires
+ * the caller to own the conversation, so a shared conversation — whose messages live
+ * elsewhere under different ids — always 404s. It is also gated on `enable_user_workspace`,
+ * so on a tenant with the workspace disabled it 403s. A control that cannot succeed is worse
+ * than no control.
+ *
+ * Orchestration history markers are also inert: only a matching committed output
+ * descriptor can supply their download, not the marker or an uploaded-file preview.
+ */
+function FileMessage({ message }: { message: ChatMessage }) {
+    const chatWidth = useUiStore((state) => state.chatWidth);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const workspaceEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_user_workspace),
+    );
+    const collaborative = useChatStore(
+        (state) => state.activeConversationKind === 'collaborative',
+    );
+    const shared = message as CollaborationMessage;
+    const author = messageAuthorName(message, currentUserId);
+    const own = isOwnMessage(message, currentUserId);
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [deriveEditorOpen, setDeriveEditorOpen] = useState(false);
+    const imageGenerationEnabled = useFeature('enable_image_generation');
+    const capability = useImageEditCapability();
+    const referenceLimit = effectiveReferenceImageLimit(capability);
+    const referencesAvailable = imageGenerationEnabled && referenceLimit > 0 && !collaborative;
+    const addComposerImageReference = useChatStore((state) => state.addComposerImageReference);
+
+    const orchestrationFile = message.metadata?.generated_artifact_origin === 'orchestration_retained_output';
+    const unavailable = orchestrationFile && message.content_unavailable === true;
+    const fileName = unavailable ? 'Generated file unavailable'
+        : shared.filename || (orchestrationFile ? 'Generated file' : 'Attached file');
+    const metadata = message.metadata as Record<string, unknown> | undefined;
+    const workspaceAttachment = (
+        metadata?.workspace_attachment && typeof metadata.workspace_attachment === 'object'
+            ? metadata.workspace_attachment as WorkspaceAttachmentPreviewRef
+            : null
+    );
+    const workspaceDocumentId = String(
+        message.workspace_document_id ?? workspaceAttachmentDocumentId(workspaceAttachment),
+    ).trim();
+    // The upload's own id, which is the message id for a file message. Both it and the
+    // conversation are needed to fetch the content.
+    const fileId = String(message.id ?? '').trim();
+    const conversationId = String(message.conversation_id ?? '').trim();
+    const openable = Boolean(fileId && conversationId && workspaceEnabled && !collaborative && !orchestrationFile);
+    const imagePreviewable = Boolean(
+        workspaceEnabled && !collaborative && !orchestrationFile
+        && workspaceDocumentId && fileId && isImageFileName(fileName),
+    );
+    const referenceCapable = imagePreviewable && referencesAvailable
+        && isReferenceImageFileName(fileName) && !isHeifFileName(fileName);
+    const imageReference: ImageReferenceRequest = { type: 'message', message_id: fileId };
+    const uploadRevisions = useImageRevisions(fileId, '', buildChatImagePreviewUrl(fileId, 'display'));
+    const [inspector, setInspector] = useState<InspectorSection | null>(null);
+    /** Toggle a section, closing the panel when the open one is clicked again. */
+    const inspect = (section: InspectorSection) =>
+        setInspector((current) => (current === section ? null : section));
+    // The same row a generated image has: how the upload was read first, then what can be
+    // done with it. Sources opens what ingestion extracted, which is what any later citation
+    // of this file is drawn from.
+    const uploadActions = (
+        <>
+            {openable && (
+                <div className="flex items-center gap-0.5">
+                    <IconButton
+                        label="Show sources"
+                        active={inspector === 'sources'}
+                        onClick={() => inspect('sources')}
+                    >
+                        <BookOpen size={15} />
+                    </IconButton>
+                    <IconButton
+                        label="Message details"
+                        active={inspector === 'details'}
+                        onClick={() => inspect('details')}
+                    >
+                        <Info size={15} />
+                    </IconButton>
+                    <IconButton
+                        label={`Open file preview for ${fileName}`}
+                        onClick={() => setPreviewOpen(true)}
+                    >
+                        <FileText size={15} />
+                    </IconButton>
+                </div>
+            )}
+            {referenceCapable && (
+                <button
+                    type="button"
+                    onClick={() => addComposerImageReference(imageReference)}
+                    title="Use this image as a reference"
+                    className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                >
+                    <ImageIcon size={13} />
+                    Use as reference
+                </button>
+            )}
+            {referenceCapable && capability.editing && (
+                <button
+                    type="button"
+                    onClick={() => setDeriveEditorOpen(true)}
+                    title="Edit this upload into a new image"
+                    aria-haspopup="dialog"
+                    className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                >
+                    <PenLine size={13} />
+                    Edit
+                </button>
+            )}
+        </>
+    );
+    const hasUploadActions = openable || referenceCapable;
+
+    return (
+        <div
+            id={`message-${message.id}`}
+            className={clsx('group/message flex flex-col', own && 'items-end')}
+        >
+            {author && <p className="mb-1 px-1 text-[11px] text-text-3">{author}</p>}
+            {imagePreviewable ? (
+                <UploadedImageFileCard
+                    messageId={fileId}
+                    fileName={fileName}
+                    own={own}
+                    chatWidth={chatWidth}
+                    workspaceAttachment={workspaceAttachment}
+                    localPreviewKeys={[fileId, workspaceDocumentId]}
+                    onOpenFile={openable ? () => setPreviewOpen(true) : undefined}
+                    onUseAsReference={referenceCapable ? () => addComposerImageReference(imageReference) : undefined}
+                    actions={hasUploadActions ? uploadActions : null}
+                    actionsPinned={inspector !== null}
+                />
+            ) : (
+                <FileAttachmentChip
+                    fileName={fileName}
+                    chatWidth={chatWidth}
+                    onOpen={openable ? () => setPreviewOpen(true) : undefined}
+                />
+            )}
+
+            {inspector && imagePreviewable && openable && (
+                <MessageInspector
+                    message={message}
+                    section={inspector}
+                    onSection={setInspector}
+                    onClose={() => setInspector(null)}
+                />
+            )}
+
+            {orchestrationFile && (
+                <p role={unavailable ? 'status' : undefined}
+                    className={clsx(bubbleWidthClass(chatWidth), 'mt-1 px-1 text-xs text-text-3')}>
+                    {unavailable ? message.content || 'This generated file is currently unavailable.'
+                        : 'Use the matching committed output card for downloads.'}
+                </p>
+            )}
+
+            {previewOpen && openable && (
+                <ChatFilePreview
+                    conversationId={conversationId}
+                    fileId={fileId}
+                    fileName={fileName}
+                    onClose={() => setPreviewOpen(false)}
+                />
+            )}
+            {deriveEditorOpen && (
+                <ImageEditor
+                    mode="derive"
+                    title={fileName}
+                    imageSrc={buildChatImagePreviewUrl(fileId, 'display')}
+                    revisions={uploadRevisions}
+                    capability={capability}
+                    reference={imageReference}
+                    onClose={() => setDeriveEditorOpen(false)}
+                />
+            )}
+        </div>
+    );
+}
+
+/**
+ * The saved prompt a sent message was written with, collapsed.
+ *
+ * Collapsed because it is context rather than content: the message you wrote is the thing to
+ * read, and the standing instructions above it are what you already knew when you sent it.
+ * Kept visible rather than dropped so the reply can still be understood by someone who was not
+ * the one who picked the prompt -- in a shared conversation, that is everybody else.
+ */
+function PromptUsedBlock({
+    name,
+    text,
+    onAccent,
+    scopeLabel,
+    edited,
+    variableCount,
+}: {
+    name: string;
+    text: string;
+    onAccent: boolean;
+    scopeLabel?: string;
+    edited?: boolean;
+    variableCount?: number;
+}) {
+    const [open, setOpen] = useState(false);
+
+    return (
+        <PromptCard
+            name={name}
+            scopeLabel={scopeLabel}
+            edited={edited}
+            summary={variableCount ? `${variableCount} ${variableCount === 1 ? 'variable' : 'variables'}` : null}
+            content={text}
+            open={open}
+            onToggle={() => setOpen((isOpen) => !isOpen)}
+            onAccent={onAccent}
+        />
+    );
+}
+
+function ReferenceImagesRow({
+    references,
+    onAccent,
+}: {
+    references: ReturnType<typeof readImageReferenceProvenance>;
+    onAccent: boolean;
+}) {
+    return (
+        <div className="mt-2">
+            <p className={clsx('mb-1 text-[11px] font-medium', onAccent ? 'text-on-accent/75' : 'text-text-3')}>
+                Reference images
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+                {references.map((reference, index) => (
+                    <ImageReferenceThumbnail
+                        key={`${imageReferencePreviewUrl(reference)}:${index}`}
+                        reference={reference}
+                        label={reference.file_name || `Reference image ${index + 1}`}
+                        className="h-9 w-9"
+                    />
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function MessageBubbleInner({
+    message,
+    proposalImages,
+}: {
+    message: ChatMessage;
+    /** Images generated from this message's own proposals, shown inside their cards. */
+    proposalImages?: ChatMessage[];
+}) {
+    const isUser = message.role === 'user';
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(message.content);
+    const [inspector, setInspector] = useState<InspectorSection | null>(null);
+    const replayPanelId = useId();
+    const inspectMessage = (section: InspectorSection | null) => {
+        setInspector(section);
+        if (section === 'sources') useChatStore.setState({ evidenceMessageId: message.id });
+    };
+    const replayButtonRef = useRef<HTMLButtonElement>(null);
+    const [expandedReplayRun, setExpandedReplayRun] = useState<string | null>(null);
+    const bodyRef = useRef<HTMLDivElement>(null);
+    const editMessage = useChatStore((state) => state.editMessage);
+    const applyMask = useChatStore((state) => state.applyMask);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const chatWidth = useUiStore((state) => state.chatWidth);
+    const messages = useChatStore((state) => state.messages);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const personalConversation = useChatStore((state) => state.activeConversationKind === 'personal');
+    const planReplayAvailable = useBootstrapStore((state) => Boolean(
+        state.data?.features?.enable_workflow_plan_replay
+        && state.data?.features?.enable_chat_orchestration
+        && state.data?.features?.allow_user_workflows,
+    ));
+    // Live run status comes from the tab's workflow run tracker, which runs only while both flags are on.
+    const liveRunStatus = useBootstrapStore((state) => workflowRunTrackerShouldRun(state.data?.features));
+    // A result or note a chat-started workflow run posted back to this conversation.
+    const workflowDelivery = useMemo(() => readWorkflowDelivery(message), [message]);
+    // the thread, which is often: the list re-renders on each streaming token.
+    const masks = useMemo(() => readMaskState(message), [message]);
+    // A stable list, so the image cards' shared scope is not rebuilt on every render.
+    const generatedImages = useMemo(() => answerGeneratedImages(message), [message]);
+    const maskingAllowed = canMask(message, currentUserId);
+
+    /**
+     * Who wrote this, when that is a question worth answering.
+     *
+     * Empty for every personal conversation and for assistant replies, so nothing changes
+     * outside a shared thread.
+     */
+    const author = messageAuthorName(message, currentUserId);
+    const own = isOwnMessage(message, currentUserId);
+    /**
+     * Which side of the thread this message sits on.
+     *
+     * In a personal conversation that is simply "did the user write it". In a shared one it
+     * is "did *this* reader write it": another participant's message is theirs, not the
+     * reader's, and putting it on the reader's side would misattribute it at a glance.
+     * `author` is empty outside a shared conversation, so this reduces to the old rule
+     * there.
+     */
+    const alignRight = author ? own : isUser;
+    /**
+     * A message an agent posted through an action on the sender's behalf. It keeps the
+     * sender's side of the thread, but renders as markdown in the neutral bubble: briefings
+     * carry tables, links and media that would be unreadable on the accent colour.
+     */
+    const agentPosted = isAgentPostedMessage(message);
+    const replyContext = useMemo(
+        () => resolveReplyContext(message, messages, currentUserId),
+        [message, messages, currentUserId],
+    );
+    /**
+     * Who the message was addressed to, drawn as pills above its text. The `@Name` text stays in
+     * the stored message for the AI and the classic client, and is taken out of what is shown.
+     */
+    const mentionPills = useMemo(
+        () => readMessageMentionPills(message, currentUserId),
+        [message, currentUserId],
+    );
+    const mentionNames = useMemo(() => mentionPills.map((pill) => pill.label), [mentionPills]);
+
+    /**
+     * Files this turn produced, and whether they replace its text.
+     *
+     * Read once here rather than inside the card so the reply body can be suppressed on the
+     * same pass — a finished durable run leaves behind a holding sentence that the artifacts
+     * have made untrue.
+     */
+    const artifacts = useMemo(() => readGeneratedArtifacts({
+        ...message, ...message.metadata,
+    }), [message]);
+    const orchestration = useMemo(
+        () => normalizeOrchestrationAttempt(message.metadata?.orchestration), [message.metadata?.orchestration],
+    );
+    const liveOutputs = useOrchestrationStore((state) =>
+        orchestration.run_id ? state.runRecovery[orchestration.run_id]?.outputs : undefined);
+    const managedOutputs = orchestration.outputs !== undefined || liveOutputs !== undefined;
+    const savedAnalyses = useMemo(() => readSavedAnalyses(message.metadata), [message.metadata]);
+    const hasSavedAnalysis = savedAnalyses.length > 0;
+    const [unavailableAnalysisKeys, setUnavailableAnalysisKeys] = useState<Set<string>>(() => new Set());
+    const markAnalysisUnavailable = useCallback((descriptor: SavedAnalysisDescriptor) => {
+        const key = `${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`;
+        setUnavailableAnalysisKeys((keys) => new Set(keys).add(key));
+    }, []);
+    const analysisUnavailable = hasSavedAnalysis && savedAnalyses.some((descriptor) =>
+        !descriptor || descriptor.available === false || descriptor.conversation_id !== activeConversationId ||
+        unavailableAnalysisKeys.has(`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`));
+    const canRepeatPlan = message.role === 'assistant' && !analysisUnavailable
+        && planReplayAvailable && Boolean(orchestration.run_id) && orchestration.outcome === 'completed'
+        && !masks.fullyMasked && masks.ranges.length === 0 && personalConversation
+        && message.conversation_id === activeConversationId
+        && !orchestrationProposedWorkflow(message.metadata?.orchestration)
+        && !orchestrationStartedWorkflow(message.metadata?.orchestration)
+        && !orchestrationHandedOffWorkflow(message.metadata?.orchestration);
+    const replayRunKey = `${message.conversation_id}:${orchestration.run_id}`;
+    const replayExpanded = canRepeatPlan && expandedReplayRun === replayRunKey;
+    useEffect(() => {
+        setExpandedReplayRun(null);
+    }, [canRepeatPlan, replayRunKey]);
+    const artifactsReplaceText = !hasSavedAnalysis && suppressesAssistantText(artifacts);
+    useEffect(() => {
+        const store = useChatStore.getState();
+        if (
+            message.role === 'safety'
+            && store.analysisResultContext?.message_id === message.id
+            && store.analysisResultContext?.conversation_id === message.conversation_id
+        ) {
+            store.clearAnalysisResultContext();
+            return;
+        }
+        const selected = savedAnalyses.find((descriptor) => sameAnalysis(store.analysisResultContext, descriptor));
+        if (selected && (masks.fullyMasked || masks.ranges.length > 0 || selected.available === false ||
+            selected.conversation_id !== activeConversationId ||
+            unavailableAnalysisKeys.has(`${selected.conversation_id}:${selected.message_id}:${selected.result_sha256}`))) {
+            store.clearAnalysisResultContext();
+        }
+    }, [unavailableAnalysisKeys, activeConversationId, masks.fullyMasked, masks.ranges.length,
+        savedAnalyses, message.id, message.role, message.conversation_id]);
+    const artifactCards = artifacts.filter((artifact) =>
+        !managedOutputs || !isOrchestrationOutputArtifact(artifact)).map((artifact, index) => (
+        <GeneratedArtifactCard
+            key={artifact.artifact_message_id || artifact.document_id || artifact.export_run_id || `artifact-${index}`}
+            artifact={artifact}
+            conversationId={message.conversation_id}
+        />
+    ));
+
+    // A user message is plain text, so its masked spans can be cut straight out of the
+    // content rather than going through the markdown placeholder path. Mentions are only
+    // taken out when nothing is masked, because mask ranges are offsets into the stored text.
+    const maskedUserContent = useMemo(() => {
+        if (!isUser) {
+            return message.content;
+        }
+        if (masks.ranges.length === 0) {
+            return mentionNames.length > 0 ? stripMentionText(message.content, mentionNames) : message.content;
+        }
+        const applied = applyMasks(message.content, masks.ranges);
+        return applied.text.split(MASK_PLACEHOLDER_PATTERN).map((part, index) =>
+            index % 2 === 1 ? (
+                <MaskedSpan key={index} range={applied.ranges[Number(part)]} />
+            ) : (
+                part
+            ),
+        );
+    }, [isUser, message.content, masks.ranges, mentionNames]);
+
+    /**
+     * The prompt this message was written with, recovered from its metadata.
+     *
+     * Only attempted when nothing is masked: mask ranges are offsets into the whole content,
+     * and splitting that content would leave them pointing at the wrong characters.
+     */
+    const promptUsed = useMemo(
+        () => (isUser && masks.ranges.length === 0 ? readMessagePrompt(message) : null),
+        [isUser, message, masks.ranges.length],
+    );
+    const promptUserText = promptUsed?.userText
+        ? stripMentionText(promptUsed.userText, mentionNames)
+        : '';
+    const referenceProvenance = useMemo(
+        () => (isUser ? readImageReferenceProvenance(message.metadata) : []),
+        [isUser, message.metadata],
+    );
+    const conversationReferences = useMemo(
+        () => storedConversationReferences(message.metadata?.conversation_references),
+        [message.metadata?.conversation_references],
+    );
+
+    if (message.role === 'image') {
+        return <ImageMessage message={message} />;
+    }
+
+    if (message.role === 'file') {
+        return <FileMessage message={message} />;
+    }
+
+    if (message.role === 'safety') {
+        return (
+            <div id={`message-${message.id}`} role="status" aria-live="polite"
+                className="rounded-2xl border border-warn/30 bg-warn/10 px-4 py-3 text-text-1">
+                <p className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    <TriangleAlert size={16} aria-hidden="true" /> Content check
+                </p>
+                <AssistantMarkdown content={message.content} />
+            </div>
+        );
+    }
+
+    if (editing) {
+        return (
+            <div id={`message-${message.id}`} className="flex justify-end">
+                <div className={clsx('w-full', bubbleWidthClass(chatWidth))}>
+                    <textarea
+                        autoFocus
+                        value={draft}
+                        onChange={(event) => setDraft(event.target.value)}
+                        rows={Math.min(10, draft.split('\n').length + 1)}
+                        aria-label="Edit message"
+                        className="w-full resize-y rounded-2xl border border-accent bg-surface-solid px-4 py-3 text-[15px] text-text-1 outline-none"
+                    />
+                    <div className="mt-1.5 flex justify-end gap-2">
+                        <GlassButton
+                            size="sm"
+                            onClick={() => {
+                                setDraft(message.content);
+                                setEditing(false);
+                            }}
+                        >
+                            Cancel
+                        </GlassButton>
+                        <GlassButton
+                            size="sm"
+                            variant="primary"
+                            disabled={!draft.trim() || draft === message.content}
+                            onClick={() => {
+                                setEditing(false);
+                                void editMessage(message.id, draft);
+                            }}
+                        >
+                            Save and resend
+                        </GlassButton>
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div
+            id={`message-${message.id}`}
+            className={clsx(
+                'group/message flex flex-col transition-shadow',
+                alignRight && 'items-end',
+            )}
+        >
+            {/* Only ever present in a shared conversation, where a thread with several
+                authors is unreadable without knowing who wrote what. */}
+            {author && (
+                <p className="mb-1 flex items-center gap-1.5 px-1 text-[11px] text-text-3">
+                    <span className="font-medium">{author}</span>
+                    {isAiRequest(message) && <span>asked the assistant</span>}
+                    {agentPosted && <span>posted through an agent</span>}
+                </p>
+            )}
+            <div className={clsx('flex w-full', alignRight ? 'justify-end' : 'justify-start')}>
+            <div
+                ref={hasSavedAnalysis ? undefined : bodyRef}
+                className={clsx(
+                    bubbleWidthClass(chatWidth),
+                    'rounded-2xl px-4 py-3',
+                    // These are repeated per message, so they use the non-blurred surface:
+                    // a backdrop-filter per bubble makes long threads scroll badly.
+                    alignRight && !agentPosted
+                        ? 'bg-accent text-on-accent'
+                        : 'glass-flat text-text-1',
+                )}
+            >
+                {replyContext && <ReplyQuote context={replyContext} />}
+                {isUser && !masks.fullyMasked && (
+                    <MessageMentionPills pills={mentionPills} onAccent={alignRight && !agentPosted} />
+                )}
+                {isUser && !masks.fullyMasked && conversationReferences.length > 0 && (
+                    <ConversationReferenceChips references={conversationReferences} />
+                )}
+                {masks.fullyMasked ? (
+                    // The whole message is masked, so none of it is rendered. The server
+                    // also withholds it from the model.
+                    <p
+                        title={describeMask({
+                            start: 0,
+                            end: 0,
+                            display_name: masks.maskedBy,
+                            timestamp: masks.maskedAt,
+                        })}
+                        className={clsx(
+                            'flex items-center gap-2 text-[15px] italic',
+                            alignRight && !agentPosted ? 'text-on-accent/80' : 'text-text-3',
+                        )}
+                    >
+                        <EyeOff size={14} className="shrink-0" />
+                        This message is masked
+                        {masks.maskedBy ? ` by ${masks.maskedBy}` : ''}.
+                    </p>
+                ) : isUser ? (
+                    agentPosted ? (
+                        <>
+                            <AssistantMarkdown
+                                content={message.content}
+                                masks={masks.ranges}
+                                messageId={message.id}
+                            />
+                            {/* A shared thread already says this beside the author's name. */}
+                            {!author && (
+                                <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
+                                    <Sparkles size={11} />
+                                    Posted through an agent
+                                </p>
+                            )}
+                        </>
+                    ) : promptUsed ? (
+                        <>
+                            <PromptUsedBlock
+                                name={promptUsed.name}
+                                text={promptUsed.promptText}
+                                onAccent={alignRight}
+                                scopeLabel={promptUsed.scopeLabel}
+                                edited={promptUsed.edited}
+                                variableCount={promptUsed.variableCount}
+                            />
+                            {promptUserText && (
+                                <p className="text-[15px] leading-relaxed whitespace-pre-wrap break-words">
+                                    {promptUserText}
+                                </p>
+                            )}
+                            {referenceProvenance.length > 0 && (
+                                <ReferenceImagesRow references={referenceProvenance} onAccent={alignRight} />
+                            )}
+                        </>
+                    ) : (
+                        <>
+                            {maskedUserContent !== '' && (
+                                <p className="text-[15px] leading-relaxed whitespace-pre-wrap">
+                                    {maskedUserContent}
+                                </p>
+                            )}
+                            {referenceProvenance.length > 0 && (
+                                <ReferenceImagesRow references={referenceProvenance} onAccent={alignRight} />
+                            )}
+                        </>
+                    )
+                ) : (
+                    <>
+                        {message.thoughts && message.thoughts.length > 0 && (
+                            <ThoughtsPanel thoughts={message.thoughts} />
+                        )}
+                        {!artifactsReplaceText && !(masks.ranges.length === 0
+                            && isCheckingFailureNotice(message.content, message.metadata?.orchestration)) && (
+                            <div ref={hasSavedAnalysis ? bodyRef : undefined}>
+                                <ImageProposalScope
+                                    assistantMessageId={message.id}
+                                    results={proposalImages}
+                                    generatedImages={generatedImages}
+                                >
+                                    {/* Microsoft 365 citation chips resolve against this message's own records. */}
+                                    <M365CitationProvider citations={message.m365_citations}>
+                                        <WebCitationProvider citations={[
+                                            ...(message.web_search_citations ?? []),
+                                            ...(message.cited_web_search_citations ?? []),
+                                        ]}>
+                                            <AssistantMarkdown
+                                                content={masks.ranges.length === 0
+                                                    ? stripLegacyMapBlocks(message.content)
+                                                    : message.content}
+                                                masks={masks.ranges}
+                                                messageId={message.id}
+                                                documentCitations={message.hybrid_citations}
+                                            />
+                                        </WebCitationProvider>
+                                    </M365CitationProvider>
+                                </ImageProposalScope>
+                            </div>
+                        )}
+                        {masks.ranges.length === 0 && !artifactsReplaceText && (
+                            <>
+                                <WebCitationCards citations={message.cited_web_search_citations} />
+                                <WebCitationLinks citations={message.cited_web_search_citations} />
+                            </>
+                        )}
+                        {/* Maps an action returned live in the message's tool results, not its text. */}
+                        {masks.ranges.length === 0 && (
+                            <InlineMapCards
+                                citations={message.agent_citations}
+                                conversationId={message.conversation_id}
+                            />
+                        )}
+                        {(message.model_deployment_name || message.agent_display_name) && (
+                            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-text-3">
+                                {message.agent_display_name ? (
+                                    <>
+                                        <Sparkles size={11} />
+                                        {message.agent_display_name}
+                                    </>
+                                ) : (
+                                    message.model_deployment_name
+                                )}
+                            </p>
+                        )}
+                        <ReasoningAdjustmentNotice adjustments={message.metadata?.reasoning_adjustments} />
+                        <OrchestrationMessageRecovery
+                            conversationId={message.conversation_id}
+                            metadata={message.metadata?.orchestration}
+                        />
+                        {orchestration.run_id && masks.ranges.length === 0 ? (
+                            <OrchestrationOutputs conversationId={message.conversation_id}
+                                runId={orchestration.run_id} metadata={message.metadata?.orchestration}
+                                artifacts={artifacts} />
+                        ) : null}
+                        {/* A proposed workflow is decided by the person who asked, in their own conversation. */}
+                        {orchestration.run_id && masks.ranges.length === 0 && personalConversation
+                            && message.conversation_id === activeConversationId
+                            && orchestrationProposedWorkflow(message.metadata?.orchestration)
+                            && !orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
+                            <WorkflowProposalCards conversationId={message.conversation_id} runId={orchestration.run_id} />
+                        ) : null}
+                        {/* A started workflow's runs only for the person who asked, in their own conversation:
+                            live while the tab keeps a run tracker, else as they stood when the answer loaded. */}
+                        {orchestration.run_id && masks.ranges.length === 0 && personalConversation
+                            && message.conversation_id === activeConversationId
+                            && orchestrationStartedWorkflow(message.metadata?.orchestration)
+                            && !orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
+                            liveRunStatus
+                                ? <WorkflowRunCard conversationId={message.conversation_id} runId={orchestration.run_id} />
+                                : <WorkflowRunLinks conversationId={message.conversation_id} runId={orchestration.run_id} />
+                        ) : null}
+                        {/* Work a plan handed off to a one-time workflow is decided by the person who asked, in
+                            their own conversation. The server refuses a plan that also proposes or starts one. */}
+                        {orchestration.run_id && masks.ranges.length === 0 && personalConversation
+                            && message.conversation_id === activeConversationId
+                            && orchestrationHandedOffWorkflow(message.metadata?.orchestration) ? (
+                            <WorkflowHandoffCards conversationId={message.conversation_id} runId={orchestration.run_id}
+                                liveRunStatus={liveRunStatus} />
+                        ) : null}
+                        {/* Inside the bubble, because a generated file belongs to the reply
+                            that produced it rather than sitting loose in the thread. */}
+                        {hasSavedAnalysis && (masks.ranges.length > 0 ? (
+                            <p className="mt-2 text-xs text-text-3">Saved findings are hidden while this message is masked.</p>
+                        ) : savedAnalyses.map((descriptor, index) => descriptor ? (
+                            <AnalysisResult key={`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`}
+                                descriptor={descriptor} onUnavailable={markAnalysisUnavailable} />
+                        ) : (
+                            <p key={`unavailable-analysis-${index}`} role="status" className="mt-2 text-sm text-text-2">
+                                {analysisUnavailableMessage()}
+                            </p>
+                        )))}
+                        {!analysisUnavailable && (!hasSavedAnalysis || masks.ranges.length === 0) && (
+                            hasSavedAnalysis ? artifactCards.length > 0 && (
+                                <details className="mt-2">
+                                    <summary className="cursor-pointer text-xs font-medium text-text-3">Downloads</summary>
+                                    {artifactCards}
+                                </details>
+                            ) : artifactCards
+                        )}
+                        {/* What the requester can do next with a result a workflow run posted back here. */}
+                        {workflowDelivery && message.role === 'assistant' && masks.ranges.length === 0
+                            && personalConversation && message.conversation_id === activeConversationId ? (
+                            <WorkflowDeliveryFooter
+                                messageId={message.id}
+                                conversationId={message.conversation_id}
+                                delivery={workflowDelivery}
+                                metadata={message.metadata}
+                            />
+                        ) : null}
+                        {masks.ranges.length === 0 && <EvidenceStatusFooter
+                            status={readEvidenceStatus(message.metadata?.evidence_status)}
+                            expanded={inspector === 'sources'}
+                            controlsId={`message-inspector-${message.id}`}
+                            onOpen={() => inspectMessage('sources')}
+                        />}
+                    </>
+                )}
+            </div>
+            </div>
+
+            <InlinePendingActions anchor={message.id} />
+
+            {maskingAllowed && !masks.fullyMasked && (
+                <MaskSelectionPopup
+                    containerRef={bodyRef}
+                    onMask={(selection) => applyMask(message.id, 'mask_selection', selection)}
+                />
+            )}
+
+            {/* Revealed on hover or keyboard focus so a long thread stays uncluttered,
+                while remaining reachable without a pointer. The inspector, once opened,
+                stays visible so it does not vanish when the pointer moves into it. */}
+            <div
+                className={clsx(
+                    'transition-opacity group-hover/message:opacity-100 focus-within:opacity-100',
+                    inspector || replayExpanded ? 'opacity-100' : 'opacity-0',
+                )}
+            >
+                {!analysisUnavailable && <MessageActions
+                    message={message}
+                    onEdit={isUser ? () => setEditing(true) : undefined}
+                    inspector={inspector}
+                    onInspect={inspectMessage}
+                    alignRight={alignRight}
+                    planReplay={canRepeatPlan ? {
+                        expanded: replayExpanded,
+                        panelId: replayPanelId,
+                        buttonRef: replayButtonRef,
+                        onToggle: () => setExpandedReplayRun(replayExpanded ? null : replayRunKey),
+                    } : undefined}
+                />}
+            </div>
+
+            {canRepeatPlan && orchestration.run_id && (
+                <PlanReplaySaveCard
+                    key={replayRunKey}
+                    conversationId={message.conversation_id}
+                    runId={orchestration.run_id}
+                    panelId={replayPanelId}
+                    expanded={replayExpanded}
+                    onCollapse={() => {
+                        setExpandedReplayRun(null);
+                        replayButtonRef.current?.focus();
+                    }}
+                />
+            )}
+
+            {inspector && (
+                <MessageInspector
+                    message={message}
+                    section={inspector}
+                    onSection={inspectMessage}
+                    onClose={() => setInspector(null)}
+                />
+            )}
+        </div>
+    );
+}
+
+/**
+ * A message in the thread, re-rendered only when that message itself changes.
+ *
+ * Without this every message re-runs its whole markdown pipeline — remark, rehype and a fresh
+ * React tree — on each streaming token and each time the scroll position crosses the pinned
+ * threshold, because those both re-render the list. In a thread containing a large diagram
+ * that is enough work per token to lock the interface up.
+ *
+ * The default shallow comparison is exactly right here: `message` is replaced by the store
+ * when it changes, and `proposalImages` comes from a memoised map.
+ */
+const MessageBubble = memo(MessageBubbleInner);
+
+/**
+ * The bubble shown while a response is being generated.
+ *
+ * A recovered stream is deliberately made to look ordinary once it is flowing again. The
+ * interruption is worth a brief note, but leaving "Reconnecting" under an answer that is
+ * actively arriving reads as a stall, which is the opposite of what is happening.
+ *
+ * An orchestrated turn shows one indicator at a time. While it plans, this bubble is the only
+ * sign of work, and it says "Planning" so the plan card that replaces it reads as the result. While
+ * an approved plan runs, the plan card already shows its progress, so this bubble draws nothing
+ * until the answer arrives and then only the answer. Its run notices stay with the finished
+ * message's reasoning steps. If the card is ever not drawing the run, the bubble shows as usual,
+ * so a run is never left with no indicator at all.
+ */
+function StreamingBubble() {
+    const {
+        streamingContent,
+        streamingReasoningAdjustments,
+        thoughts,
+        reconnectPhase,
+        orchestrationSurface,
+        activeConversationId,
+        retryPresentation,
+    } = useChatStore();
+    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const chatWidth = useUiStore((state) => state.chatWidth);
+    const runCardShowsProgress = useOrchestrationStore((state) =>
+        selectActiveTurnRunInFlight(state, activeConversationId ?? ''));
+    const questionShowsStatus = useOrchestrationStore((state) => {
+        const turnId = state.activeTurns[activeConversationId ?? ''];
+        const draft = turnId ? state.elicitationDrafts[`${activeConversationId}\u0000${turnId}`] : undefined;
+        return Boolean(draft && !draft.accepted && (draft.submitting || draft.uncertain));
+    });
+    const [showReconnectedNote, setShowReconnectedNote] = useState(false);
+
+    useEffect(() => {
+        if (reconnectPhase !== 'reconnected') {
+            setShowReconnectedNote(false);
+            return;
+        }
+        // Long enough to be read, short enough that it does not become part of the answer.
+        setShowReconnectedNote(true);
+        const timer = window.setTimeout(() => setShowReconnectedNote(false), 4000);
+        return () => window.clearTimeout(timer);
+    }, [reconnectPhase]);
+
+    const connecting = reconnectPhase === 'connecting';
+    const runShownOnCard = orchestrationSurface === 'running' && runCardShowsProgress;
+    const activityLabel = retryPresentation && !retryPresentation.admitted ? 'Preparing retry'
+        : orchestrationSurface === 'planning' ? 'Planning' : 'Thinking';
+
+    if ((runShownOnCard || questionShowsStatus) && !streamingContent) {
+        return null;
+    }
+
+    // In a shared conversation the activity line says the request is running, for everyone
+    // in it, so the bubble only appears once there is an answer to show.
+    if (collaborative && !streamingContent) {
+        return null;
+    }
+
+    return (
+        <div data-scroll-live-reply className="flex justify-start">
+            <div className={clsx(streamingContent ? 'glass-flat rounded-2xl px-4 py-3' : 'min-w-0 py-2', bubbleWidthClass(chatWidth))}>
+                {/* Shown while connecting even when partial content is already on screen:
+                    without it, a response that stopped mid-sentence just looks frozen. */}
+                {connecting && (
+                    <p className="mb-2 flex items-center gap-1.5 text-xs text-text-3">
+                        <RefreshCw size={12} className="animate-spin" />
+                        Connection lost — picking the response back up…
+                    </p>
+                )}
+                {showReconnectedNote && (
+                    <p className="mb-2 flex items-center gap-1.5 text-xs text-text-3">
+                        <RefreshCw size={12} />
+                        Reconnected.
+                    </p>
+                )}
+                <ReasoningAdjustmentNotice adjustments={streamingReasoningAdjustments} />
+                {!runShownOnCard && <ThoughtsPanel thoughts={thoughts} live />}
+                {streamingContent ? (
+                    <AssistantMarkdown content={streamingContent} streaming />
+                ) : (
+                    <span role="status" tabIndex={-1} aria-live="polite"
+                        className="flex items-center gap-1.5 rounded text-sm text-text-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                        <span className="flex gap-1">
+                            {[0, 150, 300].map((delay) => (
+                                <span
+                                    key={delay}
+                                    className="h-1.5 w-1.5 motion-safe:animate-pulse rounded-full bg-text-3"
+                                    style={{ animationDelay: `${delay}ms` }}
+                                />
+                            ))}
+                        </span>
+                        {connecting ? 'Reconnecting' : activityLabel}
+                    </span>
+                )}
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Which AI requests are running in a shared conversation, one slim line each.
+ *
+ * Every participant sees the same lines, from the activity events the stream route publishes,
+ * so a long agent run reads as work in progress rather than silence. Several can run at once.
+ * Only the sentence is announced to screen readers; the step and the timer change too often.
+ */
+function AgentActivityIndicator() {
+    const runs = useCollaborationStore((state) => state.aiRuns);
+    const currentUserId = useBootstrapStore((state) => state.data?.user?.id);
+    const collaborative = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const streaming = useChatStore((state) => state.streaming);
+    const answering = useChatStore((state) => state.streamingContent.length > 0);
+    const messages = useChatStore((state) => state.messages);
+    const [now, setNow] = useState(() => Date.now());
+    const waitingOnOwnRequest = collaborative && streaming && !answering;
+    const active = runs.length > 0 || waitingOnOwnRequest;
+
+    useEffect(() => {
+        if (!active) {
+            return;
+        }
+        setNow(Date.now());
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [active]);
+
+    const local = waitingOnOwnRequest ? localAiRun({ messages, currentUserId, now }) : null;
+    const visible = visibleAiRuns(runs, local, currentUserId, now);
+    if (visible.length === 0) {
+        return null;
+    }
+
+    return (
+        <ul aria-label="AI activity" className="space-y-1" data-ai-activity="">
+            {visible.map((run) => (
+                <li key={run.run_id} data-ai-run={run.run_id}
+                    className="flex min-w-0 items-center gap-1.5 px-1 text-[12px] text-text-3">
+                    <span aria-hidden="true" className={clsx(
+                        'h-1.5 w-1.5 shrink-0 rounded-full motion-safe:animate-pulse',
+                        run.target_type === 'agent' ? 'bg-warn' : run.target_type === 'model' ? 'bg-info' : 'bg-text-3',
+                    )} />
+                    {run.target_type === 'agent' ? (
+                        <Bot size={12} className="shrink-0" aria-hidden="true" />
+                    ) : (
+                        <Sparkles size={12} className="shrink-0" aria-hidden="true" />
+                    )}
+                    <span className="shrink-0 text-text-2">{describeAiActivityRun(run, currentUserId)}</span>
+                    <span aria-hidden="true" className="shrink-0 tabular-nums">
+                        · {formatAiActivityElapsed(now - run.startedAt)}
+                    </span>
+                    {run.step && (
+                        <span aria-hidden="true" title={run.step} className="min-w-0 truncate">· {run.step}</span>
+                    )}
+                </li>
+            ))}
+        </ul>
+    );
+}
+
+/**
+ * Who else is currently writing.
+ *
+ * Only ever populated in a shared conversation. It sits at the end of the thread rather
+ * than under the composer so it reads as part of the conversation — the same place the
+ * message being written will appear.
+ */
+function TypingIndicator() {
+    const typingUsers = useCollaborationStore((state) => state.typingUsers);
+
+    if (typingUsers.length === 0) {
+        return null;
+    }
+
+    const names = typingUsers.map((entry) => entry.display_name);
+    const label =
+        names.length === 1
+            ? `${names[0]} is typing`
+            : names.length === 2
+              ? `${names[0]} and ${names[1]} are typing`
+              : `${names.length} people are typing`;
+
+    return (
+        <div className="flex justify-start">
+            <p className="flex items-center gap-1.5 px-1 text-[12px] text-text-3">
+                <span className="flex gap-1">
+                    {[0, 150, 300].map((delay) => (
+                        <span
+                            key={delay}
+                            className="h-1 w-1 animate-bounce rounded-full bg-text-3"
+                            style={{ animationDelay: `${delay}ms` }}
+                        />
+                    ))}
+                </span>
+                {label}
+            </p>
+        </div>
+    );
+}
+
+/**
+ * The orchestration card for the conversation's active turn, drawn at the tail of the thread.
+ *
+ * The plan exists in the store before any assistant message does, so it is rendered from the store
+ * here rather than parsed out of a markdown fence in a bubble. Only the most recent turn's card
+ * shows inline: a new turn re-points `activeTurn`, and older plans are reachable through the drawer.
+ * An elicitation supersedes a plan, because a turn that is still asking a question has no plan yet.
+ */
+function ActiveOrchestrationCard({ conversationId }: { conversationId: string }) {
+    const [questionError, setQuestionError] = useState('');
+    useEffect(() => {
+        const controller = new AbortController();
+        void restorePendingQuestions(conversationId, controller.signal).catch(() => {
+            if (!controller.signal.aborted) setQuestionError('Pending questions could not be checked. Reopen this conversation to retry.');
+        });
+        return () => controller.abort();
+    }, [conversationId]);
+    const turnId = useOrchestrationStore((state) => selectActiveTurn(state, conversationId));
+    const hasElicitation = useOrchestrationStore((state) =>
+        turnId ? selectElicitation(state, conversationId, turnId) !== null : false,
+    );
+    const hasPlan = useOrchestrationStore((state) =>
+        turnId ? selectPlan(state, conversationId, turnId) !== null : false,
+    );
+
+    if (!conversationId || !turnId) {
+        return questionError ? <p role="alert" className="text-sm text-danger">{questionError}</p> : null;
+    }
+    if (hasElicitation) {
+        return <ElicitationCard conversationId={conversationId} turnId={turnId} />;
+    }
+    if (hasPlan) {
+        return <OrchestrationPlanCard conversationId={conversationId} turnId={turnId} />;
+    }
+    return null;
+}
+
+function ResponseError({ message, authUrl }: { message: string; authUrl?: string | null }) {
+    const safeAuthUrl = normalizeFoundryAuthUrl(authUrl);
+    return (
+        <GlassPanel role="alert" elevation="flat" className="flex items-start gap-2 p-3 text-sm text-danger">
+            <TriangleAlert size={16} className="mt-0.5 shrink-0" />
+            <div className="min-w-0 space-y-2 break-words">
+                <p>{message}</p>
+                {safeAuthUrl && (
+                    <>
+                        <a href={safeAuthUrl} target="_blank" rel="noopener noreferrer"
+                            className="inline-block text-accent underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent">
+                            Sign in or grant Foundry access
+                        </a>
+                        <p className="text-text-2">After signing in, return to this chat and retry your message. It will not retry automatically.</p>
+                    </>
+                )}
+            </div>
+        </GlassPanel>
+    );
+}
+
+export function MessageList() {
+    const {
+        messages,
+        messagesLoading,
+        messagesError,
+        streaming,
+        streamingContent,
+        streamError,
+        streamAuthUrl,
+        activeConversationId,
+        activeConversationKind,
+        retryPresentation,
+        completedReply,
+    } = useChatStore();
+    const activeTurnId = useOrchestrationStore((state) => selectActiveTurn(state, activeConversationId ?? ''));
+    const appTitle = useBootstrapStore((state) => state.data?.branding?.app_title);
+    const chatWidth = useUiStore((state) => state.chatWidth);
+
+    const retryIndex = retryPresentation ? messages.findIndex((message) => message.id === retryPresentation.userMessageId) : -1;
+    const retryingEarlierTurn = retryIndex >= 0 && messages.some((message, index) => index > retryIndex && message.role === 'user');
+    const isEmpty = useMemo(
+        () => messages.length === 0 && !streaming && !messagesLoading,
+        [messages.length, streaming, messagesLoading],
+    );
+
+    /**
+     * Approved image proposals, filed under the assistant message that proposed them.
+     *
+     * The server stores an approved proposal as an ordinary `image` message carrying
+     * `metadata.image_proposal.source_assistant_message_id`. Rendered as-is it would appear a
+     * second time at the end of the thread, cut off from the paragraph that asked for it, so
+     * it is routed to its own card instead — the same regrouping the classic client does in
+     * `groupGeneratedImageProposalMessages`.
+     *
+     * An image is only taken out of the thread once a card in that message has been shown to
+     * claim it, which is why the message's own fences are read here. Hiding an image on the
+     * strength of the metadata alone would make it disappear entirely whenever a card could
+     * not match it — after the prompt was edited before approval, say — and an image the user
+     * paid to generate must never end up visible nowhere.
+     */
+    const { threadMessages, proposalImagesByMessage } = useMemo(() => {
+        // A workflow run's own post is replaced by its mirrored reply, which says the same
+        // with the maps and sources attached. It stays loaded, so a reply quoting it still
+        // resolves. An orchestration attempt a later retry replaced is hidden the same way:
+        // the thread shows the latest attempt, and the earlier one stays saved for the record.
+        const supersededRuns = supersededOrchestrationRunIds(messages);
+        const shown = messages.filter((message) => !(
+            retryPresentation && !retryPresentation.admitted && message.id !== retryPresentation.userMessageId
+            && retryPresentation.hiddenMessageIds.includes(message.id)
+        ) && !isSupersededByWorkflowReply(message)
+            && !isSupersededOrchestrationAttempt(message, supersededRuns));
+        const grouped = groupProposalImages(shown);
+        if (grouped.size === 0) {
+            return { threadMessages: shown, proposalImagesByMessage: grouped };
+        }
+
+        const claimed = new Set<string>();
+        for (const message of shown) {
+            const candidates = message.role === 'assistant' ? grouped.get(message.id) : undefined;
+            if (!candidates?.length) {
+                continue;
+            }
+            const generated = answerGeneratedImages(message);
+            for (const spec of extractProposalSpecs(message.content)) {
+                const result = resultForCard(spec, candidates, generated);
+                if (result) {
+                    claimed.add(result.id);
+                }
+            }
+        }
+
+        const visible = shown.filter(
+            (message) => message.role !== 'image' || !claimed.has(message.id),
+        );
+
+        return { threadMessages: visible, proposalImagesByMessage: grouped };
+    }, [messages, retryPresentation]);
+    const streamingAnchor = streaming && retryPresentation?.conversationId === activeConversationId
+        && threadMessages.some((message) => message.id === retryPresentation.userMessageId)
+        ? retryPresentation.userMessageId : null;
+    const planAnchor = activeTurnId
+        ? threadMessages.find((message) => message.role === 'user' && messageOrchestrationTurn(message) === activeTurnId)?.id
+        : undefined;
+    const tailPlan = !planAnchor && !threadMessages.some((message) => message.role === 'user' && messageOrchestrationTurn(message));
+
+    const {
+        scrollRef, hasNewMessages, onScroll, onWheel, onKeyDown, onTouchStart, onPointerDown, jumpToNewest, pauseFollowing,
+    } = useMessageScroll({
+        conversationId: activeConversationId,
+        messages: threadMessages,
+        loading: messagesLoading,
+        streaming,
+        content: streamingContent,
+        completedReply,
+        followLatest: !retryingEarlierTurn,
+    });
+
+    const messagePane = (
+        <div
+            ref={scrollRef}
+            onScroll={onScroll}
+            onWheel={onWheel}
+            onKeyDown={onKeyDown}
+            onTouchStart={onTouchStart}
+            onPointerDown={onPointerDown}
+            tabIndex={0}
+            aria-label="Conversation messages"
+            className="min-h-0 flex-1 overflow-y-auto px-4 py-6"
+            data-tour="message-list"
+        >
+            <div className={clsx('mx-auto w-full space-y-4', chatWidthClass(chatWidth))}>
+                {messagesLoading && (
+                    <div className="space-y-4">
+                        <Skeleton className="ml-auto h-16 w-2/3" />
+                        <Skeleton className="h-28 w-4/5" />
+                    </div>
+                )}
+
+                {messagesError && (
+                    <GlassPanel elevation="flat" className="flex items-center gap-2 p-3 text-sm text-danger">
+                        <TriangleAlert size={16} />
+                        {messagesError}
+                    </GlassPanel>
+                )}
+
+                {isEmpty && !messagesError && (
+                    <EmptyState
+                        icon={<Sparkles size={30} />}
+                        title={
+                            activeConversationId
+                                ? 'No messages in this conversation yet'
+                                : `Start a conversation with ${appTitle || 'SimpleChat'}`
+                        }
+                        description="Ask a question, attach a document, or pick an agent to work with."
+                    />
+                )}
+
+                {/* Streaming output is announced politely so screen reader users are told
+                    a response arrived without every token interrupting them. */}
+                <PendingActionPlacementProvider messages={threadMessages}>
+                    <PendingActionsConversationSection scrollRef={scrollRef} pauseFollowing={pauseFollowing} />
+                    <div aria-live="polite" aria-atomic="false" className="space-y-4">
+                        {threadMessages.map((message) => {
+                            const here = streamingAnchor === message.id;
+                            const localRetry = retryPresentation?.userMessageId === message.id ? retryPresentation : null;
+                            const error = message.role === 'user' && !here
+                                ? localRetry?.error || selectedAttemptError(message, threadMessages) : undefined;
+                            return (
+                                <div key={message.id} data-scroll-message-id={message.id}>
+                                    <MessageBubble message={message} proposalImages={proposalImagesByMessage.get(message.id)} />
+                                    {message.role === 'assistant' && message.metadata?.user_input_answers
+                                        && typeof message.metadata.user_input_answers === 'object'
+                                        && !Array.isArray(message.metadata.user_input_answers) ? (
+                                            <details className="mt-2 text-sm text-text-2">
+                                                <summary className="min-h-11 cursor-pointer">Answers used for this response</summary>
+                                                <dl className="space-y-2 py-2">
+                                                    {Object.entries(message.metadata.user_input_answers).map(([label, value]) => (
+                                                        <div key={label}><dt className="font-medium">{label}</dt>
+                                                            <dd className="whitespace-pre-wrap break-words">{Array.isArray(value)
+                                                                ? value.map(String).join(', ') : typeof value === 'boolean'
+                                                                    ? value ? 'Yes' : 'No' : String(value)}</dd></div>
+                                                    ))}
+                                                </dl>
+                                            </details>
+                                        ) : null}
+                                    {here && <StreamingBubble />}
+                                    {here && <StreamingPendingActions />}
+                                    {error && <div data-retry-error={message.id}><ResponseError message={error} authUrl={localRetry?.authUrl} /></div>}
+                                    {!here && savedResponseAttempt(message).state === 'prepared' && (
+                                        <p role="status" className="px-1 text-sm text-text-3">This retry is prepared. Select Retry to generate its response.</p>
+                                    )}
+                                    {!here && initialPlanningState(message).status === 'cancelled' && (
+                                        <p role="status" className="px-1 text-sm text-text-3">Planning stopped. Your question was saved.</p>
+                                    )}
+                                    {activeConversationId && planAnchor === message.id && !(localRetry && !localRetry.admitted) && (
+                                        <ActiveOrchestrationCard conversationId={activeConversationId} />
+                                    )}
+                                </div>
+                            );
+                        })}
+                        {streaming && !streamingAnchor && <StreamingBubble />}
+                        {!streamingAnchor && <StreamingPendingActions />}
+                        {activeConversationId && tailPlan && (
+                            <ActiveOrchestrationCard conversationId={activeConversationId} />
+                        )}
+                        {activeConversationId ? <CredentialRequestCards conversationId={activeConversationId}
+                            conversationKind={activeConversationKind} /> : null}
+                        {activeConversationId ? <UserInputCards conversationId={activeConversationId}
+                            conversationKind={activeConversationKind} /> : null}
+                        {activeConversationKind !== 'collaborative' && (
+                            <ConversationHandoffCards conversationId={activeConversationId} />
+                        )}
+                        <AgentActivityIndicator />
+                        <TypingIndicator />
+                    </div>
+                </PendingActionPlacementProvider>
+
+                {streamError && <ResponseError message={streamError} authUrl={streamAuthUrl} />}
+            </div>
+        </div>
+    );
+
+    return (
+        <div className="relative flex min-h-0 flex-1 flex-col">
+            {messagePane}
+            <span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+                {hasNewMessages ? 'New messages below.' : ''}
+            </span>
+            {hasNewMessages && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-3 flex justify-center px-4">
+                    <button
+                        type="button"
+                        onClick={jumpToNewest}
+                        aria-label="Go to the beginning of the newest message"
+                        className="pointer-events-auto inline-flex min-h-10 items-center gap-2 rounded-full border border-edge-strong bg-surface-solid px-4 py-2 text-sm font-medium text-text-1 shadow-lg transition-colors hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                        New messages
+                        <ChevronDown size={16} aria-hidden="true" />
+                    </button>
+                </div>
+            )}
+        </div>
+    );
+}

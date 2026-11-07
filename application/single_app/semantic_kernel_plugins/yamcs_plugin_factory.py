@@ -2,6 +2,8 @@
 """Factory for creating Yamcs Semantic Kernel plugins from action manifests."""
 
 from typing import Any, Dict
+from functions_action_manifest import copy_action_manifest
+from action_credential_contracts import credential_slots
 
 from functions_yamcs_operations import (
     YAMCS_AUTH_METHOD_API_KEY,
@@ -24,7 +26,7 @@ class YamcsPluginFactory:
 
     @classmethod
     def normalize_manifest(cls, config: Dict[str, Any]) -> Dict[str, Any]:
-        manifest = dict(config or {})
+        manifest = copy_action_manifest(config or {})
         auth = manifest.get("auth") if isinstance(manifest.get("auth"), dict) else {}
         auth = dict(auth)
         additional_fields = manifest.get("additionalFields") if isinstance(manifest.get("additionalFields"), dict) else {}
@@ -34,7 +36,10 @@ class YamcsPluginFactory:
         auth["type"] = auth_type
         additional_fields = normalize_yamcs_additional_fields(additional_fields, auth_type=auth_type)
 
-        if auth_type == "username_password":
+        personal = credential_slots(manifest)
+        if "service" in personal:
+            additional_fields["auth_method"] = personal["service"]["auth_type"]
+        elif auth_type == "username_password":
             additional_fields["auth_method"] = YAMCS_AUTH_METHOD_USERNAME_PASSWORD
         elif auth_type == "NoAuth":
             additional_fields["auth_method"] = YAMCS_AUTH_METHOD_NONE

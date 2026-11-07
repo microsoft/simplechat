@@ -1,14 +1,40 @@
 # functions_search.py
 
 import hashlib
+import json
 import logging
+from functions_appinsights import log_event
+from document_source_selection import selection_scope_fields, source_union_filter
+from functions_document_source_discovery import admit_document_source_selection
+from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 from typing import List, Dict, Any
+from search_scope_utils import (
+    VALID_SEARCH_SCOPES as VALID_SEARCH_SCOPES,
+    normalize_search_id_list,
+    normalize_search_scope,
+)
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_document_available,
+    assert_evidence_available,
+    document_provenance,
+    filter_available_results,
+)
 from config import *
 from functions_content import *
-from functions_public_workspaces import get_user_visible_public_workspace_docs, get_user_visible_public_workspace_ids_from_settings
+from functions_embedding_compatibility import (
+    REMOTE_OPTIONS,
+    active_embedding_profile,
+    embedding_query_slot,
+    embedding_search_filter,
+    read_embedding_settings,
+    search_with_embedding_profile,
+)
+from public_source_access import get_public_source_workspace_ids
 from utils_cache import (
     generate_search_cache_key,
     get_cached_search_results,
+    get_cache_settings,
     cache_search_results,
     DEBUG_ENABLED
 )
@@ -32,7 +58,6 @@ def _query_log_context(query):
 
 SEARCH_DEFAULT_TOP_N = 12
 SEARCH_MAX_TOP_N = 500
-VALID_SEARCH_SCOPES = {"all", "personal", "group", "public"}
 BASE_SEARCH_SELECT_FIELDS = [
     "id",
     "document_id",
@@ -70,48 +95,21 @@ def normalize_search_top_n(top_n, default_top_n=SEARCH_DEFAULT_TOP_N, max_top_n=
     return min(normalized_top_n, max_top_n)
 
 
-def normalize_search_scope(doc_scope, default_scope="all"):
-    """Normalize search scope values to the supported set."""
-    normalized_scope = str(doc_scope or default_scope).strip().lower()
-    if normalized_scope not in VALID_SEARCH_SCOPES:
-        return default_scope
-    return normalized_scope
-
-
-def normalize_search_id_list(raw_ids):
-    """Normalize an optional list or comma-separated string of ids."""
-    if raw_ids is None:
-        return []
-
-    if isinstance(raw_ids, str):
-        candidate_ids = [value.strip() for value in raw_ids.split(",") if value.strip()]
-    elif isinstance(raw_ids, list):
-        candidate_ids = [str(value).strip() for value in raw_ids if str(value).strip()]
-    else:
-        candidate_ids = [str(raw_ids).strip()] if str(raw_ids).strip() else []
-
-    normalized_ids = []
-    seen_ids = set()
-    for candidate_id in candidate_ids:
-        if candidate_id in seen_ids:
-            continue
-        seen_ids.add(candidate_id)
-        normalized_ids.append(candidate_id)
-
-    return normalized_ids
-
-
 def _resolve_public_workspace_ids_for_search(
     user_id,
     active_public_workspace_id=None,
     enforce_public_workspace_visibility=True,
 ):
+    aggregate_ids = aggregate_public_workspace_ids(user_id)
+    if aggregate_ids is not None:
+        requested_ids = normalize_search_id_list(active_public_workspace_id)
+        return [value for value in aggregate_ids if not requested_ids or value in requested_ids]
     requested_workspace_ids = normalize_search_id_list(active_public_workspace_id)
     if requested_workspace_ids and not enforce_public_workspace_visibility:
         return requested_workspace_ids
 
     visible_workspace_ids = normalize_search_id_list(
-        get_user_visible_public_workspace_ids_from_settings(user_id) or []
+        get_public_source_workspace_ids(user_id) or []
     )
     if requested_workspace_ids:
         visible_workspace_id_set = set(visible_workspace_ids)
@@ -267,7 +265,120 @@ def _build_odata_any_eq(collection_field: str, iterator_name: str, value: Any) -
     escaped_value = _escape_odata_literal(value)
     return f"{collection_field}/any({iterator_name}: {iterator_name} eq '{escaped_value}')"
 
-def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True):
+
+DOCUMENT_QUERY_CANDIDATE_WINDOW = 1000
+
+
+def iter_document_query_search_pages(
+    query, user_id, *, scope_type, scope_id, mode="keyword",
+    enable_file_sharing=True, exclude_document_ids=(), check=None,
+):
+    """Read protected Search pages without changing ordinary chat ranking or caps.
+
+    Keyword queries have no top/chunk ceiling. Hybrid calls expose one provider
+    candidate window; callers backfill distinct documents with explicit exclusions.
+    Every yielded hit is still a candidate requiring current source authorization
+    and active-representation screening.
+    """
+    if not user_id or not scope_id or scope_type not in {"personal", "group", "public"}:
+        raise ValueError("A document query requires an explicit authorized workspace.")
+    if mode not in {"keyword", "hybrid"} or not isinstance(query, str) or not query.strip():
+        raise ValueError("A document query requires supported content matching.")
+    if scope_type == "personal":
+        if scope_id != user_id:
+            raise PermissionError("Personal queries must use the current user.")
+        scope_filter = (
+            f"({_build_odata_eq('user_id', user_id)} or "
+            f"{_build_odata_any_eq('shared_user_ids', 'u', f'{user_id},approved')})"
+            if enable_file_sharing else _build_odata_eq("user_id", user_id)
+        )
+    elif scope_type == "group":
+        scope_filter = (
+            f"({_build_odata_eq('group_id', scope_id)} or "
+            f"{_build_odata_any_eq('shared_group_ids', 'g', f'{scope_id},approved')})"
+        )
+    else:
+        scope_filter = _build_public_workspace_filter_clause([scope_id])
+
+    exclusions = tuple(dict.fromkeys(exclude_document_ids))
+    exclusion_filter = ""
+    if exclusions:
+        delimiter = next(
+            (value for value in ("|", ",", "\u241e") if all(value not in item for item in exclusions)),
+            None,
+        )
+        if delimiter is None:
+            exclusion_filter = f"not ({' or '.join(_build_odata_eq('document_id', item) for item in exclusions)})"
+        else:
+            values = _escape_odata_literal(delimiter.join(exclusions))
+            exclusion_filter = f"not search.in(document_id, '{values}', '{delimiter}')"
+
+    if check is not None:
+        check()
+    embedding_settings = read_embedding_settings()
+    profile = active_embedding_profile(embedding_settings)
+    client = CLIENTS[{
+        "personal": "search_client_user",
+        "group": "search_client_group",
+        "public": "search_client_public",
+    }[scope_type]]
+    arguments = {
+        **REMOTE_OPTIONS,
+        "search_text": query,
+        "search_fields": ["chunk_text"],
+        "select": get_search_select_fields(scope_type),
+        "filter": _combine_odata_filters(
+            scope_filter, exclusion_filter,
+            embedding_search_filter(client, profile, embedding_settings),
+        ),
+    }
+    if mode == "hybrid":
+        embedding = generate_embedding(query, purpose="query", profile=profile)
+        if isinstance(embedding, tuple):
+            embedding = embedding[0]
+        if embedding is None:
+            raise RuntimeError("The document query embedding is unavailable.")
+        arguments.update({
+            "top": DOCUMENT_QUERY_CANDIDATE_WINDOW,
+            "vector_queries": [VectorizedQuery(
+                vector=embedding, k_nearest_neighbors=DOCUMENT_QUERY_CANDIDATE_WINDOW,
+                fields="embedding",
+            )],
+            "query_type": "semantic",
+            "semantic_error_mode": "fail",
+            "semantic_configuration_name": {
+                "personal": "nexus-user-index-semantic-configuration",
+                "group": "nexus-group-index-semantic-configuration",
+                "public": "nexus-public-index-semantic-configuration",
+            }[scope_type],
+        })
+    else:
+        arguments["query_type"] = "simple"
+
+    try:
+        if check is not None:
+            check()
+        pages = iter(client.search(**arguments).by_page())
+        while True:
+            if check is not None:
+                check()
+            with embedding_query_slot(profile.profile_id):
+                page = next(pages, None)
+                if page is None:
+                    if getattr(pages, "continuation_token", None):
+                        raise RuntimeError("The document query continuation is incomplete.")
+                    return
+                rows = list(page)
+            if not all(isinstance(row, dict) and row.get("document_id") for row in rows):
+                raise RuntimeError("The document query returned invalid candidates.")
+            yield rows
+    except Exception as error:
+        if is_semantic_search_quota_error(error):
+            raise SemanticSearchQuotaExceededError() from error
+        raise
+
+
+def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12, doc_scope="all", active_group_id=None, active_group_ids=None, active_public_workspace_id=None, enable_file_sharing=True, tags_filter=None, document_filter_mode="intersection", enforce_public_workspace_visibility=True, document_source_selection=None, document_source_conversation_id=None):
     """
     Hybrid search that queries the user doc index, group doc index, or public doc index
     depending on doc type.
@@ -285,7 +396,23 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     """
 
     top_n = normalize_search_top_n(top_n)
+    admitted_sources = None
+    if document_source_selection is not None:
+        _, admitted_sources = admit_document_source_selection(
+            document_source_selection, user_id, conversation_id=document_source_conversation_id,
+        )
+        projection = selection_scope_fields(admitted_sources)
+        doc_scope = projection["doc_scope"]
+        active_group_ids = projection["active_group_ids"]
+        active_group_id = None
+        active_public_workspace_id = projection["active_public_workspace_ids"]
+        enforce_public_workspace_visibility = False
+        document_id, document_ids, tags_filter = None, [], None
     doc_scope = normalize_search_scope(doc_scope)
+    if current_public_chat_scope(user_id):
+        doc_scope = "public"
+        if not aggregate_public_workspace_ids(user_id):
+            return []
     document_ids = normalize_search_id_list(document_ids)
     document_filter_mode = _normalize_document_filter_mode(document_filter_mode)
 
@@ -305,31 +432,32 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     elif document_id:
         document_ids = [document_id]
 
-    normalization_changed = False
-    try:
-        from functions_documents import normalize_document_revision_families
+    selected_sources = []
+    for selected_document_id in document_ids:
+        selected_document = assert_document_available(selected_document_id, user_id=user_id, purpose="selection")
+        selected_sources.append({PROVENANCE_FIELD: document_provenance(selected_document)})
 
-        if doc_scope in ("all", "personal"):
-            normalization_changed = normalize_document_revision_families(user_id=user_id) or normalization_changed
-
-        if doc_scope in ("all", "group") and active_group_ids:
-            for current_group_id in active_group_ids:
-                normalization_changed = normalize_document_revision_families(
-                    user_id=user_id,
-                    group_id=current_group_id,
-                ) or normalization_changed
-
-        if doc_scope in ("all", "public"):
-            for workspace_id in active_public_workspace_ids:
-                normalization_changed = normalize_document_revision_families(
-                    user_id=user_id,
-                    public_workspace_id=workspace_id,
-                ) or normalization_changed
-    except Exception as normalization_error:
-        debug_print(
-            f"Revision normalization failed before search: {normalization_error}",
-            "SEARCH",
+    scope_requests = []
+    if doc_scope in ("all", "personal"):
+        scope_requests.append(("personal", user_id, {"user_id": user_id}, {}))
+    if doc_scope in ("all", "group"):
+        scope_requests.extend(
+            ("group", group_id, {"group_ids": [group_id]}, {"group_id": group_id})
+            for group_id in active_group_ids or []
         )
+    if doc_scope in ("all", "public"):
+        scope_requests.extend(
+            ("public", workspace_id, {"public_workspace_ids": [workspace_id]}, {"public_workspace_id": workspace_id})
+            for workspace_id in active_public_workspace_ids
+        )
+
+    # DAI and document owners require initialized clients, so bind them at search execution.
+    from functions_document_access_index import (
+        document_access_normalization_is_cached,
+        get_document_access_normalization_context,
+        query_document_access_index_fingerprint,
+        remember_document_access_normalization,
+    )
 
     # Build document ID filter clause
     doc_id_filter = None
@@ -340,31 +468,49 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             conditions = " or ".join([_build_odata_eq("document_id", did) for did in document_ids])
             doc_id_filter = f"({conditions})"
 
-    # Generate cache key including document set fingerprints and tags filter
-    cache_key = generate_search_cache_key(
-        query=query,
-        user_id=user_id,
-        document_id=document_id,
-        document_ids=document_ids,
-        doc_scope=doc_scope,
-        active_group_ids=active_group_ids,
-        active_public_workspace_id=active_public_workspace_ids,
-        top_n=top_n,
-        enable_file_sharing=enable_file_sharing,
-        tags_filter=tags_filter,
-        document_filter_mode=document_filter_mode
-    )
+    embedding_settings = read_embedding_settings()
+    embedding_profile = active_embedding_profile(embedding_settings)
+    # Profile identity prevents old-model retrieval results from surviving a model change.
+    cache_enabled, _cache_ttl = get_cache_settings()
+    cache_key = None
+    if cache_enabled:
+        scope_fingerprints = {}
+        for source_scope, scope_id, scope_arguments, _normalization_arguments in scope_requests:
+            fingerprint_result = query_document_access_index_fingerprint(source_scope, **scope_arguments)
+            if fingerprint_result.get("success"):
+                scope_fingerprints[f"{source_scope}:{scope_id}"] = fingerprint_result["fingerprint"]
+        cache_key = generate_search_cache_key(
+            query=query,
+            user_id=user_id,
+            document_id=document_id,
+            document_ids=document_ids,
+            doc_scope=doc_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_ids,
+            top_n=top_n,
+            enable_file_sharing=enable_file_sharing,
+            tags_filter=tags_filter,
+            document_filter_mode=document_filter_mode,
+            embedding_profile_id=embedding_profile.profile_id,
+            scope_fingerprints=scope_fingerprints,
+        )
+    if cache_key is not None and admitted_sources is not None:
+        identity = json.dumps(sorted(
+            (json.dumps(source, sort_keys=True) for source in admitted_sources),
+        ), sort_keys=True)
+        cache_key = hashlib.sha256(f"{cache_key}:{user_id}:{identity}".encode("utf-8")).hexdigest()
 
     # Check cache first (pass scope parameters for correct partition key)
     cached_results = None
-    if not normalization_changed:
-        cached_results = get_cached_search_results(
-            cache_key,
-            user_id,
-            doc_scope,
-            active_group_ids=active_group_ids,
-            active_public_workspace_id=active_public_workspace_ids
-        )
+    if cache_key is not None:
+        with embedding_query_slot(embedding_profile.profile_id):
+            cached_results = get_cached_search_results(
+                cache_key,
+                user_id,
+                doc_scope,
+                active_group_ids=active_group_ids,
+                active_public_workspace_id=active_public_workspace_ids
+            )
     if cached_results is not None:
         query_length, query_hash = _query_log_context(query)
         debug_print(
@@ -376,7 +522,33 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
             result_count=len(cached_results)
         )
         logger.info("Returning cached search results for query hash %s", query_hash)
-        return cached_results
+        available_cached_results = filter_available_results(cached_results, user_id=user_id, cached=True)
+        assert_evidence_available(selected_sources, user_id=user_id)
+        if len(available_cached_results) == len(cached_results):
+            return available_cached_results
+
+    from functions_documents import normalize_document_revision_families
+
+    for source_scope, _scope_id, scope_arguments, normalization_arguments in scope_requests:
+        try:
+            normalization_context = get_document_access_normalization_context(source_scope, **scope_arguments)
+            if document_access_normalization_is_cached(normalization_context):
+                continue
+            changed = normalize_document_revision_families(user_id=user_id, **normalization_arguments)
+            if changed:
+                # Repair can change visibility and invalidate the key sampled before it.
+                cache_key = None
+            else:
+                remembered = remember_document_access_normalization(normalization_context)
+                if normalization_context is not None and not remembered:
+                    cache_key = None
+        except Exception as normalization_error:
+            cache_key = None
+            log_event(
+                '[DOCUMENT_ACCESS_INDEX] Search revision normalization failed; result caching bypassed.',
+                extra={'source_scope': source_scope, 'exception_type': type(normalization_error).__name__},
+                level=logging.WARNING, exceptionTraceback=True,
+            )
 
     # Cache miss - proceed with search
     query_length, query_hash = _query_log_context(query)
@@ -391,8 +563,9 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
     logger.info("Cache miss - executing search for query hash %s", query_hash)
 
     # Unpack tuple from generate_embedding (returns embedding, token_usage)
-    result = generate_embedding(query)
+    result = generate_embedding(query, purpose="query", profile=embedding_profile)
     if result is None:
+        assert_evidence_available(selected_sources, user_id=user_id)
         return None
 
     # Handle both tuple (new) and single value (backward compatibility)
@@ -402,6 +575,7 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         query_embedding = result
 
     if query_embedding is None:
+        assert_evidence_available(selected_sources, user_id=user_id)
         return None
 
     search_client_user = CLIENTS['search_client_user']
@@ -438,51 +612,62 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         group_access_filter = f"({group_conditions} or {shared_conditions})"
     public_workspace_filter = _build_public_workspace_filter_clause(active_public_workspace_ids)
 
-    try:
-        if doc_scope == "all":
-            user_filter = _combine_odata_filters(user_access_filter, content_filter)
-            user_results = search_client_user.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=user_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("personal")
+    def _run_scoped_index_queries(*, use_semantic_ranker=True):
+        def _search_index(client, scope_filter_clause, scope_name, semantic_config_name):
+            selection_filter = source_union_filter(admitted_sources, scope_name) if admitted_sources is not None else None
+            if selection_filter == "false":
+                return []
+            combined_filter = _combine_odata_filters(
+                scope_filter_clause, content_filter, selection_filter,
+                embedding_search_filter(client, embedding_profile, embedding_settings),
+            )
+            search_kwargs = {
+                "top": top_n,
+                "search_text": query,
+                "vector_queries": [vector_query],
+                "filter": combined_filter,
+                "select": get_search_select_fields(scope_name),
+            }
+            if use_semantic_ranker:
+                search_kwargs.update({
+                    "query_type": "semantic",
+                    "semantic_configuration_name": semantic_config_name,
+                    "query_caption": "extractive",
+                    "query_answer": "extractive",
+                })
+            else:
+                search_kwargs["query_type"] = "simple"
+            return search_with_embedding_profile(
+                client, embedding_profile, **search_kwargs
             )
 
+        if doc_scope == "all":
+            user_results = _search_index(
+                search_client_user,
+                user_access_filter,
+                "personal",
+                "nexus-user-index-semantic-configuration",
+            )
             if group_access_filter:
-                group_filter = _combine_odata_filters(group_access_filter, content_filter)
-                group_results = search_client_group.search(
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=group_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-group-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("group")
+                group_results = _search_index(
+                    search_client_group,
+                    group_access_filter,
+                    "group",
+                    "nexus-group-index-semantic-configuration",
                 )
             else:
                 group_results = []
 
             if public_workspace_filter:
-                public_filter = _combine_odata_filters(public_workspace_filter, content_filter)
-                public_results = search_client_public.search(
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=public_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-public-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("public")
+                public_results = _search_index(
+                    search_client_public,
+                    public_workspace_filter,
+                    "public",
+                    "nexus-public-index-semantic-configuration",
                 )
             else:
                 public_results = []
 
-            # Extract results from each index
             user_results_final = extract_search_results(user_results, top_n)
             group_results_final = extract_search_results(group_results, top_n)
             public_results_final = extract_search_results(public_results, top_n)
@@ -495,72 +680,66 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 public_count=len(public_results_final)
             )
 
-            # Normalize scores from each index to [0, 1] range for fair comparison
             user_results_normalized = normalize_scores(user_results_final, "user_index")
             group_results_normalized = normalize_scores(group_results_final, "group_index")
             public_results_normalized = normalize_scores(public_results_final, "public_index")
 
-            # Merge normalized results
-            results = user_results_normalized + group_results_normalized + public_results_normalized
-
+            merged_results = user_results_normalized + group_results_normalized + public_results_normalized
             debug_print(
                 "Merged results from all indexes",
                 "SEARCH",
-                total_count=len(results)
+                total_count=len(merged_results)
             )
+            return merged_results
 
-        elif doc_scope == "personal":
-            user_filter = _combine_odata_filters(user_access_filter, content_filter)
-            user_results = search_client_user.search(
-                search_text=query,
-                vector_queries=[vector_query],
-                filter=user_filter,
-                query_type="semantic",
-                semantic_configuration_name="nexus-user-index-semantic-configuration",
-                query_caption="extractive",
-                query_answer="extractive",
-                select=get_search_select_fields("personal")
+        if doc_scope == "personal":
+            user_results = _search_index(
+                search_client_user,
+                user_access_filter,
+                "personal",
+                "nexus-user-index-semantic-configuration",
             )
-            results = extract_search_results(user_results, top_n)
+            return extract_search_results(user_results, top_n)
 
-        elif doc_scope == "group":
+        if doc_scope == "group":
             if not group_access_filter:
-                results = []
-            else:
-                group_filter = _combine_odata_filters(group_access_filter, content_filter)
-                group_results = search_client_group.search(
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=group_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-group-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("group")
-                )
-                results = extract_search_results(group_results, top_n)
+                return []
+            group_results = _search_index(
+                search_client_group,
+                group_access_filter,
+                "group",
+                "nexus-group-index-semantic-configuration",
+            )
+            return extract_search_results(group_results, top_n)
 
-        elif doc_scope == "public":
-            if public_workspace_filter:
-                public_filter = _combine_odata_filters(public_workspace_filter, content_filter)
-                public_results = search_client_public.search(
-                    search_text=query,
-                    vector_queries=[vector_query],
-                    filter=public_filter,
-                    query_type="semantic",
-                    semantic_configuration_name="nexus-public-index-semantic-configuration",
-                    query_caption="extractive",
-                    query_answer="extractive",
-                    select=get_search_select_fields("public")
-                )
-                results = extract_search_results(public_results, top_n)
-            else:
-                results = []
+        if doc_scope == "public":
+            if not public_workspace_filter:
+                return []
+            public_results = _search_index(
+                search_client_public,
+                public_workspace_filter,
+                "public",
+                "nexus-public-index-semantic-configuration",
+            )
+            return extract_search_results(public_results, top_n)
+
+        return []
+
+    semantic_fallback_used = False
+    try:
+        results = _run_scoped_index_queries(use_semantic_ranker=True)
     except Exception as search_error:
         if is_semantic_search_quota_error(search_error):
             record_semantic_search_quota_exceeded(search_error, source="hybrid_search")
-            raise SemanticSearchQuotaExceededError() from search_error
-        raise
+            try:
+                results = _run_scoped_index_queries(use_semantic_ranker=False)
+                semantic_fallback_used = True
+            except Exception:
+                raise SemanticSearchQuotaExceededError() from search_error
+        else:
+            raise
+
+    results = filter_available_results(results, user_id=user_id)
 
     # Log pre-sort statistics
     if results:
@@ -625,14 +804,15 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
                 )
 
     # Cache the results before returning (pass scope parameters for correct partition key)
-    cache_search_results(
-        cache_key,
-        results,
-        user_id,
-        doc_scope,
-        active_group_ids=active_group_ids,
-        active_public_workspace_id=active_public_workspace_ids
-    )
+    if cache_key is not None:
+        cache_search_results(
+            cache_key,
+            results,
+            user_id,
+            doc_scope,
+            active_group_ids=active_group_ids,
+            active_public_workspace_id=active_public_workspace_ids
+        )
 
     debug_print(
         "Search complete - returning results",
@@ -640,8 +820,11 @@ def hybrid_search(query, user_id, document_id=None, document_ids=None, top_n=12,
         query=query[:40],
         final_result_count=len(results)
     )
-    clear_semantic_search_quota_warning(source="hybrid_search")
+    if not semantic_fallback_used:
+        clear_semantic_search_quota_warning(source="hybrid_search")
 
+    results = filter_available_results(results, user_id=user_id, cached=True)
+    assert_evidence_available(selected_sources, user_id=user_id)
     return results
 
 def extract_search_results(paged_results, top_n):

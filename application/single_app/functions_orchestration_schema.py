@@ -1,0 +1,2583 @@
+# functions_orchestration_schema.py
+
+"""
+The plan and elicitation contracts, and the validator that enforces them.
+
+**Planner output is untrusted input.** That is the single most important property in this
+framework and the reason this module exists as a hard boundary rather than a set of
+convenience helpers. A plan arrives as JSON written by a language model. It may name a
+capability that does not exist, one the administrator has switched off, or a document the
+user is not allowed to read. It may contain a dependency cycle, or twenty steps when the
+deployment allows eight. None of that is exceptional; it is the expected range of a
+generative system, and every one of those cases has to be caught here, before an adapter
+is reached.
+
+The validator therefore *repairs where repair is honest and drops where it is not*, and
+records what it did in ``validation.repairs`` so the plan card can show the user a plan
+that differs from what the model proposed and say why. Silently executing a repaired plan
+would be as bad as executing an invalid one.
+
+Two contracts live here:
+
+``plan``
+    What the planner returns and the executor runs: Gather / Reason / Render steps that
+    exchange typed, retained results. Every saved plan carries the schema marker
+    ``planner_contract_version`` (``DEPENDENCY_PLAN_CONTRACT_VERSION``). A plan without it,
+    or with the earlier value, was written by the removed legacy contract; it is recognised
+    and refused with ``LegacyPlanError`` rather than misread.
+
+``elicitation``
+    What the planner returns *instead* when it cannot plan without more information. The
+    schema half is deliberately MCP-elicitation-shaped -- a restricted JSON Schema of a
+    flat object with primitive properties -- so a future MCP server asking a question can
+    render through the very same card. Our own paging lives in a sibling ``ui_hints``
+    field rather than inside the schema, which keeps the schema itself MCP-clean.
+
+Version: 0.261.304
+Missing signed-in session reported as its own step failure in: 0.261.209
+Microsoft 365 step failures, with their sources, added in: 0.261.238
+Microsoft 365 approval stops carry their pending approval id in: 0.261.304
+"""
+
+import hashlib
+import json
+import math
+import uuid
+from copy import deepcopy
+
+from azure.core.exceptions import ServiceRequestError
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+from openai import APIConnectionError, APITimeoutError
+from elicitation_choices import normalize_choice_hint, choice_answer_errors
+
+from blob_container_readiness import STORAGE_FAILURE_CODE, STORAGE_FAILURE_MESSAGE
+from agent_execution_context import AgentDelegationTimeout
+from functions_m365_operations import M365_SOURCES
+from functions_model_catalog import ModelCatalogError
+from functions_document_analysis_results import AnalysisOptionsError, normalize_analysis_options
+from functions_web_iq import WebIQError, get_web_search_provider, resolve_web_iq_types
+from functions_orchestration_registry import (
+    APPROVAL_FLOOR_MANUAL,
+    CAPABILITY_ACTION_INVOKE,
+    CAPABILITY_COMPOSE,
+    CAPABILITY_DOCUMENT_MERGE,
+    CAPABILITY_GENERATE_IMAGE,
+    CAPABILITY_TABULAR_ANALYZE,
+    CAPABILITY_TABULAR_INSPECT,
+    CAPABILITY_TABULAR_MERGE,
+    CAPABILITY_WORKFLOW_HANDOFF,
+    CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RESULTS,
+    CAPABILITY_WORKFLOW_RUN,
+    DEPENDENCY_PLAN_CONTRACT_VERSION,
+    GENERAL_KNOWLEDGE_BASES,
+    admitted_export_pairs,
+    approval_floor_capability_ids,
+    get_capability,
+    get_capability_document_limit,
+    get_capability_result_outputs,
+    required_capability_ids,
+    resolve_available_capability_ids,
+)
+from functions_orchestration_result_contracts import (
+    AVAILABLE_INFORMATION_POLICY, NARRATIVE_EXPORT_PROFILES,
+    EXTERNAL_SESSION_UNAVAILABLE_REASON, IMAGE_ASSET_KIND, InputBinding, InputSpec, OutputSpec, RecordColumn,
+    ResultContractError, StepBindings, TaskResult, canonical_bytes, output_name, validate_input_bindings,
+    is_narrative_output, uses_available_information,
+)
+from functions_orchestration_deliverables import DeliverableError, compile_deliverables
+# The wait rules import this module lazily, so importing them here does not form a cycle.
+from functions_orchestration_workflow_run_wait import compute_workflow_run_waits, stored_workflow_run_waits
+# The merge engine imports only the standard library; plan validation shares its option rules.
+from functions_tabular_merge import (
+    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_inspect_options_from_arguments,
+    tabular_merge_options_from_arguments,
+)
+
+ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
+
+# Shown wherever a saved plan from the removed legacy contract is opened, rerun, edited,
+# restored or continued. One stable sentence, so every surface says the same thing.
+LEGACY_PLAN_MESSAGE = (
+    "This plan was created by an earlier orchestration version and can't be opened or "
+    "rerun. Start a new request."
+)
+LEGACY_PLAN_CODE = 'legacy_plan'
+
+# Plan lifecycle.
+PLAN_STATUS_DRAFT = 'draft'
+PLAN_STATUS_AWAITING_APPROVAL = 'awaiting_approval'
+PLAN_STATUS_APPROVED = 'approved'
+PLAN_STATUS_RUNNING = 'running'
+PLAN_STATUS_WAITING = 'waiting'
+PLAN_STATUS_COMPLETED = 'completed'
+PLAN_STATUS_FAILED = 'failed'
+PLAN_STATUS_CANCELLED = 'cancelled'
+PLAN_STATUS_SUPERSEDED = 'superseded'
+
+PLAN_STATUSES = (
+    PLAN_STATUS_DRAFT,
+    PLAN_STATUS_AWAITING_APPROVAL,
+    PLAN_STATUS_APPROVED,
+    PLAN_STATUS_RUNNING,
+    PLAN_STATUS_WAITING,
+    PLAN_STATUS_COMPLETED,
+    PLAN_STATUS_FAILED,
+    PLAN_STATUS_CANCELLED,
+    PLAN_STATUS_SUPERSEDED,
+)
+
+TERMINAL_PLAN_STATUSES = (
+    PLAN_STATUS_COMPLETED,
+    PLAN_STATUS_FAILED,
+    PLAN_STATUS_CANCELLED,
+    PLAN_STATUS_SUPERSEDED,
+)
+
+# Step lifecycle.
+STEP_STATUS_PENDING = 'pending'
+STEP_STATUS_RUNNING = 'running'
+STEP_STATUS_WAITING = 'waiting'
+STEP_STATUS_PARTIAL = 'partial'
+STEP_STATUS_COMPLETED = 'completed'
+STEP_STATUS_FAILED = 'failed'
+STEP_STATUS_SKIPPED = 'skipped'
+STEP_STATUS_CANCELLED = 'cancelled'
+
+STEP_STATUSES = (
+    STEP_STATUS_PENDING,
+    STEP_STATUS_RUNNING,
+    STEP_STATUS_WAITING,
+    STEP_STATUS_PARTIAL,
+    STEP_STATUS_COMPLETED,
+    STEP_STATUS_FAILED,
+    STEP_STATUS_SKIPPED,
+    STEP_STATUS_CANCELLED,
+)
+
+# Approval.
+APPROVAL_MODE_MANUAL = 'manual'
+APPROVAL_MODE_TIMED = 'timed'
+APPROVAL_MODE_AUTO = 'auto'
+APPROVAL_MODES = (APPROVAL_MODE_MANUAL, APPROVAL_MODE_TIMED, APPROVAL_MODE_AUTO)
+
+APPROVAL_STATE_PENDING = 'pending'
+APPROVAL_STATE_APPROVED = 'approved'
+APPROVAL_STATE_REJECTED = 'rejected'
+APPROVAL_STATE_EXPIRED = 'expired'
+APPROVAL_STATES = (
+    APPROVAL_STATE_PENDING,
+    APPROVAL_STATE_APPROVED,
+    APPROVAL_STATE_REJECTED,
+    APPROVAL_STATE_EXPIRED,
+)
+
+# Complexity, as reported by triage.
+COMPLEXITY_TRIVIAL = 'trivial'
+COMPLEXITY_SIMPLE = 'simple'
+COMPLEXITY_COMPLEX = 'complex'
+COMPLEXITIES = (COMPLEXITY_TRIVIAL, COMPLEXITY_SIMPLE, COMPLEXITY_COMPLEX)
+
+# MCP elicitation response actions, named exactly as the specification names them.
+ELICITATION_ACTION_ACCEPT = 'accept'
+ELICITATION_ACTION_DECLINE = 'decline'
+ELICITATION_ACTION_CANCEL = 'cancel'
+ELICITATION_ACTIONS = (
+    ELICITATION_ACTION_ACCEPT,
+    ELICITATION_ACTION_DECLINE,
+    ELICITATION_ACTION_CANCEL,
+)
+
+# MCP restricts elicitation schemas to a flat object of primitives so any client can render
+# one without a general JSON Schema implementation. Enforced rather than assumed, because
+# the planner writes these and a nested schema would reach a card that cannot draw it.
+ELICITATION_PRIMITIVE_TYPES = ('string', 'number', 'integer', 'boolean')
+ELICITATION_MAX_PROPERTIES = 12
+ELICITATION_MAX_ENUM_VALUES = 40
+ELICITATION_MAX_ARRAY_ITEMS = 100
+
+# Hard ceilings, independent of the administrator's own limits. These bound what the
+# validator will even consider, so a malformed plan cannot cost anything to reject.
+PLAN_HARD_MAX_STEPS = 30
+PLAN_MAX_TITLE_LENGTH = 200
+PLAN_MAX_RATIONALE_LENGTH = 600
+PLAN_MAX_SUMMARY_LENGTH = 600
+PLAN_MAX_ASSUMPTIONS = 8
+
+# A workflow proposal whose blueprint breaks a draft rule, and a plan that feeds a proposal to
+# another step or to the answer. The planner repairs either once, then drops the proposal.
+WORKFLOW_BLUEPRINT_INVALID_CODE = 'workflow_blueprint_invalid'
+WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE = 'workflow_proposal_not_consumable'
+# A workflow_run step that names no offered durable workflow, is not static, repeats a workflow,
+# exceeds the per-plan limit, or is read by another step or the answer. The planner repairs it
+# once, then drops the steps that still fail.
+WORKFLOW_RUN_INVALID_CODE = 'workflow_run_invalid'
+# A workflow_results step that is not static, names no offered workflow, repeats a read, exceeds
+# the per-plan limit, reads a workflow this plan also starts, or is read by anything but an answer
+# step. The planner repairs it once, then drops the steps that still fail.
+WORKFLOW_RESULTS_INVALID_CODE = 'workflow_results_invalid'
+# A workflow_handoff step whose blueprint breaks a hand-off rule, is not static, is read by another
+# step, or shares a plan with a workflow proposal or run. The planner repairs it once, then drops it.
+WORKFLOW_HANDOFF_INVALID_CODE = 'workflow_handoff_invalid'
+# A plan over the step budget or the document limit while hand-off is available to the user. The
+# planner repairs it once, by reducing the plan or by handing the work off. Without hand-off, the
+# same plans keep their existing codes.
+PLAN_BUDGET_EXCEEDED_CODE = 'plan_budget_exceeded'
+
+
+class PlanValidationError(ValueError):
+    """Raised when a plan cannot be repaired into something safe to run."""
+
+    def __init__(self, message, *, code='plan_invalid', rule=None):
+        self.code = code
+        self.rule = rule
+        super().__init__(message)
+
+
+class LegacyPlanError(PlanValidationError):
+    """A saved plan from the removed legacy contract. It is never interpreted."""
+
+    def __init__(self):
+        super().__init__(LEGACY_PLAN_MESSAGE, code=LEGACY_PLAN_CODE)
+        self.message = LEGACY_PLAN_MESSAGE
+
+
+def is_legacy_plan(plan):
+    """Whether a saved plan predates the current contract: no marker, or the earlier one.
+
+    A missing marker is never read as the current contract, and a legacy plan is never
+    interpreted, so every caller that finds one refuses it with ``LEGACY_PLAN_MESSAGE``.
+    """
+    if not isinstance(plan, dict):
+        return True
+    version = plan.get('planner_contract_version')
+    return version is None or (type(version) is int and version == 1)
+
+
+def plan_contract_version(plan):
+    """The current contract marker of a saved plan, or a refusal.
+
+    Raises ``LegacyPlanError`` for a plan written by the removed legacy contract and
+    ``PlanValidationError`` for any other unrecognized marker.
+    """
+    if is_legacy_plan(plan):
+        raise LegacyPlanError()
+    version = plan['planner_contract_version']
+    if type(version) is not int or version != DEPENDENCY_PLAN_CONTRACT_VERSION:
+        raise PlanValidationError('Unsupported orchestration plan contract.', code='plan_version_unsupported')
+    return version
+
+
+def _text(value, limit=None):
+    """Coerce to a trimmed string, optionally truncated."""
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if limit is not None and len(text) > limit:
+        text = text[:limit].rstrip()
+    return text
+
+
+def _string_list(value, limit=None):
+    """Coerce to a list of non-empty trimmed strings, preserving order."""
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        value = [value]
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    seen = set()
+    out = []
+    for item in value:
+        text = _text(item)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if limit is not None and len(out) >= limit:
+            break
+    return out
+
+
+def new_plan_id():
+    return f"plan_{uuid.uuid4().hex}"
+
+
+def new_run_id():
+    return f"run_{uuid.uuid4().hex}"
+
+
+def new_step_id(index):
+    return f"step_{index + 1}"
+
+
+def new_turn_id():
+    """Identity for one user turn, stable across every re-plan of it.
+
+    Distinct from ``plan_id`` and ``run_id``, both of which are minted afresh each time a
+    turn is planned again -- after an elicitation is answered, or after a step asks for a
+    re-plan. A client keying its card on either would lose track of the card it is already
+    showing the moment the plan it describes is replaced.
+    """
+    return f"turn_{uuid.uuid4().hex}"
+
+
+def build_request_fingerprint(user_message, seeds=None, revision=0):
+    """A stable identity for "this request, planned this way".
+
+    Used for idempotency, matching the ``request_fingerprint`` idea already proven in
+    ``functions_tabular_orchestration.py``: a retried plan request for an unchanged
+    question should be recognisable rather than producing a second run.
+    """
+    payload = json.dumps(
+        {
+            'message': _text(user_message),
+            'seeds': seeds if isinstance(seeds, dict) else {},
+            'revision': int(revision or 0),
+        },
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
+
+
+# --------------------------------------------------------------------------------------
+# Scalar coercion for elicitation answers
+# --------------------------------------------------------------------------------------
+
+def _coerce_scalar(value, expected_type):
+    """Best-effort coercion of a submitted scalar.
+
+    A form routinely returns "12" where the schema says integer. Rejecting that would
+    discard an otherwise good answer over a quoting habit, so the narrow and unambiguous
+    coercions are performed and anything else is refused.
+    """
+    if expected_type == 'string':
+        return _text(value) if not isinstance(value, bool) else None
+    if expected_type == 'integer':
+        if isinstance(value, bool):
+            return None
+        try:
+            return int(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+    if expected_type == 'number':
+        if isinstance(value, bool):
+            return None
+        try:
+            return float(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+    if expected_type == 'boolean':
+        if isinstance(value, bool):
+            return value
+        text = _text(value).lower()
+        if text in ('true', 'yes', '1'):
+            return True
+        if text in ('false', 'no', '0'):
+            return False
+        return None
+    return value
+
+
+# --------------------------------------------------------------------------------------
+# Plan validation
+# --------------------------------------------------------------------------------------
+
+def order_dependency_steps(steps):
+    """Stable topological order that keeps every declared edge."""
+    pending = list(steps)
+    ordered = []
+    completed = set()
+    while pending:
+        ready = next((
+            step for step in pending if set(step.get('depends_on') or ()).issubset(completed)
+        ), None)
+        if ready is None:
+            raise PlanValidationError('The plan has a cycle or missing dependency.', code='result_binding_cycle')
+        ordered.append(ready)
+        completed.add(ready['step_id'])
+        pending.remove(ready)
+    return ordered
+
+
+def validate_inline_output_schema(schema):
+    """Only self-contained JSON schemas; validation cannot fetch remote definitions."""
+    if type(schema) is not dict or len(canonical_bytes(schema)) > 32768:
+        raise PlanValidationError('The prepared output schema is invalid.')
+    pending = [schema]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            if any(key in value for key in ('$ref', '$dynamicRef', '$recursiveRef')):
+                raise PlanValidationError('Prepared output schemas must be self-contained.')
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise PlanValidationError('The prepared output schema is invalid.') from exc
+
+
+def step_input_specs(step):
+    capability = get_capability(step.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
+    if capability is None or type(step.get('inputs', {})) is not dict:
+        raise PlanValidationError('The step has invalid named inputs.')
+    accepted = capability['result_input_kinds']
+    if not set(capability.get('required_result_inputs') or ()).issubset(step.get('inputs', {})):
+        raise PlanValidationError('The capability requires an explicit named input.')
+    specs = []
+    for name, value in step.get('inputs', {}).items():
+        if type(value) is not dict or set(value) - {'binding', 'allow_partial', 'optional'} or 'binding' not in value:
+            raise PlanValidationError('Each named input requires an explicit result binding.')
+        kinds = accepted.get(name, accepted.get('*'))
+        if not kinds:
+            raise PlanValidationError('This capability does not accept that named input.')
+        if value.get('allow_partial') is True and not capability['partial_inputs_supported']:
+            raise PlanValidationError('This capability requires complete named inputs.')
+        if (
+            value.get('allow_partial') is True and step.get('capability_id') == 'render_file'
+            and step.get('arguments', {}).get('profile') not in NARRATIVE_EXPORT_PROFILES
+        ):
+            raise PlanValidationError('This file profile requires complete source data.')
+        if type(value.get('optional', False)) is not bool:
+            raise PlanValidationError('Input optionality must be a boolean.')
+        if value.get('optional') is True and not capability.get('optional_inputs_supported'):
+            raise PlanValidationError('This capability cannot proceed without a named input.')
+        specs.append(InputSpec(
+            name, InputBinding.from_dict(value['binding']), tuple(kinds), value.get('allow_partial', False),
+            value.get('optional', False),
+        ))
+    return tuple(specs)
+
+
+def optional_input_producers(step):
+    """Producers a step can run without, because every binding to them is optional."""
+    required, optional = set(), set()
+    for spec in step_input_specs(step):
+        if spec.binding.step_id is not None:
+            (optional if spec.optional else required).add(spec.binding.step_id)
+    return optional - required
+
+
+def step_result_bindings(step):
+    return StepBindings(
+        step['step_id'], step.get('enabled', True),
+        tuple(OutputSpec(item['name'], item['kind']) for item in step['outputs']),
+        step_input_specs(step), tuple(step.get('depends_on', [])),
+    )
+
+
+def available_information_plan(raw, *, step_ids=None):
+    """Declare the new narrative policy before approval, never while restoring a plan."""
+    if type(raw) is not dict:
+        return raw
+    plan = deepcopy(raw)
+    if type(plan.get('steps')) is not list:
+        return plan
+    for step in plan['steps']:
+        if type(step) is not dict or type(step.get('arguments')) is not dict:
+            continue
+        if step_ids is not None and step.get('step_id') not in step_ids:
+            continue
+        outputs = step.get('outputs')
+        if (
+            step.get('capability_id') == CAPABILITY_COMPOSE
+            and type(outputs) is list and outputs and all(is_narrative_output(item) for item in outputs)
+        ):
+            step['arguments'].setdefault('response_policy', AVAILABLE_INFORMATION_POLICY)
+        narrative = uses_available_information(step) or (
+            step.get('capability_id') == 'render_file'
+            and step['arguments'].get('profile') in NARRATIVE_EXPORT_PROFILES
+        )
+        if narrative and type(step.get('inputs')) is dict:
+            for value in step['inputs'].values():
+                if (
+                    type(value) is dict and 'binding' in value
+                    and type(value.get('allow_partial', False)) is bool
+                ):
+                    value['allow_partial'] = True
+    return plan
+
+
+def _dependency_outputs(raw, capability, composition_profiles, arguments):
+    required, optional = get_capability_result_outputs(capability, arguments)
+    fixed = [{'name': name, 'kind': kind} for name, kind in required.items()]
+    outputs = raw.get('outputs', fixed)
+    if capability['id'] in ('document_create_from_reference', 'document_refresh'):
+        prepared = [{'name': 'transformation', 'kind': 'structured-v1', 'profile': 'document_transform_v1'}]
+        if outputs not in (fixed, prepared) or 'document_transform_v1' not in (composition_profiles or {}):
+            raise PlanValidationError('The document transformation output profile is unavailable or invalid.')
+        return prepared
+    if capability['role'] == 'render':
+        if outputs != []:
+            raise PlanValidationError('Render delivers files, not named retained data outputs.')
+        return []
+    if type(outputs) is not list or not 1 <= len(outputs) <= 32:
+        raise PlanValidationError('Each step must declare its supported named outputs.')
+    if capability['id'] != CAPABILITY_COMPOSE:
+        allowed = {**required, **optional}
+        for output in outputs:
+            if type(output) is not dict or set(output) != {'name', 'kind'}:
+                raise PlanValidationError('The output declaration does not match the producing capability.')
+            OutputSpec(output['name'], output['kind'])
+            if allowed.get(output['name']) != output['kind']:
+                raise PlanValidationError('The output declaration does not match the producing capability.')
+        if not set(required).issubset({output['name'] for output in outputs}):
+            raise PlanValidationError('The output declaration does not match the producing capability.')
+        return deepcopy(outputs)
+    supported = capability['result_output_kinds']
+    for item in outputs:
+        if (
+            type(item) is not dict or set(item) - {'name', 'kind', 'columns', 'schema', 'profile'}
+            or not {'name', 'kind'}.issubset(item)
+        ):
+            raise PlanValidationError('The composition output declaration is invalid.')
+        OutputSpec(item['name'], item['kind'])
+        if item['kind'] not in supported:
+            raise PlanValidationError('The composition output kind is unsupported.')
+        if item['kind'] == 'records-v1':
+            columns = item.get('columns')
+            if type(columns) is not list or not columns:
+                raise PlanValidationError('Records require an explicit ordered column schema.')
+            parsed = tuple(RecordColumn.from_dict(column) for column in columns)
+            if len(parsed) > 256 or len({column.name for column in parsed}) != len(parsed):
+                raise PlanValidationError('The record column schema is invalid.')
+        elif 'columns' in item:
+            raise PlanValidationError('Only records may declare columns.')
+        if 'schema' in item:
+            if item['kind'] != 'structured-v1':
+                raise PlanValidationError('An inline schema requires structured content.')
+            validate_inline_output_schema(item['schema'])
+        if 'profile' in item:
+            if (
+                item['kind'] != 'structured-v1' or type(item['profile']) is not str
+                or item['profile'] not in (composition_profiles or {})
+            ):
+                raise PlanValidationError('The prepared-content profile is unavailable.')
+    if (
+        arguments.get('response_policy') == AVAILABLE_INFORMATION_POLICY
+        and not all(is_narrative_output(item) for item in outputs)
+    ):
+        raise PlanValidationError('Available-information responses require narrative outputs, not datasets.')
+    return deepcopy(outputs)
+
+
+def _validate_render_requests(steps, existing_results, export_catalog=None):
+    admitted_pairs = admitted_export_pairs(export_catalog) if export_catalog is not None else None
+    renders = [step for step in steps if step['capability_id'] == 'render_file']
+    if not renders:
+        return
+    # The shared registry validates representation compatibility without rendering.
+    from functions_generated_file_exports import GeneratedFileExportError, GeneratedFileExportRequest
+    from functions_generated_export_registry import resolve_generated_file_export_format
+
+    produced = {
+        (step['step_id'], output['name']): output['kind']
+        for step in steps for output in step['outputs']
+    }
+    for step in renders:
+        source = step_input_specs(step)[0].binding
+        kind = (
+            existing_results[source.existing_result].kind if source.existing_result is not None
+            else produced[(source.step_id, source.output_name)]
+        )
+        capability = get_capability('render_file', contract_version=2)
+        arguments = step['arguments']
+        if admitted_pairs is not None and (arguments['output_format'], arguments['profile']) not in admitted_pairs:
+            raise PlanValidationError(
+                'The requested file format and profile are not admitted for this plan.',
+                code='capability_unavailable',
+            )
+        options = deepcopy(arguments.get('options') or {})
+        if 'columns' in options:
+            options['columns'] = tuple(options['columns'])
+        request = GeneratedFileExportRequest(
+            output_format=arguments['output_format'], profile=arguments['profile'], **options,
+        )
+        try:
+            resolve_generated_file_export_format(request, capability['render_source_kinds'][kind])
+        except GeneratedFileExportError as exc:
+            raise PlanValidationError(
+                'The requested file representation does not support its bound source or options.',
+                code='result_kind_incompatible',
+            ) from exc
+
+
+def _optional_input_kind(spec, produced, existing_results):
+    if spec.binding.existing_result is not None:
+        reference = (existing_results or {}).get(spec.binding.existing_result)
+        return getattr(reference, 'kind', None)
+    return produced.get((spec.binding.step_id, spec.binding.output_name))
+
+
+def _apply_image_input_policy(steps, existing_results):
+    """A generated image is illustrative: its consumer can always be written without it.
+
+    Image inputs are therefore optional, so one failed image never blocks the answer or a
+    file; the delivery notes report it. Only the answer basis rules the other inputs.
+    """
+    produced = {
+        (step['step_id'], output['name']): output['kind'] for step in steps for output in step['outputs']
+    }
+    for step in steps:
+        for value in step['inputs'].values():
+            if type(value) is not dict or type(value.get('binding')) is not dict:
+                continue
+            binding = InputBinding.from_dict(value['binding'])
+            if (
+                step['capability_id'] in (CAPABILITY_COMPOSE, 'document_create_from_reference', 'document_refresh')
+                and binding.step_id is not None
+                and produced.get((binding.step_id, binding.output_name)) == IMAGE_ASSET_KIND
+            ):
+                value['optional'] = True
+    for step in steps:
+        specs = step_input_specs(step)
+        knowledge_optional = [
+            spec for spec in specs
+            if spec.optional and _optional_input_kind(spec, produced, existing_results) != IMAGE_ASSET_KIND
+        ]
+        if knowledge_optional and step['arguments'].get('knowledge_basis') not in GENERAL_KNOWLEDGE_BASES:
+            raise PlanValidationError(
+                'An optional input requires an answer basis that allows general knowledge.',
+            )
+
+
+def _require_merge_mapping_producers(steps):
+    """A merge's mapping input must come from a compose step that prepared a column mapping.
+
+    A retained result named by alias is checked against the profile when the merge runs.
+    """
+    by_id = {step['step_id']: step for step in steps}
+    for step in steps:
+        if step['capability_id'] != CAPABILITY_TABULAR_MERGE:
+            continue
+        for spec in step_input_specs(step):
+            if spec.name != 'mapping' or spec.binding.step_id is None:
+                continue
+            producer = by_id.get(spec.binding.step_id)
+            if producer is None:
+                # A missing producer is reported by the binding validation that follows.
+                continue
+            output = next(
+                (item for item in producer['outputs'] if item.get('name') == spec.binding.output_name), None,
+            )
+            if (
+                producer['capability_id'] != CAPABILITY_COMPOSE
+                or (output or {}).get('profile') != TABULAR_COLUMN_MAPPING_PROFILE
+            ):
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" binds a "mapping" input that is not a prepared column '
+                    'mapping. Bind the output of a compose step declared as structured-v1 with profile '
+                    f'{TABULAR_COLUMN_MAPPING_PROFILE}.',
+                    code='mapping_profile_required', rule='merge_mapping_profile',
+                )
+
+
+def _require_assembled_render_sources(steps, existing_results):
+    """A merged file renders only from a document merge's assembly, in that merge's format.
+
+    A retained assembly named by alias is checked against its format when the file renders.
+    """
+    # The profile and format names are plain constants; the export stack stays unloaded.
+    from functions_document_merge_assembly import ASSEMBLED_OUTPUT_FORMATS
+    from functions_generated_export_registry import ASSEMBLED_DOCUMENT_PROFILE
+
+    by_id = {step['step_id']: step for step in steps}
+    for step in steps:
+        if step['capability_id'] != 'render_file' or step['arguments'].get('profile') != ASSEMBLED_DOCUMENT_PROFILE:
+            continue
+        sources = [spec.binding for spec in step_input_specs(step) if spec.name == 'source']
+        if not sources:
+            # A missing source input is reported by the binding validation that follows.
+            continue
+        source = sources[0]
+        if source.existing_result is not None:
+            reference = (existing_results or {}).get(source.existing_result)
+            producer = getattr(getattr(reference, 'producer', None), 'capability_id', None)
+            if producer == CAPABILITY_DOCUMENT_MERGE and getattr(reference, 'output_name', None) == 'assembly':
+                continue
+            producer_step = None
+        else:
+            if source.step_id not in by_id:
+                # A missing producer is reported by the binding validation that follows.
+                continue
+            producer_step = by_id[source.step_id]
+        if (
+            producer_step is None or producer_step['capability_id'] != CAPABILITY_DOCUMENT_MERGE
+            or source.output_name != 'assembly'
+        ):
+            raise PlanValidationError(
+                f'Step "{step["step_id"]}" renders a merged file but does not bind the "assembly" output of '
+                'a document_merge step. Bind that output, or use a profile that fits the bound source.',
+                code='result_kind_incompatible', rule='assembled_render_source',
+            )
+        kind = producer_step['arguments'].get('kind')
+        expected = ASSEMBLED_OUTPUT_FORMATS.get(kind)
+        if step['arguments'].get('output_format') != expected:
+            raise PlanValidationError(
+                f'Step "{step["step_id"]}" renders a {kind} merge in another format. Use output_format '
+                f'{expected} for a {kind} merge.',
+                code='result_kind_incompatible', rule='assembled_render_format',
+            )
+
+
+def _require_document_transform_sources(steps, existing_results):
+    by_id = {step['step_id']: step for step in steps}
+    transformations = ('document_create_from_reference', 'document_refresh')
+    for step in steps:
+        transform = step['capability_id'] in transformations
+        rendering = step['capability_id'] == 'render_file' and step['arguments'].get('profile') == 'document_transform_v1'
+        if not transform and not rendering:
+            continue
+        name = 'inspection' if transform else 'source'
+        spec = next((item for item in step_input_specs(step) if item.name == name), None)
+        if spec is None:
+            raise PlanValidationError('A document transformation requires its inspected reference.')
+        binding = spec.binding
+        if binding.existing_result is not None:
+            reference = (existing_results or {}).get(binding.existing_result)
+            producer = getattr(getattr(reference, 'producer', None), 'capability_id', None)
+            output = getattr(reference, 'output_name', None)
+        else:
+            producer = (by_id.get(binding.step_id) or {}).get('capability_id')
+            output = binding.output_name
+        expected = ('document_inspect',) if transform else transformations
+        if producer not in expected or output != ('inspection' if transform else 'transformation'):
+            raise PlanValidationError(
+                'Bind the document inspection to preparation, and its transformation to rendering.',
+                code='result_kind_incompatible', rule='document_transform_source',
+            )
+        if spec.optional or spec.allow_partial:
+            raise PlanValidationError('The inspected document and prepared edits must be complete.')
+
+
+def _reject_workflow_proposal_consumers(steps, final_response):
+    """A workflow proposal is reviewed on its own card, so no step and no answer may read it."""
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE}
+    if not producers:
+        return
+    for step in steps:
+        if step['step_id'] in producers:
+            continue
+        named = set(step.get('depends_on') or ())
+        named.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+        if named & producers:
+            raise PlanValidationError(
+                'A workflow proposal is reviewed on its own card. Remove every dependency on the '
+                'workflow_propose step and every input bound to its output.',
+                code=WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE, rule='workflow_proposal_consumed',
+            )
+    if isinstance(final_response, dict) and final_response.get('step_id') in producers:
+        raise PlanValidationError(
+            'A workflow proposal is reviewed on its own card. Bind the final response to an answer step instead.',
+            code=WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE, rule='workflow_proposal_consumed',
+        )
+
+
+def _reject_workflow_run_consumers(steps, final_response, waits=None):
+    """Starting a workflow only links to its run, so no step and no answer may read the step.
+
+    The one exception is a step in ``waits``: the server decided that the plan waits for that run,
+    and ``compute_workflow_run_waits`` already checked that only answer steps read it.
+    """
+    waited = set(waits) if isinstance(waits, dict) else set()
+    producers = {
+        step['step_id'] for step in steps
+        if step['capability_id'] == CAPABILITY_WORKFLOW_RUN and step['step_id'] not in waited
+    }
+    if not producers:
+        return
+    named = set()
+    for step in steps:
+        if step['step_id'] in producers:
+            continue
+        named.update(step.get('depends_on') or ())
+        named.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+    if isinstance(final_response, dict):
+        named.add(final_response.get('step_id'))
+    if named & producers:
+        raise PlanValidationError(
+            'A workflow_run step only starts its workflow; the reply links to the run. Remove every '
+            'dependency on it, every input bound to its output, and any final_response that selects it.',
+            code=WORKFLOW_RUN_INVALID_CODE, rule='workflow_run_consumed',
+        )
+
+
+def _reject_workflow_results_consumers(steps, final_response):
+    """A stored workflow result reaches the answer only, so only answer steps may read it.
+
+    The result's text is masked wherever the answer is read. Any step that names a results
+    step, or names a step that does, is tainted; only ``compose`` may name a tainted step, so
+    no file export, analysis, agent or action can copy the text out of that masking.
+    """
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_RESULTS}
+    if not producers:
+        return
+    named = {}
+    for step in steps:
+        names = set(step.get('depends_on') or ())
+        names.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+        named[step['step_id']] = names
+    tainted = set(producers)
+    changed = True
+    while changed:
+        changed = False
+        for step in steps:
+            if step['step_id'] not in tainted and named[step['step_id']] & tainted:
+                tainted.add(step['step_id'])
+                changed = True
+    for step in steps:
+        if step['capability_id'] != CAPABILITY_COMPOSE and named[step['step_id']] & tainted:
+            raise PlanValidationError(
+                'A workflow_results step is read only by the answer. Bind its output to a compose '
+                'step, and remove every other step that depends on it or on a step that reads it.',
+                code=WORKFLOW_RESULTS_INVALID_CODE, rule='workflow_results_consumed',
+            )
+    if isinstance(final_response, dict) and final_response.get('step_id') in producers:
+        raise PlanValidationError(
+            'A workflow_results step gathers notes for the answer. Bind the final response to the '
+            'compose step that reads it instead.',
+            code=WORKFLOW_RESULTS_INVALID_CODE, rule='workflow_results_consumed',
+        )
+
+
+def _reject_workflow_handoff_consumers(steps, final_response):
+    """A hand-off is reviewed on its own card and runs later, so no step and no answer may read it."""
+    producers = {step['step_id'] for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_HANDOFF}
+    if not producers:
+        return
+    named = set()
+    for step in steps:
+        if step['step_id'] in producers:
+            continue
+        named.update(step.get('depends_on') or ())
+        named.update(spec.binding.step_id for spec in step_input_specs(step) if spec.binding.step_id is not None)
+    if isinstance(final_response, dict):
+        named.add(final_response.get('step_id'))
+    if named & producers:
+        raise PlanValidationError(
+            'A workflow_handoff step only prepares the hand-off card; the work runs after the user '
+            'approves it. Remove every dependency on it, every input bound to its output, and any '
+            'final_response that selects it.',
+            code=WORKFLOW_HANDOFF_INVALID_CODE, rule='workflow_handoff_consumed',
+        )
+
+
+def _reject_mixed_workflow_handoff(raw_steps):
+    """A hand-off plan hands the whole job to one workflow, so it neither proposes nor starts another.
+
+    Read from the planner's steps before any step is checked, so this is the first rule a mixed
+    plan is told about.
+    """
+    capabilities = {
+        raw['capability_id'] for raw in raw_steps
+        if isinstance(raw, dict) and isinstance(raw.get('capability_id'), str)
+    }
+    if CAPABILITY_WORKFLOW_HANDOFF in capabilities and capabilities & {
+        CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN,
+    }:
+        raise PlanValidationError(
+            'A plan with a workflow_handoff step hands the whole request to that workflow. Remove '
+            'every workflow_propose and workflow_run step, or remove the workflow_handoff step.',
+            code=WORKFLOW_HANDOFF_INVALID_CODE, rule='workflow_handoff_exclusive',
+        )
+
+
+def _offers_handoff(available_capability_ids):
+    """Whether a request offered hand-off to its planner. Reads a concrete collection only."""
+    if not isinstance(available_capability_ids, (list, tuple, set, frozenset)):
+        return False
+    return CAPABILITY_WORKFLOW_HANDOFF in available_capability_ids
+
+
+_REFERENCE_IMAGE_FIELDS = ('reference_document_ids', 'reference_message_ids')
+
+
+def _validate_reference_id_list(values, label):
+    if not isinstance(values, list) or not values:
+        raise PlanValidationError(f'{label} must be a nonempty list.')
+    if any(not isinstance(value, str) or not value or value != value.strip() for value in values):
+        raise PlanValidationError('Reference image IDs must be exact, nonempty identifiers.')
+    if len(set(values)) != len(values):
+        raise PlanValidationError('Reference image selections must not contain duplicates.')
+
+
+def _validate_generate_image_references(arguments, seeds, settings):
+    document_ids = arguments.get('reference_document_ids') or []
+    message_ids = arguments.get('reference_message_ids') or []
+    if not document_ids and not message_ids:
+        return
+    _validate_reference_id_list(document_ids, 'Reference document IDs') if document_ids else None
+    _validate_reference_id_list(message_ids, 'Reference message IDs') if message_ids else None
+    seed_data = seeds if isinstance(seeds, dict) else {}
+    offered_documents = {
+        item.get('document_id') for item in seed_data.get('image_reference_documents') or []
+        if isinstance(item, dict)
+    }
+    offered_messages = {
+        item.get('message_id') for item in seed_data.get('image_reference_messages') or []
+        if isinstance(item, dict)
+    }
+    if set(document_ids) - offered_documents or set(message_ids) - offered_messages:
+        raise PlanValidationError('A required reference image is unavailable.')
+    if set(document_ids) & set(message_ids):
+        raise PlanValidationError('Reference image selections must not contain duplicates.')
+    try:
+        from functions_image_edit import resolve_image_edit_capability
+        from functions_image_references import effective_max_reference_images
+
+        limit = effective_max_reference_images(resolve_image_edit_capability(settings or {}))
+    except Exception as exc:
+        raise PlanValidationError('Reference images are unavailable for this image model.') from exc
+    if limit <= 0:
+        raise PlanValidationError('Reference images are unavailable for this image model.')
+    if len(document_ids) + len(message_ids) > limit:
+        raise PlanValidationError('The complete reference image selection exceeds the image model limit.')
+
+
+def validate_dependency_plan(
+    plan, *, settings=None, authorized_document_ids=None, available_capability_ids=None,
+    agent_names=None, action_refs=None, existing_results=None, composition_profiles=None,
+    export_catalog=None, deliverable_availability=None, image_selected=False, seeds=None,
+    workflow_planning=None,
+):
+    """Compile a plan without dropping required work, arguments, outputs, or dependencies.
+
+    ``deliverable_availability`` is the server truth a new plan is checked against; see
+    ``functions_orchestration_deliverables.compile_deliverables``. ``workflow_planning`` is the
+    request's server-only workflow planning context; with it, a proposal's blueprint is also
+    checked against the handles, limits and agents offered with the request, and a workflow_run
+    step must name a durable workflow the request offered. A plan over the step budget or the
+    document limit fails with ``plan_budget_exceeded`` instead of its usual code only when
+    ``available_capability_ids`` offered ``workflow_handoff``, so the planner can hand the work off.
+    """
+    settings = settings or {}
+    canonical_bytes(composition_profiles or {})
+    try:
+        max_steps = min(PLAN_HARD_MAX_STEPS, max(1, int(settings.get('chat_orchestration_max_steps') or 8)))
+    except (TypeError, ValueError):
+        max_steps = 8
+    raw_steps = plan.get('steps')
+    if type(raw_steps) is not list or not raw_steps or len(raw_steps) > max_steps:
+        if type(raw_steps) is list and raw_steps and _offers_handoff(available_capability_ids):
+            raise PlanValidationError(
+                'The complete plan exceeds the available step budget. Reduce the plan, or hand the '
+                'work off with one workflow_handoff step.',
+                code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_step_budget',
+            )
+        raise PlanValidationError('The complete plan exceeds the available step budget.', code='result_step_limit')
+    # A plan over a budget names hand-off as a way out only when the request offered it.
+    handoff_offered = _offers_handoff(available_capability_ids)
+    if available_capability_ids is None:
+        available_capability_ids = resolve_available_capability_ids(
+            settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+            contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION,
+            export_catalog=export_catalog,
+        )
+    available = set(available_capability_ids)
+    if CAPABILITY_WORKFLOW_HANDOFF in available:
+        _reject_mixed_workflow_handoff(raw_steps)
+    accepted = []
+    counts = {}
+    # Workflows earlier run steps of this plan start; each may be started once.
+    workflow_run_seen = set()
+    # Reads earlier workflow_results steps of this plan make, and the workflows this plan starts:
+    # a run is queued, so the same plan reading that workflow's results would read a stale run.
+    workflow_results_seen = set()
+    workflow_run_handles = {
+        raw['arguments']['workflow'] for raw in raw_steps
+        if isinstance(raw, dict) and raw.get('capability_id') == CAPABILITY_WORKFLOW_RUN
+        and isinstance(raw.get('arguments'), dict) and isinstance(raw['arguments'].get('workflow'), str)
+    }
+    fields = {
+        'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
+        'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
+        # Auto routing: the planner may name a task category; only the server assigns a binding.
+        'model_task', 'model_binding',
+        # Deliverables: the planner names what a step delivers; the server derives its brief.
+        'delivers', 'deliverable_context',
+    }
+    try:
+        for raw in raw_steps:
+            if type(raw) is not dict or set(raw) - fields:
+                raise PlanValidationError('The plan contains an invalid step field.')
+            output_name(raw.get('step_id'))
+            capability = get_capability(raw.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
+            if capability is None or capability['id'] not in available or capability.get('runtime_unavailable_reason'):
+                raise PlanValidationError('A required capability is unknown or disabled.', code='capability_unavailable')
+            capability_id = capability['id']
+            if 'role' in raw and raw['role'] != capability['role']:
+                raise PlanValidationError('Capability purpose is server-owned.')
+            if any(type(raw.get(key, default)) is not bool for key, default in (('enabled', True), ('optional', False))):
+                raise PlanValidationError('Step enablement and optionality must be booleans.')
+            if type(raw.get('depends_on', [])) is not list:
+                raise PlanValidationError('Dependencies must be a list of step IDs.')
+            if 'model_task' in raw and (type(raw['model_task']) is not str or not raw['model_task'].strip()):
+                raise PlanValidationError('A model task must be a named task category.')
+            if 'model_binding' in raw and type(raw['model_binding']) is not dict:
+                raise PlanValidationError('A model binding is server-owned structured data.')
+            if capability_id == CAPABILITY_WORKFLOW_RUN:
+                # Loaded only when a plan starts a workflow. It runs before the generic limit and
+                # contract checks, so each problem with the step is reported with its own rule.
+                from functions_orchestration_workflow_runs import prepare_workflow_run_arguments
+
+                prepare_workflow_run_arguments(
+                    raw, raw.get('arguments', {}), workflow_planning=workflow_planning, seen=workflow_run_seen,
+                )
+            if capability_id == CAPABILITY_WORKFLOW_RESULTS:
+                # Loaded only when a plan reads a workflow's results; checked before the generic
+                # limit and contract checks, like a run step, so each problem has its own rule.
+                from functions_orchestration_workflow_results import prepare_workflow_results_arguments
+
+                prepare_workflow_results_arguments(
+                    raw, raw.get('arguments', {}), workflow_planning=workflow_planning,
+                    seen=workflow_results_seen, run_handles=workflow_run_handles,
+                )
+            counts[capability_id] = counts.get(capability_id, 0) + 1
+            if capability['max_per_plan'] is not None and counts[capability_id] > capability['max_per_plan']:
+                raise PlanValidationError('The plan exceeds a capability work limit.', code='result_step_limit')
+            arguments = raw.get('arguments', {})
+            if type(arguments) is not dict:
+                raise PlanValidationError('Step arguments must be an object.')
+            canonical_bytes(arguments)
+            analysis_options = None
+            if capability_id == 'document_analyze' and 'analysis_options' in arguments:
+                try:
+                    analysis_options = normalize_analysis_options(arguments['analysis_options'])
+                except ValueError as exc:
+                    raise PlanValidationError(
+                        'The declared Analyze semantics or field requirements are unsupported.',
+                        code='analysis_options_invalid',
+                        rule=exc.rule if isinstance(exc, AnalysisOptionsError) else 'analysis_options_invalid',
+                    ) from exc
+                option_schema = capability['inputs']['properties']['analysis_options']
+                if not Draft202012Validator(option_schema).is_valid(arguments['analysis_options']):
+                    raise PlanValidationError(
+                        'The declared Analyze options do not match their contract.',
+                        code='analysis_options_invalid', rule='analysis_options_schema_invalid',
+                    )
+            if not Draft202012Validator(capability['inputs']).is_valid(arguments):
+                raise PlanValidationError('Step arguments do not match the capability contract.')
+            arguments = deepcopy(arguments)
+            if analysis_options is not None:
+                arguments['analysis_options'] = analysis_options
+            if capability_id in ('web_search', 'deep_research') and 'result_types' in arguments:
+                try:
+                    if get_web_search_provider(settings) == 'web_iq':
+                        resolve_web_iq_types(settings, arguments['result_types'])
+                    elif arguments['result_types'] != ['web']:
+                        raise WebIQError('result_type_disabled')
+                    if not settings.get('enable_web_search'):
+                        raise WebIQError('result_type_disabled')
+                except WebIQError as exc:
+                    raise PlanValidationError('A requested web discovery type is disabled.') from exc
+            if capability_id == CAPABILITY_TABULAR_ANALYZE:
+                # Native query/transform validators run only for explicitly admitted native work.
+                from functions_orchestration_native_results import validate_native_orchestration_arguments
+
+                try:
+                    arguments = validate_native_orchestration_arguments(arguments)
+                except ValueError as exc:
+                    raise PlanValidationError('The native computation arguments are unsupported.') from exc
+            if capability_id == CAPABILITY_WORKFLOW_PROPOSE:
+                # Loaded only when a plan proposes a workflow; the draft service is not needed otherwise.
+                from functions_orchestration_workflows import prepare_workflow_proposal_arguments
+
+                arguments = prepare_workflow_proposal_arguments(
+                    raw, arguments, settings=settings, workflow_planning=workflow_planning,
+                )
+            if capability_id == CAPABILITY_WORKFLOW_HANDOFF:
+                # Loaded only when a plan hands work off; the draft service is not needed otherwise.
+                from functions_orchestration_workflow_handoffs import prepare_workflow_handoff_arguments
+
+                arguments = prepare_workflow_handoff_arguments(
+                    raw, arguments, settings=settings, workflow_planning=workflow_planning,
+                )
+            if capability_id == 'conversation_read':
+                from functions_conversation_references import (
+                    ConversationReferenceError, normalize_conversation_references,
+                )
+
+                try:
+                    references = normalize_conversation_references(arguments.get('conversation_references'))
+                except ConversationReferenceError as exc:
+                    raise PlanValidationError(exc.public_message) from exc
+                if not references:
+                    raise PlanValidationError('Select at least one conversation reference.')
+                if plan.get('conversation_id') and any(
+                    reference['id'] == plan['conversation_id'] for reference in references
+                ):
+                    raise PlanValidationError('Choose a different conversation as a source.')
+                arguments['conversation_references'] = references
+            if capability_id == 'conversation_send':
+                from functions_conversation_references import ConversationReferenceError
+                from functions_orchestration_conversation_capabilities import normalize_conversation_send
+
+                try:
+                    arguments = normalize_conversation_send(arguments)
+                except ConversationReferenceError as exc:
+                    raise PlanValidationError(exc.public_message) from exc
+                if plan.get('conversation_id') and arguments['destination_conversation_id'] == plan['conversation_id']:
+                    raise PlanValidationError('Choose a different destination conversation.')
+                if any(
+                    reference['id'] == arguments['destination_conversation_id']
+                    for reference in arguments.get('conversation_references') or []
+                ):
+                    raise PlanValidationError('A destination conversation cannot reference itself as a source.')
+            if any(isinstance(value, str) and not value.strip() for value in arguments.values()):
+                raise PlanValidationError('String arguments must not be empty or whitespace.')
+            for name, rule in capability['inputs']['properties'].items():
+                if name not in arguments and 'default' in rule:
+                    arguments[name] = deepcopy(rule['default'])
+            if 'agent_name' in arguments and arguments['agent_name'] not in (agent_names or ()):
+                raise PlanValidationError('The selected agent is unavailable.')
+            if 'action_ref' in arguments and arguments['action_ref'] not in (action_refs or ()):
+                raise PlanValidationError('The selected action is unavailable.')
+            limit = get_capability_document_limit(capability, settings=settings)
+            for name in ('document_ids', 'right_document_ids'):
+                if name in arguments:
+                    if any(not value or value != value.strip() for value in arguments[name]):
+                        raise PlanValidationError('Document IDs must be exact, nonempty identifiers.')
+                    if len(set(arguments[name])) != len(arguments[name]):
+                        raise PlanValidationError('Document selections must not contain duplicates.')
+                    if limit and len(arguments[name]) > limit:
+                        if handoff_offered:
+                            raise PlanValidationError(
+                                'The complete source selection exceeds the document limit. Reduce the '
+                                'plan, or hand the work off with one workflow_handoff step.',
+                                code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_document_budget',
+                            )
+                        raise PlanValidationError('The complete source selection exceeds the document limit.')
+                    if authorized_document_ids is not None and set(arguments[name]) - set(authorized_document_ids):
+                        raise PlanValidationError('A required source is unavailable.')
+            if 'reference_document_ids' in arguments:
+                _validate_reference_id_list(arguments['reference_document_ids'], 'Reference document IDs')
+                if authorized_document_ids is not None and set(arguments['reference_document_ids']) - set(authorized_document_ids):
+                    raise PlanValidationError('A required reference image is unavailable.')
+            if 'reference_message_ids' in arguments:
+                _validate_reference_id_list(arguments['reference_message_ids'], 'Reference message IDs')
+            if capability_id == CAPABILITY_GENERATE_IMAGE:
+                _validate_generate_image_references(arguments, seeds, settings)
+            if capability_id == 'document_inspect':
+                reference = arguments['reference']
+                if reference['kind'] == 'document' and authorized_document_ids is not None:
+                    if reference['document_id'] not in authorized_document_ids:
+                        raise PlanValidationError('The reference document is unavailable.')
+                if reference['kind'] == 'artifact':
+                    candidates = (seeds or {}).get('document_transform_references') or []
+                    if not any(item.get('handle') == reference for item in candidates if isinstance(item, dict)):
+                        raise PlanValidationError('The reference artifact is not available in this conversation.')
+            if (
+                'left_document_id' in arguments
+                and arguments['left_document_id'] != arguments['left_document_id'].strip()
+            ):
+                raise PlanValidationError('Document IDs must be exact, nonempty identifiers.')
+            if (
+                'left_document_id' in arguments and authorized_document_ids is not None
+                and arguments['left_document_id'] not in authorized_document_ids
+            ):
+                raise PlanValidationError('A required comparison source is unavailable.')
+            if arguments.get('left_document_id') in arguments.get('right_document_ids', []):
+                raise PlanValidationError('A comparison source and its targets must be distinct.')
+            step = {
+                'step_id': raw['step_id'], 'capability_id': capability_id,
+                'title': _text(raw.get('title'), PLAN_MAX_TITLE_LENGTH) or capability['label'],
+                'rationale': _text(raw.get('rationale'), PLAN_MAX_RATIONALE_LENGTH),
+                'arguments': arguments, 'depends_on': list(raw.get('depends_on', [])),
+                'inputs': deepcopy(raw.get('inputs', {})),
+                'outputs': _dependency_outputs(raw, capability, composition_profiles, arguments),
+                'optional': raw.get('optional', False), 'enabled': raw.get('enabled', True),
+                'estimated_cost': capability['cost_class'], 'role': capability['role'],
+                'status': STEP_STATUS_PENDING,
+                **({'model_task': raw['model_task'].strip()} if 'model_task' in raw else {}),
+                **({'model_binding': deepcopy(raw['model_binding'])} if 'model_binding' in raw else {}),
+                **({'delivers': deepcopy(raw['delivers'])} if 'delivers' in raw else {}),
+            }
+            step_input_specs(step)
+            if capability_id == 'document_analyze' and not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                raise PlanValidationError(
+                    'Analyze requires arguments.document_ids with the selected IDs, or an inputs.sources '
+                    'source-set binding. Mentioning a filename in analysis_prompt is not a source binding.',
+                    code='source_binding_required', rule='document_sources_required',
+                )
+            if capability_id == 'document_analyze' and arguments.get('document_ids') and 'sources' in step['inputs']:
+                raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+            if capability_id == CAPABILITY_TABULAR_MERGE:
+                if not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                    raise PlanValidationError(
+                        'Merge requires arguments.document_ids naming at least two CSV or Excel files in '
+                        'merge order, or an inputs.sources source-set binding.',
+                        code='source_binding_required', rule='merge_sources_required',
+                    )
+                if arguments.get('document_ids') and 'sources' in step['inputs']:
+                    raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+                try:
+                    tabular_merge_options_from_arguments(arguments, mapping_bound='mapping' in step['inputs'])
+                except TabularMergeError as exc:
+                    raise PlanValidationError(
+                        f'Step "{step["step_id"]}" has merge settings that cannot be used together: '
+                        f'{exc.message}',
+                        code='merge_options_invalid', rule='merge_options_invalid',
+                    ) from exc
+            if capability_id == CAPABILITY_DOCUMENT_MERGE:
+                if not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                    raise PlanValidationError(
+                        'Merge documents requires arguments.document_ids naming at least two files in merge '
+                        'order, or an inputs.sources source-set binding.',
+                        code='source_binding_required', rule='merge_sources_required',
+                    )
+                if arguments.get('document_ids') and 'sources' in step['inputs']:
+                    raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+                # The document merge engine and its option rules are standard-library only.
+                from functions_document_merge import DocumentMergeError
+                from functions_document_merge_assembly import document_merge_options_from_arguments
+
+                try:
+                    document_merge_options_from_arguments(arguments)
+                except DocumentMergeError as exc:
+                    raise PlanValidationError(
+                        f'Step "{step["step_id"]}" has merge settings that cannot be used together: '
+                        f'{exc.message}',
+                        code='merge_options_invalid', rule='merge_options_invalid',
+                    ) from exc
+            if capability_id == CAPABILITY_TABULAR_INSPECT:
+                if not arguments.get('document_ids') and 'sources' not in step['inputs']:
+                    raise PlanValidationError(
+                        'Inspect requires arguments.document_ids naming the CSV or Excel files, or an '
+                        'inputs.sources source-set binding.',
+                        code='source_binding_required', rule='inspect_sources_required',
+                    )
+                if arguments.get('document_ids') and 'sources' in step['inputs']:
+                    raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+                try:
+                    tabular_inspect_options_from_arguments(arguments)
+                except TabularMergeError as exc:
+                    raise PlanValidationError(
+                        f'Step "{step["step_id"]}" has inspection settings that cannot be used together: '
+                        f'{exc.message}',
+                        code='merge_options_invalid', rule='inspect_options_invalid',
+                    ) from exc
+            accepted.append(step)
+        if not any(step['enabled'] for step in accepted):
+            raise PlanValidationError('The plan contains no enabled work.')
+        _require_merge_mapping_producers(accepted)
+        _require_assembled_render_sources(accepted, existing_results)
+        _require_document_transform_sources(accepted, existing_results)
+        _apply_image_input_policy(accepted, existing_results)
+        _reject_workflow_proposal_consumers(accepted, plan.get('final_response'))
+        # Whether a run step waits is the server's decision: computed from the server-side planning
+        # context when there is one, and otherwise kept from the stored plan only while it still fits.
+        if workflow_planning is not None:
+            waits = compute_workflow_run_waits(accepted, plan.get('final_response'), workflow_planning)
+        else:
+            waits = stored_workflow_run_waits(plan.get('workflow_run_waits'), accepted, plan.get('final_response'))
+        _reject_workflow_run_consumers(accepted, plan.get('final_response'), waits=waits)
+        _reject_workflow_results_consumers(accepted, plan.get('final_response'))
+        _reject_workflow_handoff_consumers(accepted, plan.get('final_response'))
+        bindings = [step_result_bindings(step) for step in accepted]
+        dependencies = validate_input_bindings(bindings, existing_results=existing_results, max_steps=max_steps)
+        _validate_render_requests(accepted, existing_results, export_catalog=export_catalog)
+        final_binding = None
+        if plan.get('final_response') is not None:
+            final_binding = InputBinding.from_dict(plan['final_response'])
+            validate_input_bindings(
+                [*bindings, StepBindings(
+                    '__final_response__', True, inputs=(
+                        InputSpec('answer', final_binding, ('text-v1', 'markdown-v1'), allow_partial=True),
+                    ),
+                )],
+                existing_results=existing_results, max_steps=max_steps + 1,
+            )
+        for step in accepted:
+            step['depends_on'] = list(dependencies[step['step_id']])
+        # A producer that only feeds optional inputs is not required work: its failure is
+        # disclosed by the consumer instead of failing the whole plan. The final response and
+        # any required binding keep it required.
+        final_producer = final_binding.step_id if final_binding is not None else None
+        consumers = {}
+        for step in accepted:
+            for spec in step_input_specs(step):
+                if spec.binding.step_id is not None:
+                    consumers.setdefault(spec.binding.step_id, []).append(spec.optional)
+        for step in accepted:
+            uses = consumers.get(step['step_id'])
+            if uses and all(uses) and step['step_id'] != final_producer:
+                step['optional'] = True
+        deliverables = compile_deliverables(
+            plan.get('deliverables'), accepted, final_response=plan.get('final_response'),
+            availability=deliverable_availability, image_selected=image_selected,
+        )
+    except ResultContractError as exc:
+        raise PlanValidationError('The plan has an invalid or unavailable result binding.', code=exc.code) from exc
+    except DeliverableError as exc:
+        raise PlanValidationError(exc.message, code=exc.code, rule=exc.rule) from exc
+    compiled = deepcopy(plan)
+    if final_binding is None:
+        compiled.pop('final_response', None)
+    compiled.pop('workflow_run_waits', None)
+    if waits:
+        compiled['workflow_run_waits'] = waits
+    compiled.update({
+        'planner_contract_version': DEPENDENCY_PLAN_CONTRACT_VERSION,
+        'deliverables': deliverables,
+        'steps': order_dependency_steps(accepted),
+        'validation': {'ok': True, 'errors': [], 'repairs': []},
+    })
+    return compiled
+
+
+def validate_plan(
+    plan,
+    settings=None,
+    authorized_document_ids=None,
+    available_capability_ids=None,
+    agent_names=None,
+    action_refs=None,
+    *,
+    existing_results=None,
+    composition_profiles=None,
+    export_catalog=None,
+    contract_version=None,
+    deliverable_availability=None,
+    image_selected=False,
+    seeds=None,
+    workflow_planning=None,
+):
+    """Make a planner-authored plan safe to run, or refuse it.
+
+    ``authorized_document_ids`` is the set of documents this user may read *right now*. It
+    is applied here and applied again before finalization in the executor, because the two
+    moments are not the same moment and access can be revoked between them.
+
+    ``agent_names`` and ``action_refs`` are the agents and actions this user can actually
+    reach. A planner naming anything else is refused exactly like a planner naming an
+    unknown capability, rather than handed to an adapter that would go looking for an
+    integration nobody offered.
+
+    Required work, arguments, outputs and dependencies are never dropped to make a plan
+    fit: a plan that cannot run as written raises ``PlanValidationError``. A plan without
+    the current schema marker was written by the removed legacy contract and raises
+    ``LegacyPlanError``.
+    """
+    version = plan_contract_version(plan)
+    if contract_version is not None and (type(contract_version) is not int or contract_version != version):
+        raise PlanValidationError('The saved plan contract does not match the admitted contract.')
+    return validate_dependency_plan(
+        plan, settings=settings, authorized_document_ids=authorized_document_ids,
+        available_capability_ids=available_capability_ids, agent_names=agent_names,
+        action_refs=action_refs, existing_results=existing_results,
+        composition_profiles=composition_profiles,
+        export_catalog=export_catalog,
+        deliverable_availability=deliverable_availability, image_selected=image_selected,
+        seeds=seeds, workflow_planning=workflow_planning,
+    )
+
+
+def plan_document_ids(plan, *, include_disabled=False):
+    """Read named sources before authorization, without treating their presence as access."""
+    document_ids = []
+    for step in (plan or {}).get('steps') or ():
+        if not isinstance(step, dict) or (
+            not include_disabled and not step.get('enabled', True)
+        ):
+            continue
+        arguments = step.get('arguments')
+        if not isinstance(arguments, dict):
+            continue
+        for field in ('document_ids', 'right_document_ids', 'left_document_id', 'reference_document_ids'):
+            document_ids.extend(_string_list(arguments.get(field)))
+        if step.get('capability_id') == 'document_inspect':
+            reference = arguments.get('reference') or {}
+            if isinstance(reference, dict) and reference.get('kind') == 'document':
+                document_ids.extend(_string_list(reference.get('document_id')))
+    return list(dict.fromkeys(document_ids))
+
+
+def effective_plan_document_ids(plan, seeds=None):
+    """Include an implicit search filter supplied by the user's selected sources."""
+    document_ids = plan_document_ids(plan)
+    if any(
+        step.get('enabled', True) and step.get('capability_id') == 'document_search'
+        and not (step.get('arguments') or {}).get('document_ids')
+        for step in (plan or {}).get('steps') or ()
+    ):
+        document_ids.extend(_string_list((seeds or {}).get('document_ids')))
+    return list(dict.fromkeys(document_ids))
+
+
+def validate_plan_document_source_kinds(plan, document_source_kinds):
+    """Check known source kinds without treating model-supplied labels as authority."""
+    if not isinstance(document_source_kinds, dict):
+        raise PlanValidationError('Document type metadata is unavailable.', code='source_metadata_invalid')
+    for step in plan.get('steps') or []:
+        if step.get('enabled', True) and step.get('capability_id') in (
+            CAPABILITY_TABULAR_MERGE, CAPABILITY_TABULAR_INSPECT,
+        ):
+            if any(
+                document_source_kinds.get(document_id) not in (None, 'tabular')
+                for document_id in plan_document_ids({'steps': [step]})
+            ):
+                action = 'merges' if step['capability_id'] == CAPABILITY_TABULAR_MERGE else 'inspects'
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" {action} only CSV or Excel files, and a selected source is '
+                    'another kind of document. Use only the tabular sources there, or prepare the others '
+                    'with compatible offered capabilities. Keep every selected source.',
+                    code='source_kind_invalid', rule='tabular_source_required',
+                )
+            continue
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_DOCUMENT_MERGE:
+            workbook = (step.get('arguments') or {}).get('kind') == 'workbook'
+            kinds = [
+                document_source_kinds.get(document_id) for document_id in plan_document_ids({'steps': [step]})
+            ]
+            if workbook and any(kind not in (None, 'tabular') for kind in kinds):
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" puts CSV or Excel files on the sheets of one workbook, and a '
+                    'selected source is another kind of document. Keep every selected source.',
+                    code='source_kind_invalid', rule='tabular_source_required',
+                )
+            if not workbook and 'tabular' in kinds:
+                raise PlanValidationError(
+                    f'Step "{step["step_id"]}" merges documents, and a selected source is a CSV or Excel '
+                    'file. Use tabular_merge to append spreadsheet rows, or kind workbook to keep each '
+                    'one as a sheet. Keep every selected source.',
+                    code='source_kind_invalid', rule='document_source_required',
+                )
+            continue
+        if not step.get('enabled', True) or step.get('capability_id') not in (
+            'document_analyze', 'document_compare',
+        ):
+            continue
+        if any(
+            document_source_kinds.get(document_id) in ('tabular', 'unsupported', 'unresolved')
+            for document_id in plan_document_ids({'steps': [step]})
+        ):
+            raise PlanValidationError(
+                f'Step "{step["step_id"]}" uses a source kind that narrative document analysis '
+                'cannot process. Use offered tabular_analyze work for tabular sources, then '
+                'compose across the prepared results. Keep every selected source.',
+                code='source_kind_invalid', rule='narrative_source_required',
+            )
+
+
+def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
+    """Do not silently lose selected operations or sources during normalization.
+
+    Editor revisions require explicit review and may change earlier selections. Make
+    those changes visible rather than blocking a user's later narrowing instruction.
+    """
+    seeds = seeds or {}
+    steps = [step for step in plan.get('steps') or () if step.get('enabled', True)]
+    used = {step.get('capability_id') for step in steps}
+    missing = set(required_capability_ids(seeds)) - used
+    selected_documents = set(_string_list(seeds.get('document_ids')))
+    used_documents = set(effective_plan_document_ids(plan, seeds))
+    messages = [
+        f"The plan does not use the selected {get_capability(value)['label']} operation."
+        if get_capability(value) else 'A selected operation is not available.'
+        for value in sorted(missing)
+    ]
+    if selected_documents - used_documents:
+        messages.append('The plan does not use all selected documents.')
+    if messages and not allow_changes:
+        raise PlanValidationError(
+            ' '.join(messages), code='selected_requirements_missing',
+            rule=(
+                'selected_documents_and_capabilities_missing' if missing and selected_documents - used_documents
+                else 'selected_capabilities_missing' if missing else 'selected_documents_missing'
+            ),
+        )
+    if messages:
+        repairs = plan.setdefault('validation', {}).setdefault('repairs', [])
+        for message in messages:
+            warning = f'{message} Review this change before running.'
+            if warning not in repairs:
+                repairs.append(warning)
+    return plan
+
+
+def workflow_run_catalog_entry(workflow_planning, handle):
+    """The catalog entry the request offered for ``handle``, or None. Never raises.
+
+    The handle must be in both the planner-facing catalog and the server-side handle map, with a
+    record id, so a handle the planner invented, or one whose record is missing, is never used.
+    It is defined here so the workflow runs module, which imports this one, checks run steps with
+    the same lookup that names them on the approval card, without this module importing it back.
+    """
+    if not isinstance(workflow_planning, dict) or not isinstance(handle, str):
+        return None
+    handles = workflow_planning.get('handles')
+    handles = handles.get('workflows') if isinstance(handles, dict) else None
+    record = handles.get(handle) if isinstance(handles, dict) else None
+    if not isinstance(record, dict) or not isinstance(record.get('id'), str) or not record['id'].strip():
+        return None
+    catalog = workflow_planning.get('catalog')
+    entries = catalog.get('workflows') if isinstance(catalog, dict) else None
+    for entry in entries if isinstance(entries, list) else ():
+        if isinstance(entry, dict) and entry.get('handle') == handle:
+            return entry
+    return None
+
+
+def _plan_workflow_inputs(plan, workflow_planning):
+    """The saved workflows the plan's enabled run steps start, named for the approval card.
+
+    Handles, names and triggers only: workflow ids stay in the server-side handle map.
+    """
+    run_steps = [
+        step for step in (plan or {}).get('steps') or ()
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_WORKFLOW_RUN
+    ]
+    if not run_steps:
+        return []
+    workflows = []
+    for step in run_steps:
+        handle = (step.get('arguments') or {}).get('workflow')
+        entry = workflow_run_catalog_entry(workflow_planning, handle)
+        if entry is None or any(workflow['handle'] == handle for workflow in workflows):
+            continue
+        workflows.append({
+            'handle': handle,
+            'name': _text(entry.get('name'), 200) or 'Workflow',
+            'trigger_summary': _text(entry.get('trigger_summary'), 200),
+            'paused': entry.get('enabled') is not True,
+        })
+    return workflows
+
+
+def _plan_workflow_results_inputs(plan, workflow_planning):
+    """The saved workflows the plan's enabled results steps read, named for the approval card.
+
+    Handles and names only: workflow and run ids stay on the server, and nothing about a run.
+    """
+    workflows = []
+    for step in (plan or {}).get('steps') or ():
+        if not step.get('enabled', True) or step.get('capability_id') != CAPABILITY_WORKFLOW_RESULTS:
+            continue
+        handle = (step.get('arguments') or {}).get('workflow')
+        entry = workflow_run_catalog_entry(workflow_planning, handle)
+        if entry is None or any(workflow['handle'] == handle for workflow in workflows):
+            continue
+        workflows.append({'handle': handle, 'name': _text(entry.get('name'), 200) or 'Workflow'})
+    return workflows
+
+
+def plan_approval_floor(plan):
+    """``{'mode': 'manual', 'reason': <capability id>}`` when an enabled step sets a floor, else None.
+
+    A capability whose descriptor sets ``approval_floor`` makes its plan wait for the user to run
+    it, whatever approval mode was asked for. Disabled steps never run, so they set no floor.
+    """
+    floors = approval_floor_capability_ids()
+    for step in (plan or {}).get('steps') or ():
+        if isinstance(step, dict) and step.get('enabled', True) and step.get('capability_id') in floors:
+            return {'mode': APPROVAL_FLOOR_MANUAL, 'reason': step['capability_id']}
+    return None
+
+
+def build_plan_inputs(plan, seeds=None, document_labels=None, actions=None, workflow_planning=None):
+    """Describe what the plan will actually act on, for the approval card.
+
+    Derived from the validated steps rather than from what the planner claimed, because
+    the two can differ: a step may have had unauthorized documents removed, or been
+    dropped entirely. The card has to show the plan that will run, not the one proposed.
+
+    ``document_labels`` maps ids to display names. It is optional because a plan is still
+    describable without it -- an id is a poor label but an honest one, and failing to
+    resolve a name is not a reason to refuse to show the plan.
+
+    ``workflow_planning`` names the saved workflows the plan starts; ``workflows`` is present
+    only when the plan starts one, and ``workflow_results`` only when it reads one's results, so
+    every other plan's inputs are unchanged.
+    """
+    seeds = seeds if isinstance(seeds, dict) else {}
+    labels = document_labels if isinstance(document_labels, dict) else {}
+
+    document_ids = effective_plan_document_ids(plan, seeds)
+    action_refs = []
+    uses_web = False
+    for step in (plan or {}).get('steps') or ():
+        if not step.get('enabled', True):
+            continue
+        if step.get('capability_id') == 'web_search':
+            uses_web = True
+        arguments = step.get('arguments') or {}
+        if step.get('capability_id') == CAPABILITY_ACTION_INVOKE:
+            action_ref = arguments.get('action_ref')
+            if action_ref and action_ref not in action_refs:
+                action_refs.append(action_ref)
+    selected = set(seeds.get('document_ids') or ())
+
+    # Named, not quoted. The plan document is stored and shown, and the prompt's full wording
+    # is already in the message the plan was built from; repeating it here would duplicate an
+    # unbounded string into every plan that used a prompt.
+    seed_prompt = seeds.get('prompt')
+    prompt = None
+    if isinstance(seed_prompt, dict):
+        prompt = {'id': seed_prompt.get('id'), 'name': seed_prompt.get('name')}
+
+    inputs = {
+        'documents': [
+            {
+                'document_id': document_id,
+                'display_name': labels.get(document_id) or document_id,
+                'selected_by_user': document_id in selected,
+            }
+            for document_id in document_ids
+        ],
+        'conversation_references': deepcopy(seeds.get('conversation_references') or []),
+        'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
+        'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
+        'web': uses_web,
+        'required_capabilities': required_capability_ids(seeds),
+        'actions': [
+            {
+                'action_ref': action['action_ref'],
+                'display_name': _text(action.get('display_name') or action.get('name'), 200),
+                'scope_label': _text(action.get('scope_label'), 200),
+            }
+            for action in actions or ()
+            if isinstance(action, dict) and action.get('action_ref') in action_refs
+        ],
+        'agent': seeds.get('agent'),
+        'model': seeds.get('model'),
+        'prompt': prompt,
+    }
+    workflows = _plan_workflow_inputs(plan, workflow_planning)
+    if workflows:
+        inputs['workflows'] = workflows
+    workflow_results = _plan_workflow_results_inputs(plan, workflow_planning)
+    if workflow_results:
+        inputs['workflow_results'] = workflow_results
+    return inputs
+
+
+def build_plan_outputs(plan):
+    """What the run will produce: the answer, plus every enabled step's retained results."""
+    return [{'kind': 'message'}] + [
+        {'kind': 'retained_result', 'source_step_id': step['step_id'], **deepcopy(output)}
+        for step in plan['steps'] if step.get('enabled', True) for output in step['outputs']
+    ]
+
+
+def normalize_plan(
+    plan,
+    conversation_id,
+    user_id,
+    settings=None,
+    approval_mode=None,
+    authorized_document_ids=None,
+    available_capability_ids=None,
+    turn_id=None,
+    seeds=None,
+    document_labels=None,
+    agent_names=None,
+    actions=None,
+    *,
+    contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION,
+    existing_results=None,
+    composition_profiles=None,
+    export_catalog=None,
+    deliverable_availability=None,
+    image_selected=False,
+    workflow_planning=None,
+):
+    """Turn raw planner output into a complete, validated plan document.
+
+    ``deliverable_availability`` and ``image_selected`` check a new plan's deliverables
+    against what the server can produce right now; ``workflow_planning`` checks a workflow
+    proposal against the handles and limits offered with the request.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    plan = dict(plan) if isinstance(plan, dict) else {}
+    requested_version = plan.get('planner_contract_version', contract_version)
+    if type(requested_version) is not int or requested_version != contract_version:
+        raise PlanValidationError('A model cannot change the admitted plan contract.')
+    plan_contract_version({'planner_contract_version': contract_version})
+
+    # Bindings are server-owned. A planner response cannot authorize a deployment.
+    plan.pop('model_routing', None)
+    # So is waiting for a workflow run: the validator computes it from the server's planning context.
+    plan.pop('workflow_run_waits', None)
+    for step in plan.get('steps') or []:
+        if isinstance(step, dict):
+            step.pop('model_binding', None)
+
+    intent = plan.get('intent') if isinstance(plan.get('intent'), dict) else {}
+    complexity = _text(intent.get('complexity')).lower()
+    if complexity not in COMPLEXITIES:
+        complexity = COMPLEXITY_SIMPLE
+
+    mode = _text(approval_mode).lower()
+    if mode not in APPROVAL_MODES:
+        mode = _text(settings.get('chat_orchestration_default_approval_mode')).lower()
+    if mode not in APPROVAL_MODES:
+        mode = APPROVAL_MODE_MANUAL
+
+    try:
+        timeout_seconds = int(settings.get('chat_orchestration_timed_approval_seconds') or 10)
+    except (TypeError, ValueError):
+        timeout_seconds = 10
+
+    plan.update({
+        'plan_id': plan.get('plan_id') or new_plan_id(),
+        'run_id': plan.get('run_id') or new_run_id(),
+        # Identifies the user's turn rather than this attempt at planning it. Re-planning
+        # after an elicitation mints a new plan_id and run_id, so a client keying anything
+        # on those would lose track of the card it is already showing.
+        'turn_id': _text(turn_id) or _text(plan.get('turn_id')) or new_turn_id(),
+        'revision': int(plan.get('revision') or 0),
+        'conversation_id': conversation_id,
+        'user_id': user_id,
+        'planner_contract_version': contract_version,
+        'intent': {
+            'summary': _text(intent.get('summary'), PLAN_MAX_SUMMARY_LENGTH),
+            'complexity': complexity,
+            'confidence': intent.get('confidence'),
+        },
+        'assumptions': _string_list(plan.get('assumptions'), limit=PLAN_MAX_ASSUMPTIONS),
+        'approval': {
+            'mode': mode,
+            'timeout_seconds': max(3, min(timeout_seconds, 120)),
+            'state': APPROVAL_STATE_PENDING,
+            'approved_at': None,
+            'approved_by': None,
+            'edited': False,
+        },
+    })
+
+    plan = validate_plan(
+        plan,
+        settings=settings,
+        authorized_document_ids=authorized_document_ids,
+        available_capability_ids=available_capability_ids,
+        agent_names=agent_names,
+        action_refs=[
+            action.get('action_ref') for action in actions or () if isinstance(action, dict)
+        ],
+        existing_results=existing_results,
+        composition_profiles=composition_profiles,
+        export_catalog=export_catalog,
+        contract_version=contract_version,
+        deliverable_availability=deliverable_availability,
+        image_selected=image_selected,
+        seeds=seeds,
+        workflow_planning=workflow_planning,
+    )
+
+    plan['inputs'] = build_plan_inputs(
+        plan, seeds=seeds, document_labels=document_labels, actions=actions,
+        workflow_planning=workflow_planning,
+    )
+    plan['outputs'] = build_plan_outputs(plan)
+
+    # Some work always waits for the user, whatever mode was asked for: a plan that starts a
+    # saved workflow is never approved on arrival or by a countdown. The floor is recorded so the
+    # card can say why, and claim_plan_run refuses a saved plan that lost it.
+    floor = plan_approval_floor(plan)
+    if floor is not None:
+        mode = APPROVAL_MODE_MANUAL
+        plan['approval'].update(mode=mode, floor=floor)
+
+    # A plan nobody has to look at is approved on arrival; everything else waits. Timed
+    # mode waits too, because the countdown belongs to the browser -- a server that
+    # pre-approved it would leave the user watching a countdown that could not be stopped.
+    plan['status'] = (
+        PLAN_STATUS_APPROVED if mode == APPROVAL_MODE_AUTO else PLAN_STATUS_AWAITING_APPROVAL
+    )
+    if mode == APPROVAL_MODE_AUTO:
+        plan['approval']['state'] = APPROVAL_STATE_APPROVED
+
+    return plan
+
+
+def apply_plan_edits(
+    plan, edits, *, existing_results=None, composition_profiles=None,
+    export_catalog=None, contract_version=None,
+):
+    """Apply a user's edits to a plan before it runs.
+
+    Edits disable steps, remove documents, or select optional semantic review.
+    A user may not add a capability or
+    a document through this path, because doing so would let the browser assemble a plan
+    that never passed the planner's own reasoning or the authorization check that followed
+    it. Widening belongs to re-planning, which goes back through validation.
+    """
+    if contract_version is not None and (
+        type(contract_version) is not int or contract_version != plan_contract_version(plan)
+    ):
+        raise PlanValidationError('The saved plan contract does not match the admitted contract.')
+    plan_contract_version(plan)
+    if not isinstance(edits, dict):
+        return plan
+    original = plan
+    plan = deepcopy(plan)
+
+    disabled = set(_string_list(edits.get('disabled_step_ids')))
+    removed_documents = edits.get('removed_document_ids')
+    removed_documents = removed_documents if isinstance(removed_documents, dict) else {}
+    semantic_review = edits.get('semantic_review', {})
+    if type(semantic_review) is not dict or any(
+        type(key) is not str or value not in ('auto', 'on', 'off')
+        for key, value in semantic_review.items()
+    ):
+        raise PlanValidationError('The semantic review choice is invalid.')
+    review_steps = {step['step_id'] for step in plan.get('steps') or () if step['capability_id'] == 'compose'}
+    if set(semantic_review) - review_steps:
+        raise PlanValidationError('Semantic review can only be changed for prepared content.')
+
+    edited = False
+    for step in plan.get('steps') or ():
+        if step['step_id'] in semantic_review:
+            step['arguments']['semantic_review'] = semantic_review[step['step_id']]
+            edited = True
+        if step['step_id'] in disabled and step.get('enabled', True):
+            step['enabled'] = False
+            edited = True
+        drop = set(_string_list(removed_documents.get(step['step_id'])))
+        if not drop:
+            continue
+        for field in ('document_ids', 'right_document_ids', *_REFERENCE_IMAGE_FIELDS):
+            if field not in step.get('arguments', {}):
+                continue
+            kept = [value for value in step['arguments'][field] if value not in drop]
+            if len(kept) != len(step['arguments'][field]):
+                if not kept and field in _REFERENCE_IMAGE_FIELDS:
+                    # With every reference removed, the image is generated from its prompt alone.
+                    del step['arguments'][field]
+                else:
+                    step['arguments'][field] = kept
+                edited = True
+
+    if edited:
+        plan.setdefault('approval', {})['edited'] = True
+    try:
+        if not any(step['enabled'] for step in plan['steps']):
+            raise PlanValidationError('The plan contains no enabled work.')
+        for step in plan['steps']:
+            capability = get_capability(step['capability_id'])
+            if not Draft202012Validator(capability['inputs']).is_valid(step['arguments']):
+                raise PlanValidationError('This edit leaves a required source unavailable.')
+            if step['capability_id'] == 'document_analyze' and 'analysis_options' in step['arguments']:
+                try:
+                    normalize_analysis_options(step['arguments']['analysis_options'])
+                except ValueError as exc:
+                    raise PlanValidationError('This edit has unsupported Analyze semantics.') from exc
+            if composition_profiles is not None:
+                _dependency_outputs(step, capability, composition_profiles, step['arguments'])
+            if (
+                step['enabled'] and step['capability_id'] == 'document_analyze'
+                and not step['arguments'].get('document_ids') and 'sources' not in step['inputs']
+            ):
+                raise PlanValidationError('This edit leaves Analyze without a source.')
+        validate_input_bindings(
+            [step_result_bindings(step) for step in plan['steps']], existing_results=existing_results,
+            max_steps=PLAN_HARD_MAX_STEPS,
+        )
+        _validate_render_requests(plan['steps'], existing_results, export_catalog=export_catalog)
+        if plan.get('final_response'):
+            binding = InputBinding.from_dict(plan['final_response'])
+            if binding.step_id and not next(
+                step['enabled'] for step in plan['steps'] if step['step_id'] == binding.step_id
+            ):
+                raise PlanValidationError('The selected answer producer cannot be disabled.')
+        # A step the user switched off changes what an answer step writes for, such as a
+        # file it no longer feeds. The saved plan must describe exactly what will run, so
+        # checkpoints and retries compare the same deliverable briefs the executor derives.
+        plan['deliverables'] = compile_deliverables(
+            plan.get('deliverables'), plan['steps'], final_response=plan.get('final_response'),
+        )
+    except ResultContractError as exc:
+        raise PlanValidationError('This edit leaves a required result unavailable.', code=exc.code) from exc
+    except DeliverableError as exc:
+        raise PlanValidationError(exc.message, code=exc.code, rule=exc.rule) from exc
+    original.update(plan)
+    return original
+
+
+def summarize_plan(plan):
+    """A compact description for the collapsed card, the ledger and message metadata."""
+    steps = [step for step in (plan or {}).get('steps') or () if step.get('enabled', True)]
+    return {
+        'run_id': (plan or {}).get('run_id'),
+        'plan_id': (plan or {}).get('plan_id'),
+        'turn_id': (plan or {}).get('turn_id'),
+        'intent_summary': ((plan or {}).get('intent') or {}).get('summary', ''),
+        'step_count': len(steps),
+        'capabilities_used': list(dict.fromkeys(
+            step.get('capability_id') for step in steps if step.get('capability_id')
+        )),
+        'status': (plan or {}).get('status'),
+    }
+
+
+# --------------------------------------------------------------------------------------
+# Step results
+# --------------------------------------------------------------------------------------
+
+FAILURE_CONTRACT_VERSION = 1
+FAILURE_MESSAGES = {
+    'user_cancelled': 'You stopped this run. Already submitted external actions may still finish.',
+    'step_timeout': (
+        'This step did not finish before its time limit. An admin can raise the step timeout '
+        'under Admin Settings > Orchestration > Chat Orchestration > Limits.'
+    ),
+    'run_timeout': 'The run reached its total time limit before all work could finish.',
+    'step_budget': 'The run reached its step limit before all work could finish.',
+    'delegation_timeout': 'The delegated agent did not finish before its time limit.',
+    'provider_timeout': 'The service used by this step timed out.',
+    'provider_http_error': 'The service used by this step returned an unsuccessful HTTP response.',
+    'provider_not_configured': 'The service used by this step is not configured for this deployment.',
+    'provider_failed': 'The service used by this step reported an error before returning results.',
+    'connection_failed': 'This step could not connect to the service it uses.',
+    'execution_interrupted': 'This step stopped unexpectedly. The underlying cause was not recorded.',
+    'execution_expired': 'The execution lease expired before the worker recorded a final outcome.',
+    'ownership_lost': 'This execution no longer owns the attempt and cannot publish further results.',
+    'context_unavailable': 'The original context or access changed. Review the request and create a new plan.',
+    'analysis_result_unavailable': 'The saved Analyze result is unavailable. No answer was generated from an incomplete preview.',
+    'analysis_result_not_saved': 'The analysis completed, but its final data could not be saved for reuse.',
+    'analysis_input_too_large': 'The complete saved analysis exceeds the selected model input budget. No data was truncated or re-analyzed. Select a larger model or use a supported complete-record reader.',
+    'result_unavailable': 'A required retained result is unavailable or changed. No preview was substituted.',
+    'integration_unavailable': (
+        "This step's agent or action isn't available to you right now, so it didn't run. Check "
+        'that it still exists, is enabled and is shared with you, then retry.'
+    ),
+    'operation_recovery_required': (
+        'An operation may already have run, or its material changed. Check its saved outgoing '
+        'action and the external service before creating a new plan. It was not repeated.'
+    ),
+    'integration_input_unavailable': (
+        'The complete prepared input is unavailable, unauthorized, or exceeds the integration '
+        'input budget. No shortened content was substituted. Review the input or choose a larger model.'
+    ),
+    'external_session_required': (
+        'This step continued in the background, where your sign-in is not available to confirm '
+        'access to web search, web pages, deep research, agents or actions, or to start a saved '
+        'workflow. Send the request again to use them.'
+    ),
+    'm365_sign_in_required': (
+        'Microsoft 365 needs you to sign in or grant access before this step can use your account. '
+        'Select Connect Microsoft 365, then Retry from failed step.'
+    ),
+    'm365_approval_required': (
+        'This step needs your approval before it can use Microsoft 365. Review it in Approvals, '
+        'then select Retry from failed step.'
+    ),
+    'm365_unavailable': (
+        'Microsoft 365 access for this step could not be confirmed, so no Microsoft 365 data was '
+        "read. Check the action's settings and your access to it, then retry."
+    ),
+    'm365_shared_conversation': (
+        "Plans can't use Microsoft 365 in a shared conversation. Use Microsoft 365 actions and "
+        'agents from your own conversation.'
+    ),
+    'm365_read_only': (
+        "This step only gathers Microsoft 365 information, but the action only sends or changes "
+        'data. Ask the planner for an explicit operation step if that is what you want.'
+    ),
+    'm365_model_limits_required': (
+        "This step's model has no verified token limits, so SharePoint and OneDrive file content "
+        "couldn't be used safely. Ask an admin to set this model's token limits in Model Endpoints, "
+        'then ask again.'
+    ),
+    'm365_evidence_unavailable': (
+        "SharePoint or OneDrive file evidence couldn't be saved or read for this conversation, so "
+        'no file content was used. Select Retry from failed step. If it fails again, ask an admin '
+        "to check the app's chat storage."
+    ),
+    'workflow_runtime_unavailable': (
+        'Saved workflows were temporarily unavailable, so this workflow may not have started. '
+        "Retrying is safe: a workflow this plan already started won't start again."
+    ),
+    'workflow_run_failed': (
+        "The workflow this plan waited for didn't finish successfully, so its result wasn't used. "
+        'Open its run in Workflows to see what happened.'
+    ),
+    'workflow_run_cancelled': (
+        'The workflow this plan waited for was cancelled before it finished, so its result '
+        "wasn't used."
+    ),
+    'workflow_results_unavailable': "Your workflow results couldn't be read right now. Try again in a moment.",
+    'workflow_result_changed': (
+        'A workflow result this answer used changed or is no longer available, so the answer was not '
+        'saved. Ask again to read the current result.'
+    ),
+    'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
+    STORAGE_FAILURE_CODE: STORAGE_FAILURE_MESSAGE,
+    'completeness_incomplete': "The answer still needs an adjustment after checking. Your progress is saved.",
+    'completeness_unavailable': "I couldn't finish checking the prepared answer. Your progress is saved.",
+    'search_result_too_large': (
+        'The full search response exceeds the retained-result storage budget. No shortened result was '
+        'accepted. Narrow the search or select fewer sources and create a new plan.'
+    ),
+    'search_result_incomplete': (
+        'This saved search contains only a bounded or incomplete result. Its discarded content cannot '
+        'be recovered from the checkpoint. Review the source selection and create a new plan.'
+    ),
+    'result_input_too_large': 'The complete named inputs exceed the selected model budget. No input was truncated. Use a larger model or revise the plan.',
+    'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
+    'result_commit_unconfirmed': 'The producer stopped before its retained completion checkpoint was confirmed. Its work will not be repeated automatically.',
+    'result_partial': 'Required work produced only an explicitly limited partial result.',
+    'visual_not_delivered': (
+        'A chart or diagram you asked for could not be created or shown. Retry runs the steps that '
+        'make it again.'
+    ),
+    'input_partial_not_accepted': (
+        'An earlier step returned only a partial result, and this step requires complete results, so it did not run.'
+    ),
+    'input_partial_not_recoverable': (
+        'The saved analysis has unresolved findings despite complete source coverage. Retrying the same '
+        'dependent steps cannot complete this request. Review the unresolved findings and revise the request or sources.'
+    ),
+    'dependency_unavailable': 'A required dependency did not complete. This operation was not executed.',
+    'file_publication_not_allowed': 'Gathering and reasoning cannot create downloadable files.',
+    'checkpoint_unavailable': 'Progress could not be saved or verified. This attempt cannot safely resume.',
+    'checkpoint_storage_unavailable': 'Saved progress storage is temporarily unavailable. Verification can be retried without repeating completed work.',
+    'checkpoint_invalid': 'Saved progress could not be verified. Review the request and create a new plan.',
+    'recovery_changed': 'Saved step inputs changed. Previously completed work will not be repeated.',
+    'model_failed': 'The answering model could not complete the reply.',
+    'model_routing_changed': 'The approved model or its capabilities changed. Review a new plan before running.',
+    'image_content_refused': 'The image service declined this image prompt under its content policy.',
+    'image_generation_unavailable': 'Image generation is not available for this deployment right now.',
+    'image_request_invalid': 'The image model did not accept the planned image request.',
+    'retry_would_repeat': 'A retry would send the same request that was declined. Ask again with a different description instead.',
+    'merge_schema_mismatch': (
+        "The selected files don't all have the same columns, so nothing was merged. Ask to keep every "
+        'column, to line up columns that have different names, or to leave out the files that '
+        "don't match."
+    ),
+    'merge_nothing_to_merge': (
+        'None of the selected files had a sheet with column headers that fit the merge, so nothing '
+        'was merged.'
+    ),
+    'merge_columns_invalid': (
+        'A selected file has duplicate or overly long column headers, no header row, or too many '
+        'columns, so nothing was merged.'
+    ),
+    'merge_columns_not_found': (
+        "A column named for removing duplicates or sorting isn't in the merged files, so nothing "
+        'was merged.'
+    ),
+    'merge_rows_invalid': (
+        'A selected file has a row with more values than column headers, or a value longer than a '
+        'spreadsheet cell allows, so nothing was merged.'
+    ),
+    'merge_source_unreadable': (
+        "A selected file couldn't be read as a CSV or Excel file. It may be damaged or "
+        'password-protected.'
+    ),
+    'merge_sheet_not_found': "A selected workbook doesn't have the requested sheet, so nothing was merged.",
+    'merge_sources_invalid': 'Merging needs at least two different CSV or Excel files (.csv, .xlsx, .xlsm or .xls).',
+    'merge_options_invalid': "This merge's settings can't be used together, so nothing was merged.",
+    'merge_mapping_invalid': "The column mapping prepared for this merge isn't valid, so nothing was merged.",
+    'merge_limit_exceeded': (
+        'The merge is larger than chat allows. Merge fewer or smaller files, or ask for a workflow '
+        'to merge them.'
+    ),
+    'inspect_sources_invalid': 'Only CSV and Excel files (.csv, .xlsx, .xlsm or .xls) can be inspected.',
+    'inspect_limit_exceeded': (
+        'The selected files have too many sheets or columns to inspect here. Inspect fewer files at '
+        'a time.'
+    ),
+    'document_merge_sources_invalid': (
+        'Merging needs at least two different files of the kind being merged: PDFs (.pdf), Word '
+        'documents (.docx), PowerPoint decks (.pptx), or CSV and Excel files for a workbook.'
+    ),
+    'document_merge_source_unreadable': (
+        "A selected file couldn't be read. It may be damaged, password-protected or macro-enabled, so "
+        'nothing was merged.'
+    ),
+    'document_merge_active_content': (
+        'A selected Word document has fields that start other programs (DDE), so nothing was merged.'
+    ),
+    'document_merge_limit_exceeded': (
+        'The merged file would be larger than chat allows. Merge fewer or smaller files, or ask for a '
+        'workflow to merge them.'
+    ),
+    'document_merge_failed': "The selected files couldn't be merged into one file.",
+    'document_transform_unsafe': 'This reference contains active content that cannot be safely reused.',
+    'document_transform_limit': 'The reference document exceeds the available transformation limits.',
+    'document_transform_invalid': 'The reference is not a readable, supported Word or PowerPoint document.',
+    'document_transform_unavailable': 'The reference document could not be inspected right now.',
+    'step_failed': 'This operation could not complete.',
+    'file_sign_in_required': (
+        'A file could not be created because the results it uses can only be checked with your '
+        "sign-in, which wasn't available where the file was prepared. Select Retry from failed step "
+        'to create it again.'
+    ),
+    'message_not_saved': 'The explanation could not be saved. Reload this run to check its durable status.',
+    LEGACY_PLAN_CODE: LEGACY_PLAN_MESSAGE,
+}
+
+# Microsoft 365 refusals of an action or agent step. Each names what the user does next.
+M365_STEP_FAILURE_CODES = frozenset({
+    'm365_sign_in_required', 'm365_approval_required', 'm365_unavailable',
+    'm365_shared_conversation', 'm365_read_only',
+    'm365_model_limits_required', 'm365_evidence_unavailable',
+})
+# Failures an exception may carry by code, through its ``orchestration_failure_code``.
+EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {
+    'external_session_required', 'operation_recovery_required', 'integration_input_unavailable',
+    STORAGE_FAILURE_CODE,
+}
+# Steps that hand work to an integration; input-reading failures have their own code.
+INTEGRATION_CAPABILITIES = frozenset({'action_invoke', 'agent_invoke'})
+
+
+_M365_APPROVAL_ID_PREFIX = 'm365-'
+_M365_APPROVAL_ID_DIGITS = frozenset('0123456789abcdef')
+
+
+def _m365_approval_id(value):
+    """An application-minted Microsoft 365 approval id (``m365-`` and a SHA-256 hex digest), or None."""
+    if type(value) is not str or len(value) != len(_M365_APPROVAL_ID_PREFIX) + 64:
+        return None
+    if not value.startswith(_M365_APPROVAL_ID_PREFIX):
+        return None
+    digest = value[len(_M365_APPROVAL_ID_PREFIX):]
+    return value if set(digest) <= _M365_APPROVAL_ID_DIGITS else None
+
+
+def build_failure(
+    code='step_failed', *, step_id=None, capability_id=None, provider_status=None, m365_sources=None,
+    approval_id=None,
+):
+    """Only application-owned text may cross a failure boundary."""
+    code = code if code in FAILURE_MESSAGES else 'step_failed'
+    result = {'code': code, 'message': FAILURE_MESSAGES[code]}
+    if step_id:
+        result['step_id'] = _text(step_id, 200)
+    if capability_id:
+        result['capability_id'] = _text(capability_id, 100)
+    if isinstance(provider_status, int) and not isinstance(provider_status, bool) and 400 <= provider_status <= 599:
+        result['provider_status'] = provider_status
+        if code == 'provider_http_error':
+            result['message'] = f'The service used by this step returned HTTP {provider_status}.'
+    if code in M365_STEP_FAILURE_CODES and isinstance(m365_sources, (list, tuple, set, frozenset)):
+        # The browser connects exactly these sources; anything else is dropped, never echoed.
+        sources = sorted({source for source in m365_sources if source in M365_SOURCES})
+        if sources:
+            result['m365_sources'] = sources
+    if code == 'm365_approval_required':
+        # The chat offers this pending approval inline. The approvals API still checks that
+        # the signed-in user is its subject before showing or deciding it.
+        approval = _m365_approval_id(approval_id)
+        if approval:
+            result['approval_id'] = approval
+    return result
+
+
+def safe_failure(value, *, step_id=None, capability_id=None):
+    value = value if isinstance(value, dict) else {}
+    return build_failure(
+        value.get('code'), step_id=step_id or value.get('step_id'),
+        capability_id=capability_id or value.get('capability_id'),
+        provider_status=value.get('provider_status'),
+        m365_sources=value.get('m365_sources'),
+        approval_id=value.get('approval_id'),
+    )
+
+
+def failure_from_exception(exc, *, answering=False, _depth=0):
+    """Use types and structured status, never diagnostic prose or model content."""
+    code = getattr(exc, 'orchestration_failure_code', None)
+    if type(code) is str and code in EXCEPTION_FAILURE_CODES:
+        return build_failure(
+            code, m365_sources=getattr(exc, 'm365_sources', None),
+            approval_id=getattr(exc, 'approval_id', None),
+        )
+    if isinstance(exc, ModelCatalogError):
+        return build_failure('model_routing_changed')
+    status = getattr(exc, 'status_code', None)
+    if not isinstance(status, int):
+        status = getattr(getattr(exc, 'response', None), 'status_code', None)
+    if isinstance(status, int) and 400 <= status <= 599:
+        return build_failure('provider_http_error', provider_status=status)
+    if isinstance(exc, AgentDelegationTimeout):
+        return build_failure('delegation_timeout')
+    if isinstance(exc, (TimeoutError, APITimeoutError)):
+        return build_failure('provider_timeout')
+    if isinstance(exc, (ConnectionError, APIConnectionError, ServiceRequestError)):
+        return build_failure('connection_failed')
+    cause = getattr(exc, '__cause__', None)
+    if cause is not None and cause is not exc and _depth < 3:
+        return failure_from_exception(cause, answering=answering, _depth=_depth + 1)
+    return build_failure('model_failed' if answering else 'step_failed')
+
+
+def access_failure(exc, *, capability_id=None, _depth=0):
+    """Explain a refused retained source, naming a missing signed-in session when that was why.
+
+    Input readers report their own failures. A refusal from integration admission concerns
+    the selected agent or action. Only stable reason codes are read, never exception text.
+    """
+    for reason in (getattr(exc, 'authority_reason', None), getattr(exc, 'code', None)):
+        if type(reason) is str and reason == EXTERNAL_SESSION_UNAVAILABLE_REASON:
+            return build_failure('external_session_required')
+    cause = getattr(exc, '__cause__', None)
+    if cause is not None and cause is not exc and _depth < 3:
+        return access_failure(cause, capability_id=capability_id, _depth=_depth + 1)
+    if capability_id in INTEGRATION_CAPABILITIES:
+        return build_failure('integration_unavailable')
+    return build_failure('result_unavailable')
+
+
+# Failures one bounded retry of a read-only step could plausibly outlast. Configuration,
+# authorization and validation failures are never retried; they would fail the same way.
+TRANSIENT_FAILURE_CODES = frozenset({
+    'provider_timeout', 'connection_failed', 'provider_failed', 'workflow_results_unavailable',
+})
+TRANSIENT_PROVIDER_STATUSES = frozenset({408, 429, 500, 502, 503, 504})
+
+
+def failure_is_transient(failure):
+    """Whether an application-owned failure describes a transient provider condition."""
+    failure = failure if isinstance(failure, dict) else {}
+    code = failure.get('code')
+    if code in TRANSIENT_FAILURE_CODES:
+        return True
+    return code == 'provider_http_error' and failure.get('provider_status') in TRANSIENT_PROVIDER_STATUSES
+
+
+# Failures in which a service declined or rejected the planned request itself. A checkpoint
+# retry resends exactly the same request, so it would reproduce them.
+REQUEST_REFUSAL_FAILURE_CODES = frozenset({
+    'search_result_too_large', 'result_input_too_large',
+    'image_content_refused', 'image_request_invalid', 'operation_recovery_required',
+})
+
+
+def failure_repeats_on_retry(failure):
+    """Whether resending the same planned request would reproduce this failure."""
+    failure = failure if isinstance(failure, dict) else {}
+    return failure.get('code') in REQUEST_REFUSAL_FAILURE_CODES
+
+
+def failure_explanation(failures, *, partial=False, cancelled=False):
+    facts = [safe_failure(value)['message'] for value in failures or []]
+    facts = list(dict.fromkeys(facts))
+    heading = 'The run was stopped.' if cancelled else (
+        'The request was only partially completed.' if partial else 'The request could not be completed.'
+    )
+    return heading + ('\n\n' + '\n'.join(facts) if facts else '') + (
+        '\n\nCheck the run details for saved progress and retry availability.'
+    )
+
+
+def build_step_result(
+    status=STEP_STATUS_COMPLETED,
+    summary='',
+    evidence=None,
+    citations=None,
+    artifacts=None,
+    notes=None,
+    error=None,
+    replan_hint=None,
+    message=None,
+    failure=None,
+    saved_analyses=None,
+    analysis_consumption=None,
+    task_result=None,
+    wait=None,
+    operation_receipts=None,
+):
+    """The single shape every capability adapter returns.
+
+    Defined here rather than in the executor so that adapters and executor cannot drift:
+    the adapters are the widest part of this framework and the easiest place for a
+    divergent return shape to go unnoticed until a plan fails at runtime.
+
+    ``evidence`` entries are mixed-source evidence envelopes, which is why nothing here
+    tries to re-describe them -- ``functions_mixed_source_orchestration.build_evidence_envelope``
+    already owns that contract, complete with its byte bounds.
+
+    ``replan_hint`` is how a step says the plan was wrong: a short sentence about what it
+    discovered, handed back to the planner. It is bounded by the run's replan budget, so a
+    step cannot loop the plan forever by always asking for another one.
+    """
+    if status not in STEP_STATUSES:
+        status = STEP_STATUS_COMPLETED
+    result = {
+        'status': status,
+        'summary': _text(summary, PLAN_MAX_SUMMARY_LENGTH),
+        'evidence': list(evidence or ()),
+        'citations': list(citations or ()),
+        'artifacts': list(artifacts or ()),
+        'notes': _string_list(notes),
+        'error': _text(error) or None,
+        'replan_hint': _text(replan_hint) or None,
+        'message': message,
+        'failure': safe_failure(failure) if failure else None,
+    }
+    if saved_analyses:
+        result['saved_analyses'] = [dict(item) for item in saved_analyses]
+    if analysis_consumption:
+        result['analysis_consumption'] = dict(analysis_consumption)
+    if task_result is not None:
+        if type(task_result) is not TaskResult:
+            raise ResultContractError('result_contract_invalid')
+        result['task_result'] = task_result
+    if operation_receipts:
+        if type(operation_receipts) is not list or len(canonical_bytes(operation_receipts)) > 512000:
+            raise ResultContractError('result_contract_invalid')
+        result['operation_receipts'] = deepcopy(operation_receipts)
+    if wait is not None:
+        if type(wait) is not dict:
+            raise ResultContractError('result_wait_invalid')
+        if len(canonical_bytes(wait)) > 32768:
+            raise ResultContractError('result_wait_invalid')
+        result['wait'] = deepcopy(wait)
+    return result
+
+
+# --------------------------------------------------------------------------------------
+# Elicitation
+# --------------------------------------------------------------------------------------
+
+def validate_elicitation_schema(requested_schema):
+    """Enforce the MCP restriction: a flat object of primitive properties.
+
+    Returns ``(schema, errors)``. MCP restricts elicitation schemas this way so that any
+    client can render one without implementing JSON Schema in general, and this framework
+    holds to the restriction rather than merely aiming at it -- the card is a paged form,
+    and a nested object would arrive as something it cannot draw.
+    """
+    errors = []
+    requested_schema = requested_schema if isinstance(requested_schema, dict) else {}
+
+    properties = requested_schema.get('properties')
+    if not isinstance(properties, dict) or not properties:
+        return None, ['The question set declared no fields.']
+
+    clean_properties = {}
+    for name, rules in list(properties.items())[:ELICITATION_MAX_PROPERTIES]:
+        if not isinstance(rules, dict):
+            errors.append(f"Field '{name}' is not an object.")
+            continue
+
+        field_type = _text(rules.get('type')).lower() or 'string'
+        is_array = field_type == 'array'
+        item_type = 'string'
+
+        if is_array:
+            items = rules.get('items') if isinstance(rules.get('items'), dict) else {}
+            item_type = _text(items.get('type')).lower() or 'string'
+            if item_type not in ELICITATION_PRIMITIVE_TYPES:
+                errors.append(f"Field '{name}' is an array of a non-primitive type.")
+                continue
+        elif field_type not in ELICITATION_PRIMITIVE_TYPES:
+            errors.append(f"Field '{name}' uses unsupported type '{field_type}'.")
+            continue
+
+        clean = {'type': 'array' if is_array else field_type}
+        if is_array:
+            item_rules = {'type': item_type}
+            source_items = rules.get('items') if isinstance(rules.get('items'), dict) else {}
+            enum_values = source_items.get('enum')
+            if isinstance(enum_values, list) and enum_values:
+                item_rules['enum'] = enum_values[:ELICITATION_MAX_ENUM_VALUES]
+            clean['items'] = item_rules
+            for bound in ('minItems', 'maxItems'):
+                value = rules.get(bound)
+                if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+                    clean[bound] = min(value, ELICITATION_MAX_ARRAY_ITEMS)
+        else:
+            enum_values = rules.get('enum')
+            if isinstance(enum_values, list) and enum_values:
+                clean['enum'] = enum_values[:ELICITATION_MAX_ENUM_VALUES]
+
+        for passthrough in ('title', 'description', 'default'):
+            if passthrough in rules:
+                clean[passthrough] = rules[passthrough]
+
+        clean_properties[_text(name)] = clean
+
+    if not clean_properties:
+        return None, errors or ['No renderable fields survived validation.']
+
+    required = [
+        name for name in _string_list(requested_schema.get('required'))
+        if name in clean_properties
+    ]
+
+    return (
+        {'type': 'object', 'properties': clean_properties, 'required': required},
+        errors,
+    )
+
+
+def normalize_elicitation(elicitation, run_id, revision=0, candidate_references=None):
+    """Normalize questions; resource suggestions come only from resolved candidates."""
+    elicitation = elicitation if isinstance(elicitation, dict) else {}
+
+    schema, errors = validate_elicitation_schema(elicitation.get('requested_schema'))
+    if schema is None:
+        raise PlanValidationError(
+            'The planner asked a question that could not be rendered: ' + '; '.join(errors)
+        )
+
+    names = list(schema['properties'].keys())
+    hints = elicitation.get('ui_hints') if isinstance(elicitation.get('ui_hints'), dict) else {}
+
+    order = [name for name in _string_list(hints.get('order')) if name in schema['properties']]
+    order += [name for name in names if name not in order]
+
+    # Paging is ours, not MCP's, so it lives beside the schema rather than inside it. One
+    # field per page reads as an interview rather than a form, which is the point of asking
+    # in a card instead of in the thread.
+    pages = []
+    covered = set()
+    raw_pages = hints.get('pages') if isinstance(hints.get('pages'), list) else []
+    for page in raw_pages[:ELICITATION_MAX_PROPERTIES]:
+        page_fields = [
+            name for name in _string_list(page)
+            if name in schema['properties'] and name not in covered
+        ]
+        if page_fields:
+            pages.append(page_fields)
+            covered.update(page_fields)
+    remainder = [name for name in order if name not in covered]
+    pages.extend([[name] for name in remainder])
+
+    ui_hints = {'order': order, 'pages': pages}
+    references = {
+        reference['id']: reference
+        for reference in (candidate_references or ())
+        if isinstance(reference, dict)
+        and reference.get('kind') in ('document', 'chat_attachment')
+        and isinstance(reference.get('id'), str)
+        and isinstance(reference.get('scope'), dict)
+    }
+    fields = hints.get('fields') if isinstance(hints.get('fields'), dict) else {}
+    resource_fields = {}
+    for name, hint in fields.items():
+        if name not in schema['properties'] or not isinstance(hint, dict):
+            continue
+        if hint.get('input') == 'choices':
+            try:
+                resource_fields[name] = normalize_choice_hint(schema['properties'][name], hint)
+            except ValueError as exc:
+                raise PlanValidationError('The planner supplied an invalid choice question.') from exc
+            continue
+        if hint.get('input') != 'files':
+            continue
+        rules = schema['properties'][name]
+        value_rules = rules.get('items', {}) if rules['type'] == 'array' else rules
+        if value_rules.get('type') != 'string':
+            continue
+        # File suggestions are deliberately not an exhaustive enum. An authorized file
+        # selected elsewhere (including a new upload) is equally valid.
+        value_rules.pop('enum', None)
+        candidate_ids = hint.get('candidate_ids')
+        if candidate_ids is None:
+            candidate_ids = [
+                item.get('id') for item in hint.get('candidates') or ()
+                if isinstance(item, dict)
+            ] if 'candidates' in hint else list(references)
+        resource_fields[name] = {
+            'input': 'files',
+            'candidates': [
+                references[document_id]
+                for document_id in _string_list(candidate_ids, ELICITATION_MAX_ENUM_VALUES)
+                if document_id in references
+            ],
+        }
+    if resource_fields:
+        ui_hints['fields'] = resource_fields
+
+    return {
+        'elicitation_id': f"ask_{uuid.uuid4().hex}",
+        'contract_version': ORCHESTRATION_ELICITATION_CONTRACT_VERSION,
+        'run_id': run_id,
+        'revision': int(revision or 0),
+        'message': _text(elicitation.get('message'), PLAN_MAX_SUMMARY_LENGTH)
+        or 'I need a little more information before I can plan this.',
+        'requested_schema': schema,
+        'ui_hints': ui_hints,
+    }
+
+
+def validate_elicitation_response(elicitation, response):
+    """Validate an ``{action, content}`` response against the schema that was asked.
+
+    The shape is MCP's verbatim, so the same validation serves an answer typed into our
+    card and one that arrives from an MCP client.
+    """
+    response = response if isinstance(response, dict) else {}
+    action = _text(response.get('action')).lower()
+    if action not in ELICITATION_ACTIONS:
+        return None, [f"'{action or 'missing'}' is not a valid response action."]
+
+    if action != ELICITATION_ACTION_ACCEPT:
+        # Declining or cancelling carries no content, and reading any would be a way to
+        # smuggle answers past the user's refusal.
+        return {'action': action, 'content': {}}, []
+
+    schema = (elicitation or {}).get('requested_schema') or {}
+    properties = schema.get('properties') or {}
+    required = set(schema.get('required') or ())
+    content = response.get('content') if isinstance(response.get('content'), dict) else {}
+
+    cleaned = {}
+    errors = [
+        f"'{name}' is not a question field."
+        for name in content if name not in properties
+    ]
+    if 'content' in response and not isinstance(response.get('content'), dict):
+        errors.append('Answer content must be an object.')
+
+    for name, rules in properties.items():
+        if name not in content or content[name] is None:
+            continue
+        raw = content[name]
+        if rules.get('type') == 'array':
+            item_type = (rules.get('items') or {}).get('type', 'string')
+            allowed = (rules.get('items') or {}).get('enum')
+            values = raw if isinstance(raw, (list, tuple)) else [raw]
+            maximum = min(rules.get('maxItems', ELICITATION_MAX_ARRAY_ITEMS), ELICITATION_MAX_ARRAY_ITEMS)
+            if len(values) > maximum:
+                errors.append(f"'{name}' allows at most {maximum} values.")
+                continue
+            coerced = []
+            for item in values:
+                if not isinstance(item, (str, int, float, bool)):
+                    errors.append(f"'{name}' contains an invalid value.")
+                    continue
+                value = _coerce_scalar(item, item_type)
+                if value is None or value == '' or (isinstance(value, float) and not math.isfinite(value)):
+                    errors.append(f"'{name}' contains an invalid {item_type}.")
+                    continue
+                if allowed and value not in allowed:
+                    errors.append(f"'{name}' contains a value that was not offered.")
+                    continue
+                coerced.append(value)
+            cleaned[name] = coerced
+            if len(coerced) < rules.get('minItems', 0):
+                errors.append(f"'{name}' needs at least {rules['minItems']} values.")
+            continue
+
+        if not isinstance(raw, (str, int, float, bool)):
+            errors.append(f"'{name}' must be a primitive value.")
+            continue
+        value = _coerce_scalar(raw, rules.get('type', 'string'))
+        if value is None or value == '' or (isinstance(value, float) and not math.isfinite(value)):
+            errors.append(f"'{name}' is not a valid {rules.get('type', 'string')}.")
+            continue
+        allowed = rules.get('enum')
+        if allowed and value not in allowed:
+            errors.append(f"'{name}' is not one of the offered choices.")
+            continue
+        cleaned[name] = value
+
+    for name in required:
+        if name not in cleaned or cleaned[name] == []:
+            errors.append(f"'{name}' is required.")
+
+    errors.extend(choice_answer_errors(elicitation or {}, cleaned))
+    if errors:
+        return None, errors
+
+    return {'action': action, 'content': cleaned}, []

@@ -27,7 +27,7 @@ Voice-assisted creation extends the existing form speech-to-text controls from a
 - `POST /api/workflows/draft-instructions`
   - Request: `workflow_scope`, `name`, `description`, `brief`, `existing_instructions`
   - Response: `success`, `instructions`
-  - Access: authenticated users only; personal workflow app-role gates and group workflow management role gates are enforced.
+  - Access: authenticated users only; personal workflow app-role gates and group workflow management role gates are enforced. From version **0.261.215**, personal requests also need the AI workflow assistant (**Enable AI Workflow Assistant**, `enable_workflow_ai_assistant`) to be available to the user, and are refused with 403 `workflow_assistant_disabled` otherwise. Group requests don't follow that setting.
 
 ### Configuration Options
 
@@ -50,3 +50,4 @@ No new settings are introduced. Voice buttons depend on the existing speech-to-t
 
 - Voice controls only render when speech-to-text is enabled and the browser supports local audio recording APIs.
 - Drafted workflow instructions still require user review before save.
+- From version **0.261.215**, the personal workflow modal renders the task brief and **Draft Workflow Instructions** controls only when the AI workflow assistant is available to the user. The group workflow modal is unaffected.

@@ -113,3 +113,7 @@ Later phases can consume the shared partition and evidence contracts instead of 
 ## Related Version Updates
 
 - `application/single_app/config.py` was updated from **0.250.061** to **0.250.062** for #1056.
+
+## Settings Update (0.261.266)
+
+`enable_mixed_source_manifest` is retired. Analyze, Compare and mixed-source Chat and Search all resolve their manifests for real, so the shadow manifests it produced were discarded work. The key is removed from stored settings on load, and `_maybe_resolve_chat_source_manifest()` and the workflow shadow block are deleted. The manifest contracts in this document are unchanged. See `docs/explanation/fixes/MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.

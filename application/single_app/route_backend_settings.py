@@ -1,10 +1,26 @@
 # route_backend_settings.py
 
 from config import *
+from blob_container_readiness import BlobContainerUnavailableError, create_missing_blob_container
 from functions_documents import *
 from functions_authentication import *
 from functions_settings import *
 from functions_web_search_test import run_web_search_connection_test
+from functions_ai_connections import AIConnectionError, EMBEDDING_SELECTION_KEY, IMAGE_SELECTION_KEY
+from functions_embeddings import generate_embedding_batch
+from functions_embedding_profile import resolve_embedding_profile
+from functions_embedding_compatibility import (
+    build_embedding_index_schema,
+    embedding_index_maintenance,
+    get_embedding_search_index_client,
+    record_embedding_index_schema,
+    validate_embedding_index_schema,
+)
+from functions_image_generation import (
+    image_generation_error_log_context,
+    image_generation_error_response,
+    request_generated_image_source,
+)
 from functions_url_access_policy_test import run_url_access_policy_test
 from functions_model_endpoint_runtime import (
     build_model_endpoint_sync_chat_client,
@@ -18,6 +34,7 @@ from functions_model_endpoint_types import (
 from functions_activity_logging import (
     log_admin_feedback_email_submission,
     log_general_admin_action,
+    log_index_auto_fix,
     log_admin_release_notifications_registration,
     log_user_support_feedback_email_submission,
 )
@@ -38,13 +55,15 @@ from functions_keyvault_reminders import (
     check_due_key_vault_secret_reminders_once,
     list_key_vault_secret_reminders,
 )
+from functions_keyvault import get_keyvault_credential
+from functions_keyvault_test import run_key_vault_connection_test
 from functions_redis_monitoring import (
     get_redis_explorer_keys,
     get_redis_explorer_value,
     get_redis_monitoring_status,
 )
 from azure.identity import DefaultAzureCredential
-from azure.keyvault.secrets import SecretClient
+from azure.core.exceptions import AzureError
 from swagger_wrapper import swagger_route, get_auth_security
 import logging
 import time
@@ -69,11 +88,15 @@ def _resolve_admin_settings_test_secrets(payload):
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_gpt_key')
     elif test_type == 'embedding':
+        if 'selection' in payload:
+            return payload
         if payload.get('enable_apim'):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_embedding_subscription_key')
         else:
             _resolve_test_payload_secret(payload, ('direct', 'key'), settings, 'azure_openai_embedding_key')
     elif test_type == 'image':
+        if 'selection' in payload:
+            return payload
         if payload.get('enable_apim'):
             _resolve_test_payload_secret(payload, ('apim', 'subscription_key'), settings, 'azure_apim_image_gen_subscription_key')
         else:
@@ -170,8 +193,8 @@ def _test_enhanced_citations_storage_connection(data):
                     f"Missing containers: {', '.join(missing_containers)}",
                 ],
                 "guidance": [
-                    "Containers are created on demand during upload when permissions allow it.",
-                    "If uploads fail, grant the app identity permission to create or write these containers.",
+                    "Save storage settings, then use Create missing containers to prepare application storage.",
+                    "Result writes also recover missing containers on demand when the app has permission.",
                 ],
                 "containers": container_results,
             }), 200
@@ -225,11 +248,137 @@ def _test_enhanced_citations_storage_connection(data):
         }), 400
 
 
-def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: str = None) -> dict:
+def _repair_enhanced_citations_storage_containers():
+    """Create only application containers using saved, server-owned configuration."""
+    settings = get_settings()
+    try:
+        client = build_enhanced_citations_blob_service_client(settings)
+    except ValueError as exc:
+        log_event(
+            "[ENHANCED_CITATIONS] Admin container repair configuration was invalid.",
+            extra={"error_type": type(exc).__name__}, level=logging.WARNING,
+        )
+        return jsonify({
+            "success": False, "error": "Save valid storage settings before creating containers.",
+        }), 400
+    results = []
+    try:
+        for name in get_enhanced_citations_storage_container_names():
+            try:
+                created = create_missing_blob_container(client, name, log=log_event)
+                results.append({
+                    "container_name": name, "status": "created" if created else "already_exists",
+                })
+            except BlobContainerUnavailableError as exc:
+                results.append({"container_name": name, "status": "failed", "reason": exc.reason})
+    finally:
+        client.close()
+    failed = sum(item["status"] == "failed" for item in results)
+    created = sum(item["status"] == "created" for item in results)
+    message = (
+        "Some storage containers could not be prepared. Check the app's storage access, then try again."
+        if failed else f"Storage is ready. Created {created} missing container(s); existing containers were unchanged."
+    )
+    log_event(
+        "[ENHANCED_CITATIONS] Admin storage container repair completed.",
+        extra={"created": created, "failed": failed, "container_count": len(results)},
+        level=logging.WARNING if failed else logging.INFO,
+    )
+    return jsonify({
+        "success": not failed, "status": "error" if failed else "success",
+        "message": message, "error": message if failed else None, "containers": results,
+        "details": [
+            f"{item['container_name']}: {item['status'].replace('_', ' ')}"
+            for item in results
+        ],
+        "guidance": (
+            ["Verify saved storage settings, app permissions, firewall and private endpoint access."]
+            if failed else ["Retry the failed analysis when you are ready; repair does not rerun it."]
+        ),
+    }), 503 if failed else 200
+
+
+ADMIN_SETTINGS_CONNECTION_TESTS = {
+    'gpt': lambda data: _test_gpt_connection(data),
+    'embedding': lambda data: _test_embedding_connection(data),
+    'image': lambda data: _test_image_gen_connection(data),
+    'safety': lambda data: _test_safety_connection(data),
+    'web_search': lambda data: _test_web_search_connection(data),
+    'url_access_policy': lambda data: _test_url_access_policy(data),
+    'azure_ai_search': lambda data: _test_azure_ai_search_connection(data),
+    'redis': lambda data: _test_redis_connection(data),
+    'azure_doc_intelligence': lambda data: _test_azure_doc_intelligence_connection(data),
+    'content_understanding': lambda data: _test_content_understanding_connection(data),
+    'multimodal_vision': lambda data: _test_multimodal_vision_connection(data),
+    'key_vault': lambda data: _test_key_vault_connection(data),
+    'enhanced_citations_storage': lambda data: _test_enhanced_citations_storage_connection(data),
+    'chunking_api': lambda data: (jsonify({'message': 'Chunking API connection successful'}), 200),
+}
+
+
+def run_admin_settings_connection_test(payload):
+    """Run one administrator-requested connection test and return its response.
+
+    Both admin interfaces reach the same tests: the server-rendered page posts to
+    ``/api/admin/settings/test_connection`` and the V2 surface posts to
+    ``/api/v2/admin/settings/test-connection``. Sharing this dispatcher is what
+    stops the two from supporting different sets of tests, which is how the
+    original page ended up able to test things the newer one could not.
+
+    The payload carries the values currently on screen rather than what is
+    stored, so an administrator can verify a connection before committing it.
+    Credentials are the exception: the browser holds only a redaction
+    placeholder for a stored secret, so ``_resolve_admin_settings_test_secrets``
+    swaps it back for the real value here, server-side.
+    """
+    data = payload if isinstance(payload, dict) else {}
+    try:
+        data = _resolve_admin_settings_test_secrets(data)
+    except Exception as exc:
+        if str(data.get('test_type') or '').strip() == 'image':
+            return _image_connection_test_error_response(exc)
+        raise
+    test_type = str(data.get('test_type') or '').strip()
+
+    runner = ADMIN_SETTINGS_CONNECTION_TESTS.get(test_type)
+    if runner is None:
+        return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
+
+    try:
+        return runner(data)
+    except Exception as exc:
+        if test_type == 'image':
+            return _image_connection_test_error_response(exc)
+        # A connection test reaches external services, so a failure here is an
+        # expected outcome to report rather than a server fault to raise.
+        return jsonify({'error': str(exc)}), 500
+
+
+def _index_settings_for_revision(expected_etag=None):
+    settings = get_settings(use_cosmos=expected_etag is not None)
+    if expected_etag is not None and settings.get("_etag") != expected_etag:
+        raise AIConnectionError(
+            "Settings changed since this page was loaded. Review the latest settings and try again.",
+            "settings_conflict",
+        )
+    return settings
+
+
+def _index_configuration_error_response(error):
+    return jsonify({
+        "error": error.public_message,
+        "code": error.code,
+        "needsReload": error.code == "settings_conflict",
+        "needsRecreation": error.code in {"embedding_dimensions_mismatch", "embedding_rebuild_required"},
+    }), 409
+
+
+def auto_fix_index_fields(
+    idx_type: str, user_id: str = 'system', admin_email: str = None, *, expected_etag=None,
+) -> dict:
     """
     Automatically fix missing fields in an Azure AI Search index.
-    
-    Args:
+        Args:
         idx_type (str): Type of index ('user', 'group', or 'public')
         user_id (str): User ID triggering the fix
         admin_email (str): Admin email if available
@@ -248,15 +397,22 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
             
         with open(json_path, 'r') as f:
             full_def = json.load(f)
+        settings = _index_settings_for_revision(expected_etag)
+        full_def = build_embedding_index_schema(full_def, settings)
 
         client = get_index_client()
         index_obj = client.get_index(full_def['name'])
+        validate_embedding_index_schema(index_obj, full_def)
 
         existing_names = {fld.name for fld in index_obj.fields}
         missing_defs = [fld for fld in full_def['fields'] if fld['name'] not in existing_names]
 
         if not missing_defs:
-            return {'status': 'nothingToAdd'}
+            with embedding_index_maintenance(settings):
+                revision = record_embedding_index_schema(
+                    index_obj, settings, expected_etag=expected_etag,
+                )
+            return {'status': 'nothingToAdd', 'settings_etag': revision}
 
         new_fields = []
         for fld in missing_defs:
@@ -303,7 +459,11 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
         # Update the index
         index_obj.fields.extend(new_fields)
         index_obj.etag = "*"
-        client.create_or_update_index(index_obj)
+        with embedding_index_maintenance(settings):
+            updated_index = client.create_or_update_index(index_obj)
+            revision = record_embedding_index_schema(
+                updated_index, settings, expected_etag=expected_etag,
+            )
 
         added = [f.name for f in new_fields]
         
@@ -315,10 +475,13 @@ def auto_fix_index_fields(idx_type: str, user_id: str = 'system', admin_email: s
             admin_email=admin_email
         )
         
-        return {'status': 'success', 'added': added}
+        return {'status': 'success', 'added': added, 'settings_etag': revision}
 
-    except Exception as e:
-        return {'error': str(e)}
+    except AIConnectionError as exc:
+        return {'error': exc.public_message, 'code': exc.code}
+    except (AzureError, ValueError, OSError) as exc:
+        log_event("[EMBEDDING] Index maintenance failed", extra={"error_type": type(exc).__name__})
+        return {'error': 'AI Search index fields could not be updated.'}
 
 
 def register_route_backend_settings(bp):
@@ -447,9 +610,18 @@ def register_route_backend_settings(bp):
     @admin_required
     def check_index_fields():
         try:
-            data = request.get_json(force=True)
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                log_event("[EMBEDDING] Invalid index check request.", level=logging.WARNING)
+                return jsonify({'error': 'Index check payload must be an object.'}), 400
             idx_type = data.get('indexType')  # 'user', 'group', or 'public'
             auto_fix = data.get('autoFix', True)  # Default to auto-fix enabled
+            expected_etag = data.get('settings_etag')
+            if expected_etag is not None and (
+                not isinstance(expected_etag, str) or not expected_etag.strip()
+            ):
+                log_event("[EMBEDDING] Invalid index check revision.", level=logging.WARNING)
+                return jsonify({'error': 'The settings revision is invalid.'}), 400
 
             if not idx_type or idx_type not in ['user', 'group', 'public']:
                 return jsonify({'error': 'Invalid indexType. Must be "user", "group", or "public"'}), 400
@@ -468,8 +640,12 @@ def register_route_backend_settings(bp):
                 expected = json.load(f)
 
             # Check if Azure AI Search is configured
-            settings = get_settings()
-            if not settings.get("azure_ai_search_endpoint"):
+            settings = _index_settings_for_revision(expected_etag)
+            expected = build_embedding_index_schema(expected, settings)
+            if not settings.get(
+                "azure_apim_ai_search_endpoint" if settings.get("enable_ai_search_apim")
+                else "azure_ai_search_endpoint"
+            ):
                 return jsonify({
                     'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
                     'needsConfiguration': True
@@ -478,6 +654,7 @@ def register_route_backend_settings(bp):
             try:
                 client = get_index_client()
                 current = client.get_index(expected['name'])
+                validate_embedding_index_schema(current, expected)
                 
                 existing_names = { fld.name for fld in current.fields }
                 expected_names = { fld['name'] for fld in expected['fields'] }
@@ -493,17 +670,25 @@ def register_route_backend_settings(bp):
                         fix_result = auto_fix_index_fields(
                             idx_type=idx_type,
                             user_id=user_id,
-                            admin_email=admin_email
+                            admin_email=admin_email,
+                            expected_etag=expected_etag,
                         )
                         
-                        if fix_result.get('status') == 'success':
+                        if fix_result.get('status') in {'success', 'nothingToAdd'}:
                             return jsonify({
                                 'indexExists': True,
                                 'missingFields': [],
                                 'autoFixed': True,
                                 'fieldsAdded': fix_result.get('added', []),
-                                'indexName': expected['name']
+                                'indexName': expected['name'],
+                                'settings_etag': fix_result.get('settings_etag'),
                             }), 200
+                        elif fix_result.get('code') == 'settings_conflict':
+                            return jsonify({
+                                'error': fix_result['error'],
+                                'code': 'settings_conflict',
+                                'needsReload': True,
+                            }), 409
                         else:
                             # Auto-fix failed, return missing fields for manual fix
                             return jsonify({
@@ -521,12 +706,19 @@ def register_route_backend_settings(bp):
                             'indexName': expected['name']
                         }), 200
                 else:
+                    with embedding_index_maintenance(settings):
+                        revision = record_embedding_index_schema(
+                            current, settings, expected_etag=expected_etag,
+                        )
                     return jsonify({ 
                         'missingFields': [],
                         'indexExists': True,
-                        'indexName': expected['name']
+                        'indexName': expected['name'],
+                        'settings_etag': revision,
                     }), 200
                 
+            except AIConnectionError as exc:
+                return _index_configuration_error_response(exc)
             except ResourceNotFoundError as not_found_error:
                 # Index doesn't exist - this is the specific exception for "index not found"
                 return jsonify({
@@ -535,29 +727,18 @@ def register_route_backend_settings(bp):
                     'indexName': expected['name'],
                     'needsCreation': True
                 }), 404
-            except Exception as search_error:
-                error_str = str(search_error).lower()
-                # Check for other index not found patterns (fallback)
-                if any(phrase in error_str for phrase in [
-                    "not found", "does not exist", "no index with the name", 
-                    "index does not exist", "could not find index"
-                ]):
-                    return jsonify({
-                        'error': f'Azure AI Search index "{expected["name"]}" does not exist yet',
-                        'indexExists': False,
-                        'indexName': expected['name'],
-                        'needsCreation': True
-                    }), 404
-                else:
-                    current_app.logger.error(f"Azure AI Search error: {search_error}")
-                    return jsonify({
-                        'error': f'Failed to connect to Azure AI Search: {str(search_error)}',
-                        'needsConfiguration': True
-                    }), 500
-
-        except Exception as e:
-            current_app.logger.error(f"Error in check_index_fields: {str(e)}")
-            return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+        except AIConnectionError as exc:
+            return _index_configuration_error_response(exc)
+        except (AzureError, ImportError, OSError, RuntimeError, ValueError) as exc:
+            log_event(
+                "[EMBEDDING] Index check failed.",
+                extra={"error_type": type(exc).__name__, "status_code": getattr(exc, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({
+                'error': 'Unable to inspect Azure AI Search. Check the Search connection, permissions, and server diagnostics.',
+                'code': 'index_check_failed',
+            }), 500
 
 
     @bp.route('/api/admin/settings/fix_index_fields', methods=['POST'])
@@ -577,14 +758,19 @@ def register_route_backend_settings(bp):
                 raise Exception("Invalid file path")
             with open(json_path, 'r') as f:
                 full_def = json.load(f)
+            settings = get_settings()
+            full_def = build_embedding_index_schema(full_def, settings)
 
             client    = get_index_client()
             index_obj = client.get_index(full_def['name'])
+            validate_embedding_index_schema(index_obj, full_def)
 
             existing_names = {fld.name for fld in index_obj.fields}
             missing_defs   = [fld for fld in full_def['fields'] if fld['name'] not in existing_names]
 
             if not missing_defs:
+                with embedding_index_maintenance(settings):
+                    record_embedding_index_schema(index_obj, settings)
                 return jsonify({'status': 'nothingToAdd'}), 200
 
             new_fields = []
@@ -632,13 +818,18 @@ def register_route_backend_settings(bp):
             # append the new fields, bypass ETag checks, and update
             index_obj.fields.extend(new_fields)
             index_obj.etag = "*"
-            client.create_or_update_index(index_obj)
+            with embedding_index_maintenance(settings):
+                updated_index = client.create_or_update_index(index_obj)
+                record_embedding_index_schema(updated_index, settings)
 
             added = [f.name for f in new_fields]
             return jsonify({ 'status': 'success', 'added': added }), 200
 
-        except Exception as e:
-            return jsonify({ 'error': str(e) }), 500
+        except AIConnectionError as exc:
+            return jsonify({'error': exc.public_message, 'code': exc.code, 'needsRecreation': True}), 409
+        except (AzureError, ValueError, OSError) as exc:
+            log_event("[EMBEDDING] Index maintenance failed", extra={"error_type": type(exc).__name__})
+            return jsonify({'error': 'AI Search index fields could not be updated.'}), 500
 
     @bp.route('/api/admin/settings/create_index', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -668,6 +859,7 @@ def register_route_backend_settings(bp):
 
             # Check if Azure AI Search is configured
             settings = get_settings()
+            index_definition = build_embedding_index_schema(index_definition, settings)
             if not settings.get("azure_ai_search_endpoint"):
                 return jsonify({
                     'error': 'Azure AI Search not configured. Please configure Azure AI Search endpoint and key in settings.',
@@ -686,17 +878,15 @@ def register_route_backend_settings(bp):
             except ResourceNotFoundError:
                 # Index doesn't exist, which is what we want for creation
                 pass
-            except Exception as e:
-                # Other errors checking if index exists
-                current_app.logger.error(f"Error checking if index exists: {e}")
-                # Continue with creation attempt anyway
 
             # Create the index using the JSON definition
             from azure.search.documents.indexes.models import SearchIndex
             index = SearchIndex.deserialize(index_definition)
             
             # Create the index
-            result = client.create_index(index)
+            with embedding_index_maintenance(settings):
+                result = client.create_index(index)
+                record_embedding_index_schema(result, settings)
             
             return jsonify({
                 'status': 'success',
@@ -705,9 +895,15 @@ def register_route_backend_settings(bp):
                 'fieldsCount': len(result.fields)
             }), 200
 
-        except Exception as e:
-            current_app.logger.error(f"Error creating index: {str(e)}")
-            return jsonify({'error': f'Failed to create index: {str(e)}'}), 500
+        except AIConnectionError as exc:
+            return _index_configuration_error_response(exc)
+        except (AzureError, ImportError, OSError, RuntimeError, ValueError) as exc:
+            log_event(
+                "[EMBEDDING] Index creation failed.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'AI Search index creation failed. Check the connection and permissions.'}), 500
     
     @bp.route('/api/admin/settings/test_connection', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -719,59 +915,22 @@ def register_route_backend_settings(bp):
         data from admin_settings.js. Uses that data to attempt an actual connection
         to GPT, Embeddings, etc., and returns success/failure.
         """
-        data = request.get_json(force=True) or {}
-        data = _resolve_admin_settings_test_secrets(data)
-        test_type = data.get('test_type', '')
+        return run_admin_settings_connection_test(request.get_json(force=True) or {})
 
-        try:
-            if test_type == 'gpt':
-                return _test_gpt_connection(data)
-
-            elif test_type == 'embedding':
-                return _test_embedding_connection(data)
-
-            elif test_type == 'image':
-                return _test_image_gen_connection(data)
-
-            elif test_type == 'safety':
-                return _test_safety_connection(data)
-
-            elif test_type == 'web_search':
-                return _test_web_search_connection(data)
-
-            elif test_type == 'url_access_policy':
-                return _test_url_access_policy(data)
-
-            elif test_type == 'azure_ai_search':
-                return _test_azure_ai_search_connection(data)
-
-            elif test_type == 'redis':
-                return _test_redis_connection(data)
-
-            elif test_type == 'azure_doc_intelligence':
-                return _test_azure_doc_intelligence_connection(data)
-
-            elif test_type == 'content_understanding':
-                return _test_content_understanding_connection(data)
-
-            elif test_type == 'multimodal_vision':
-                return _test_multimodal_vision_connection(data)
-
-            elif test_type == 'chunking_api':
-                # If you have a chunking API test, implement it here.
-                return jsonify({'message': 'Chunking API connection successful'}), 200
-            
-            elif test_type == 'key_vault':
-                return _test_key_vault_connection(data)
-
-            elif test_type == 'enhanced_citations_storage':
-                return _test_enhanced_citations_storage_connection(data)
-
-            else:
-                return jsonify({'error': f'Unknown test_type: {test_type}'}), 400
-
-        except Exception as e:
-            return jsonify({'error': str(e)}), 500
+    @bp.route('/api/admin/settings/storage/repair-containers', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def repair_storage_containers():
+        """Create missing private application containers using saved storage settings."""
+        data = request.get_json(silent=True)
+        if type(data) is not dict or data:
+            log_event(
+                "[ENHANCED_CITATIONS] Admin storage repair rejected an invalid request.",
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'This operation accepts no configuration overrides.'}), 400
+        return _repair_enhanced_citations_storage_containers()
 
     @bp.route('/api/admin/settings/redis-monitoring/status', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -1412,16 +1571,27 @@ def _test_multimodal_vision_connection(payload):
 
     try:
         multi_endpoint_selection = payload.get('multi_endpoint') if isinstance(payload.get('multi_endpoint'), dict) else None
+        has_explicit_multi_endpoint = bool(
+            multi_endpoint_selection
+            and str(multi_endpoint_selection.get('endpoint_id') or '').strip()
+            and str(multi_endpoint_selection.get('model_id') or '').strip()
+        )
         # Ingestion resolves the saved vision model name to the AI connection that hosts it, so the
         # test uses that same connection whenever the lookup succeeds, even if APIM is selected.
-        runtime_endpoint, runtime_model = resolve_vision_model_endpoint(get_settings(), vision_model)
-        if runtime_endpoint and runtime_model:
-            multi_endpoint_selection = {
-                'endpoint_id': str(runtime_endpoint.get('id') or '').strip(),
-                'model_id': str(runtime_model.get('id') or '').strip(),
-                'provider': str(runtime_endpoint.get('provider') or '').strip(),
-                'deployment_name': resolve_model_endpoint_request_model(runtime_endpoint, runtime_model),
-            }
+        if not has_explicit_multi_endpoint:
+            try:
+                runtime_endpoint, runtime_model = resolve_vision_model_endpoint(
+                    get_settings(), vision_model
+                )
+            except (LookupError, ValueError):
+                return jsonify({'error': 'Selected vision model endpoint could not be resolved from saved settings'}), 400
+            if runtime_endpoint and runtime_model:
+                multi_endpoint_selection = {
+                    'endpoint_id': str(runtime_endpoint.get('id') or '').strip(),
+                    'model_id': str(runtime_model.get('id') or '').strip(),
+                    'provider': str(runtime_endpoint.get('provider') or '').strip(),
+                    'deployment_name': resolve_model_endpoint_request_model(runtime_endpoint, runtime_model),
+                }
         if multi_endpoint_selection:
             settings = get_settings()
             identity_context = {'user_id': get_current_user_id()}
@@ -1594,23 +1764,10 @@ def get_index_client() -> SearchIndexClient:
       - azure_ai_search_authentication_type (managed_identity vs key)
       - and the various endpoint & key settings.
     """
-    settings = get_settings()
-
-    if settings.get("enable_ai_search_apim", False):
-        endpoint = settings["azure_apim_ai_search_endpoint"].rstrip("/")
-        credential = AzureKeyCredential(settings["azure_apim_ai_search_subscription_key"])
-    else:
-        endpoint = settings["azure_ai_search_endpoint"].rstrip("/")
-        if settings.get("azure_ai_search_authentication_type", "key") == "managed_identity":
-            credential = DefaultAzureCredential()
-            if AZURE_ENVIRONMENT in ("usgovernment", "custom"):
-                return SearchIndexClient(endpoint=endpoint,
-                                          credential=credential,
-                                          audience=search_resource_manager)
-        else:
-            credential = AzureKeyCredential(settings["azure_ai_search_key"])
-
-    return SearchIndexClient(endpoint=endpoint, credential=credential)
+    client = get_embedding_search_index_client(get_settings())
+    if client is None:
+        raise AIConnectionError("AI Search is not configured.")
+    return client
 
 def _test_gpt_connection(payload):
     """Attempt to connect to GPT using ephemeral settings from the admin UI."""
@@ -1761,109 +1918,81 @@ def _test_redis_connection(payload):
 
 
 def _test_embedding_connection(payload):
-    """Attempt to connect to Embeddings using ephemeral settings from the admin UI."""
-    enable_apim = payload.get('enable_apim', False)
-    selected_model = payload.get('selected_model') or {}
-    text = "Test text for embedding connection."
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        api_version = apim_data.get('api_version')
-        embedding_model = apim_data.get('deployment')
-        subscription_key = apim_data.get('subscription_key')
-
-        embedding_client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key
-        )
-    else:
-        direct_data = payload.get('direct', {})
-        endpoint = direct_data.get('endpoint')
-        api_version = direct_data.get('api_version')
-        embedding_model = selected_model.get('deploymentName')
-
-        if direct_data.get('auth_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-            
-            embedding_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider
-            )
-        else:
-            key = direct_data.get('key')
-
-            embedding_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=key
-            )
+    """Probe actual embeddings without selecting a default or persisting vectors."""
     try:
-        response = embedding_client.embeddings.create(
-            model=embedding_model,
-            input=text
+        if 'selection' in payload:
+            settings = dict(get_settings())
+            settings[EMBEDDING_SELECTION_KEY] = payload['selection']
+        else:
+            direct = payload.get('direct') or {}
+            apim = payload.get('apim') or {}
+            settings = {
+                'enable_embedding_apim': bool(payload.get('enable_apim')),
+                'embedding_model': {'selected': [payload.get('selected_model') or {}]},
+                'azure_openai_embedding_endpoint': direct.get('endpoint'),
+                'azure_openai_embedding_api_version': direct.get('api_version'),
+                'azure_openai_embedding_authentication_type': direct.get('auth_type'),
+                'azure_openai_embedding_key': direct.get('key'),
+                'azure_apim_embedding_endpoint': apim.get('endpoint'),
+                'azure_apim_embedding_api_version': apim.get('api_version'),
+                'azure_apim_embedding_deployment': apim.get('deployment'),
+                'azure_apim_embedding_subscription_key': apim.get('subscription_key'),
+            }
+        profile = resolve_embedding_profile(settings)
+        results = generate_embedding_batch(
+            ["Test embedding."], settings=settings, profile=profile, purpose="text", max_retries=0,
         )
-
-        if response:
-            return jsonify({'message': 'Embedding connection successful'}), 200
-    except Exception as e:
-        print(str(e))
-        return jsonify({'error': f'Error generating embedding response: {str(e)}'}), 500
+        return jsonify({
+            'success': True, 'message': 'Embedding inference succeeded.',
+            'dimensions': len(results[0][0]),
+        }), 200
+    except AIConnectionError as exc:
+        log_event("[EMBEDDING] Connection test failed", extra={"code": exc.code})
+        return jsonify({'success': False, 'error': exc.public_message, 'code': exc.code}), 400
+    except (AzureError, RuntimeError) as exc:
+        log_event("[EMBEDDING] Connection initialization failed", extra={"error_type": type(exc).__name__})
+        return jsonify({'success': False, 'error': 'The embedding connection could not be initialized.'}), 503
     
 
+def _image_connection_test_error_response(exc):
+    log_event(
+        '[IMAGE_GENERATION] Image connection test failed',
+        extra=image_generation_error_log_context(exc),
+    )
+    error_payload, status_code = image_generation_error_response(exc)
+    return jsonify({**error_payload, 'success': False}), status_code
+
+
 def _test_image_gen_connection(payload):
-    """Attempt to connect to an Image Generation endpoint using ephemeral settings."""
-    enable_apim = payload.get('enable_apim', False)
-    selected_model = payload.get('selected_model') or {}
-    prompt = "A scenic mountain at sunrise"
-
-    if enable_apim:
-        apim_data = payload.get('apim', {})
-        endpoint = apim_data.get('endpoint')
-        api_version = apim_data.get('api_version')
-        image_gen_model = apim_data.get('deployment')
-        subscription_key = apim_data.get('subscription_key')
-
-        image_gen_client = AzureOpenAI(
-            api_version=api_version,
-            azure_endpoint=endpoint,
-            api_key=subscription_key
-        )
-    else:
-        direct_data = payload.get('direct', {})
-        endpoint = direct_data.get('endpoint')
-        api_version = direct_data.get('api_version')
-        image_gen_model = selected_model.get('deploymentName')
-
-        if direct_data.get('auth_type') == 'managed_identity':
-            token_provider = get_bearer_token_provider(DefaultAzureCredential(), cognitive_services_scope)
-            
-            image_gen_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider
-            )
-        else:
-            key = direct_data.get('key')
-
-            image_gen_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=key
-            )
+    """Test the real image operation using a stored global reference or a legacy draft."""
     try:
-        response = image_gen_client.images.generate(
-            prompt=prompt,
-            n=1,
-            model=image_gen_model
-        )
-        if response:
-            return jsonify({'message': 'Image generation connection successful'}), 200
-    except Exception as e:
-        print(str(e))
-        return jsonify({'error': f'Error generating model response: {str(e)}'}), 500
+        if 'selection' in payload:
+            settings = dict(get_settings())
+            settings[IMAGE_SELECTION_KEY] = payload.get('selection')
+            # This explicit admin test may validate a connection before enabling images
+            # for users. Stored endpoint/model availability still applies.
+            settings['enable_image_generation'] = True
+        else:
+            is_apim = bool(payload.get('enable_apim'))
+            direct = payload.get('direct') or {}
+            apim = payload.get('apim') or {}
+            settings = {
+                'enable_image_generation': True,
+                'enable_image_gen_apim': is_apim,
+                'image_gen_model': {'selected': [payload.get('selected_model') or {}]},
+                'azure_openai_image_gen_endpoint': direct.get('endpoint'),
+                'azure_openai_image_gen_api_version': direct.get('api_version'),
+                'azure_openai_image_gen_authentication_type': direct.get('auth_type'),
+                'azure_openai_image_gen_key': direct.get('key'),
+                'azure_apim_image_gen_endpoint': apim.get('endpoint'),
+                'azure_apim_image_gen_api_version': apim.get('api_version'),
+                'azure_apim_image_gen_deployment': apim.get('deployment'),
+                'azure_apim_image_gen_subscription_key': apim.get('subscription_key'),
+            }
+        request_generated_image_source(settings, 'A scenic mountain at sunrise')
+        return jsonify({'success': True, 'message': 'Image generation connection successful'}), 200
+    except Exception as exc:
+        return _image_connection_test_error_response(exc)
 
 
 def _test_safety_connection(payload):
@@ -2105,33 +2234,10 @@ def _test_content_understanding_connection(payload):
 
 
 def _test_key_vault_connection(payload):
-    """Attempt to connect to Azure Key Vault using ephemeral settings."""
-    vault_name = payload.get('vault_name', '').strip()
-    client_id = payload.get('client_id', '').strip()
-
-    if not vault_name:
-        return jsonify({'error': 'Key Vault name is required'}), 400
-
-    try:
-        vault_url = f"https://{vault_name}{KEY_VAULT_DOMAIN}"
-
-        if client_id:
-            credential = DefaultAzureCredential(managed_identity_client_id=client_id)
-        else:
-            credential = DefaultAzureCredential()
-
-        if AZURE_ENVIRONMENT == "custom":
-            #TODO: Needs to be tested with a custom environment
-            kv_client = SecretClient(vault_url=vault_url, credential=credential)
-        else:
-            kv_client = SecretClient(vault_url=vault_url, credential=credential)
-
-        # Perform a simple list operation to verify connectivity
-        secrets = kv_client.list_properties_of_secrets()
-        _ = next(secrets, None)  # Attempt to get the first secret (if any)
-
-        return jsonify({'message': 'Key Vault connection successful'}), 200
-
-    except Exception as e:
-        log_event(f"[AKV_TEST] Key Vault connection error: {str(e)}", level="error")
-        return jsonify({'error': 'Key Vault connection failed. Check Application Insights using "[AKV_TEST]" for details.'}), 500
+    """Verify draft Key Vault settings with an isolated write/read/cleanup probe."""
+    result, status = run_key_vault_connection_test(
+        payload,
+        vault_domain=KEY_VAULT_DOMAIN,
+        credential_factory=get_keyvault_credential,
+    )
+    return jsonify(result), status

@@ -2,7 +2,7 @@
 # test_markdown_chunk_size_enforcement.py
 """
 Functional test for bounding Markdown chunks to the embedding token limit.
-Version: 0.261.002
+Version: 0.261.106
 Implemented in: 0.261.002
 
 Markdown was the only ingestion path with no maximum chunk size. MarkdownHeaderTextSplitter
@@ -38,6 +38,8 @@ from langchain_text_splitters import (  # noqa: E402
 )
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from functions_ai_connections import AIConnectionError, embedding_settings_use_connections  # noqa: E402
+from functions_embedding_profile import resolve_embedding_profile  # noqa: E402
 
 
 IMPLEMENTED_IN_VERSION = "0.261.002"
@@ -82,7 +84,13 @@ def build_content_namespace():
 
 def build_settings_namespace():
     """Load the embedding budget helpers from functions_settings.py."""
-    namespace = {"WORD_CHUNK_SIZE": 400, "get_settings": lambda: {}}
+    namespace = {
+        "WORD_CHUNK_SIZE": 400, "get_settings": lambda: {},
+        "embedding_settings_use_connections": embedding_settings_use_connections,
+        "resolve_embedding_profile": resolve_embedding_profile,
+        "AIConnectionError": AIConnectionError,
+        "log_event": lambda *args, **kwargs: None,
+    }
     return load_functions(
         APP_ROOT / "functions_settings.py",
         [
@@ -119,6 +127,7 @@ def run_process_md(md_content, target_chunk_words=1200, max_chunk_characters=Non
         "split_text_by_word_limit": content_ns["split_text_by_word_limit"],
         "split_oversized_chunks": content_ns["split_oversized_chunks"],
         "get_settings": lambda: {},
+        "current_extraction": lambda document_id=None: None,
         "get_chunk_size_config": lambda settings=None: {"md": {"value": target_chunk_words, "unit": "words"}},
         "get_embedding_safe_chunk_characters": lambda settings=None: max_chunk_characters,
         "save_chunks": fake_save_chunks,

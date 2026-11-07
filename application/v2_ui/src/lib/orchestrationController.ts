@@ -1,0 +1,2460 @@
+// orchestrationController.ts
+// The seam between the orchestration transport and the two stores that display it.
+//
+// The plan and run clients (`orchestration.ts`) are pure transport, and the two stores hold
+// display state; neither drives the other. This module is the thing that does — it owns the
+// AbortControllers, mints the turn id, and folds each stream's events into `chatStore` (the
+// thread and streaming surface) and `orchestrationStore` (the plan, question and per-step state).
+//
+// It is plain functions rather than a hook on purpose. A plan or a run OUTLIVES the component
+// that started it: the composer that submits a plan, the card that approves a run and the drawer
+// that watches it are three different components, any of which can unmount while the work
+// continues. Holding the in-flight controllers in React state would tie them to whichever of
+// those happened to still be mounted. Held at module scope, keyed by conversation, they survive a
+// component coming and going exactly as `chatStore`'s own stream controller does — and for the
+// same reason.
+
+import { createConversation, type AttemptOrchestrationRequest } from './endpoints';
+import { api, ApiError } from './apiClient';
+import { adoptConversationModeDraft, conversationModes } from './conversationMode';
+import { useBootstrapStore } from '../stores/bootstrapStore';
+import type { CredentialRequest } from './actionCredentialTypes';
+import { legacyPlanErrorMessage } from './orchestrationErrors';
+import {
+    beginPlanEdit,
+    cancelOrchestrationRun,
+    cancelOrchestrationTurn,
+    fetchOrchestrationTurn,
+    fetchOrchestrationRun,
+    fetchRunSteps,
+    isOrchestrationRunPending,
+    isOrchestrationRunWaiting,
+    normalizeOrchestrationAttempt,
+    normalizeOrchestrationRecovery,
+    orchestrationTerminalStatus,
+    persistedRunPlan,
+    prepareOrchestrationRetry,
+    fetchPlanEditor,
+    MAX_PLAN_INSTRUCTION_LENGTH,
+    orchestrationErrorInfo,
+    planOrchestration,
+    reviseOrchestrationPlan,
+    runOrchestration,
+    type ApprovalMode,
+    type ElicitationContext,
+    type Elicitation,
+    type ElicitationResponse,
+    type OrchestrationPlan,
+    type OrchestrationPlanRequest,
+    type OrchestrationSeeds,
+    type OrchestrationRunRequest,
+    type OrchestrationRequestError,
+    type PlanRevisionAction,
+    type PlanRevisionRequest,
+    type RunStreamEvent,
+    type PersistedRun,
+    type PlanEdits,
+    type SavedPlanningTurn,
+} from './orchestration';
+import {
+    applyPlanEdits, doneFrameHasGeneratedImages, isPlanApproved, isPlanAwaitingApproval, isPlanRunnable, normalizePlan,
+    planHasApprovalFloor,
+    neutralizeTimedApproval,
+} from './orchestrationPlan';
+import { initialPlanningState, messageOrchestrationTurn } from './chatRetryAttempts';
+import { isOwnMessage } from './sharedMessage';
+import type { Json } from './types';
+import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
+import { applyOrchestrationOutputEvent } from './orchestrationOutputController';
+import { filesNeedPlanRetry } from './orchestrationOutputs';
+import { choosePlanSubmissionId, rememberPlanSubmission } from './planSubmissionIds';
+import { canonicalPlanReferences, PlanReferenceError, type PlanReference } from './planReferences';
+import { announceCompletedReply } from './replyEvents';
+import { currentConversationEpoch, useChatStore } from '../stores/chatStore';
+import { chatPendingActionsStore } from '../stores/m365PendingActionsStore';
+import {
+    selectEdits,
+    selectActiveTurn,
+    selectCanEditPlan,
+    selectElicitation,
+    selectElicitationDraft,
+    selectPlan,
+    selectHasPlanHold,
+    selectPlanEditor,
+    selectPlanRunBlocked,
+    useOrchestrationStore,
+    type PlanEditorTarget,
+} from '../stores/orchestrationStore';
+
+/** Mirrors `orchestrationStore`'s own `scopeKey`; the separator has to match to share a key space. */
+function scopeKey(conversationId: string, turnId: string): string {
+    return `${conversationId}\u0000${turnId}`;
+}
+
+function refreshOutgoingActions(conversationId: string): void {
+    const pending = chatPendingActionsStore.getState();
+    if (pending.conversationId === conversationId) {
+        void pending.refreshList();
+    }
+}
+
+/**
+ * Tell the desktop notifier that a run this page started has delivered its answer.
+ *
+ * Only a completed run is announced. A plan waiting for approval, a failed or stopped run,
+ * and a run adopted from an earlier page are not replies this page is waiting on.
+ */
+function announceRunReply(conversationId: string, runId: string, event: RunStreamEvent): void {
+    const listed = useChatStore.getState().conversations.find((item) => item.id === conversationId);
+    announceCompletedReply({
+        conversationId,
+        messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
+        runId,
+        conversationTitle: event.conversation_title || listed?.title || null,
+        blocked: event.blocked === true || event.role === 'safety',
+        source: 'orchestration',
+    });
+}
+
+/**
+ * The turn id the whole turn is keyed on.
+ *
+ * Minted here, by the client, and sent on the plan request: a turn is one question, and this
+ * client's store keys every plan, edit and run of it on this one value. It is STABLE across a
+ * turn's re-plans (an answered question, a step asking to re-plan) — that is the point of holding
+ * it apart from `plan_id`/`run_id`, which the server mints fresh each revision. The server honours
+ * the id it is sent and echoes it back on the plan, and `dispatchPlan` reconciles the rare case
+ * where the two ever disagree. `crypto.randomUUID` is present in every browser this app targets;
+ * the fallback only guards a non-secure context or a test.
+ */
+function makeTurnId(): string {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    return `turn-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * The browser's IANA time zone, sent with each plan request.
+ *
+ * A proposed workflow's calendar schedule defaults to it. The server accepts only an exact zone
+ * name it knows and otherwise uses UTC, so an unusual value here is harmless.
+ */
+function requestTimeZone(): string | undefined {
+    try {
+        const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        return typeof zone === 'string' && zone.length > 0 && zone.length <= 64 ? zone : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * What a turn needs remembered between its plan and its re-plans.
+ *
+ * The plan request carries the original message, the seeds that constrained it and the approval
+ * mode; none of that is in the plan the server returns, so a re-plan after an answered question
+ * would lose it unless it is held here. `revision` is bumped each re-plan, and
+ * `pendingUserMessageId` is the optimistic user bubble the run reconciles with the server's id.
+ */
+interface TurnContext {
+    message: string;
+    approvalMode: ApprovalMode;
+    seeds: OrchestrationSeeds;
+    revision: number;
+    pendingUserMessageId: string;
+    requiresFreshReview?: boolean;
+    submissionId?: string;
+    serverManaged?: boolean;
+}
+
+const turnContexts = new Map<string, TurnContext>();
+
+export async function restorePendingQuestions(conversationId: string, signal?: AbortSignal): Promise<void> {
+    if (selectActiveTurn(useOrchestrationStore.getState(), conversationId)) return;
+    const result = await api.get<{ questions: Elicitation[] }>(
+        `/api/v2/orchestration/questions?${new URLSearchParams({ conversation_id: conversationId })}`, signal,
+    );
+    if (signal?.aborted || useChatStore.getState().activeConversationId !== conversationId) return;
+    const store = useOrchestrationStore.getState();
+    if (selectActiveTurn(store, conversationId)) return;
+    const question = result.questions[0];
+    if (question?.turn_id) {
+        store.setActiveTurn(conversationId, question.turn_id);
+        store.setElicitation(conversationId, question.turn_id, question);
+    }
+}
+
+/**
+ * The in-flight plan or run per conversation.
+ *
+ * One at a time per conversation: a turn plans, is approved, then runs, so a conversation never
+ * has a plan stream and a run stream open together. Keyed by conversation so cancelling — or a
+ * re-plan superseding a plan — reaches the right one while another conversation's run is untouched.
+ */
+const activeControllers = new Map<string, AbortController>();
+const activeRunIds = new Map<string, string>();
+/** Editor requests never abort, begin, settle, or append a main-thread turn. */
+const editorControllers = new Map<string, AbortController>();
+interface PlanningWatch {
+    turnId: string;
+    messageId: string;
+    submissionId: string;
+    timer?: ReturnType<typeof setTimeout>;
+    checking: boolean;
+    startedHere?: boolean;
+}
+const planningWatches = new Map<string, PlanningWatch>();
+const consideredPlanningViews = new Map<string, string>();
+
+function stopPlanningWatch(conversationId: string): void {
+    const watch = planningWatches.get(conversationId);
+    if (watch?.timer) clearTimeout(watch.timer);
+    planningWatches.delete(conversationId);
+}
+
+function planningViewKey(messageId: string, submissionId: string): string {
+    return `${currentConversationEpoch()}:${messageId}:${submissionId}`;
+}
+
+function mayOwnPlanningSurface(conversationId: string): boolean {
+    const chat = useChatStore.getState();
+    return chat.activeConversationId !== conversationId || !chat.streaming || Boolean(chat.orchestrationSurface);
+}
+
+function updateQuestionPlanning(turn: Pick<SavedPlanningTurn,
+    'conversation_id' | 'turn_id' | 'submission_id' | 'status' | 'run_id' | 'run_started' | 'error'>): void {
+    useChatStore.setState((state) => {
+        if (state.activeConversationId !== turn.conversation_id) return state;
+        let changed = false;
+        const messages = state.messages.map((message) => {
+            if (message.role !== 'user' || message.conversation_id !== turn.conversation_id
+                || messageOrchestrationTurn(message) !== turn.turn_id) return message;
+            const value = message.metadata?.orchestration;
+            const previous = value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {};
+            if (previous.planning_status === turn.status && previous.planning_submission_id === turn.submission_id
+                && previous.run_id === turn.run_id && previous.planning_error === turn.error
+                && previous.planning_run_started === turn.run_started) return message;
+            const { run_id: _run, planning_error: _error, planning_run_started: _started, ...retained } = previous;
+            changed = true;
+            return {
+                ...message, metadata: {
+                    ...message.metadata, orchestration: {
+                        ...retained, turn_id: turn.turn_id, planning_status: turn.status,
+                        planning_submission_id: turn.submission_id,
+                        ...(turn.run_id ? { run_id: turn.run_id } : {}),
+                        ...(turn.error ? { planning_error: turn.error } : {}),
+                        ...(turn.run_started !== undefined ? { planning_run_started: turn.run_started } : {}),
+                    },
+                },
+            };
+        });
+        return changed ? { messages } : state;
+    });
+}
+
+function rememberPlanningContext(turn: SavedPlanningTurn): void {
+    if (!turn.request) return;
+    const {
+        message, approval_mode, revision, conversation_id: _conversation,
+        turn_id: _turn, planning_submission_id: _submission, ...seeds
+    } = turn.request;
+    turnContexts.set(scopeKey(turn.conversation_id, turn.turn_id), {
+        message, seeds: structuredClone(seeds),
+        approvalMode: approval_mode === 'auto' || approval_mode === 'timed' ? approval_mode : 'manual',
+        revision: revision ?? 0, pendingUserMessageId: turn.user_message_id,
+        requiresFreshReview: turn.request.requires_fresh_review === true,
+        submissionId: turn.submission_id, serverManaged: true,
+    });
+}
+
+async function applySavedPlanningTurn(conversationId: string, watch: PlanningWatch, turn: SavedPlanningTurn): Promise<void> {
+    if (planningWatches.get(conversationId) !== watch) return;
+    if (turn.submission_id !== watch.submissionId && watch.submissionId) {
+        watch.submissionId = turn.submission_id;
+    }
+    watch.messageId = turn.user_message_id;
+    rememberPlanningContext(turn);
+    updateQuestionPlanning(turn);
+    const store = useOrchestrationStore.getState();
+    const answeringDraft = selectElicitationDraft(store, conversationId, turn.turn_id);
+    if (answeringDraft?.submissionId && (turn.submission_id === answeringDraft.submissionId
+        || turn.request?.elicitation_submission_id === answeringDraft.submissionId)) {
+        store.acceptElicitationSubmission(conversationId, turn.turn_id, answeringDraft.elicitationId,
+            answeringDraft.revision, answeringDraft.submissionId);
+    }
+    store.setActiveTurn(conversationId, turn.turn_id);
+    const chat = useChatStore.getState();
+    if (turn.status === 'planning') {
+        if (mayOwnPlanningSurface(conversationId)
+            && (chat.activeConversationId !== conversationId || !chat.streaming || chat.orchestrationSurface !== 'planning')) {
+            chat.beginOrchestrationTurn(conversationId, turn.request?.message ?? '', false, turn.turn_id);
+        }
+        return;
+    }
+    if (turn.status === 'awaiting_clarification' && turn.elicitation) {
+        store.setElicitation(conversationId, turn.turn_id, turn.elicitation);
+        chat.settleOrchestrationTurn(conversationId, { turnId: turn.turn_id, status: 'planned' });
+        stopPlanningWatch(conversationId);
+        return;
+    }
+    if (turn.run_id && (turn.run_started
+        || ['awaiting_review', 'running', 'waiting', 'completed'].includes(turn.status))) {
+        const record = await loadOrchestrationRecovery(conversationId, turn.run_id);
+        const steps = await fetchRunSteps(turn.run_id, { conversationId });
+        if (!record || planningWatches.get(conversationId) !== watch) return;
+        const awaitingReview = turn.status === 'awaiting_review';
+        const plan = persistedRunPlan(record);
+        const normalized = normalizePlan(plan);
+        if (!normalized) throw new Error('The saved plan could not be restored.');
+        const current = useOrchestrationStore.getState();
+        current.adoptPersistedPlan(
+            conversationId, turn.turn_id, awaitingReview ? neutralizeTimedApproval(plan) : plan,
+            steps, { readOnly: !awaitingReview },
+        );
+        current.setActiveTurn(conversationId, turn.turn_id);
+        chat.settleOrchestrationTurn(conversationId, { turnId: turn.turn_id, status: 'planned' });
+        stopPlanningWatch(conversationId);
+        if (!awaitingReview) {
+            const tracked = {
+                conversationId, turnId: turn.turn_id, runId: turn.run_id,
+                planId: normalized.plan_id, startedAt: Date.now(),
+            };
+            if (watch.startedHere) current.beginRun(tracked);
+            else current.restoreRuns([{ ...tracked, resumed: true }]);
+            if (isOrchestrationRunPending(record) && !isOrchestrationRunWaiting(record)
+                && mayOwnPlanningSurface(conversationId)) {
+                useChatStore.getState().beginOrchestrationTurn(
+                    conversationId, turn.request?.message ?? '', false, turn.turn_id, undefined, 'running',
+                );
+            }
+            void reconcileOrchestrationRun(conversationId, turn.run_id);
+        }
+        return;
+    }
+    if (turn.status === 'cancelled') {
+        chat.settleOrchestrationTurn(conversationId, { turnId: turn.turn_id, status: 'cancelled', accumulated: '' });
+    } else {
+        const error = turn.error || 'Planning was interrupted. Your question was saved. Retry to create a new plan.';
+        if (answeringDraft && !answeringDraft.accepted) {
+            store.failElicitationSubmission(conversationId, turn.turn_id, answeringDraft.elicitationId,
+                answeringDraft.revision, error);
+        }
+        updateQuestionPlanning({ ...turn, error });
+        chat.settleOrchestrationTurn(conversationId, { turnId: turn.turn_id, status: 'failed', error });
+        if (useChatStore.getState().activeConversationId === conversationId) {
+            useChatStore.setState({ streamError: null });
+        }
+    }
+    stopPlanningWatch(conversationId);
+}
+
+async function checkPlanningWatch(conversationId: string, watch: PlanningWatch): Promise<void> {
+    if (watch.checking || planningWatches.get(conversationId) !== watch) return;
+    watch.checking = true;
+    try {
+        const turn = await fetchOrchestrationTurn(conversationId, watch.turnId, {
+            messageId: watch.messageId.startsWith('pending-user-') ? undefined : watch.messageId,
+            includeRequest: true,
+        });
+        await applySavedPlanningTurn(conversationId, watch, turn);
+    } catch (error) {
+        if (planningWatches.get(conversationId) !== watch) return;
+        const chat = useChatStore.getState();
+        const unavailable = error instanceof ApiError && error.status === 404;
+        if (unavailable) {
+            stopPlanningWatch(conversationId);
+            chat.settleOrchestrationTurn(conversationId, {
+                turnId: watch.turnId, status: 'failed',
+                error: 'This saved planning request is no longer available. Reload the conversation.',
+            });
+        }
+        if (chat.activeConversationId === conversationId) {
+            useChatStore.setState({
+                streamError: unavailable
+                    ? 'This saved planning request is no longer available. Reload the conversation.'
+                    : 'Saved planning status could not be reached. Work may still be running. Checking again; no retry will start.',
+            });
+        }
+    } finally {
+        watch.checking = false;
+    }
+    if (planningWatches.get(conversationId) === watch) {
+        watch.timer = setTimeout(() => { void checkPlanningWatch(conversationId, watch); }, 3000);
+    }
+}
+
+function followPlanningTurn(conversationId: string, turnId: string, messageId: string, submissionId: string): void {
+    stopPlanningWatch(conversationId);
+    const watch: PlanningWatch = { turnId, messageId, submissionId, checking: false, startedHere: true };
+    planningWatches.set(conversationId, watch);
+    void checkPlanningWatch(conversationId, watch);
+}
+
+/** History, not sessionStorage, identifies an accepted initial turn after a fresh load. */
+export async function resumeOrchestrationPlanning(conversationId: string): Promise<void> {
+    const chat = useChatStore.getState();
+    if (!conversationId || chat.activeConversationId !== conversationId || planningWatches.has(conversationId)) return;
+    const question = [...chat.messages].reverse().find((message) => message.role === 'user');
+    const state = initialPlanningState(question);
+    const turnId = messageOrchestrationTurn(question);
+    if (!question || !turnId || !state.status || state.status === 'completed') return;
+    if (chat.activeConversationKind === 'collaborative'
+        && !isOwnMessage(question, useBootstrapStore.getState().data?.user?.id)) return;
+    const key = planningViewKey(question.id, state.submissionId ?? '');
+    if (consideredPlanningViews.get(conversationId) === key || activeControllers.has(conversationId)) return;
+    consideredPlanningViews.set(conversationId, key);
+    const watch: PlanningWatch = {
+        turnId, messageId: state.sourceMessageId ?? question.id,
+        submissionId: state.submissionId ?? '', checking: false,
+    };
+    planningWatches.set(conversationId, watch);
+    await checkPlanningWatch(conversationId, watch);
+}
+
+export type ElicitationSubmitResult = { ok: true } | { ok: false; error: string; uncertain?: boolean };
+
+interface ElicitationContinuation {
+    elicitation: Elicitation;
+    response: ElicitationResponse;
+    context?: ElicitationContext;
+    elicitationId: string;
+    revision: number;
+    submissionId: string;
+}
+
+export interface StartPlanParams {
+    /** The open conversation, or null to create one for this first message. */
+    conversationId: string | null;
+    message: string;
+    approvalMode: ApprovalMode;
+    /**
+     * Manual-control selections that constrain the plan rather than being ignored:
+     * `selected_document_ids`, `agent_info`, the `model_*` quartet, `prompt_info`,
+     * `required_capabilities` and legacy `web_search_enabled`. Unchecked controls are neutral.
+     */
+    seeds?: OrchestrationSeeds;
+}
+
+/**
+ * Create the conversation a first message needs, or pass an existing one through.
+ *
+ * Mirrors the minimal half of `sendMessage`'s creation: claim `activeConversationId` only if the
+ * reader is still in the new chat this was sent from, so a reader who opens another thread -- or
+ * starts another new chat -- meanwhile keeps their place while this turn still attaches to the
+ * conversation it created.
+ */
+async function ensureConversation(
+    conversationId: string | null,
+    message: string,
+): Promise<string | null> {
+    if (conversationId) {
+        return conversationId;
+    }
+    // Taken before the round trip: New chat leaves the id null too, so only the epoch says the
+    // reader has moved on to a different new chat.
+    const epoch = currentConversationEpoch();
+    const draftMode = conversationModes.captureDraft(useBootstrapStore.getState().data?.user?.id ?? '');
+    try {
+        const created = await createConversation(message);
+        adoptConversationModeDraft(draftMode, created.conversation_id);
+        const chat = useChatStore.getState();
+        if (chat.activeConversationId === null && currentConversationEpoch() === epoch) {
+            useChatStore.setState({
+                activeConversationId: created.conversation_id,
+                activeConversationKind: 'personal',
+            });
+        }
+        // Refresh the rail so the new conversation appears with its server-side title.
+        void chat.loadConversations({ reset: true });
+        return created.conversation_id;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Open the drawer's plan mode, but only for a manual-mode plan awaiting approval on screen.
+ *
+ * Asymmetric by design. Auto and timed plans leave the drawer shut: the inline card already
+ * carries the countdown and the controls to intervene, and throwing a panel open on every message
+ * is intrusive. Manual is the one mode where approval is a deliberate gate, so the panel earns its
+ * interruption. Guarded on the visible conversation so a plan arriving for a thread the reader has
+ * left does not yank a panel open over the one they are reading.
+ */
+function maybeAutoOpenDrawer(conversationId: string, plan: OrchestrationPlan): void {
+    if (plan.approval.mode !== 'manual' || !isPlanAwaitingApproval(plan)) {
+        return;
+    }
+    if (useOrchestrationStore.getState().visibleConversationId !== conversationId) {
+        return;
+    }
+    const chat = useChatStore.getState();
+    if (chat.drawerMode !== 'plan') {
+        chat.setDrawerMode('plan');
+    }
+}
+
+/**
+ * Drive one plan stream for a turn, fresh or a re-plan, into both stores.
+ *
+ * `addUserMessage` is false for a re-plan: the user's question is already in the thread from the
+ * first plan, and a second bubble for the same turn would be a phantom. A produced plan or
+ * question leaves the thinking state via a `planned` settle; a bare abort drops it and forgets the
+ * card; an error settle has already run from `onError`.
+ */
+async function dispatchPlan(
+    conversationId: string,
+    turnId: string,
+    context: TurnContext,
+    addUserMessage: boolean,
+    continuation?: ElicitationContinuation,
+): Promise<ElicitationSubmitResult> {
+    let uncertain = false;
+    // The ids the turn is keyed on. Mutable because the server can, in principle, reconcile
+    // either one mid-stream: it names a brand-new conversation on `conversation_metadata`, and it
+    // echoes the turn id back on the plan. The client sends both and the server honours both, so
+    // these only ever move on a genuine disagreement — the helpers below make that move safe.
+    let currentConversationId = conversationId;
+    let currentTurnId = turnId;
+    stopPlanningWatch(conversationId);
+    context.submissionId = continuation?.submissionId ?? makeTurnId();
+
+    const key = scopeKey(currentConversationId, currentTurnId);
+    turnContexts.set(key, context);
+
+    const orchestration = useOrchestrationStore.getState();
+    orchestration.setActiveTurn(currentConversationId, currentTurnId);
+
+    const pendingUserMessageId = useChatStore
+        .getState()
+        .beginOrchestrationTurn(
+            currentConversationId,
+            context.message,
+            addUserMessage,
+            currentTurnId,
+            context.seeds.prompt_info as Json | undefined,
+        );
+    if (addUserMessage) {
+        context.pendingUserMessageId = pendingUserMessageId;
+        turnContexts.set(key, context);
+    }
+
+    const controller = new AbortController();
+    // A re-plan supersedes whatever was open for this conversation.
+    activeControllers.get(currentConversationId)?.abort();
+    activeControllers.set(currentConversationId, controller);
+    activeRunIds.delete(currentConversationId);
+
+    /**
+     * Adopt the conversation id the server just announced, if it is not the one we already hold.
+     *
+     * The rail title belongs to the conversation whichever id won, so it is applied first, exactly
+     * as the ordinary chat stream's handler does. The id itself only moves when it genuinely
+     * differs — the normal path pre-created the conversation and sent that id, so the server has
+     * nothing new to say and this returns early. When it does move, the turn was keyed under the
+     * old id (its controller, its context, its store entry and its on-screen bubble), so each of
+     * those follows the id across rather than being stranded under a conversation that never was.
+     */
+    const adoptServerConversationId = (serverConversationId: string, title: unknown): void => {
+        const targetId = serverConversationId || currentConversationId;
+        if (typeof title === 'string' && title) {
+            useChatStore.setState((state) => ({
+                conversations: state.conversations.map((item) =>
+                    item.id === targetId ? { ...item, title } : item,
+                ),
+            }));
+        }
+        if (!serverConversationId || serverConversationId === currentConversationId) {
+            return;
+        }
+        console.warn(
+            `[orchestration] server named conversation ${serverConversationId}; client held ` +
+                `${currentConversationId}. Adopting the server id.`,
+        );
+        const previousConversationId = currentConversationId;
+        const inFlight = activeControllers.get(previousConversationId);
+        if (inFlight) {
+            activeControllers.delete(previousConversationId);
+            activeControllers.set(serverConversationId, inFlight);
+        }
+        const previousKey = scopeKey(previousConversationId, currentTurnId);
+        const heldContext = turnContexts.get(previousKey);
+        if (heldContext) {
+            turnContexts.delete(previousKey);
+            turnContexts.set(scopeKey(serverConversationId, currentTurnId), heldContext);
+        }
+        orchestration.clearActiveTurn(previousConversationId);
+        orchestration.setActiveTurn(serverConversationId, currentTurnId);
+        useChatStore.getState().reassignOrchestrationTurn({
+            fromConversationId: previousConversationId,
+            toConversationId: serverConversationId,
+            fromTurnId: currentTurnId,
+            toTurnId: currentTurnId,
+        });
+        currentConversationId = serverConversationId;
+    };
+
+    /**
+     * Adopt the turn id echoed on the plan, if it is not the one we sent.
+     *
+     * `activeTurns` is keyed by conversation, so re-pointing it overwrites the old value with no
+     * orphan; the controller's context map and the question bubble carry the old turn id and are
+     * moved to match. The plan and its edits are written by the caller AFTER this runs, so they
+     * land under the reconciled id directly and need no move.
+     */
+    const adoptServerTurnId = (serverTurnId: string | undefined): void => {
+        if (!serverTurnId || serverTurnId === currentTurnId) {
+            return;
+        }
+        console.warn(
+            `[orchestration] server keyed turn ${serverTurnId}; client sent ${currentTurnId}. ` +
+                `Adopting the server id.`,
+        );
+        const previousTurnId = currentTurnId;
+        const previousKey = scopeKey(currentConversationId, previousTurnId);
+        const heldContext = turnContexts.get(previousKey);
+        if (heldContext) {
+            turnContexts.delete(previousKey);
+            turnContexts.set(scopeKey(currentConversationId, serverTurnId), heldContext);
+        }
+        orchestration.setActiveTurn(currentConversationId, serverTurnId);
+        useChatStore.getState().reassignOrchestrationTurn({
+            fromConversationId: currentConversationId,
+            toConversationId: currentConversationId,
+            fromTurnId: previousTurnId,
+            toTurnId: serverTurnId,
+        });
+        currentTurnId = serverTurnId;
+    };
+
+    const body: OrchestrationPlanRequest = {
+        ...context.seeds,
+        message: context.message,
+        conversation_id: currentConversationId,
+        turn_id: currentTurnId,
+        revision: context.revision,
+        approval_mode: context.approvalMode,
+        planning_submission_id: context.submissionId,
+        ...(context.requiresFreshReview ? { requires_fresh_review: true } : {}),
+    };
+    const timeZone = requestTimeZone();
+    if (timeZone && !body.time_zone) {
+        body.time_zone = timeZone;
+    }
+    if (continuation) {
+        delete body.retry_user_message_id;
+        delete body.retry_thread_id;
+        delete body.retry_thread_attempt;
+        body.elicitation = continuation.elicitation;
+        body.elicitation_response = continuation.response;
+        body.elicitation_id = continuation.elicitationId;
+        body.elicitation_revision = continuation.revision;
+        body.elicitation_submission_id = continuation.submissionId;
+        delete body.elicitation_context;
+        if (continuation.response.action === 'accept' && continuation.context) {
+            body.elicitation_context = continuation.context;
+        }
+    }
+
+    let produced = false;
+    let errored = false;
+    let failure = '';
+    let needsRecovery = false;
+    const adoption: { turn: SavedPlanningTurn | null } = { turn: null };
+    let reasoningAdjustments: ReasoningResolution[] = [];
+    const isCurrentRequest = () =>
+        !controller.signal.aborted && activeControllers.get(currentConversationId) === controller;
+    await planOrchestration(
+        body,
+        {
+            onThought: (event) => {
+                if (isCurrentRequest()) {
+                    reasoningAdjustments = normalizeReasoningAdjustments(
+                        event.reasoning_adjustments, reasoningAdjustments,
+                    );
+                    useOrchestrationStore.getState().mergeReasoningAdjustments(
+                        currentConversationId, currentTurnId, event.reasoning_adjustments,
+                    );
+                    useChatStore.getState()
+                        .pushOrchestrationThought(currentConversationId, { ...event, turn_id: currentTurnId } as RunStreamEvent);
+                }
+            },
+            onConversationMetadata: (event) => {
+                if (!isCurrentRequest()) {
+                    return;
+                }
+                adoptServerConversationId(
+                    typeof event.conversation_id === 'string' ? event.conversation_id : '',
+                    event.conversation_title ?? event.title,
+                );
+            },
+            onUserMessagePersisted: (event) => {
+                if (!isCurrentRequest() || typeof event.user_message_id !== 'string'
+                    || !event.user_message_id || typeof event.conversation_id !== 'string') return;
+                if (continuation && event.server_managed === true
+                    && event.planning_submission_id !== continuation.submissionId) return;
+                // The existing server-managed admission event follows validated answer persistence,
+                // before the planner runs. Initial-message persistence is never answer acceptance.
+                const acceptedAnswer = continuation && event.server_managed === true
+                    && event.conversation_id === currentConversationId && event.turn_id === currentTurnId
+                    && event.planning_submission_id === continuation.submissionId;
+                adoptServerConversationId(event.conversation_id, undefined);
+                adoptServerTurnId(typeof event.turn_id === 'string' ? event.turn_id : undefined);
+                useChatStore.getState().reconcileOrchestrationUserMessage({
+                    conversationId: currentConversationId, turnId: currentTurnId,
+                    optimisticId: context.pendingUserMessageId || pendingUserMessageId,
+                    savedId: event.user_message_id,
+                });
+                context.pendingUserMessageId = event.user_message_id;
+                context.serverManaged = event.server_managed === true;
+                if (acceptedAnswer && continuation) {
+                    useOrchestrationStore.getState().acceptElicitationSubmission(
+                        currentConversationId, currentTurnId, continuation.elicitationId,
+                        continuation.revision, continuation.submissionId,
+                    );
+                }
+                if (typeof event.planning_submission_id === 'string' && event.planning_submission_id) {
+                    context.submissionId = event.planning_submission_id;
+                }
+                if (context.serverManaged) {
+                    updateQuestionPlanning({
+                        conversation_id: currentConversationId, turn_id: currentTurnId,
+                        submission_id: context.submissionId ?? '', status: 'planning',
+                    });
+                    if (useChatStore.getState().activeConversationId === currentConversationId) {
+                        consideredPlanningViews.set(currentConversationId,
+                            planningViewKey(event.user_message_id, context.submissionId ?? ''));
+                    }
+                }
+            },
+            onTurn: (turn) => {
+                if (!isCurrentRequest() || turn.conversation_id !== currentConversationId
+                    || turn.turn_id !== currentTurnId) return;
+                adoption.turn = turn;
+                produced = true;
+            },
+            onPlan: (plan, exportCatalog, turnIdentity, serverManaged) => {
+                if (!isCurrentRequest()) {
+                    return;
+                }
+                const normalized = normalizePlan(context.requiresFreshReview
+                    ? { ...plan, requires_fresh_review: true } : plan);
+                if (!normalized?.plan_id || !normalized.run_id || !normalized.turn_id
+                    || (normalized.revision ?? 0) < context.revision
+                    || normalized.conversation_id !== currentConversationId || !isPlanRunnable(normalized)
+                    || (turnIdentity && (
+                        turnIdentity.conversation_id !== normalized.conversation_id
+                        || turnIdentity.turn_id !== normalized.turn_id
+                        || turnIdentity.run_id !== normalized.run_id
+                        || typeof turnIdentity.user_message_id !== 'string'
+                        || !turnIdentity.user_message_id.trim()
+                    ))) {
+                    errored = true;
+                    failure = 'The planner returned an invalid plan. Please try again.';
+                    useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
+                        turnId: currentTurnId,
+                        status: 'failed',
+                        error: failure,
+                    });
+                    return;
+                }
+                adoptServerTurnId(normalized.turn_id);
+                if (turnIdentity) {
+                    useChatStore.getState().reconcileOrchestrationUserMessage({
+                        conversationId: currentConversationId,
+                        turnId: currentTurnId,
+                        optimisticId: context.pendingUserMessageId || pendingUserMessageId,
+                        savedId: turnIdentity.user_message_id,
+                    });
+                    context.pendingUserMessageId = turnIdentity.user_message_id;
+                }
+                context.revision = normalized.revision ?? context.revision;
+                context.serverManaged ||= serverManaged === true;
+                if (context.serverManaged) {
+                    updateQuestionPlanning({
+                        conversation_id: currentConversationId, turn_id: currentTurnId,
+                        submission_id: context.submissionId ?? '', run_id: normalized.run_id,
+                        status: normalized.approval.mode === 'auto' ? 'planning' : 'awaiting_review',
+                    });
+                }
+                useOrchestrationStore.getState().setPlan(currentConversationId, currentTurnId, {
+                    ...normalized,
+                    reasoning_adjustments: normalizeReasoningAdjustments([
+                        ...reasoningAdjustments, ...(normalized.reasoning_adjustments ?? []),
+                    ]),
+                });
+                if (Array.isArray(exportCatalog)) {
+                    useOrchestrationStore.getState().updateRunRecovery(normalized.run_id, {
+                        export_catalog: exportCatalog,
+                    });
+                }
+                produced = true;
+                maybeAutoOpenDrawer(currentConversationId, normalized);
+            },
+            onElicitationAccepted: (event) => {
+                if (!isCurrentRequest() || !continuation
+                    || event.conversation_id !== currentConversationId || event.turn_id !== currentTurnId
+                    || event.elicitation_id !== continuation.elicitationId
+                    || event.elicitation_revision !== continuation.revision
+                    || event.elicitation_submission_id !== continuation.submissionId) return;
+                useOrchestrationStore.getState().acceptElicitationSubmission(
+                    currentConversationId, currentTurnId, continuation.elicitationId,
+                    continuation.revision, continuation.submissionId,
+                );
+            },
+            onElicitation: (elicitation) => {
+                if (!isCurrentRequest()) {
+                    return;
+                }
+                if ((elicitation.revision ?? 0) < context.revision) return;
+                adoptServerTurnId(elicitation.turn_id);
+                context.revision = elicitation.revision ?? context.revision;
+                if (context.serverManaged) {
+                    updateQuestionPlanning({
+                        conversation_id: currentConversationId, turn_id: currentTurnId,
+                        submission_id: context.submissionId ?? '', status: 'awaiting_clarification',
+                    });
+                }
+                useOrchestrationStore
+                    .getState()
+                    .setElicitation(currentConversationId, currentTurnId, elicitation);
+                produced = true;
+            },
+            onError: (message, error) => {
+                if (!isCurrentRequest()) {
+                    return;
+                }
+                uncertain = Boolean(continuation && !error?.code);
+                if (context.serverManaged && !error?.code) {
+                    failure = message;
+                    needsRecovery = true;
+                    return;
+                }
+                errored = true;
+                failure = message;
+                if (context.serverManaged) {
+                    updateQuestionPlanning({
+                        conversation_id: currentConversationId, turn_id: currentTurnId,
+                        submission_id: context.submissionId ?? '', status: 'failed', error: message,
+                    });
+                }
+                useChatStore
+                    .getState()
+                    .settleOrchestrationTurn(currentConversationId, {
+                        turnId: currentTurnId,
+                        status: 'failed',
+                        error: message,
+                    });
+                if (context.serverManaged && useChatStore.getState().activeConversationId === currentConversationId) {
+                    useChatStore.setState({ streamError: null });
+                }
+            },
+        },
+        controller.signal,
+    );
+
+    if (activeControllers.get(currentConversationId) !== controller) {
+        return { ok: false, error: 'This request was superseded by another request.' };
+    }
+    activeControllers.delete(currentConversationId);
+
+    if (adoption.turn) {
+        const turn = adoption.turn;
+        const watch: PlanningWatch = {
+            turnId: turn.turn_id, messageId: turn.user_message_id,
+            submissionId: turn.submission_id, checking: false,
+        };
+        planningWatches.set(currentConversationId, watch);
+        await applySavedPlanningTurn(currentConversationId, watch, turn);
+        if (planningWatches.get(currentConversationId) === watch) {
+            void checkPlanningWatch(currentConversationId, watch);
+        }
+        return { ok: true };
+    }
+    if (needsRecovery && !controller.signal.aborted) {
+        followPlanningTurn(
+            currentConversationId, currentTurnId,
+            context.pendingUserMessageId, context.submissionId ?? '',
+        );
+        return { ok: true };
+    }
+
+    if (produced && !errored) {
+        // Auto mode is pre-approved on arrival, so its run starts here rather than waiting for a
+        // click or a countdown — and it starts INSTEAD OF settling `planned`, so the thinking
+        // state flows straight into the run's streaming without a flicker to idle between them.
+        // Manual and timed settle `planned` and wait for the card. So does a plan that starts a
+        // saved workflow: the server saves it as manual, and this guard holds even if it did not.
+        const settledPlan = selectPlan(
+            useOrchestrationStore.getState(),
+            currentConversationId,
+            currentTurnId,
+        );
+        const autoRun =
+            settledPlan !== null &&
+            settledPlan.approval.mode === 'auto' &&
+            !context.requiresFreshReview &&
+            !settledPlan.requires_fresh_review &&
+            !planHasApprovalFloor(settledPlan) &&
+            !selectHasPlanHold(useOrchestrationStore.getState(), currentConversationId, currentTurnId) &&
+            isPlanApproved(settledPlan) &&
+            isPlanRunnable(settledPlan);
+        if (autoRun) {
+            if (context.serverManaged) {
+                followPlanningTurn(
+                    currentConversationId, currentTurnId,
+                    context.pendingUserMessageId, context.submissionId ?? '',
+                );
+            } else {
+                void approveAndRunPlan({
+                    conversationId: currentConversationId, turnId: currentTurnId, automatic: true,
+                });
+            }
+        } else {
+            useChatStore
+                .getState()
+                .settleOrchestrationTurn(currentConversationId, {
+                    turnId: currentTurnId,
+                    status: 'planned',
+                    attemptState: selectElicitation(useOrchestrationStore.getState(), currentConversationId, currentTurnId)
+                        ? 'awaiting_clarification' : 'awaiting_review',
+                });
+        }
+        return { ok: true };
+    } else if (!errored && controller.signal.aborted) {
+        // Cancelled before the planner committed: drop the thinking state and forget the card,
+        // rather than leaving an empty plan slot the drawer would puzzle over.
+        useChatStore
+            .getState()
+            .settleOrchestrationTurn(currentConversationId, { turnId: currentTurnId, status: 'cancelled', accumulated: '' });
+        if (!continuation) {
+            useOrchestrationStore.getState().clearActiveTurn(currentConversationId);
+        }
+        return { ok: false, error: 'The request was interrupted. You can try again.' };
+    }
+    failure ||= 'The planner did not return a plan or a question. Please try again.';
+    if (!errored) {
+        useChatStore.getState().settleOrchestrationTurn(currentConversationId, {
+            turnId: currentTurnId,
+            status: 'failed',
+            error: failure,
+        });
+    }
+    return { ok: false, error: failure, uncertain };
+}
+
+/**
+ * Plan a fresh turn from the composer.
+ *
+ * Creates the conversation if there is none, mints the turn id, and dispatches the first plan.
+ */
+export async function startOrchestrationPlan(params: StartPlanParams): Promise<void> {
+    const message = params.message.trim();
+    if (!message) {
+        return;
+    }
+    const seeds = structuredClone(params.seeds ?? {});
+    const conversationId = await ensureConversation(params.conversationId, message);
+    if (!conversationId) {
+        return;
+    }
+    const turnId = makeTurnId();
+    await dispatchPlan(
+        conversationId,
+        turnId,
+        {
+            message,
+            approvalMode: params.approvalMode,
+            seeds,
+            revision: 0,
+            pendingUserMessageId: '',
+        },
+        true,
+    );
+}
+
+export async function planRegeneratedMessage(prepared: AttemptOrchestrationRequest): Promise<ElicitationSubmitResult> {
+    const { message, ...seeds } = prepared.plan_request;
+    return dispatchPlan(
+        prepared.user_message.conversation_id,
+        prepared.turn_id,
+        {
+            message,
+            seeds,
+            approvalMode: 'manual',
+            revision: 0,
+            pendingUserMessageId: prepared.user_message_id,
+            requiresFreshReview: true,
+        },
+        false,
+    );
+}
+
+/** Initial planning retries use canonical saved inputs, not today's composer selections. */
+export async function retryOrchestrationPlanning(
+    conversationId: string,
+    turnId: string,
+    messageId: string,
+): Promise<ElicitationSubmitResult> {
+    const chat = useChatStore.getState();
+    let context = turnContexts.get(scopeKey(conversationId, turnId));
+    const message = chat.messages.find((candidate) => candidate.id === messageId);
+    const sourceMessageId = initialPlanningState(message).sourceMessageId ?? messageId;
+    if (message?.conversation_id === conversationId
+        && (context?.serverManaged || initialPlanningState(message).status)) {
+        try {
+            const turn = await fetchOrchestrationTurn(conversationId, turnId, {
+                messageId: sourceMessageId, includeRequest: true,
+            });
+            if (!['failed', 'interrupted', 'cancelled'].includes(turn.status) || turn.run_started) {
+                followPlanningTurn(conversationId, turnId, sourceMessageId, turn.submission_id);
+                return { ok: false, error: 'This request has saved work. Its current status is being restored; no retry was started.' };
+            }
+            rememberPlanningContext(turn);
+            context = turnContexts.get(scopeKey(conversationId, turnId));
+            useOrchestrationStore.getState().clearPlan(conversationId, turnId);
+        } catch {
+            return { ok: false, error: 'The saved planning inputs could not be loaded. Reload to check the request; no retry was started.' };
+        }
+    }
+    if (useChatStore.getState().activeConversationId !== conversationId || !context
+        || context.pendingUserMessageId !== sourceMessageId
+        || message?.conversation_id !== conversationId || message.role !== 'user'
+        || message.content !== context.message) {
+        return {
+            ok: false,
+            error: 'This planning request is no longer available in this tab. Copy the original message to the composer, review the model and documents, and send it again.',
+        };
+    }
+    if (hasActiveOrchestration(conversationId) || chat.streaming) {
+        return { ok: false, error: 'This conversation already has a request in progress.' };
+    }
+    const store = useOrchestrationStore.getState();
+    if (selectPlan(store, conversationId, turnId)) {
+        return { ok: false, error: 'This request already has a plan. Review the saved plan instead of starting another attempt.' };
+    }
+    if (selectElicitation(store, conversationId, turnId)) {
+        return { ok: false, error: 'This request has a planner question. Continue from that question so your answers are preserved.' };
+    }
+    return dispatchPlan(conversationId, turnId, { ...context, approvalMode: 'manual', requiresFreshReview: true }, false);
+}
+
+/** A deleted conversation must not regain a plan from a late response or retained Retry context. */
+export function forgetOrchestrationConversation(conversationId: string): void {
+    stopPlanningWatch(conversationId);
+    consideredPlanningViews.delete(conversationId);
+    activeControllers.get(conversationId)?.abort();
+    activeControllers.delete(conversationId);
+    activeRunIds.delete(conversationId);
+    const store = useOrchestrationStore.getState();
+    const prefix = `${conversationId}\u0000`;
+    for (const key of turnContexts.keys()) {
+        if (!key.startsWith(prefix)) {
+            continue;
+        }
+        const turnId = key.slice(prefix.length);
+        turnContexts.delete(key);
+        store.clearPlan(conversationId, turnId);
+        store.clearElicitation(conversationId, turnId);
+        editorControllers.get(key)?.abort();
+        editorControllers.delete(key);
+    }
+    store.clearActiveTurn(conversationId);
+}
+
+/**
+ * Answer a planner's question and re-plan the same turn.
+ *
+ * Accept and decline continue the same turn with its original message, seeds and stored-question
+ * identity. The draft stays until that continuation succeeds. Cancel abandons the local turn
+ * without another planning request.
+ */
+export async function answerElicitation(params: {
+    conversationId: string;
+    turnId: string;
+    response: ElicitationResponse;
+    context?: ElicitationContext;
+    elicitationId?: string;
+    elicitationRevision?: number;
+}): Promise<ElicitationSubmitResult> {
+    const { conversationId, turnId, response } = params;
+    const key = scopeKey(conversationId, turnId);
+    const store = useOrchestrationStore.getState();
+    const elicitation = selectElicitation(store, conversationId, turnId);
+    const draft = selectElicitationDraft(store, conversationId, turnId);
+    const fail = (message: string): ElicitationSubmitResult => {
+        if (elicitation && draft && (!params.elicitationId || params.elicitationId === elicitation.elicitation_id)
+            && (params.elicitationRevision === undefined || params.elicitationRevision === (elicitation.revision ?? 0))) {
+            useOrchestrationStore.getState().failElicitationSubmission(
+                conversationId, turnId, elicitation.elicitation_id, elicitation.revision ?? 0, message,
+            );
+        }
+        return { ok: false, error: message };
+    };
+    if (!elicitation || !draft || (params.elicitationId && params.elicitationId !== elicitation.elicitation_id)
+        || (params.elicitationRevision !== undefined && params.elicitationRevision !== (elicitation.revision ?? 0))
+        || store.activeTurns[conversationId] !== turnId) {
+        return fail('This question is no longer active. Open the current request to continue.');
+    }
+    if (draft.submitting || draft.accepted || draft.uncertain) {
+        return { ok: false, error: 'An answer is already being submitted.' };
+    }
+    if (response.action === 'cancel') {
+        try {
+            const pending = await api.get<{ csrf_token: string }>(
+                `/api/v2/orchestration/questions?${new URLSearchParams({ conversation_id: conversationId })}`,
+            );
+            await api.post('/api/v2/orchestration/questions/cancel', {
+                conversation_id: conversationId, turn_id: turnId,
+                elicitation_id: elicitation.elicitation_id, revision: elicitation.revision ?? 0,
+                csrf_token: pending.csrf_token,
+            });
+        } catch {
+            return fail('The cancellation could not be confirmed. Refresh this conversation.');
+        }
+        cancelOrchestration(conversationId);
+        turnContexts.delete(key);
+        store.clearElicitation(conversationId, turnId);
+        store.clearActiveTurn(conversationId);
+        useChatStore.getState().settleOrchestrationTurn(conversationId, {
+            status: 'cancelled',
+            accumulated: '',
+        });
+        return { ok: true };
+    }
+    // On reload the server, not browser storage, restores original seeds and approval mode.
+    const previous = turnContexts.get(key) ?? {
+        message: '', seeds: {}, revision: elicitation.revision ?? 0,
+        approvalMode: 'manual' as const, pendingUserMessageId: '',
+    };
+    turnContexts.set(key, previous);
+    const cleanedResponse: ElicitationResponse = {
+        action: response.action,
+        content: response.action === 'accept' ? response.content : {},
+    };
+    const answerContext = response.action === 'accept' ? params.context : undefined;
+    const fingerprint = JSON.stringify({ response: cleanedResponse, context: answerContext });
+    const submissionId = draft.submissionFingerprint === fingerprint && draft.submissionId
+        ? draft.submissionId
+        : makeTurnId();
+    if (!store.beginElicitationSubmission(
+        conversationId, turnId, elicitation.elicitation_id, submissionId, fingerprint,
+    )) {
+        return { ok: false, error: 'This answer is already being submitted or is no longer current.' };
+    }
+    const nextContext = { ...previous, revision: previous.revision + 1 };
+    const result = await dispatchPlan(
+        conversationId,
+        turnId,
+        nextContext,
+        false,
+        {
+            elicitation,
+            response: cleanedResponse,
+            context: answerContext,
+            elicitationId: elicitation.elicitation_id,
+            revision: elicitation.revision ?? previous.revision,
+            submissionId,
+        },
+    );
+    if (!result.ok) {
+        if (result.uncertain) {
+            useOrchestrationStore.getState().updateElicitationDraft(
+                conversationId, turnId, elicitation.elicitation_id, elicitation.revision ?? 0,
+                (current) => current.accepted ? current : {
+                    ...current, submitting: false, uncertain: true,
+                    error: 'Your answers are saved in this tab. Checking whether they were received.',
+                },
+            );
+            await reconcileElicitationAnswer(conversationId, turnId);
+            return result;
+        }
+        if (turnContexts.get(key) === nextContext) {
+            turnContexts.set(key, previous);
+        }
+        return fail(result.error);
+    }
+    return result;
+}
+
+/** Reconcile an ambiguous answer without resending it or losing its draft. */
+export async function reconcileElicitationAnswer(conversationId: string, turnId: string): Promise<void> {
+    const state = useOrchestrationStore.getState();
+    const draft = selectElicitationDraft(state, conversationId, turnId);
+    if (!draft || draft.accepted || !draft.submissionId) return;
+    try {
+        const turn = await fetchOrchestrationTurn(conversationId, turnId, { includeRequest: true });
+        if (turn.submission_id === draft.submissionId
+            || turn.request?.elicitation_submission_id === draft.submissionId) {
+            state.acceptElicitationSubmission(conversationId, turnId, draft.elicitationId, draft.revision, draft.submissionId);
+            followPlanningTurn(conversationId, turnId, turn.user_message_id, turn.submission_id);
+        } else if (turn.status === 'awaiting_clarification'
+            && turn.elicitation?.elicitation_id === draft.elicitationId
+            && (turn.elicitation.revision ?? 0) === draft.revision) {
+            state.updateElicitationDraft(conversationId, turnId, draft.elicitationId, draft.revision,
+                (current) => ({ ...current, uncertain: false, submitting: false,
+                    error: 'The answer was not accepted. Review your saved answers and try again.' }));
+        }
+    } catch {
+        // An unavailable status is not evidence that the answer was rejected. Keep resends blocked.
+    }
+}
+
+/**
+ * Approve a plan and run it, streaming its answer into the thread.
+ *
+ * The run request carries the narrowing edits so the server applies them before executing; the
+ * browser never assembles the plan that runs. `beginRun` guards a double approval — a second press
+ * or a restored record — by refusing a run id already tracked. Every terminal path settles the
+ * thread and ends the run. A dropped reader is reconciled against the saved attempt instead of
+ * guessing that execution ended or that the user cancelled it.
+ */
+export async function approveAndRunPlan(params: {
+    conversationId: string;
+    turnId: string;
+    automatic?: boolean;
+}): Promise<void> {
+    const { conversationId, turnId } = params;
+    const store = useOrchestrationStore.getState();
+    const plan = selectPlan(store, conversationId, turnId);
+    // Nothing automatic -- a countdown or auto-run -- may start a plan that starts a saved
+    // workflow; only the user's own click does.
+    if (!plan || selectPlanRunBlocked(store, conversationId, turnId)
+        || (params.automatic && (plan.requires_fresh_review
+            || turnContexts.get(scopeKey(conversationId, turnId))?.requiresFreshReview
+            || selectHasPlanHold(store, conversationId, turnId) || planHasApprovalFloor(plan)))) {
+        return;
+    }
+    const edits = selectEdits(store, conversationId, turnId);
+    if (!isPlanRunnable(applyPlanEdits(plan, edits))) {
+        return;
+    }
+    await executeSavedPlan(conversationId, turnId, plan, edits, !params.automatic && (
+        plan.requires_fresh_review === true || turnContexts.get(scopeKey(conversationId, turnId))?.requiresFreshReview === true
+    ));
+}
+
+async function executeSavedPlan(
+    conversationId: string,
+    turnId: string,
+    plan: OrchestrationPlan,
+    edits?: PlanEdits,
+    reviewedRegeneration = false,
+    credentialRequest?: CredentialRequest,
+    openContinuation?: (signal?: AbortSignal) => Promise<Response>,
+): Promise<void> {
+    const store = useOrchestrationStore.getState();
+
+    const runId = plan.run_id;
+    const planId = plan.plan_id;
+    const began = store.beginRun({
+        conversationId,
+        turnId,
+        runId,
+        planId,
+        startedAt: Date.now(),
+    });
+    if (!began) {
+        if (credentialRequest || openContinuation) throw new Error('This action is already continuing in this tab.');
+        return;
+    }
+    if (store.editorTarget?.conversationId === conversationId && store.editorTarget.turnId === turnId) {
+        store.setEditorTarget(null);
+    }
+
+    const context = turnContexts.get(scopeKey(conversationId, turnId));
+    // Enter the streaming state for the answer without a second user bubble — the question is
+    // already in the thread from planning. Taken as the run phase: the plan card shows a run's
+    // progress, so the streaming bubble stays out of the way until there is an answer to show.
+    useChatStore.getState().beginOrchestrationTurn(conversationId, '', false, turnId, undefined, 'running');
+
+    const controller = new AbortController();
+    activeControllers.get(conversationId)?.abort();
+    activeControllers.set(conversationId, controller);
+    activeRunIds.set(conversationId, runId);
+
+    const originalUserMessageId = useChatStore.getState().messages.find((message) =>
+        message.conversation_id === conversationId && message.role === 'user'
+        && message.metadata?.orchestration_turn_id === turnId,
+    )?.id || context?.pendingUserMessageId || '';
+    const currentPendingStream = () => activeControllers.get(conversationId) === controller
+        && activeRunIds.get(conversationId) === runId
+        && useChatStore.getState().activeConversationId === conversationId
+        && chatPendingActionsStore.getState().conversationId === conversationId;
+    if (originalUserMessageId && currentPendingStream()) {
+        chatPendingActionsStore.getState().setLiveStream(null);
+        chatPendingActionsStore.getState().setLiveStream({
+            conversationId, userMessageId: originalUserMessageId, placement: 'turn',
+        });
+    }
+    const ingestOutgoingActions = (event: RunStreamEvent) => {
+        if (!currentPendingStream() || event.blocked
+            || (event.conversation_id && event.conversation_id !== conversationId)
+            || (event.run_id && event.run_id !== runId)) return;
+        if (event.type === 'm365_pending_action' && (
+            !plan.steps.some((step) => step.step_id === event.step_id)
+            || (originalUserMessageId && event.user_message_id !== originalUserMessageId)
+        )) return;
+        chatPendingActionsStore.getState().handleStreamPayload(event, {
+            conversationId, userMessageId: originalUserMessageId,
+        });
+    };
+
+    const runBody: OrchestrationRunRequest = {
+        run_id: runId,
+        plan_id: planId,
+        conversation_id: conversationId,
+        ...(edits ? { edits } : {}),
+        // A retry uses its returned child plan version, not the source recovery token.
+        ...(plan.edit_version ? { expected_version: plan.edit_version } : {}),
+        ...(reviewedRegeneration ? { reviewed_regeneration: true } : {}),
+    };
+
+    let settled = false;
+    let conflictMessage = '';
+    const acknowledgeWaiting = (event: RunStreamEvent) => {
+        ingestOutgoingActions(event);
+        settled = true;
+        const current = useOrchestrationStore.getState();
+        const waitingPlan: OrchestrationPlan = { ...plan, status: 'waiting' };
+        current.updateRunRecovery(runId, {
+            ...normalizeOrchestrationAttempt({ ...event, run_id: runId, turn_id: turnId }),
+            status: 'waiting', plan: waitingPlan, transportUnknown: false, checking: false, error: null,
+        });
+        if (selectPlan(current, conversationId, turnId)?.run_id === runId) {
+            current.setPlan(conversationId, turnId, waitingPlan);
+        }
+        // Release only the browser's streaming surface. Keep the attempt in flight, without
+        // manufacturing an assistant answer or a new execution for the durable computation.
+        useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'planned', attemptState: 'waiting' });
+    };
+    const result = await runOrchestration(
+        runBody,
+        {
+            onM365PendingActions: ingestOutgoingActions,
+            onStep: (event) => {
+                const current = useOrchestrationStore.getState();
+                if (selectPlan(current, conversationId, turnId)?.run_id !== runId) return;
+                current.applyStepEvent(conversationId, turnId, event);
+                applyOrchestrationOutputEvent(runId, event);
+                current.mergeReasoningAdjustments(conversationId, turnId, event.reasoning_adjustments);
+                const step = plan.steps.find((item) => item.step_id === event.step_id);
+                if ((step?.capability_id === 'action_invoke' || step?.capability_id === 'agent_invoke')
+                    && (event.status === 'completed' || event.status === 'failed')) {
+                    refreshOutgoingActions(conversationId);
+                }
+            },
+            // A run reports each step starting and finishing as a `thought`, the same event
+            // planning uses, so it lands in the same place a planning thought does — feeding the
+            // orchestration progress lane while the answer is still being assembled.
+            onThought: (event) => {
+                useOrchestrationStore.getState().mergeReasoningAdjustments(
+                    conversationId, turnId, event.reasoning_adjustments,
+                );
+                useChatStore
+                    .getState()
+                    .pushOrchestrationThought(conversationId, { ...event, turn_id: turnId } as RunStreamEvent);
+            },
+            onContent: (_delta, accumulated) =>
+                useChatStore.getState().pushOrchestrationContent(conversationId, accumulated, turnId),
+            onWaiting: acknowledgeWaiting,
+            onDone: (event, accumulated) => {
+                ingestOutgoingActions(event);
+                settled = true;
+                const status = orchestrationTerminalStatus(event);
+                if (status === 'waiting') {
+                    acknowledgeWaiting(event);
+                    return;
+                }
+                const terminal = { ...event, run_id: runId, turn_id: turnId };
+                useOrchestrationStore.getState().updateRunRecovery(runId, {
+                    ...normalizeOrchestrationAttempt(terminal), status, plan,
+                    transportUnknown: false, checking: false,
+                    error: event.message_saved === false
+                        ? 'This explanation could not be saved to the conversation. It is kept in this tab; review saved progress before leaving.' : null,
+                });
+                useOrchestrationStore.getState().mergeReasoningAdjustments(
+                    conversationId, turnId, event.reasoning_adjustments ?? event.metadata?.reasoning_adjustments,
+                );
+                useChatStore.getState().settleOrchestrationTurn(conversationId, {
+                    turnId,
+                    status,
+                    event: terminal,
+                    accumulated,
+                    pendingUserMessageId: context?.pendingUserMessageId ?? null,
+                });
+                useOrchestrationStore.getState().endRun(runId, status);
+                if (status === 'completed') {
+                    announceRunReply(conversationId, runId, terminal);
+                }
+                // Generated images are saved as their own conversation messages, which the
+                // answer's image cards show. Reading the saved thread brings them in.
+                if (doneFrameHasGeneratedImages(event)) {
+                    void useChatStore.getState().reloadMessages();
+                }
+            },
+            onCancelled: (event, accumulated) => {
+                ingestOutgoingActions(event);
+                settled = true;
+                const terminal = { ...event, run_id: runId, turn_id: turnId, status: 'cancelled' as const };
+                useOrchestrationStore.getState().updateRunRecovery(runId, {
+                    ...normalizeOrchestrationAttempt(terminal), status: 'cancelled', plan,
+                    transportUnknown: false, checking: false,
+                    error: event.message_saved === false
+                        ? 'This explanation could not be saved to the conversation. It is kept in this tab; review saved progress before leaving.' : null,
+                });
+                useChatStore
+                    .getState()
+                    .settleOrchestrationTurn(conversationId, { turnId, status: 'cancelled', event: terminal, accumulated });
+                useOrchestrationStore.getState().endRun(runId, 'cancelled');
+            },
+            // Older error-only frames do not prove that finalization reached storage.
+            onError: () => {},
+            onConflict: (message) => {
+                settled = true;
+                conflictMessage = message;
+                const current = useOrchestrationStore.getState();
+                current.releaseRunAttempt(runId);
+                current.updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor, blocked: true, error: message,
+                }));
+                useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'planned' });
+            },
+            // The plan was already run somewhere else.
+            //
+            // Only reachable now that a pending approval can be picked up on a second device: two
+            // tabs can hold the same card, and the server refuses the second approval rather than
+            // doing the work twice. That is not a failure of this turn, so the thread is settled
+            // quietly and the conversation re-read -- the answer the other device produced is
+            // already stored, and fetching it is how this device catches up.
+            onAlreadyRun: () => {
+                // Read the existing attempt; it might still be running, failed, or stopped.
+            },
+        },
+        controller.signal,
+        credentialRequest,
+        openContinuation,
+    );
+    if (currentPendingStream()) chatPendingActionsStore.getState().setLiveStream(null);
+    // A draft may have been saved even when the stream ended without its terminal frame.
+    refreshOutgoingActions(conversationId);
+
+    if (activeControllers.get(conversationId) === controller) {
+        activeControllers.delete(conversationId);
+        activeRunIds.delete(conversationId);
+    }
+    if (result.conflict) {
+        await refreshOrchestrationPlanEditor(
+            { conversationId, turnId }, result.conflict.current_run_id ?? runId, conflictMessage,
+        );
+    }
+    if (result.rejection) {
+        const legacyMessage = result.rejection.code === 'legacy_plan' ? result.rejection.message : null;
+        const current = useOrchestrationStore.getState();
+        current.releaseRunAttempt(runId);
+        current.updateRunRecovery(runId, {
+            run_id: runId, turn_id: turnId, plan, status: plan.status,
+            transportUnknown: false,
+            error: legacyMessage
+                || 'The saved attempt was not started. Its saved progress or access may have changed. Review the current attempt; no steps were replayed.',
+            ...(legacyMessage ? { legacyPlan: true } : {}),
+        });
+        if (legacyMessage) {
+            // The server will never run this plan, so it is put away and the thread says why.
+            current.clearPlan(conversationId, turnId);
+            if (current.activeTurns[conversationId] === turnId) current.clearActiveTurn(conversationId);
+            useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'failed', error: legacyMessage });
+            return;
+        }
+        useChatStore.getState().settleOrchestrationTurn(conversationId, { turnId, status: 'planned' });
+        return;
+    }
+    if (result.waiting) {
+        await reconcileOrchestrationRun(conversationId, runId);
+        return;
+    }
+
+    if (!settled) {
+        useOrchestrationStore.getState().updateRunRecovery(runId, {
+            run_id: runId, turn_id: turnId, plan, transportUnknown: true,
+        });
+        if (!activeControllers.has(conversationId)) {
+            useChatStore.getState().settleOrchestrationTurn(conversationId, {
+                turnId,
+                status: 'unknown',
+                event: { run_id: runId, turn_id: turnId },
+                accumulated: result.accumulated,
+            });
+        }
+        await reconcileOrchestrationRun(conversationId, runId);
+    }
+    if ((credentialRequest || openContinuation) && (result.transportUnknown || result.errored || result.conflict || result.rejection)) {
+        throw new Error('The continuation could not be confirmed. Review the saved attempt; no steps were replayed.');
+    }
+}
+
+export async function continueCredentialOrchestration(credentialRequest: CredentialRequest): Promise<void> {
+    return continueSavedInteraction(credentialRequest, credentialRequest);
+}
+
+export async function continueSavedInteraction(
+    interaction: { conversation_id: string; run_id?: string; turn_id?: string },
+    credentialRequest?: CredentialRequest,
+    openContinuation?: (signal?: AbortSignal) => Promise<Response>,
+): Promise<void> {
+    const { conversation_id: conversationId, run_id: runId } = interaction;
+    if (!runId || useChatStore.getState().activeConversationId !== conversationId ||
+        useChatStore.getState().streaming || activeControllers.has(conversationId)) {
+        throw new Error('Open this conversation and wait for its current response before continuing.');
+    }
+    const record = await fetchOrchestrationRun(runId);
+    if (!record) throw new Error('The saved action could not be read. Reload this conversation.');
+    const plan = normalizePlan(persistedRunPlan(record));
+    if (!plan || plan.run_id !== runId || plan.conversation_id !== conversationId ||
+        (interaction.turn_id && interaction.turn_id !== plan.turn_id) ||
+        !isOrchestrationRunWaiting(record)) {
+        throw new Error('The saved action is no longer waiting for these credentials. Reload requests.');
+    }
+    const store = useOrchestrationStore.getState();
+    store.setPlan(conversationId, plan.turn_id, plan);
+    store.releaseRunAttempt(runId);
+    await executeSavedPlan(conversationId, plan.turn_id, plan, undefined, false, credentialRequest, openContinuation);
+}
+
+const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const recoverySubmissions = new Map<string, {
+    id: string; version: string; confirmed: boolean; unresolved: boolean; availableInformation: boolean;
+}>();
+const recoveryLocks = new Set<string>();
+
+/**
+ * Start a prepared retry without waiting for it to finish.
+ *
+ * `executeSavedPlan` claims the run and enters the streaming state before its first await, so
+ * the conversation stays busy, and no second retry can start, while the run streams into the
+ * thread. The retry's confirmation and its button are released as soon as the run is admitted
+ * instead of staying open until the whole run finishes.
+ */
+function launchSavedPlan(conversationId: string, plan: OrchestrationPlan): void {
+    void executeSavedPlan(conversationId, plan.turn_id, plan).catch(() => {
+        useOrchestrationStore.getState().updateRunRecovery(plan.run_id, {
+            transportUnknown: true,
+            error: 'The retry started, but its progress could not be followed here. Checking saved status; no retry will start again.',
+        });
+        void reconcileOrchestrationRun(conversationId, plan.run_id);
+    });
+}
+
+/**
+ * Stop tracking a run the server refuses as an earlier orchestration version.
+ *
+ * Nothing else would settle it. The server leaves those runs out of the run history and refuses
+ * every read of one, so a tracked record would keep the conversation busy, with its retries
+ * disabled, until the tab closed. A plan this tab still holds for the run is ended, so its card
+ * settles and says why; a record restored from storage has no plan here and is only released,
+ * which matches the run history.
+ */
+function releaseLegacyRun(conversationId: string, runId: string, message: string): void {
+    const store = useOrchestrationStore.getState();
+    store.updateRunRecovery(runId, {
+        checking: false, transportUnknown: false, busy: false, error: message, legacyPlan: true,
+    });
+    const tracked = store.inFlight[runId];
+    if (!tracked) return;
+    if (selectPlan(store, conversationId, tracked.turnId)?.run_id === runId) {
+        store.endRun(runId, 'failed');
+    } else {
+        store.releaseRunAttempt(runId);
+    }
+}
+
+export async function loadOrchestrationRecovery(conversationId: string, runId: string): Promise<PersistedRun | null> {
+    const beforeRead = useOrchestrationStore.getState();
+    const readRevision = beforeRead.recoveryRevision;
+    const outputRevision = beforeRead.runRecovery[runId]?.outputRevision ?? 0;
+    const record = await fetchOrchestrationRun(runId, { conversationId });
+    if (!record || record.run_id !== runId || record.conversation_id !== conversationId) {
+        throw new Error('Recovery record unavailable');
+    }
+    const plan = normalizePlan(persistedRunPlan(record));
+    const snapshot = normalizeOrchestrationAttempt(record);
+    if ((useOrchestrationStore.getState().runRecovery[runId]?.outputRevision ?? 0) !== outputRevision) {
+        delete snapshot.outputs;
+        delete snapshot.generated_artifacts;
+    }
+    const admitted = useOrchestrationStore.getState().updateRunRecovery(runId, {
+        ...snapshot,
+        status: record.status,
+        ...(plan ? { plan } : {}),
+        detailLoaded: true,
+        transportUnknown: false,
+    }, readRevision);
+    return admitted ? record : null;
+}
+
+function scheduleReconciliation(conversationId: string, runId: string): void {
+    reconciliationTimers.set(runId, setTimeout(() => {
+        void reconcileOrchestrationRun(conversationId, runId);
+    }, 5000));
+}
+
+/** Read-only polling never approves, retries, or invents a cancellation reason. */
+export async function reconcileOrchestrationRun(conversationId: string, runId: string): Promise<void> {
+    const timer = reconciliationTimers.get(runId);
+    if (timer) clearTimeout(timer);
+    reconciliationTimers.delete(runId);
+    const store = useOrchestrationStore.getState();
+    if (store.runRecovery[runId]?.checking) return;
+    store.updateRunRecovery(runId, {
+        checking: true,
+    });
+    try {
+        const record = await loadOrchestrationRecovery(conversationId, runId);
+        if (!record) {
+            const current = useOrchestrationStore.getState();
+            current.updateRunRecovery(runId, { checking: false });
+            if (isOrchestrationRunPending(current.runRecovery[runId] ?? {})) scheduleReconciliation(conversationId, runId);
+            else if (current.inFlight[runId]) await reconcileOrchestrationRun(conversationId, runId);
+            return;
+        }
+        const attemptRevision = useOrchestrationStore.getState().runRecovery[runId]?.attemptRevision;
+        const progressRevision = useOrchestrationStore.getState().recoveryRevision;
+        const steps = await fetchRunSteps(runId, { conversationId }).catch(() => []);
+        const current = useOrchestrationStore.getState();
+        if (current.runRecovery[runId]?.attemptRevision !== attemptRevision
+            || current.recoveryRevision !== progressRevision) {
+            current.updateRunRecovery(runId, { checking: false });
+            if (isOrchestrationRunPending(current.runRecovery[runId] ?? {})) scheduleReconciliation(conversationId, runId);
+            else if (current.inFlight[runId]) await reconcileOrchestrationRun(conversationId, runId);
+            return;
+        }
+        if (record.turn_id && selectPlan(current, conversationId, record.turn_id)?.run_id === runId) {
+            current.adoptPersistedPlan(conversationId, record.turn_id, persistedRunPlan(record), steps);
+        }
+        const terminal = record.status === 'completed' || record.status === 'failed' || record.status === 'cancelled';
+        if (terminal && !isOrchestrationRunPending(record)) {
+            const event: RunStreamEvent = {
+                ...normalizeOrchestrationAttempt(record),
+                status: record.status === 'cancelled' ? 'cancelled' : record.status === 'failed' ? 'failed' : 'completed',
+                message_id: record.assistant_message_id ?? undefined,
+            };
+            const status = orchestrationTerminalStatus(event);
+            current.updateRunRecovery(runId, { transportUnknown: false, checking: false, error: null });
+            if (status === 'waiting') return;
+            // Read before endRun forgets it: only a run this page started, and was still
+            // waiting on when its stream dropped, is a reply to announce.
+            const tracked = current.inFlight[runId];
+            current.endRun(runId, status);
+            if (status === 'completed' && tracked && !tracked.resumed) {
+                announceRunReply(conversationId, runId, event);
+            }
+            const chat = useChatStore.getState();
+            const otherRun = Object.values(current.inFlight)
+                .some((run) => run.conversationId === conversationId && run.runId !== runId);
+            const activeTurn = current.activeTurns[conversationId];
+            if (chat.activeConversationId === conversationId && !otherRun
+                && (!chat.streaming || (chat.orchestrationSurface && (!activeTurn || activeTurn === record.turn_id)))) {
+                const partial = chat.messages.find((message) => message.id === `orchestration-status-${runId}`)?.content ?? '';
+                chat.settleOrchestrationTurn(conversationId, {
+                    turnId: record.turn_id ?? tracked?.turnId,
+                    status, event, accumulated: record.assistant_message_id ? '' : partial,
+                });
+                refreshOutgoingActions(conversationId);
+                // Saved messages own final content, citations and artifact metadata.
+                if (record.assistant_message_id) await useChatStore.getState().reloadMessages();
+                else current.updateRunRecovery(runId, {
+                    error: record.finalization_status === 'interrupted'
+                        ? 'Execution was interrupted before a final conversation message could be confirmed. Review the saved status and recovery options.'
+                        : record.message_saved === false || record.finalization_status === 'failed'
+                        ? 'The run ended, but its conversation message was not saved. This visible status is kept in this tab.'
+                        : 'This run ended without a linked conversation message. Review its saved status and recovery options.',
+                });
+            }
+            return;
+        }
+        current.updateRunRecovery(runId, {
+            checking: false, transportUnknown: false,
+            error: terminal ? 'The server is saving the final response. Checking saved status; no retry will start.' : null,
+        });
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            releaseLegacyRun(conversationId, runId, legacyMessage);
+            return;
+        }
+        useOrchestrationStore.getState().updateRunRecovery(runId, {
+            checking: false, transportUnknown: true,
+            error: 'The saved run status could not be reached. Execution may still be running. No retry will start until its status is confirmed.',
+        });
+    }
+    scheduleReconciliation(conversationId, runId);
+}
+
+export function openOrchestrationRecovery(conversationId: string, runId: string): void {
+    useOrchestrationStore.setState({ recoveryTarget: { conversationId, runId } });
+    useChatStore.getState().setDrawerMode('plan');
+    void loadOrchestrationRecovery(conversationId, runId).then((record) => {
+        if (record && isOrchestrationRunPending(record)) {
+            return reconcileOrchestrationRun(conversationId, runId);
+        }
+    }).catch((error) => {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        useOrchestrationStore.getState().updateRunRecovery(runId, legacyMessage
+            ? { error: legacyMessage, legacyPlan: true }
+            : { error: 'The saved attempt could not be loaded. Your previous failure and progress have been kept.' });
+    });
+}
+
+export async function retryOrchestrationRun(
+    conversationId: string,
+    runId: string,
+    confirmedVersion?: string,
+    useAvailableInformation = false,
+): Promise<{ confirmationRequired?: boolean; version?: string; started?: boolean }> {
+    const key = scopeKey(conversationId, runId);
+    const store = useOrchestrationStore.getState();
+    if (recoveryLocks.has(key)) return {};
+    const fail = (error: string) => useOrchestrationStore.getState().updateRunRecovery(runId, { error });
+    if (useChatStore.getState().activeConversationId !== conversationId
+        || useChatStore.getState().streaming
+        || Object.values(store.inFlight).some((run) => run.conversationId === conversationId)) {
+        fail('Finish or stop the current request, then review this saved attempt before retrying.');
+        return {};
+    }
+    recoveryLocks.add(key);
+    store.updateRunRecovery(runId, { busy: true, error: null });
+    const initialTurn = store.activeTurns[conversationId];
+    try {
+        const record = await loadOrchestrationRecovery(conversationId, runId);
+        const previous = recoverySubmissions.get(key);
+        if (previous?.unresolved && previous.availableInformation !== useAvailableInformation) {
+            fail('A different recovery request is still unresolved. Check saved status before choosing another recovery action.');
+            return {};
+        }
+        const availableInformation = previous?.unresolved ? previous.availableInformation : useAvailableInformation;
+        if (record?.outputs?.length && !availableInformation && !filesNeedPlanRetry(record.outputs)) {
+            fail('Use the individual file retry controls. This action will not repeat file producers or the plan.');
+            return {};
+        }
+        if (record && isOrchestrationRunPending(record)) {
+            fail('This attempt is still active. Check saved status; waiting does not start another execution.');
+            return {};
+        }
+        const recovery = normalizeOrchestrationRecovery(record?.recovery);
+        const eligible = availableInformation ? recovery?.can_use_available_information === true : recovery?.eligible;
+        if (!record || !recovery || (!previous?.unresolved && (!eligible || !recovery.expected_version
+            || recovery.source_run_id !== runId
+            || (recovery.current_run_id && recovery.current_run_id !== runId)))) {
+            fail(recovery?.message || 'This saved attempt cannot be resumed. Review the current attempt or start a new plan deliberately.');
+            return {};
+        }
+        if (!previous?.unresolved && confirmedVersion && confirmedVersion !== recovery.expected_version) {
+            fail('The recovery preview changed. Review the updated saved steps before confirming another retry.');
+            return {};
+        }
+        if (!previous?.unresolved && recovery.requires_confirmation && confirmedVersion !== recovery.expected_version) {
+            return { confirmationRequired: true, version: recovery.expected_version ?? undefined };
+        }
+        const confirmed = recovery.requires_confirmation && confirmedVersion === recovery.expected_version;
+        const submission = previous?.unresolved ? previous
+            : { id: makeTurnId(), version: recovery.expected_version ?? '', confirmed, unresolved: true, availableInformation };
+        recoverySubmissions.set(key, submission);
+        const child = await prepareOrchestrationRetry(runId, {
+            conversation_id: conversationId,
+            submission_id: submission.id,
+            expected_version: submission.version,
+            confirm_external_effects: submission.confirmed,
+            ...(submission.availableInformation ? { use_available_information: true } : {}),
+        });
+        submission.unresolved = false;
+        const plan = normalizePlan(child.plan);
+        if (!plan || child.conversation_id !== conversationId || child.turn_id !== record.turn_id
+            || child.retry_of_run_id !== runId || child.run_id !== plan.run_id
+            || plan.conversation_id !== conversationId || plan.turn_id !== record.turn_id) {
+            fail('The prepared attempt could not be verified. Nothing was executed. Reload the saved run before continuing.');
+            return {};
+        }
+        const current = useOrchestrationStore.getState();
+        current.updateRunRecovery(runId, {
+            latest_attempt_run_id: child.run_id,
+            recovery: { ...recovery, eligible: false, current_run_id: child.run_id },
+        });
+        current.updateRunRecovery(child.run_id, { ...normalizeOrchestrationAttempt(child), plan, status: child.status });
+        if (useChatStore.getState().activeConversationId !== conversationId
+            || useChatStore.getState().streaming
+            || current.activeTurns[conversationId] !== initialTurn
+            || Object.values(current.inFlight).some((run) => run.conversationId === conversationId)) {
+            fail('A retry was prepared but not started because the active request changed. Open the current saved attempt to continue manually.');
+            return {};
+        }
+        // Never replan or append a user message. The saved child is the server's effective plan.
+        current.setPlan(conversationId, plan.turn_id, plan);
+        current.setActiveTurn(conversationId, plan.turn_id);
+        current.pinRun(null);
+        useOrchestrationStore.setState({ recoveryTarget: null });
+        launchSavedPlan(conversationId, plan);
+        return { started: true };
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            fail(legacyMessage);
+            return {};
+        }
+        const info = error instanceof ApiError ? orchestrationErrorInfo(error.payload, error.status) : {};
+        if (info.code) recoverySubmissions.delete(key);
+        const payload = error instanceof ApiError && error.payload && typeof error.payload === 'object'
+            ? error.payload as Record<string, unknown> : {};
+        const recovery = normalizeOrchestrationRecovery(payload.recovery);
+        if (recovery) useOrchestrationStore.getState().updateRunRecovery(runId, { recovery });
+        if (info.code === 'confirmation_required' && recovery?.expected_version) {
+            return { confirmationRequired: true, version: recovery.expected_version };
+        }
+
+        if (info.current_run_id) useOrchestrationStore.getState().updateRunRecovery(runId, {
+            latest_attempt_run_id: info.current_run_id,
+        });
+        fail(info.code === 'recovery_changed'
+            ? 'Recovery changed or a newer attempt already exists. Review the current attempt; no work was started by this request.'
+            : 'Recovery could not be prepared. Your previous failure and saved progress have been kept. Check the saved status and try again.');
+        return {};
+    } finally {
+        recoveryLocks.delete(key);
+        useOrchestrationStore.getState().updateRunRecovery(runId, { busy: false });
+    }
+}
+
+export async function runPreparedOrchestrationRetry(conversationId: string, runId: string): Promise<void> {
+    const key = scopeKey(conversationId, runId);
+    if (recoveryLocks.has(key)) return;
+    recoveryLocks.add(key);
+    const fail = () => useOrchestrationStore.getState().updateRunRecovery(runId, {
+        error: 'This saved retry cannot start right now. Check the current attempt and finish any active request first.',
+    });
+    try {
+        const record = await loadOrchestrationRecovery(conversationId, runId);
+        const plan = normalizePlan(record?.plan);
+        if (!plan || !record?.retry_of_run_id || isOrchestrationRunWaiting(record)
+            || (record.status !== 'awaiting_approval' && record.status !== 'approved')
+            || plan.run_id !== runId || plan.conversation_id !== conversationId || plan.turn_id !== record.turn_id
+            || useChatStore.getState().activeConversationId !== conversationId || useChatStore.getState().streaming
+            || Object.values(useOrchestrationStore.getState().inFlight).some((run) => run.conversationId === conversationId)) {
+            fail();
+            return;
+        }
+        const source = await loadOrchestrationRecovery(conversationId, record.retry_of_run_id);
+        const latest = source?.latest_attempt_run_id || source?.recovery?.current_run_id;
+        if (latest !== runId || useChatStore.getState().activeConversationId !== conversationId
+            || useChatStore.getState().streaming) {
+            fail();
+            return;
+        }
+        const current = useOrchestrationStore.getState();
+        current.setPlan(conversationId, plan.turn_id, plan);
+        current.setActiveTurn(conversationId, plan.turn_id);
+        useOrchestrationStore.setState({ recoveryTarget: null });
+        launchSavedPlan(conversationId, plan);
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            useOrchestrationStore.getState().updateRunRecovery(runId, { error: legacyMessage });
+        } else {
+            fail();
+        }
+    } finally {
+        recoveryLocks.delete(key);
+    }
+}
+
+export async function cancelOrchestration(conversationId: string, runId?: string): Promise<void> {
+    const runs = Object.values(useOrchestrationStore.getState().inFlight)
+        .filter((candidate) => candidate.conversationId === conversationId);
+    const turnId = selectActiveTurn(useOrchestrationStore.getState(), conversationId);
+    const context = turnId ? turnContexts.get(scopeKey(conversationId, turnId)) : undefined;
+    if (!runId && turnId && context?.submissionId && runs.length === 0
+        && (context.serverManaged || activeControllers.has(conversationId) || planningWatches.has(conversationId))) {
+        const controller = activeControllers.get(conversationId);
+        const submissionId = context.submissionId;
+        try {
+            const stopped = await cancelOrchestrationTurn(
+                conversationId, turnId, submissionId, context.pendingUserMessageId,
+            );
+            if (turnContexts.get(scopeKey(conversationId, turnId))?.submissionId !== submissionId) return;
+            stopPlanningWatch(conversationId);
+            if (activeControllers.get(conversationId) === controller) controller?.abort();
+            if (stopped?.run_id && stopped.run_started) {
+                followPlanningTurn(conversationId, turnId, stopped.user_message_id, stopped.submission_id);
+                return;
+            }
+            if (context.serverManaged || !context.pendingUserMessageId.startsWith('pending-user-')) {
+                updateQuestionPlanning({
+                    conversation_id: conversationId, turn_id: turnId,
+                    submission_id: submissionId, status: 'cancelled',
+                });
+            }
+            useChatStore.getState().settleOrchestrationTurn(conversationId, {
+                turnId, status: 'cancelled', accumulated: '',
+            });
+        } catch {
+            if (useChatStore.getState().activeConversationId === conversationId
+                && turnContexts.get(scopeKey(conversationId, turnId))?.submissionId === submissionId) {
+                useChatStore.setState({
+                    streamError: 'Stop could not be confirmed. Work may still be running. Retry Stop or check saved status.',
+                });
+            }
+        }
+        return;
+    }
+    const targetId = runId ?? activeRunIds.get(conversationId);
+    const run = targetId ? runs.find((candidate) => candidate.runId === targetId)
+        : runs.sort((left, right) => right.startedAt - left.startedAt)[0];
+    if (!run) {
+        if (!runId) activeControllers.get(conversationId)?.abort();
+        return;
+    }
+    const controller = activeRunIds.get(conversationId) === run.runId
+        ? activeControllers.get(conversationId) : undefined;
+    try {
+        await cancelOrchestrationRun(run.runId, conversationId);
+        if (activeControllers.get(conversationId) === controller) controller?.abort();
+        await reconcileOrchestrationRun(conversationId, run.runId);
+    } catch (error) {
+        const legacyMessage = legacyPlanErrorMessage(error);
+        if (legacyMessage) {
+            // The server can neither stop nor report on this run, so this tab stops following it.
+            if (activeControllers.get(conversationId) === controller) controller?.abort();
+            releaseLegacyRun(conversationId, run.runId, legacyMessage);
+            return;
+        }
+        useOrchestrationStore.getState().updateRunRecovery(run.runId, {
+            error: 'Stop could not be confirmed by the server. Execution may still be running. Try Stop again or check saved status.',
+        });
+    }
+}
+
+/** Whether a plan or run is streaming for a conversation, so Stop can route to the right cancel. */
+export function hasActiveOrchestration(conversationId: string): boolean {
+    return activeControllers.has(conversationId)
+        || planningWatches.has(conversationId)
+        || Object.values(useOrchestrationStore.getState().inFlight).some((run) => run.conversationId === conversationId);
+}
+
+/**
+ * Dismiss a turn's plan or question outright.
+ *
+ * The card's Cancel, which is a different act from Stop: it throws the proposal away rather than
+ * interrupting work in progress. Any in-flight stream is aborted first (a plan still arriving),
+ * then the plan, question and inline card are forgotten and the thinking state dropped. The run
+ * history is left untouched — a run that already finished stays in the timeline.
+ */
+export function dismissOrchestrationTurn(conversationId: string, turnId: string): void {
+    const store = useOrchestrationStore.getState();
+    if (store.activeTurns[conversationId] === turnId) {
+        void cancelOrchestration(conversationId);
+    } else {
+        const runId = selectPlan(store, conversationId, turnId)?.run_id;
+        if (runId) void cancelOrchestration(conversationId, runId);
+    }
+    const key = scopeKey(conversationId, turnId);
+    turnContexts.delete(key);
+    editorControllers.get(key)?.abort();
+    editorControllers.delete(key);
+    store.clearPlan(conversationId, turnId);
+    store.clearElicitation(conversationId, turnId);
+    if (store.activeTurns[conversationId] === turnId) store.clearActiveTurn(conversationId);
+    useChatStore
+        .getState()
+        .settleOrchestrationTurn(conversationId, { turnId, status: 'cancelled', accumulated: '' });
+}
+
+function editorRequestFailure(error: unknown): { message: string; info: OrchestrationRequestError } {
+    if (error instanceof ApiError) {
+        const payload = error.payload as { error?: unknown } | null;
+        return {
+            message: typeof payload?.error === 'string'
+                ? payload.error : 'The saved plan could not be loaded. Please try again.',
+            info: orchestrationErrorInfo(error.payload, error.status),
+        };
+    }
+    return {
+        message: 'The request could not connect. Your current plan and instruction have been kept.',
+        info: {},
+    };
+}
+
+function isEditorRequestCurrent(target: PlanEditorTarget, controller: AbortController): boolean {
+    return !controller.signal.aborted
+        && editorControllers.get(scopeKey(target.conversationId, target.turnId)) === controller
+        && Boolean(selectPlanEditor(useOrchestrationStore.getState(), target.conversationId, target.turnId));
+}
+
+async function loadPlanEditorState(
+    target: PlanEditorTarget,
+    begin: boolean,
+    runId?: string,
+    preservedError?: string,
+): Promise<ElicitationSubmitResult> {
+    const { conversationId, turnId } = target;
+    const key = scopeKey(conversationId, turnId);
+    const store = useOrchestrationStore.getState();
+    const plan = selectPlan(store, conversationId, turnId);
+    if (!plan || !selectCanEditPlan(store, conversationId, turnId)) {
+        return { ok: false, error: 'Only a pending plan can be edited.' };
+    }
+    if (editorControllers.has(key)) {
+        return { ok: true };
+    }
+    const controller = new AbortController();
+    editorControllers.set(key, controller);
+    store.updatePlanEditor(conversationId, turnId, (editor) => ({
+        ...editor,
+        loading: true,
+        error: preservedError ?? (begin && editor.state && !editor.blocked ? editor.error : null),
+    }));
+    const currentRunId = runId ?? plan.run_id;
+    try {
+        const editor = begin
+            ? await beginPlanEdit(currentRunId, {
+                conversation_id: conversationId,
+                plan_id: plan.plan_id,
+                edits: selectEdits(store, conversationId, turnId),
+                ...(plan.edit_version ? { expected_version: plan.edit_version } : {}),
+            }, controller.signal)
+            : await fetchPlanEditor(currentRunId, conversationId, { signal: controller.signal });
+        if (!isEditorRequestCurrent(target, controller)) {
+            return { ok: false, error: 'This editor request is no longer active.' };
+        }
+        if (!useOrchestrationStore.getState().adoptPlanEditor(
+            conversationId, turnId, editor, { retainLocalEdits: begin },
+        )) {
+            throw new Error('Invalid or stale editor identity');
+        }
+        return { ok: true };
+    } catch (error) {
+        const { message, info } = editorRequestFailure(error);
+        if (isEditorRequestCurrent(target, controller)) {
+            if (info.code === 'plan_changed' || info.code === 'edit_in_progress') {
+                try {
+                    const editor = await fetchPlanEditor(
+                        info.current_run_id ?? currentRunId, conversationId, { signal: controller.signal },
+                    );
+                    if (isEditorRequestCurrent(target, controller)
+                        && useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, editor)) {
+                        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                            (session) => ({ ...session, error: message }));
+                        return { ok: true };
+                    }
+                } catch {
+                    // The local pause remains; a failed refresh must not authorize stale work.
+                }
+            }
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor, blocked: true, error: message,
+            }));
+        }
+        return { ok: false, error: message };
+    } finally {
+        if (isEditorRequestCurrent(target, controller)) {
+            editorControllers.delete(key);
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor, loading: false,
+            }));
+        }
+    }
+}
+
+/** Pause synchronously, then acquire the durable hold; closing never undoes either. */
+export async function openOrchestrationPlanEditor(target: PlanEditorTarget): Promise<void> {
+    const store = useOrchestrationStore.getState();
+    if (!selectCanEditPlan(store, target.conversationId, target.turnId)) {
+        return;
+    }
+    store.updatePlanEditor(target.conversationId, target.turnId, (editor) => editor);
+    store.setEditorTarget(target);
+    await loadPlanEditorState(target, true);
+}
+
+/** Policy edits share the editor's durable manual-approval hold without opening its dialog. */
+export async function setPlanSemanticReview(
+    target: PlanEditorTarget, stepId: string, value: 'auto' | 'on' | 'off',
+): Promise<void> {
+    const store = useOrchestrationStore.getState();
+    if (!selectCanEditPlan(store, target.conversationId, target.turnId)) return;
+    store.updatePlanEditor(target.conversationId, target.turnId, (editor) => editor);
+    const result = await loadPlanEditorState(target, true);
+    if (result.ok) useOrchestrationStore.getState().setSemanticReview(
+        target.conversationId, target.turnId, stepId, value,
+    );
+}
+/** Read-only hydration also works with an old run ID; the server resolves the current revision. */
+export async function refreshOrchestrationPlanEditor(
+    target: PlanEditorTarget,
+    runId?: string,
+    preservedError?: string,
+): Promise<ElicitationSubmitResult> {
+    return loadPlanEditorState(target, false, runId, preservedError);
+}
+
+/** How the plan editor's assist thread sends a planner request. */
+export interface PlanRevisionOptions {
+    /**
+     * The id for this request. A retry of the request the editor already holds keeps that
+     * request's id instead, so the server replays it rather than running it twice. An id this page
+     * already sent with a different request is replaced by a fresh one, because the server would
+     * refuse it; the result says which id was used.
+     */
+    submissionId?: string;
+    /** The caller shows a failure in its own turn, so the editor's banner stays clear. */
+    inlineError?: boolean;
+}
+
+export type PlanRevisionResult =
+    | { ok: true; submissionId?: string }
+    | {
+        ok: false;
+        error: string;
+        /** The id this request was sent under, once it had one. */
+        submissionId?: string;
+        /** The editor dropped this request, because it was cancelled or the editor moved on. */
+        stale?: boolean;
+    };
+
+const STALE_EDITOR_REQUEST = 'This editor request is no longer active.';
+
+export async function submitPlanRevision(
+    target: PlanEditorTarget,
+    action: PlanRevisionAction,
+    options: PlanRevisionOptions = {},
+): Promise<PlanRevisionResult> {
+    const { conversationId, turnId } = target;
+    const key = scopeKey(conversationId, turnId);
+    const store = useOrchestrationStore.getState();
+    const session = selectPlanEditor(store, conversationId, turnId);
+    const plan = selectPlan(store, conversationId, turnId);
+    const discarding = action.action === 'discard';
+    if (!session?.state || !plan || !selectCanEditPlan(store, conversationId, turnId)
+        || session.loading || session.cancellationStatus === 'cancelling'
+        || (!discarding && (session.submitting || session.blocked || session.state.busy
+            || (action.action === 'answer' && (session.pendingDraft?.accepted || session.pendingDraft?.uncertain))
+            || editorControllers.has(key) || plan.edit_version !== session.state.version))) {
+        return { ok: false, error: 'Wait for the current plan to be saved before editing.' };
+    }
+    const pending = session.state.pending;
+    const cancellationChangedError = 'The plan changed. Review the current change before cancelling it.';
+    if (action.action === 'discard' && action.elicitation_id !== undefined
+        && (action.elicitation_id !== pending?.elicitation_id
+            || action.elicitation_revision !== pending?.revision)) {
+        store.updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor, error: cancellationChangedError,
+        }));
+        return { ok: false, error: cancellationChangedError };
+    }
+    if ((pending && (action.action === 'ask' || action.action === 'restore'))
+        || (action.action === 'answer' && (!pending
+            || action.elicitation_id !== pending.elicitation_id
+            || action.elicitation_revision !== (pending.revision ?? 0)))) {
+        return { ok: false, error: 'Answer or cancel the current edit question first.' };
+    }
+    if (action.action === 'ask') {
+        const instruction = action.instruction.trim();
+        if (!instruction || instruction.length > MAX_PLAN_INSTRUCTION_LENGTH) {
+            const error = `Enter an instruction of 1–${MAX_PLAN_INSTRUCTION_LENGTH} characters.`;
+            if (!options.inlineError) {
+                store.updatePlanEditor(conversationId, turnId, (editor) => ({ ...editor, error }));
+            }
+            return { ok: false, error };
+        }
+        // The canonical form is what the server compares a replayed submission id against, so it
+        // is also what the fingerprint below covers: reordered chips reuse an id, changed ones do not.
+        let references: PlanReference[];
+        try {
+            references = canonicalPlanReferences(action.references);
+        } catch (problem) {
+            const error = problem instanceof PlanReferenceError ? problem.message
+                : 'Choose documents or tags from the # picker.';
+            if (!options.inlineError) {
+                store.updatePlanEditor(conversationId, turnId, (editor) => ({ ...editor, error }));
+            }
+            return { ok: false, error };
+        }
+        const conversationReferences = Array.isArray(action.conversation_references)
+            ? action.conversation_references.filter((item) => Boolean(item && item.kind === 'conversation' && typeof item.id === 'string' && item.id.trim()))
+            : [];
+        action = {
+            action: 'ask',
+            instruction,
+            ...(references.length ? { references } : {}),
+            ...(conversationReferences.length ? { conversation_references: conversationReferences } : {}),
+        };
+    }
+    const controller = new AbortController();
+    const previousController = editorControllers.get(key);
+    editorControllers.set(key, controller);
+    if (discarding) {
+        // The explicit discard owns this turn now. Aborting the reader alone is not
+        // cancellation: the server must acknowledge the token-rotating discard below.
+        previousController?.abort();
+    }
+    store.updatePlanEditor(conversationId, turnId, (editor) => ({
+        ...editor,
+        submitting: true,
+        cancellationStatus: discarding ? 'cancelling' : 'idle',
+        error: null,
+        pendingDraft: editor.pendingDraft ? { ...editor.pendingDraft, submitting: true } : null,
+    }));
+    let failure = 'The planner did not return a saved revision. Your current plan has been kept.';
+    let info: OrchestrationRequestError | undefined;
+    let accepted = false;
+    let submissionId: string | undefined;
+    const stale = (): PlanRevisionResult => ({ ok: false, error: STALE_EDITOR_REQUEST, stale: true, submissionId });
+    try {
+        let requestPlan = plan;
+        let version = session.state.version;
+        if (discarding) {
+            const latest = await fetchPlanEditor(plan.run_id, conversationId, { signal: controller.signal });
+            if (!isEditorRequestCurrent(target, controller)) {
+                return stale();
+            }
+            if (!useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, latest)) {
+                throw new Error('Invalid or stale editor identity');
+            }
+            requestPlan = latest.plan;
+            version = latest.version;
+            if (!latest.busy && !latest.pending && (!previousController
+                || latest.version !== session.state.version || latest.plan.run_id !== plan.run_id)) {
+                accepted = true;
+                useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor,
+                    submission: null,
+                    error: 'No pending change remains. Review the latest saved plan before running it.',
+                }));
+                return { ok: true };
+            }
+            const sameQuestion = pending === null
+                ? latest.pending === null
+                : latest.pending?.elicitation_id === pending.elicitation_id
+                    && latest.pending?.revision === pending.revision;
+            if (latest.plan.run_id !== plan.run_id || latest.plan.plan_id !== plan.plan_id
+                || latest.version !== session.state.version || !sameQuestion) {
+                failure = cancellationChangedError;
+                useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor, submission: null, error: failure,
+                }));
+                return { ok: false, error: failure };
+            }
+            if (pending) {
+                action = {
+                    action: 'discard',
+                    elicitation_id: pending.elicitation_id,
+                    elicitation_revision: pending.revision ?? 0,
+                };
+            }
+        }
+        const edits = discarding ? undefined : selectEdits(store, conversationId, turnId);
+        const fingerprint = JSON.stringify({ runId: requestPlan.run_id, version, edits, action });
+        const sentId = choosePlanSubmissionId(fingerprint, session.submission, options.submissionId, makeTurnId);
+        rememberPlanSubmission(sentId, fingerprint);
+        submissionId = sentId;
+        const body: PlanRevisionRequest = {
+            ...action,
+            conversation_id: conversationId,
+            expected_version: version,
+            ...(edits ? { edits } : {}),
+            submission_id: sentId,
+        };
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor, submission: { id: sentId, fingerprint },
+        }));
+        const result = await reviseOrchestrationPlan(requestPlan.run_id, body, {
+            onElicitationAccepted: (event) => {
+                if (!isEditorRequestCurrent(target, controller) || action.action !== 'answer'
+                    || event.conversation_id !== conversationId || event.turn_id !== turnId
+                    || event.elicitation_id !== action.elicitation_id
+                    || event.elicitation_revision !== action.elicitation_revision
+                    || event.elicitation_submission_id !== sentId) return;
+                useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                    ...editor, pendingDraft: editor.pendingDraft
+                        ? { ...editor.pendingDraft, accepted: true, uncertain: false } : null,
+                }));
+            },
+            onThought: (event) => {
+                if (isEditorRequestCurrent(target, controller)) {
+                    useOrchestrationStore.getState().mergeReasoningAdjustments(
+                        conversationId, turnId, event.reasoning_adjustments,
+                    );
+                }
+            },
+            onError: (message, error) => { failure = message; info = error; },
+        }, controller.signal);
+        if (!isEditorRequestCurrent(target, controller)) {
+            return stale();
+        }
+        accepted = !result.errored && !result.cancelled && Boolean(result.editor)
+            && useOrchestrationStore.getState().adoptPlanEditor(conversationId, turnId, result.editor!);
+        if (accepted) {
+            const context = turnContexts.get(key);
+            if (context && result.editor) {
+                context.revision = result.editor.plan.revision;
+            }
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor,
+                submission: null,
+            }));
+        } else {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor,
+                pendingDraft: action.action === 'answer' && !info?.code && editor.pendingDraft
+                    ? { ...editor.pendingDraft, uncertain: !editor.pendingDraft.accepted } : editor.pendingDraft,
+                ...(options.inlineError ? {} : { error: failure }),
+                blocked: discarding || info?.code === 'plan_changed' || info?.code === 'edit_in_progress'
+                    || info?.code === 'already_run' || info?.status === 403 || info?.status === 404,
+            }));
+        }
+    } catch (error) {
+        failure = editorRequestFailure(error).message;
+        if (!isEditorRequestCurrent(target, controller)) {
+            return stale();
+        }
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor,
+            pendingDraft: action.action === 'answer' && editor.pendingDraft
+                ? { ...editor.pendingDraft, uncertain: !editor.pendingDraft.accepted } : editor.pendingDraft,
+            ...(options.inlineError ? {} : { error: failure }),
+            blocked: discarding || editor.blocked,
+        }));
+    } finally {
+        if (isEditorRequestCurrent(target, controller)) {
+            editorControllers.delete(key);
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (editor) => ({
+                ...editor,
+                submitting: false,
+                cancellationStatus: discarding && !accepted ? 'failed' : 'idle',
+                pendingDraft: editor.pendingDraft ? { ...editor.pendingDraft, submitting: false } : null,
+            }));
+        }
+    }
+    if (info?.code === 'plan_changed' || info?.code === 'edit_in_progress') {
+        await refreshOrchestrationPlanEditor(
+            target, info.current_run_id ?? plan.run_id, options.inlineError ? undefined : failure,
+        );
+    }
+    return accepted ? { ok: true, submissionId } : { ok: false, error: failure, submissionId };
+}
+
+/**
+ * Resolves once the plan editor has no request in flight, or after `timeoutMs`.
+ *
+ * A cancelled planner request returns before the cancel itself is answered. The assist thread
+ * waits for that answer, so the stored chat can show whether the request finished after all.
+ */
+export function whenPlanEditorSettles(target: PlanEditorTarget, timeoutMs = 60_000): Promise<void> {
+    const settled = (state: ReturnType<typeof useOrchestrationStore.getState>) => {
+        const session = selectPlanEditor(state, target.conversationId, target.turnId);
+        return !session || (!session.submitting && !session.loading);
+    };
+    if (settled(useOrchestrationStore.getState())) {
+        return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+        let unsubscribe = () => {};
+        const timer = setTimeout(() => {
+            unsubscribe();
+            resolve();
+        }, timeoutMs);
+        unsubscribe = useOrchestrationStore.subscribe((state) => {
+            if (settled(state)) {
+                clearTimeout(timer);
+                unsubscribe();
+                resolve();
+            }
+        });
+    });
+}
+
+export async function loadPlanEditorHistory(target: PlanEditorTarget): Promise<void> {
+    const { conversationId, turnId } = target;
+    const session = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId);
+    const editor = session?.state;
+    if (!editor || session.historyLoading || editor.next_before_revision === null) {
+        return;
+    }
+    useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+        (current) => ({ ...current, historyLoading: true }));
+    try {
+        const page = await fetchPlanEditor(editor.plan.run_id, conversationId, {
+            beforeRevision: editor.next_before_revision,
+        });
+        const current = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId);
+        if (current?.state?.version !== editor.version || page.version !== editor.version) {
+            return;
+        }
+        const byRun = new Map([...current.state.history, ...page.history].map((entry) => [entry.run_id, entry]));
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId, (value) => ({
+            ...value,
+            state: value.state ? {
+                ...value.state,
+                history: [...byRun.values()].sort((left, right) => right.revision - left.revision),
+                next_before_revision: page.next_before_revision,
+            } : null,
+        }));
+    } catch (error) {
+        if (selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (current) => ({ ...current, error: editorRequestFailure(error).message }));
+        }
+    } finally {
+        if (selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId)) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (current) => ({ ...current, historyLoading: false }));
+        }
+    }
+}
+
+export async function previewPlanEditorRevision(target: PlanEditorTarget, runId: string): Promise<void> {
+    const { conversationId, turnId } = target;
+    const store = useOrchestrationStore.getState();
+    const session = selectPlanEditor(store, conversationId, turnId);
+    if (!session?.state) {
+        return;
+    }
+    if (session.state.plan.run_id === runId) {
+        store.updatePlanEditor(conversationId, turnId, (editor) => ({
+            ...editor, previewRunId: null, previewPlan: null, previewLoading: false,
+        }));
+        return;
+    }
+    store.updatePlanEditor(conversationId, turnId, (editor) => ({
+        ...editor, previewRunId: runId, previewPlan: null, previewLoading: true, error: null,
+    }));
+    const stillSelected = () => {
+        const current = selectPlanEditor(useOrchestrationStore.getState(), conversationId, turnId);
+        return current?.previewRunId === runId && current.state?.version === session.state?.version;
+    };
+    try {
+        const run = await fetchOrchestrationRun(runId, { conversationId });
+        const plan = normalizePlan(run?.plan);
+        if (!stillSelected()) {
+            return;
+        }
+        if (!plan || plan.run_id !== runId || plan.turn_id !== turnId
+            || plan.conversation_id !== conversationId) {
+            throw new Error('Invalid history identity');
+        }
+        useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+            (editor) => ({ ...editor, previewPlan: plan }));
+    } catch (error) {
+        if (stillSelected()) {
+            const legacyMessage = legacyPlanErrorMessage(error);
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (editor) => ({
+                    ...editor,
+                    error: legacyMessage || 'This revision could not be previewed. The current plan is unchanged.',
+                }));
+        }
+    } finally {
+        if (stillSelected()) {
+            useOrchestrationStore.getState().updatePlanEditor(conversationId, turnId,
+                (editor) => ({ ...editor, previewLoading: false }));
+        }
+    }
+}

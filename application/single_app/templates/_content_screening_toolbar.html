@@ -1,0 +1,30 @@
+<!-- _content_screening_toolbar.html -->
+<section class="content-screening card mb-3" data-content-screening-workspace
+    data-scope-type="{{ content_screening_scope }}" aria-label="Content screening">
+    <div class="card-body">
+        <div class="d-flex flex-wrap align-items-end gap-2">
+            <div class="me-auto">
+                <h3 class="h6 mb-1">Content screening</h3>
+                <p class="small text-body-secondary mb-0" data-screening-workspace-notice>
+                    Held knowledge stays unavailable even when new scans are disabled.
+                </p>
+            </div>
+            <a class="btn btn-sm btn-outline-secondary" href="/content-review" data-screening-review-link>Content review</a>
+            <a class="btn btn-sm btn-outline-secondary" href="/content-review?tab=policy" data-screening-policy-link>Policy additions</a>
+            <button type="button" class="btn btn-sm btn-outline-primary d-none" data-screening-scan-selected disabled>Scan selected</button>
+            <button type="button" class="btn btn-sm btn-outline-primary d-none" data-screening-scan-workspace disabled>Scan workspace</button>
+        </div>
+        <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+            <label class="small" data-screening-filter-label>Screening status on this page</label>
+            <select class="form-select form-select-sm screening-status-filter" data-screening-filter aria-label="Screening status on this page">
+                <option value="all">All statuses</option>
+                <option value="held">Held</option>
+                <option value="scanning">Scanning / pending</option>
+                <option value="error">Error / incomplete</option>
+                <option value="approved_with_flags">Approved with flags</option>
+            </select>
+        </div>
+        <div class="alert mt-3 mb-0 d-none" data-screening-workspace-message role="alert"></div>
+        <div data-screening-workspace-jobs class="mt-2" aria-live="polite"></div>
+    </div>
+</section>

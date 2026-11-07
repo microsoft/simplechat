@@ -4,10 +4,10 @@
                         <i class="bi bi-image me-2"></i>Image Generation Configuration
                     </h5>
                     <p class="text-muted small">
-                        Configure image generation settings. Enable/disable, set endpoints, and choose a model.
+                        Choose one image model from AI Connections. Its saved connection and credentials are reused without changing the chat default.
                     </p>
-                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-bs-toggle="modal" data-bs-target="#legacyModelDiscoveryIdentityGuideModal">
-                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-open-admin-tab="#model-endpoints">
+                        <i class="bi bi-hdd-network me-1"></i>Manage AI Connections
                     </button>
 
                 <div class="form-group form-check form-switch mb-3">
@@ -16,10 +16,33 @@
                     <label class="form-check-label ms-2" for="enable_image_generation">
                         Enable Image Generation
                     </label>
-                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Enable AI-powered image generation capabilities using DALL-E models for creating images from text descriptions."></i>
+                    <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Offer the Image action using the saved image default. Chat connection mode is independent."></i>
                 </div>
-                <div id="image_gen_settings" {% if not settings.enable_image_generation %}style="display: none;" {%
-                    endif %}>
+                <div id="shared-image-model-settings"
+                    data-shared-binding-authoritative="{{ 'true' if 'image_generation_model_selection' in settings or (settings.get('ai_connections_image_migration_version') is integer and settings.get('ai_connections_image_migration_version') >= 1) else 'false' }}">
+                    <label for="image-generation-default-model" class="form-label">Default image model</label>
+                    <select id="image-generation-default-model" class="form-select" aria-describedby="image-generation-default-help" disabled>
+                        <option value="">Loading models…</option>
+                    </select>
+                    <p id="image-generation-default-help" class="form-text">
+                        This default saves immediately. Save a new or edited connection in AI Connections before selecting it here.
+                        Images do not require enabling AI Connections for chat.
+                    </p>
+                    <div id="image-generation-model-capability" class="form-text"></div>
+                    <div id="image-generation-model-notice" class="alert alert-warning d-none mt-2" role="status"></div>
+                    <div id="image-generation-migration-notice" class="alert alert-info d-none mt-2" role="status"></div>
+                    <div id="image-generation-model-error" class="alert alert-danger d-none mt-2" role="alert"></div>
+                    <div id="image-generation-model-saving" class="form-text d-none" role="status">Saving…</div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="refresh-image-generation-models">Refresh choices</button>
+                </div>
+                <div id="legacy-image-recovery" class="d-none mt-3">
+                    <div class="alert alert-warning" role="status">
+                        Automatic import has not completed. Existing image settings are retained.
+                        These recovery fields are used only until a shared image default is saved or import completes.
+                    </div>
+                    <fieldset id="legacy-image-settings" disabled>
+                    <legend class="h6">Legacy image configuration recovery</legend>
+                <div id="image_gen_settings" class="{% if not settings.enable_image_generation %}d-none{% endif %}">
 
                     <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                         <input type="checkbox" class="form-check-input me-2" id="enable_image_gen_apim"
@@ -29,8 +52,7 @@
                         <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route image generation requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
                     </div>
 
-                    <div id="non_apim_image_gen_settings" {% if settings.enable_image_gen_apim %}style="display: none;"
-                        {% endif %}>
+                    <div id="non_apim_image_gen_settings" class="{% if settings.enable_image_gen_apim %}d-none{% endif %}">
                         <div class="card p-3 mb-3">
                             <div class="mb-3">
                                 <label for="azure_openai_image_gen_endpoint" class="form-label">
@@ -71,9 +93,7 @@
                                     name="azure_openai_image_gen_resource_group"
                                     value="{{ settings.azure_openai_image_gen_resource_group or '' }}">
                             </div>
-                            <div class="mb-3" id="image_gen_key_container" {% if
-                                settings.azure_openai_image_gen_authentication_type !='key' %}style="display: none;" {%
-                                endif %}>
+                            <div class="mb-3{% if settings.azure_openai_image_gen_authentication_type != 'key' %} d-none{% endif %}" id="image_gen_key_container">
                                 <label for="azure_openai_image_gen_key" class="form-label">Azure OpenAI Image Generation
                                     Key</label>
                                 <div class="input-group">
@@ -121,8 +141,7 @@
                         </div>
                     </div>
 
-                    <div id="apim_image_gen_settings" class="card p-3 mb-3" {% if not settings.enable_image_gen_apim
-                        %}style="display: none;" {% endif %}>
+                    <div id="apim_image_gen_settings" class="card p-3 mb-3{% if not settings.enable_image_gen_apim %} d-none{% endif %}">
                         <div class="mb-3">
                             <label for="azure_apim_image_gen_endpoint" class="form-label">Azure APIM Endpoint</label>
                             <input type="text" class="form-control" id="azure_apim_image_gen_endpoint"
@@ -156,10 +175,12 @@
                         </div>
                     </div>
                 </div>
-
-                <button type="button" class="btn btn-secondary mt-3" id="test_image_button">
-                    Test Image Connection
+                    </fieldset>
+                </div>
+                <button type="button" class="btn btn-secondary mt-3" id="test_image_button" disabled>
+                    Test image generation
                 </button>
-                <div id="test_image_result" class="mt-2"></div>
+                <p class="form-text">Uses only the saved image model and may incur generation costs. A connection check does not test image inference.</p>
+                <div id="test_image_result" class="mt-2" role="status"></div>
                 </div>
             </div>

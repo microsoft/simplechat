@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.250.109
+Version: 0.261.103
 Implemented in: 0.241.179; updated in 0.250.109
+Anthropic completion reason normalization: 0.261.103
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
@@ -39,6 +40,7 @@ from model_endpoint_clients import (  # noqa: E402
 from semantic_kernel.contents.chat_history import ChatHistory  # noqa: E402
 from semantic_kernel.contents.chat_message_content import ChatMessageContent  # noqa: E402
 from semantic_kernel.contents.utils.author_role import AuthorRole  # noqa: E402
+from semantic_kernel.contents.utils.finish_reason import FinishReason  # noqa: E402
 
 
 def assert_equal(actual, expected, description):
@@ -213,6 +215,31 @@ def test_model_endpoint_protocol_inference():
     assert_equal(sk_payload["max_tokens"], 128, "SK Claude service should copy max_tokens")
     assert_equal(sk_payload["temperature"], 0.2, "SK Claude service should copy temperature")
     assert_equal(sk_payload["stream"], True, "SK Claude service should support streaming")
+
+    for native_reason, expected_reason, expected_sk_reason in (
+        ("end_turn", "stop", FinishReason.STOP),
+        ("stop_sequence", "stop", FinishReason.STOP),
+        ("max_tokens", "length", FinishReason.LENGTH),
+        ("model_context_window_exceeded", "length", FinishReason.LENGTH),
+        ("tool_use", "tool_calls", FinishReason.TOOL_CALLS),
+        ("refusal", "content_filter", FinishReason.CONTENT_FILTER),
+        ("pause_turn", "pause_turn", None),
+        (None, None, None),
+    ):
+        response = client._build_completion_response({
+            "stop_reason": native_reason,
+            "content": [{"type": "text", "text": "Response text"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        })
+        assert_equal(
+            response.choices[0].finish_reason, expected_reason,
+            f"Anthropic {native_reason} should keep its completion meaning",
+        )
+        message = sk_service._create_chat_message_contents_from_response(response)[0]
+        assert_equal(
+            message.finish_reason, expected_sk_reason,
+            f"SK should receive the normalized {native_reason} completion reason",
+        )
 
     loader_content = (APP_DIR / "semantic_kernel_loader.py").read_text(encoding="utf-8")
     if "create_model_endpoint_chat_completion_service" not in loader_content:

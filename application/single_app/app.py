@@ -38,12 +38,14 @@ from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_rate_limit import build_rate_limit_error_payload
 from functions_appinsights import *
 from functions_activity_logging import *
+from functions_session_store import install_merging_session_interface
 
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from datetime import datetime
 from flask import Blueprint, g, make_response
-from urllib.parse import urlparse
+from urllib.parse import urlencode, urlparse
 
 from route_frontend_authentication import *
 from route_frontend_profile import *
@@ -61,11 +63,25 @@ from route_frontend_feedback import *
 from route_frontend_support import *
 from route_frontend_notifications import *
 from route_frontend_terms_of_use import register_route_frontend_terms_of_use
+from route_frontend_v2 import register_route_frontend_v2
+from route_access_restriction import register_route_access_restriction
 from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
+from route_backend_analysis_results import register_route_backend_analysis_results
+from route_backend_v2 import (
+    register_route_backend_v2,
+    register_route_backend_v2_admin,
+)
+from route_backend_orchestration import register_route_backend_orchestration
+from route_backend_action_credentials import register_route_backend_action_credentials
+from route_backend_user_input import register_route_backend_user_input
+from functions_action_credential_state import configure_action_credential_state
+from functions_action_credential_runtime import configure_action_credential_runtime
+from config import cosmos_action_credential_state_container
 from route_backend_search import *
 from route_backend_conversations import *
+from route_backend_conversation_handoffs import register_route_backend_conversation_handoffs
 from route_backend_documents import *
 from route_backend_groups import *
 from route_backend_users import *
@@ -77,6 +93,17 @@ from route_backend_feedback import *
 from route_backend_settings import *
 from route_backend_prompts import *
 from route_backend_group_prompts import *
+from route_backend_group_prompts_scoped import *
+from route_backend_group_actions_scoped import *
+from route_backend_group_agents_scoped import *
+from route_backend_v2_admin_agents_actions import register_route_backend_v2_admin_agents_actions
+from route_backend_group_identities_scoped import *
+from route_backend_personal_identities_scoped import register_route_backend_personal_identities_scoped
+from route_backend_group_endpoints_scoped import *
+from route_backend_group_file_sources_scoped import *
+from route_backend_group_directory import register_route_backend_group_directory
+from route_backend_group_membership import register_route_backend_group_membership
+from route_backend_group_settings import register_route_backend_group_settings
 from route_backend_control_center import *
 from route_backend_notifications import *
 from route_backend_retention_policy import *
@@ -85,8 +112,17 @@ from route_backend_plugins import bpap as admin_plugins_bp, bpdp as dynamic_plug
 from route_backend_agents import bpa as admin_agents_bp
 from route_backend_agent_templates import bp_agent_templates
 from route_backend_public_workspaces import *
+from route_backend_public_directory import register_route_backend_public_directory
+from route_backend_public_settings import register_route_backend_public_settings
 from route_backend_public_documents import *
+from route_backend_public_document_reads import register_route_backend_public_document_reads
+from route_backend_public_document_management import register_route_backend_public_document_management
+from route_backend_public_document_collaboration import register_route_backend_public_document_collaboration
+from route_backend_public_membership import register_route_backend_public_membership
 from route_backend_public_prompts import *
+from route_backend_public_prompts_scoped import register_route_backend_public_prompts_scoped
+from route_backend_public_identities_scoped import register_route_backend_public_identities_scoped
+from route_backend_public_file_sources_scoped import register_route_backend_public_file_sources_scoped
 from route_backend_file_sync import register_route_backend_file_sync
 from route_backend_workspace_identities import register_route_backend_workspace_identities
 from route_backend_user_agreement import register_route_backend_user_agreement
@@ -96,6 +132,8 @@ from route_backend_speech import register_route_backend_speech
 from route_backend_tts import register_route_backend_tts
 from route_backend_collaboration import register_route_backend_collaboration
 from route_backend_data_management import register_route_backend_data_management
+from route_backend_content_screening import register_route_backend_content_screening
+from route_frontend_content_screening import register_route_frontend_content_screening
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
 from route_backend_m365 import configure_m365_routes, register_route_backend_m365
 from functions_m365_approvals import configure_m365_approvals
@@ -137,8 +175,14 @@ if not (disable_flask_instrumentation == "1" or disable_flask_instrumentation.lo
 
 app.config['EXECUTOR_TYPE'] = EXECUTOR_TYPE
 app.config['EXECUTOR_MAX_WORKERS'] = EXECUTOR_MAX_WORKERS
+app.config['CHAT_STREAM_EXECUTOR_MAX_WORKERS'] = CHAT_STREAM_EXECUTOR_MAX_WORKERS
 executor = Executor()
 executor.init_app(app)
+chat_stream_executor = ThreadPoolExecutor(
+    max_workers=CHAT_STREAM_EXECUTOR_MAX_WORKERS,
+    thread_name_prefix='chat-stream',
+)
+app.extensions['chat_stream_executor'] = chat_stream_executor
 app.config['SESSION_TYPE'] = SESSION_TYPE
 app.config['VERSION'] = VERSION
 app.config['IS_DEVELOPMENT'] = IS_DEVELOPMENT
@@ -157,6 +201,7 @@ if SESSION_TYPE == 'filesystem':
         log_event(f"Unable to create session directory {app.config.get('SESSION_FILE_DIR')}: {e}", level=logging.ERROR)
 
 Session(app)
+install_merging_session_interface(app)
 
 
 def register_route_blueprint(name, registrar, auth_guard=None):
@@ -197,6 +242,7 @@ register_swagger_routes(app)
 from flask_session import Session
 import functions_redis_client
 from functions_settings import get_settings
+from functions_ai_connection_migration import initialize_ai_connections
 from functions_authentication import get_current_user_id
 from functions_global_agents import ensure_default_global_agent_exists
 from background_tasks import start_background_task_threads
@@ -272,8 +318,10 @@ def configure_sessions(settings):
         log_event(f"Session configuration error; falling back to filesystem: {e}", level=logging.ERROR)
         app.config['SESSION_TYPE'] = 'filesystem'
 
-    # Initialize session interface
+    # Initialize session interface. Saves merge into the latest stored session so a slow
+    # request cannot overwrite what a concurrent request saved meanwhile.
     Session(app)
+    install_merging_session_interface(app)
 
 # =================== Helper Functions ===================
 def start_background_tasks():
@@ -308,6 +356,7 @@ def initialize_application(force=False):
             get_redis_cache_infrastructure_endpoint(redis_hostname),
             redis_client_factory=functions_redis_client.create_redis_client,
         )
+        settings = initialize_ai_connections(settings)
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")
         sanitized_settings_cache = sanitize_settings_for_logging(app_settings_cache.get_settings_cache())
@@ -754,6 +803,17 @@ def _state_changing_request_has_same_origin_boundary():
     referer_header = request.headers.get('Referer', '').strip()
 
     if fetch_site == 'cross-site':
+        # A genuinely cross-site request is rejected unless its Origin is explicitly
+        # trusted. This is what allows a deliberately separate front-end origin (the
+        # standalone V2 UI app service, declared via V2_UI_ALLOWED_ORIGIN) to mutate
+        # state, while an arbitrary attacker origin still cannot: the browser sets
+        # Origin itself and it must match the configured allowlist exactly.
+        if origin_header:
+            request_origin = _normalize_origin_from_url(origin_header)
+            if request_origin and _origin_matches_any_allowed_origin(
+                request_origin, _build_allowed_request_origins()
+            ):
+                return True, 'cross-site origin explicitly trusted'
         return False, 'cross-site fetch metadata'
     if fetch_site == 'same-origin':
         return True, 'same-origin fetch metadata'
@@ -784,6 +844,40 @@ def _requires_same_origin_state_change_boundary():
     if request.method == 'GET':
         return any(request.path.startswith(prefix) for prefix in GET_STATE_CHANGING_PATH_PREFIXES)
     return False
+
+
+@app.before_request
+def answer_cors_preflight_for_allowed_origins():
+    """Answer CORS preflight requests before the authentication guards run.
+
+    A cross-origin JSON request triggers an OPTIONS preflight, and preflights deliberately
+    carry no cookies. Blueprint auth guards run after app-level before_request handlers, so
+    without this a preflight would be rejected with 401 and every state-changing call from
+    a separately hosted V2 UI would fail before it was ever sent.
+
+    This is inert unless V2_UI_ALLOWED_ORIGIN is configured, and it only ever answers for an
+    Origin that exactly matches the allowlist.
+    """
+    if not V2_UI_ALLOWED_ORIGINS or request.method != 'OPTIONS':
+        return None
+
+    # Access-Control-Request-Method is only present on a real preflight, which keeps this
+    # from intercepting an ordinary OPTIONS request.
+    if not request.headers.get('Access-Control-Request-Method'):
+        return None
+
+    request_origin = request.headers.get('Origin', '').strip()
+    if not request_origin or request_origin not in V2_UI_ALLOWED_ORIGINS:
+        return None
+
+    response = make_response('', 204)
+    response.headers['Access-Control-Allow-Origin'] = request_origin
+    response.headers['Access-Control-Allow-Credentials'] = 'true'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+    response.headers['Access-Control-Max-Age'] = '600'
+    response.headers['Vary'] = 'Origin'
+    return response
 
 
 @app.before_request
@@ -848,6 +942,15 @@ TERMS_OF_USE_EXEMPT_PATHS = {
     '/terms-of-use',
     '/terms-of-use/accept',
     '/terms-of-use/decline',
+    '/v2/terms-of-use',
+    '/api/v2/terms-of-use',
+    '/api/v2/terms-of-use/accept',
+    '/api/v2/terms-of-use/decline',
+    # The Access restricted screen. The Terms of Use pages require an unrestricted account,
+    # so gating this screen on the terms would bounce a restricted user between the two.
+    '/access-restricted',
+    '/v2/access-restricted',
+    '/api/v2/access-restriction',
     '/robots933456.txt',
     '/favicon.ico',
     '/acceptable_use_policy.html',
@@ -868,6 +971,31 @@ def _is_terms_of_use_exempt(path):
     return any(path.startswith(prefix) for prefix in TERMS_OF_USE_EXEMPT_PREFIXES)
 
 
+V2_TERMS_OF_USE_PATH = '/v2/terms-of-use'
+
+
+def _is_v2_request_path(path):
+    """True for V2 SPA pages and V2 API calls, which get the V2 Terms of Use page."""
+    return path in ('/v2', '/api/v2') or path.startswith('/v2/') or path.startswith('/api/v2/')
+
+
+def build_terms_of_use_url(path, query_string):
+    """Return the Terms of Use page for a blocked request.
+
+    V2 pages and V2 API calls are sent to the V2 page so a V2 user never lands on the
+    classic interstitial. An API path is not a page to return to, so a blocked V2 API call
+    gets the bare V2 page and the SPA supplies its own location as ``next``.
+    """
+    if _is_v2_request_path(path):
+        if path.startswith('/api/'):
+            return V2_TERMS_OF_USE_PATH
+        return f"{V2_TERMS_OF_USE_PATH}?{urlencode({'next': normalize_path_with_query(path, query_string)})}"
+    return url_for(
+        'frontend_terms_of_use.terms_of_use',
+        next=normalize_path_with_query(path, query_string),
+    )
+
+
 @app.before_request
 def enforce_terms_of_use():
     """Block authenticated app usage until the current terms of use is accepted."""
@@ -881,10 +1009,7 @@ def enforce_terms_of_use():
     if has_terms_of_use_acceptance(request_settings, user_id=user_id):
         return None
 
-    terms_url = url_for(
-        'frontend_terms_of_use.terms_of_use',
-        next=normalize_path_with_query(request.path, request.query_string),
-    )
+    terms_url = build_terms_of_use_url(request.path, request.query_string)
     is_api_request = (
         request.accept_mimetypes.accept_json
         and not request.accept_mimetypes.accept_html
@@ -998,7 +1123,10 @@ def enforce_idle_session_timeout():
                     level=logging.INFO
                 )
 
-                if request.path.startswith('/api/'):
+                if (
+                    request.accept_mimetypes.accept_json
+                    and not request.accept_mimetypes.accept_html
+                ) or request.path.startswith('/api/'):
                     return jsonify({
                         'error': 'Session expired',
                         'message': 'Your session expired due to inactivity. Please sign in again.',
@@ -1026,7 +1154,7 @@ def add_security_headers(response):
     Add comprehensive security headers to all responses to protect against
     various web vulnerabilities including MIME sniffing attacks.
     """
-    from config import SECURITY_HEADERS, ENABLE_STRICT_TRANSPORT_SECURITY, HSTS_MAX_AGE
+    from config import SECURITY_HEADERS, ENABLE_STRICT_TRANSPORT_SECURITY, HSTS_MAX_AGE, V2_UI_ALLOWED_ORIGINS
     
     # Apply all configured security headers
     for header_name, header_value in SECURITY_HEADERS.items():
@@ -1040,7 +1168,27 @@ def add_security_headers(response):
     # This provides extra protection against MIME sniffing attacks
     if response.content_type and any(ct in response.content_type.lower() for ct in ['text/', 'application/json', 'application/javascript', 'application/octet-stream']):
         response.headers['X-Content-Type-Options'] = 'nosniff'
-    
+
+    # Cross-origin support for a separately hosted V2 UI.
+    #
+    # Only the exact configured origin is ever echoed back, never a wildcard, because
+    # Allow-Credentials is required to carry the session cookie and the two are mutually
+    # exclusive with '*'. This block does nothing unless V2_UI_ALLOWED_ORIGIN is set, so
+    # the default same-origin deployment emits no CORS headers at all.
+    if V2_UI_ALLOWED_ORIGINS:
+        request_origin = request.headers.get('Origin')
+        if request_origin and request_origin in V2_UI_ALLOWED_ORIGINS:
+            response.headers['Access-Control-Allow-Origin'] = request_origin
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Expose-Headers'] = 'Content-Disposition'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, PATCH, DELETE, OPTIONS'
+            response.headers['Access-Control-Max-Age'] = '600'
+            # Responses vary by Origin, so caches must not serve one origin's response
+            # to another.
+            existing_vary = response.headers.get('Vary')
+            response.headers['Vary'] = f'{existing_vary}, Origin' if existing_vary else 'Origin'
+
     return response
 
 # Register a custom Jinja filter for Markdown
@@ -1263,6 +1411,11 @@ register_route_blueprint('frontend_authentication', register_route_frontend_auth
 # ------------------- Terms of Use Routes --
 register_route_blueprint('frontend_terms_of_use', register_route_frontend_terms_of_use)
 
+# ------------------- Access Restricted Routes -----------
+# Login-only on purpose: user_required sends a suspended or blocked user here, so these
+# pages must not require an unrestricted account themselves.
+register_route_blueprint('access_restriction', register_route_access_restriction, login_required_blueprint)
+
 # ------------------- User Profile Routes ----------------
 register_route_blueprint('frontend_profile', register_route_frontend_profile, login_required_blueprint)
 
@@ -1293,6 +1446,7 @@ register_route_blueprint('frontend_public_workspaces', register_route_frontend_p
 
 # ------------------- Safety Routes ----------------------
 register_route_blueprint('frontend_safety', register_route_frontend_safety, login_required_blueprint)
+register_route_blueprint('frontend_content_screening', register_route_frontend_content_screening, user_required_blueprint)
 
 # ------------------- Feedback Routes -------------------
 register_route_blueprint('frontend_feedback', register_route_frontend_feedback, login_required_blueprint)
@@ -1306,14 +1460,28 @@ register_route_blueprint('frontend_notifications', register_route_frontend_notif
 # ------------------- Custom Pages Routes ---------------
 register_route_blueprint('custom_pages', register_route_custom_pages, login_required_blueprint)
 
+# ------------------- V2 React UI Routes ----------------
+register_route_blueprint('frontend_v2', register_route_frontend_v2, user_required_blueprint)
+
 # ------------------- API Chat Routes --------------------
 register_route_blueprint('backend_chats', register_route_backend_chats, user_required_blueprint)
+register_route_blueprint('backend_analysis_results', register_route_backend_analysis_results, user_required_blueprint)
+
+# ------------------- API V2 UI Routes -------------------
+register_route_blueprint('backend_v2', register_route_backend_v2, user_required_blueprint)
+register_route_blueprint('backend_v2_admin', register_route_backend_v2_admin, admin_required_blueprint)
+register_route_blueprint('backend_v2_admin_agents_actions', register_route_backend_v2_admin_agents_actions, admin_required_blueprint)
+
+# ------------------- API Orchestration Routes ----------
+register_route_blueprint('backend_orchestration', register_route_backend_orchestration, user_required_blueprint)
 
 # ------------------- API Search Routes ------------------
 register_route_blueprint('backend_search', register_route_backend_search, user_required_blueprint)
+register_route_blueprint('backend_content_screening', register_route_backend_content_screening, user_required_blueprint)
 
 # ------------------- API Conversation Routes ------------
 register_route_blueprint('backend_conversations', register_route_backend_conversations, user_required_blueprint)
+register_route_blueprint('backend_conversation_handoffs', register_route_backend_conversation_handoffs, user_required_blueprint)
 
 # ------------------- API Collaboration Routes -----------
 register_route_blueprint('backend_collaboration', register_route_backend_collaboration, user_required_blueprint)
@@ -1384,6 +1552,32 @@ register_route_blueprint('backend_prompts', register_route_backend_prompts, user
 
 # ------------------- API Group Prompts Routes ----------
 register_route_blueprint('backend_group_prompts', register_route_backend_group_prompts, user_required_blueprint)
+register_route_blueprint('backend_group_prompts_scoped', register_route_backend_group_prompts_scoped, user_required_blueprint)
+
+# ------------------- API Group Actions Routes ----------
+register_route_blueprint('backend_group_actions_scoped', register_route_backend_group_actions_scoped, user_required_blueprint)
+
+# ------------------- API Group Agents Routes -----------
+register_route_blueprint('backend_group_agents_scoped', register_route_backend_group_agents_scoped, user_required_blueprint)
+
+# ------------------- API Group Identities Routes -------
+register_route_blueprint('backend_group_identities_scoped', register_route_backend_group_identities_scoped, user_required_blueprint)
+register_route_blueprint('backend_personal_identities_scoped', register_route_backend_personal_identities_scoped, user_required_blueprint)
+
+# ------------------- API Group Model Endpoints Routes --
+register_route_blueprint('backend_group_endpoints_scoped', register_route_backend_group_endpoints_scoped, user_required_blueprint)
+
+# ------------------- API Group File Sources Routes -----
+register_route_blueprint('backend_group_file_sources_scoped', register_route_backend_group_file_sources_scoped, user_required_blueprint)
+
+# ------------------- API Group Directory Routes --------
+register_route_blueprint('backend_group_directory', register_route_backend_group_directory, user_required_blueprint)
+
+# ------------------- API Group Membership Routes -------
+register_route_blueprint('backend_group_membership', register_route_backend_group_membership, user_required_blueprint)
+
+# ------------------- API Group Settings Routes ---------
+register_route_blueprint('backend_group_settings', register_route_backend_group_settings, user_required_blueprint)
 
 # ------------------- API Control Center Routes ---------
 register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)
@@ -1400,20 +1594,51 @@ register_route_blueprint('backend_governance', register_route_backend_governance
 # ------------------- API Public Workspaces Routes -------
 register_route_blueprint('backend_public_workspaces', register_route_backend_public_workspaces, user_required_blueprint)
 
+# ------------------- API Public Directory Routes -------
+register_route_blueprint('backend_public_directory', register_route_backend_public_directory, user_required_blueprint)
+
+# ------------------- API Public Settings Routes --------
+register_route_blueprint('backend_public_settings', register_route_backend_public_settings, user_required_blueprint)
+
 # ------------------- API Conversation Export Routes -----
 register_route_blueprint('backend_conversation_export', register_route_backend_conversation_export, user_required_blueprint)
 
 # ------------------- API Public Documents Routes --------
 register_route_blueprint('backend_public_documents', register_route_backend_public_documents, user_required_blueprint)
 
+# ------------------- API Public Document Reads (immutable-target) ---
+register_route_blueprint('backend_public_document_reads', register_route_backend_public_document_reads, user_required_blueprint)
+
+# ------------------- API Public Document Management (immutable-target) ---
+register_route_blueprint('backend_public_document_management', register_route_backend_public_document_management, user_required_blueprint)
+
+# ------------------- API Public Document Collaboration (immutable-target) ---
+register_route_blueprint('backend_public_document_collaboration', register_route_backend_public_document_collaboration, user_required_blueprint)
+
+# ------------------- API Public Membership Routes (immutable-target) ---
+register_route_blueprint('backend_public_membership', register_route_backend_public_membership, user_required_blueprint)
+
 # ------------------- API Public Prompts Routes ----------
 register_route_blueprint('backend_public_prompts', register_route_backend_public_prompts, user_required_blueprint)
+
+# ------------------- API Public Prompts Routes (immutable-target) ---
+register_route_blueprint('backend_public_prompts_scoped', register_route_backend_public_prompts_scoped, user_required_blueprint)
+
+# ------------------- API Public Identities Routes (immutable-target) ---
+register_route_blueprint('backend_public_identities_scoped', register_route_backend_public_identities_scoped, user_required_blueprint)
+
+# ------------------- API Public File Sources Routes (immutable-target) ---
+register_route_blueprint('backend_public_file_sources_scoped', register_route_backend_public_file_sources_scoped, user_required_blueprint)
 
 # ------------------- API File Sync Routes ---------------
 register_route_blueprint('backend_file_sync', register_route_backend_file_sync, login_required_blueprint)
 
 # ------------------- API Workspace Identity Routes ------
 register_route_blueprint('backend_workspace_identities', register_route_backend_workspace_identities, login_required_blueprint)
+configure_action_credential_state(cosmos_action_credential_state_container)
+configure_action_credential_runtime()
+register_route_blueprint('backend_action_credentials', register_route_backend_action_credentials, user_required_blueprint)
+register_route_blueprint('backend_user_input', register_route_backend_user_input, user_required_blueprint)
 
 # ------------------- API User Agreement Routes ----------
 register_route_blueprint('backend_user_agreement', register_route_backend_user_agreement, user_required_blueprint)

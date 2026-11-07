@@ -1,6 +1,76 @@
-# Microsoft 365 actions and conversation evidence (v0.261.038)
+# Microsoft 365 actions and conversation evidence (v0.261.355)
 
 Implemented in version: **0.261.029**
+
+Orchestration operations implemented in version: **0.261.321**, tracked in
+`application/single_app/config.py`.
+
+## Persistent chat connections
+
+Implemented in version: **0.261.355**, tracked in
+`application/single_app/config.py`.
+
+Explicit chat reconnect saves an independent, AES-GCM-encrypted credential when
+Key Vault secret storage is configured. Saved chat access survives browser
+restarts and normal app sign-out/sign-in, with no extra SimpleChat expiration.
+Microsoft refresh-token, consent, user revocation, and organizational sign-in
+policies remain authoritative. Routine access-token expiry no longer clears
+the source-permission list.
+
+Classic Profile and V2 Settings explain saved versus session-only access and
+provide confirmed **Disconnect chat**. Existing session-only users reconnect
+once to opt into durable storage; ordinary login or a workflow connection never
+silently creates a saved chat credential. Without Key Vault, chat remains
+session-only. Workflow credentials and Run as approvals stay independent.
+
+See the [chat connection persistence fix](../fixes/M365_CHAT_CONNECTION_PERSISTENCE_FIX.md)
+for lifecycle, storage, refresh fencing, and regression coverage.
+
+## Manual review editing and draft delivery
+
+Implemented in version: **0.261.325**, tracked in
+`application/single_app/config.py`.
+
+Manual-review email and invitation cards support owner-only saved edits and
+durable AI suggestions. Direct/AI revision history survives reopening the editor
+within its bounded history window, until send/cancel. The assistant proposes
+only supported fields and never approves or sends.
+
+New manual email approvals send the actual immutable-ID Outlook draft rather
+than a second saved snapshot. Saving patches that draft; external Outlook edits
+are refreshed rather than blindly overwritten. Calendar edits remain local
+until explicit approval creates the event and sends invitations.
+
+Accepted email sends hide the obsolete draft link until a read-only lookup finds
+the current sent-message link. Up to five lookups are spaced with persisted
+backoff within a five-minute window; rapid refreshes do not spend more retries.
+If the link remains unavailable, the card directs the owner to Outlook Sent
+Items without suggesting another send. Existing retained-draft actions keep their
+compatibility behavior, and automatic/delayed delivery is unchanged. See the
+[review and draft lifecycle fix](../fixes/M365_PENDING_REVIEW_DRAFT_LIFECYCLE_FIX.md)
+for API contracts, history limits and validation.
+
+## Operations in orchestration
+
+An explicit operation-intent action or agent step can use enabled M365 write functions.
+Sending mail, creating invitations, and changing read state keep their existing delegated
+permissions, sharing policies, and delivery settings. Old plans without operation intent
+remain read-only until replanned.
+
+Research and prepared email content can be bound as complete named inputs. Manual and
+delayed outgoing actions have a durable orchestration origin rather than an invented
+chat-agent or workflow binding. Review/send rechecks the original owned plan, selected
+action or agent, current permissions, conversation audience, and reviewed material.
+Changed or cancelled plans cannot silently revive an outgoing operation.
+
+The V2 conversation recovers saved cards after integration steps and interrupted streams.
+Confirmed operation receipts prevent a retry from recreating an existing draft or
+resending an accepted operation. Uncertain writes require review of Microsoft 365 before
+new work. Interactive delayed-delivery recovery keeps its existing grace window rather
+than becoming an unattended workflow.
+
+See [orchestration action access](CHAT_ORCHESTRATION_ACTIONS.md) and the
+[operation capability fix](../fixes/ORCHESTRATION_OPERATION_CAPABILITY_FIX.md).
 
 Authorization bootstrap and workflow diagnostic handling updated in **0.261.030**.
 See the [CodeQL remediation](../fixes/M365_CODEQL_REMEDIATION_FIX.md).
@@ -28,8 +98,20 @@ Chat mail/invitation review cards, current-state recovery, and claimed
 interactive delivery were added in **0.261.038**. See the
 [action-card repair](../fixes/M365_CHAT_ACTION_CARDS_FIX.md).
 
+Mail and calendar history search, and the agent stream context and
+interrupted-reply persistence repair, were added in **0.261.129**. See the
+[stream context and persistence fix](../fixes/M365_AGENT_STREAM_CONTEXT_PERSISTENCE_FIX.md).
+
+In **0.261.302** the workflow encryption key creates itself in Key Vault,
+workflow sign-in returns to the registered `/getAToken` callback, sign-in
+results report to the window that opened them instead of showing raw JSON,
+chat status lists the sources a session can actually use, and V2 links stay in
+V2. Concurrent requests no longer erase each other's session writes, which had
+broken sign-in callbacks. See the
+[connection session race fix](../fixes/M365_CONNECTION_SESSION_RACE_FIX.md).
+
 Related version update: `application/single_app/config.py`.
-Associated issue: #1493. Related future work: #954 and #956.
+Associated issues: #1493, #1523, #1604 and #1714. Related future work: #954 and #956.
 
 ## Overview
 
@@ -56,15 +138,31 @@ operations also pass through source-sharing checks.
   SharePoint `Sites.Selected` grants.
 - Existing chat Blob storage for retained evidence and resumable processing.
   This dependency is independent of whether enhanced-citation rendering is on.
-- Key Vault for saved workflow connections. Set the server environment variable
-  `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` to a dedicated Key Vault secret holding
-  a base64-encoded 32-byte encryption key. Preserve historical key versions
-  while rotating active connection caches.
-- Register `/api/m365/connections/callback` as a redirect URI for workflow
-  connection. This connection is separate from ordinary interactive sign-in.
+- Key Vault for saved workflow and chat connections. Turn on Key Vault secret storage
+  in Admin Settings > Security > Secrets > Key Vault. Every user's saved
+  workflow sign-in is encrypted with one deployment-wide 256-bit key, bound to
+  that user's connection record. Since 0.261.302 SimpleChat creates the key
+  itself, as the secret `simplechat-m365-workflow-token-key`, the first time
+  anyone connects or an administrator saves settings; the application identity
+  needs Key Vault Secrets Officer, which Key Vault secret storage already
+  requires. The optional `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME` app setting
+  renames the secret. Preserve historical key versions while rotating active
+  connection caches. Without Key Vault secret storage, Profile and V2 Settings
+  explain that workflow connections are not set up rather than failing on
+  Connect.
+- Workflow connection sign-in returns to the registered `/getAToken` callback
+  (since 0.261.302), routed by its `m365-workflow-` state prefix, so no extra
+  redirect URI is needed. `/api/m365/connections/callback` still completes
+  sign-ins for deployments that registered it. This connection is separate
+  from ordinary interactive sign-in.
 - Interactive chat reuses the registered `/getAToken` callback with a separate
   state/nonce/PKCE-protected flow and the existing server-side login session.
-  It does not require a saved workflow connection or Key Vault.
+  It does not require a saved workflow connection. Saved chat credentials use
+  the deployment key above with a separate chat-record binding; without
+  Key Vault, the connection is session-only.
+- A sign-in started in a popup ends on a small result page that reports the
+  outcome to the window that opened it and closes, so V2 never lands on a
+  classic page. A full-page sign-in from classic Profile returns to Profile.
 
 Admin Settings, **Agents & Actions**, offers `m365_retrieval_provider`
 (`auto` or `graph`) and `m365_trusted_download_hosts`. These hosts control
@@ -92,6 +190,39 @@ SharePoint supports document-library files. Site pages, list rows, on-premises
 SharePoint, and consumer Microsoft accounts are outside this release.
 User instructions can narrow a query to a folder or file; actions have no
 independent site/folder allowlist.
+
+## Mail and calendar history
+
+Implemented in version: **0.261.129**
+
+**Read my mail** and **Read my calendar events** read any period the user's
+mailbox still holds, not only recent mail or upcoming events. Both tools gained
+parameters instead of new capabilities, so existing actions and their saved
+capability choices keep working.
+
+- Mail accepts literal `search` words and a `received_from`/`received_to`
+  range, and can read `all` folders. Words are extracted from the model's text
+  before they reach Microsoft Graph KQL, so operators and field prefixes are
+  dropped. KQL dates are whole days in an unstated time zone, so the query is
+  widened by a day and the exact bounds are applied to each returned message.
+- Calendar always reads `me/calendarView`, which expands recurring meetings.
+  Without a range it reads the next 30 days. `query` words are matched by the
+  plugin, because a calendar view doesn't support Graph search. `order` and
+  `starts_in_range` support reading backward and continuing without repeats.
+- Every result carries `coverage` with `complete` and, when more items exist,
+  `continue_with`: the arguments for the next call. Continuation uses a
+  received or start time cursor plus one look-ahead item, because Graph advises
+  against reusing a skip token in a different request. Items that share the
+  cursor's time are returned by the next call; a tie group larger than `top` is
+  reported in the note rather than silently dropped.
+
+No permission changes: history uses the same delegated `Mail.Read` and
+`Calendars.Read` scopes. The limits are Microsoft 365's: the primary mailbox
+and default calendar only, no permanently deleted or retention-purged items,
+and at most 1,000 results for one mail search. See the
+[Email](../../reference/actions/m365-email.md) and
+[Calendar](../../reference/actions/m365-calendar.md) references for the
+parameter details.
 
 ## Sharing and approvals
 
@@ -212,9 +343,14 @@ their own approval flows.
 ## Workflows
 
 Manual and scheduled runs use an explicitly selected, consenting Run as user.
-The connection does not grant other workflows access automatically. Material
-instructions, agent/action capabilities, inputs, or destinations require new
-Run as approval. The full review is retained without truncating task or agent
+The connection does not grant other workflows access automatically. When
+someone else saved the current revision, a change to instructions, agent or
+action capabilities, inputs, or destinations requires new Run as approval. Since
+0.261.229, a revision the Run as user saved themselves, with no later change by
+anyone else to its agents and actions, is approved in their name without asking
+them, and an audience change never asks again. See
+[Run as approval for a revision you saved](M365_RUN_AS_SELF_AUTHORED_APPROVAL.md).
+The full review is retained without truncating task or agent
 instructions; reviews over 1.5 MB require splitting the workflow. A personal
 workflow uses its owner's account; group Run as accounts must be eligible group
 members.

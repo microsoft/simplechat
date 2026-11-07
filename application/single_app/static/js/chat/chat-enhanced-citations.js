@@ -518,7 +518,7 @@ export function showAudioModal(docId, timestamp, fileName) {
     modalInstance.show();
 }
 
-function triggerBlobDownload(blob, filename) {
+export function triggerBlobDownload(blob, filename) {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -529,7 +529,7 @@ function triggerBlobDownload(blob, filename) {
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
-function getDownloadFilename(response, fallbackFilename) {
+export function getDownloadFilename(response, fallbackFilename) {
     const contentDisposition = response.headers.get('Content-Disposition') || '';
     const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
     if (utf8Match && utf8Match[1]) {

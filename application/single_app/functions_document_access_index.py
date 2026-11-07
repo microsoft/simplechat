@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from time import perf_counter
 
 import app_settings_cache
+from document_chunk_counts import chunk_count_for_response
+from document_metadata_identity import document_cache_identity, document_family_identity
 from azure.core import MatchConditions
 from config import (
     cosmos_document_access_index_container,
@@ -27,6 +29,7 @@ from config import (
     cosmos_user_documents_container_name,
 )
 from functions_appinsights import log_event
+from functions_group_document_projection_fence import hold_group_document_projection
 from functions_settings import get_settings
 
 
@@ -38,7 +41,7 @@ DOCUMENT_ACCESS_BACKFILL_STATE_TYPE = 'document_access_index_backfill_state'
 DOCUMENT_ACCESS_BACKFILL_STATE_DOC_ID = 'document_access_index_backfill_state'
 DOCUMENT_ACCESS_SHADOW_STATE_TYPE = 'document_access_index_shadow_validation_state'
 DOCUMENT_ACCESS_SHADOW_STATE_DOC_ID = 'document_access_index_shadow_validation_state'
-DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 3
+DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION = 4
 
 DOCUMENT_ACCESS_SCOPE_PERSONAL = 'personal'
 DOCUMENT_ACCESS_SCOPE_GROUP = 'group'
@@ -61,6 +64,7 @@ DOCUMENT_ACCESS_DEFAULT_BACKFILL_BATCH_SIZE = 200
 DOCUMENT_ACCESS_MAX_BACKFILL_BATCH_SIZE = 1000
 DOCUMENT_ACCESS_DEFAULT_REPAIR_BATCH_SIZE = 100
 DOCUMENT_ACCESS_MAX_REPAIR_BATCH_SIZE = 500
+DOCUMENT_ACCESS_SOURCE_BATCH_SIZE = 200
 DOCUMENT_ACCESS_DEFAULT_CACHE_TTL_SECONDS = 900
 DOCUMENT_ACCESS_MIN_CACHE_TTL_SECONDS = 60
 DOCUMENT_ACCESS_MAX_CACHE_TTL_SECONDS = 900
@@ -1633,17 +1637,7 @@ def _document_identity(document_item):
 def _document_family_identity(document_item, source_scope):
     if not isinstance(document_item, dict):
         return None
-    revision_family_id = str(document_item.get('revision_family_id') or '').strip()
-    if revision_family_id:
-        return revision_family_id
-
-    if source_scope == DOCUMENT_ACCESS_SCOPE_PUBLIC:
-        scope_value = document_item.get('owner_public_workspace_id') or document_item.get('public_workspace_id')
-    elif source_scope == DOCUMENT_ACCESS_SCOPE_GROUP:
-        scope_value = document_item.get('owner_group_id') or document_item.get('group_id')
-    else:
-        scope_value = document_item.get('owner_user_id') or document_item.get('user_id')
-    return f'legacy::{scope_value or "unknown"}::{document_item.get("file_name") or ""}'
+    return document_family_identity(document_item, source_scope)
 
 
 def _normalize_share_entry(entry):
@@ -1717,6 +1711,7 @@ def _build_base_row(document_item, source_scope, scope_type, scope_id, access_ro
         'source_document_id': document_id,
         'source_partition_key': document_id,
         'document_id': document_id,
+        'cache_identity': document_cache_identity(document_item, document_id=document_id),
         'revision_family_id': document_item.get('revision_family_id'),
         'version': version,
         'is_current_version': bool(document_item.get('is_current_version', True)),
@@ -1727,6 +1722,7 @@ def _build_base_row(document_item, source_scope, scope_type, scope_id, access_ro
         'shared_user_ids': _normalize_string_list(document_item.get('shared_user_ids')),
         'shared_group_ids': _normalize_string_list(document_item.get('shared_group_ids')),
         'file_name': document_item.get('file_name'),
+        'file_size': document_item.get('file_size'),
         'title': document_item.get('title'),
         'document_classification': document_item.get('document_classification'),
         'tags': _normalize_string_list(document_item.get('tags')),
@@ -1734,11 +1730,16 @@ def _build_base_row(document_item, source_scope, scope_type, scope_id, access_ro
         'keywords': _normalize_string_list(document_item.get('keywords')),
         'abstract': document_item.get('abstract'),
         'status': document_item.get('status'),
+        'metadata_extraction_status': document_item.get('metadata_extraction_status'),
+        'num_chunks': chunk_count_for_response(document_item),
+        'indexed_chunk_count_version': document_item.get('indexed_chunk_count_version'),
+        'num_file_chunks': document_item.get('num_file_chunks'),
         'percentage_complete': document_item.get('percentage_complete'),
         'number_of_pages': document_item.get('number_of_pages'),
         'publication_date': document_item.get('publication_date'),
         'enhanced_citations': _has_persisted_blob_reference(document_item),
         'document_kind': document_item.get('document_kind'),
+        'xsd_revision_identity': document_item.get('xsd_revision_identity'),
         'xsd_logical_path': document_item.get('xsd_logical_path'),
         'xsd_schema_status': document_item.get('xsd_schema_status'),
         'xsd_profile': document_item.get('xsd_profile'),
@@ -2169,7 +2170,9 @@ def _query_candidate_projection_rows_for_scope(scope_key, source_scope):
         'SELECT c.id, c.document_id, c.source_document_id, c.version, c.scope_key, '
         'c.scope_id, c.access_role, c.approval_status, c.access_granted, '
         'c.shared_user_ids, c.shared_group_ids, c.file_name, c.title, c.document_classification, c.tags, c.authors, c.keywords, '
-        'c.abstract, c.status, c.percentage_complete, c.number_of_pages, c.publication_date, '
+        'c.abstract, c.status, c.metadata_extraction_status, c.percentage_complete, c.number_of_pages, c.publication_date, '
+        'c.file_size, c.document_kind, c.xsd_revision_identity, '
+        'c.num_chunks, c.indexed_chunk_count_version, c.num_file_chunks, '
         'c.enhanced_citations, c.document_intelligence_extraction_mode, '
         'c.extraction_engine, c.extraction_engine_reason, '
         'c.generated_artifact_promotion_status, c.generated_artifact_requested_by_user_id, '
@@ -2415,6 +2418,7 @@ def _projection_row_to_document(row, source_scope):
         'id': document_id,
         'document_id': document_id,
         'file_name': row.get('file_name'),
+        'file_size': row.get('file_size'),
         'title': row.get('title'),
         'document_classification': row.get('document_classification'),
         'tags': _normalize_string_list(row.get('tags')),
@@ -2422,11 +2426,16 @@ def _projection_row_to_document(row, source_scope):
         'keywords': _normalize_string_list(row.get('keywords')),
         'abstract': row.get('abstract'),
         'status': row.get('status'),
+        'metadata_extraction_status': row.get('metadata_extraction_status'),
+        'num_chunks': row.get('num_chunks'),
+        'indexed_chunk_count_version': row.get('indexed_chunk_count_version'),
+        'num_file_chunks': row.get('num_file_chunks'),
         'percentage_complete': row.get('percentage_complete'),
         'number_of_pages': row.get('number_of_pages'),
         'publication_date': row.get('publication_date'),
         'enhanced_citations': row.get('enhanced_citations'),
         'document_kind': row.get('document_kind'),
+        'xsd_revision_identity': row.get('xsd_revision_identity'),
         'xsd_logical_path': row.get('xsd_logical_path'),
         'xsd_schema_status': row.get('xsd_schema_status'),
         'xsd_profile': row.get('xsd_profile'),
@@ -2484,6 +2493,7 @@ def _projection_row_to_document(row, source_scope):
             if shared_entry not in document_item['shared_user_ids']:
                 document_item['shared_user_ids'].append(shared_entry)
 
+    document_item['num_chunks'] = chunk_count_for_response(document_item)
     return document_item
 
 
@@ -2501,7 +2511,7 @@ def _is_backfill_state_ready_for_scope(state, source_scope):
     return source_scope in completed_scopes
 
 
-def _get_document_access_index_readiness(source_scope, settings=None):
+def _get_document_access_index_readiness(source_scope, settings=None, *, read_only=False):
     normalized_settings = get_document_access_index_settings(settings)
     if not normalized_settings.get('container_enabled'):
         return {
@@ -2516,7 +2526,7 @@ def _get_document_access_index_readiness(source_scope, settings=None):
             'settings': normalized_settings,
         }
     try:
-        state = _read_backfill_state()
+        state = _read_backfill_state(use_cache=False) if read_only else _read_backfill_state()
     except Exception as exc:
         log_event(
             '[DOCUMENT_ACCESS_INDEX] DAI read path readiness check failed; source document read should be used.',
@@ -2537,7 +2547,17 @@ def _get_document_access_index_readiness(source_scope, settings=None):
             'backfill_status': (state or {}).get('status'),
         }
 
-    has_repair_backlog = has_document_access_index_repair_backlog()
+    if read_only:
+        # Advisory selection must not initialize or repair catalog state.
+        try:
+            backlog_state = _read_repair_backlog_state(use_cache=False)
+            has_repair_backlog = bool(
+                isinstance(backlog_state, dict) and backlog_state.get('has_repair_backlog')
+            ) or _query_repair_backlog_exists()
+        except Exception:
+            has_repair_backlog = None
+    else:
+        has_repair_backlog = has_document_access_index_repair_backlog()
     if has_repair_backlog is None:
         return {
             'ready': False,
@@ -2558,6 +2578,216 @@ def _get_document_access_index_readiness(source_scope, settings=None):
         'status': 'ready',
         'settings': normalized_settings,
         'backfill_status': state.get('status'),
+    }
+
+
+class DocumentAccessIndexEnumerationError(RuntimeError):
+    """A complete, read-only catalog enumeration could not be established."""
+
+    def __init__(self, code='document_catalog_unavailable'):
+        self.code = code
+        super().__init__('The document catalog is temporarily unavailable. Try again later.')
+
+
+def iter_document_access_index_candidates(
+    source_scope, *, user_id=None, group_ids=None, public_workspace_ids=None,
+    settings=None, page_size=100, check=None,
+):
+    """Page current candidate IDs without the preview helper's 1,001-row ceiling.
+
+    These projection rows are not permission grants. The caller must authorize
+    each requested scope before enumeration and each source before consumption.
+    """
+    if source_scope not in DOCUMENT_ACCESS_SOURCE_SCOPES:
+        raise DocumentAccessIndexEnumerationError('invalid_source_scope')
+    if type(page_size) is not int or not 1 <= page_size <= 1000:
+        raise DocumentAccessIndexEnumerationError('invalid_page_size')
+    scope_keys = list(dict.fromkeys(_build_shadow_scope(
+        source_scope, user_id=user_id, group_ids=group_ids,
+        public_workspace_ids=public_workspace_ids,
+    )))
+    if not scope_keys or not all(scope_keys):
+        raise DocumentAccessIndexEnumerationError('missing_scope_keys')
+    if len(scope_keys) > DOCUMENT_ACCESS_BOUNDED_CATALOG_MAX_SCOPES:
+        raise DocumentAccessIndexEnumerationError('scope_limit_exceeded')
+
+    def check_readiness():
+        if check is not None:
+            check()
+        readiness = _get_document_access_index_readiness(
+            source_scope, settings=settings, read_only=True,
+        )
+        if not readiness.get('ready'):
+            raise DocumentAccessIndexEnumerationError()
+
+    for scope_key in scope_keys:
+        check_readiness()
+        result = cosmos_document_access_index_container.query_items(
+            query=(
+                'SELECT c.document_id, c.source_document_id, c.version, c.revision_family_id '
+                'FROM c WHERE c.type = @type AND c.source_scope = @source_scope '
+                'AND c.scope_key = @scope_key AND c.access_granted = true '
+                'AND c.is_current_version = true AND c.projection_version = @projection_version '
+                'ORDER BY c.document_id ASC'
+            ),
+            parameters=[
+                {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
+                {'name': '@source_scope', 'value': source_scope},
+                {'name': '@scope_key', 'value': scope_key},
+                {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
+            ],
+            partition_key=scope_key,
+            max_item_count=page_size,
+        )
+        if not callable(getattr(result, 'by_page', None)):
+            raise DocumentAccessIndexEnumerationError('document_catalog_paging_unavailable')
+        pages = iter(result.by_page())
+        while True:
+            check_readiness()
+            page = next(pages, None)
+            if page is None:
+                if getattr(pages, 'continuation_token', None):
+                    raise DocumentAccessIndexEnumerationError('document_catalog_continuation_failed')
+                break
+            for row in page:
+                if not isinstance(row, dict) or not (
+                    row.get('source_document_id') or row.get('document_id')
+                ):
+                    raise DocumentAccessIndexEnumerationError('document_catalog_invalid')
+                yield row
+        check_readiness()
+
+
+def document_matches_list_filters(document, filters=None):
+    """Apply the shared document-list metadata semantics to a current document."""
+    return _matches_shadow_filters(document, filters)
+
+
+def query_document_access_index_fingerprint(
+    source_scope, *, user_id=None, group_ids=None, public_workspace_ids=None, settings=None,
+):
+    """Read all authorized revision identities without enumerating source containers."""
+    if source_scope not in DOCUMENT_ACCESS_SOURCE_SCOPES:
+        return {'success': False, 'status': 'invalid_source_scope'}
+    readiness = _get_document_access_index_readiness(source_scope, settings=settings)
+    if not readiness.get('ready'):
+        _record_document_access_read_metric('document_fingerprint', source_scope, readiness.get('status'), False)
+        return {'success': False, 'status': readiness.get('status')}
+    scope_keys = _build_shadow_scope(
+        source_scope, user_id=user_id, group_ids=group_ids, public_workspace_ids=public_workspace_ids,
+    )
+    if not scope_keys or not all(scope_keys):
+        return {'success': False, 'status': 'missing_scope_keys'}
+    context = _build_document_access_cache_context(
+        'document_fingerprint', source_scope, scope_keys, {}, readiness['settings'],
+    )
+    cached = _try_get_document_access_cache_entry(context)
+    if cached is not None and isinstance(cached.get('fingerprint'), str):
+        _record_document_access_read_metric(
+            'document_fingerprint', source_scope, 'served_from_cache', True, served_from_cache=True,
+        )
+        return {'success': True, 'fingerprint': cached['fingerprint']}
+    identities = {}
+    diagnostics = []
+    try:
+        for scope_key in scope_keys:
+            rows, metrics = query_items_with_cosmos_diagnostics(
+                cosmos_document_access_index_container,
+                diagnostics_label=f'fingerprint:{scope_key}',
+                query=(
+                    'SELECT c.source_document_id, c.version, c.cache_identity FROM c '
+                    'WHERE c.type = @type AND c.source_scope = @source_scope '
+                    'AND c.scope_key = @scope_key AND c.access_granted = true '
+                    'AND c.projection_version = @projection_version'
+                ),
+                parameters=[
+                    {'name': '@type', 'value': DOCUMENT_ACCESS_INDEX_TYPE},
+                    {'name': '@source_scope', 'value': source_scope},
+                    {'name': '@scope_key', 'value': scope_key},
+                    {'name': '@projection_version', 'value': DOCUMENT_ACCESS_INDEX_SCHEMA_VERSION},
+                ],
+                partition_key=scope_key,
+            )
+            diagnostics.append(metrics)
+            for row in rows:
+                if (
+                    not isinstance(row, dict) or not row.get('source_document_id')
+                    or not isinstance(row.get('cache_identity'), str) or not row['cache_identity']
+                ):
+                    raise ValueError('Invalid document fingerprint projection.')
+                identities[(row['source_document_id'], row.get('version'))] = row['cache_identity']
+    except Exception as error:
+        log_event(
+            '[DOCUMENT_ACCESS_INDEX] Indexed document fingerprint failed; source fallback will be used.',
+            extra={'source_scope': source_scope, 'exception_type': type(error).__name__},
+            level=logging.WARNING, exceptionTraceback=True,
+        )
+        _record_document_access_read_metric('document_fingerprint', source_scope, 'query_failed', False, error=error)
+        return {'success': False, 'status': 'query_failed'}
+    fingerprint = hashlib.sha256('|'.join(sorted(identities.values())).encode('utf-8')).hexdigest()
+    _try_set_document_access_cache_entry(context, {'fingerprint': fingerprint})
+    _record_document_access_read_metric(
+        'document_fingerprint', source_scope, 'served_from_index', True,
+        diagnostics=_combine_query_diagnostics('document_fingerprint', diagnostics),
+    )
+    return {'success': True, 'fingerprint': fingerprint}
+
+
+def get_document_access_normalization_context(
+    source_scope, *, user_id=None, group_ids=None, public_workspace_ids=None, settings=None,
+):
+    """Bind a repair memo to the existing shared index generation, when available."""
+    readiness = _get_document_access_index_readiness(source_scope, settings=settings)
+    if not readiness.get('ready'):
+        return None
+    scope_keys = _build_shadow_scope(
+        source_scope, user_id=user_id, group_ids=group_ids, public_workspace_ids=public_workspace_ids,
+    )
+    if not scope_keys or not all(scope_keys):
+        return None
+    context = _build_document_access_cache_context(
+        'revision_normalization', source_scope, scope_keys, {}, readiness['settings'],
+    )
+    if context is not None:
+        context['scope_keys'] = scope_keys
+        context['settings'] = readiness['settings']
+    return context
+
+
+def document_access_normalization_is_cached(context):
+    cached = _try_get_document_access_cache_entry(context)
+    return cached is not None and cached.get('normalized') is True
+
+
+def remember_document_access_normalization(context):
+    if context is None:
+        return False
+    current = _build_document_access_cache_context(
+        'revision_normalization', context['source_scope'], context['scope_keys'], {}, context['settings'],
+    )
+    if current is None or current['cache_key'] != context['cache_key']:
+        return False
+    return _try_set_document_access_cache_entry(current, {'normalized': True})
+
+
+def query_document_access_index_ids(source_scope, **scope_arguments):
+    """Adapt the shared current catalog to candidate IDs, preserving fallback state."""
+    result = query_document_access_index_documents(source_scope, **scope_arguments)
+    if not result.get('success'):
+        return {'success': False, 'status': result.get('status')}
+    documents = result.get('documents')
+    if not isinstance(documents, list) or any(
+        not isinstance(document, dict) or not isinstance(document.get('id'), str) or not document['id']
+        for document in documents
+    ):
+        log_event(
+            '[DOCUMENT_ACCESS_INDEX] Invalid indexed candidate IDs; source fallback will be used.',
+            extra={'source_scope': source_scope}, level=logging.WARNING,
+        )
+        return {'success': False, 'status': 'invalid_projection'}
+    return {
+        'success': True, 'status': result.get('status'),
+        'document_ids': list(dict.fromkeys(document['id'] for document in documents)),
     }
 
 
@@ -2630,6 +2860,8 @@ def query_document_access_index_documents(
     cached_payload = _try_get_document_access_cache_entry(cache_context)
     if cached_payload is not None:
         cached_documents = copy.deepcopy(cached_payload.get('documents') or [])
+        for document in cached_documents:
+            document['num_chunks'] = chunk_count_for_response(document)
         cache_diagnostics = {
             'label': 'document_access_index_cache_hit',
             'request_charge': 0,
@@ -3411,6 +3643,17 @@ def sync_document_access_index_for_document(
             'deleted_count': 0,
         }
 
+    if _resolve_source_scope(document_item) == DOCUMENT_ACCESS_SCOPE_GROUP:
+        with hold_group_document_projection(
+            cosmos_group_documents_container, document_item.get("id") or document_item.get("document_id"),
+            document_item.get("group_id"), expected_version=document_item.get("version"), log=log_event,
+        ) as current:
+            return _sync_document_access_index_projection(current, operation, settings)
+    return _sync_document_access_index_projection(document_item, operation, settings)
+
+
+def _sync_document_access_index_projection(document_item, operation, settings):
+    """Publish only after group callers have bound a fresh source and writer claim."""
     rows = build_document_access_index_rows(document_item)
     document_id = str((document_item or {}).get('id') or (document_item or {}).get('document_id') or '').strip()
     if not document_id:
@@ -3520,8 +3763,10 @@ def delete_document_access_index_for_document(
     }
 
 
-def sync_document_access_index_for_document_fail_open(document_item, operation=DOCUMENT_ACCESS_OPERATION_UPSERT, settings=None):
-    """Synchronize projection rows without failing the source document mutation."""
+def sync_document_access_index_for_document_fail_open(
+    document_item, operation=DOCUMENT_ACCESS_OPERATION_UPSERT, settings=None, *, raise_on_error=False,
+):
+    """Record projection failures, optionally preserving the exception for a durable caller."""
     try:
         return sync_document_access_index_for_document(document_item, operation=operation, settings=settings)
     except Exception as exc:
@@ -3557,6 +3802,8 @@ def sync_document_access_index_for_document_fail_open(document_item, operation=D
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
+        if raise_on_error:
+            raise
         return {
             'success': False,
             'status': 'repair_required',

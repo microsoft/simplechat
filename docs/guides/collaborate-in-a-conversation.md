@@ -10,6 +10,13 @@ audience: user
 
 Collaborative conversations let more than one person work in the same chat thread. Participants see the shared message history, can reply in context, and can use `@` mentions to direct attention to another participant or an AI target.
 
+{% include media.html id="slide-collaborative-conversations" %}
+
+Sharing the thread is a deliberate disclosure of its retained content, not
+a transfer of each person's credentials or all their private workspace access.
+[Private conversation references and queued handoffs]({{ '/guides/reference-and-send-conversations/' | relative_url }})
+are a different feature and are not offered as shared-conversation equivalents.
+
 {% include media.html type="video"
                       title="Collaborate in a conversation walkthrough"
                       poster="video-posters/guide-collaborate-in-a-conversation.png"
@@ -56,6 +63,35 @@ Use a shared conversation when the discussion, prompts, AI responses, and genera
                       capture="Capture the inline file approval card in a shared conversation. Show Approve and Deny, and redact file names if needed." %}
 
 9. Approve the file to make it downloadable, or deny it if it should not be released. Requesters cannot approve their own generated files.
+
+## In the V2 interface
+
+The same shared conversations work in the V2 interface, with the controls in different places.
+
+### Reading incoming messages
+
+Fixed/Implemented in version: **0.261.318** (`application/single_app/config.py`).
+When you are caught up, a new participant's message opens at its beginning.
+AI replies follow the live streaming line and return to the beginning when
+finished. If you scroll up to read earlier content, incoming messages and AI
+completion leave you where you are. **New messages**, with a down arrow above
+the composer, brings you to the beginning of the most current message when you
+are ready. This indication is local to your open chat, not a participant read receipt.
+
+### Shared conversation controls
+
+- **Share a conversation, or manage who is in one**: the people button in the chat header, or **Share** in the conversation's menu in the left rail. Both open the same panel, which also promotes members to admin, removes people, and lets you leave the conversation or delete it for everyone.
+- **Accept an invitation**: a prompt above the conversation offers **Join** and **Decline**. You can read an invited conversation before joining, but the composer stays disabled until you do.
+- **Mention somebody**: type `@` in the composer. The menu lists the people already in the conversation, then the models and agents you can address, then people you could add. Use the arrow keys and press **Tab** or **Enter** to accept the highlighted suggestion.
+- **Ask the assistant**: `@`-mention a model or agent, or turn on an assistant tool such as document search, web search, image generation, deep research, reading URLs, an agent, or a saved prompt. A message with none of those goes to the other participants only, exactly as in the classic interface.
+- **Reply to a specific message**: the reply button on any message. The reply shows what it is answering.
+- **Approve a generated file**: files waiting on your decision are listed above the conversation with **Approve** and **Deny**, rather than on the message that produced them.
+
+Retry, edit, attempt navigation, and fork are not offered in a shared conversation in either interface; those actions have no shared-conversation equivalent.
+
+### Messages an agent posts for you
+
+An agent with the Simple Chat action can post into a conversation on your behalf, for example a workflow that opens a group conversation and writes the first briefing. The message is sent with your permissions, so it appears under your name, with **posted through an agent** beside it. Unlike a message you type, it is rendered as formatted text: headings, tables, links, images, and audio or video players appear the way they do in the agent's own replies.
 
 ## Verify it worked
 

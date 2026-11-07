@@ -14,8 +14,10 @@ from functions_m365_agent_continuation import (
 from functions_appinsights import log_event
 from functions_model_capabilities import ModelTokenBudget, ModelTokenBudgetError
 from functions_model_budget_runtime import prepare_model_execution_settings
+from functions_model_message_names import wrap_agent_message_names
 import datetime
 import re
+from typing import Literal
 
 
 class LoggingChatCompletionAgent(ChatCompletionAgent):
@@ -27,8 +29,9 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
     azure_endpoint: str | None = Field(default=None)
     api_version: str | None = Field(default=None)
     model_token_budget: ModelTokenBudget | None = Field(default=None, exclude=True)
+    construction_profile: Literal["agent-core", "per-user", "global"] = Field(default="agent-core", exclude=True)
 
-    def __init__(self, *args, display_name=None, default_agent=False, deployment_name=None, azure_endpoint=None, api_version=None, model_token_budget=None, **kwargs):
+    def __init__(self, *args, display_name=None, default_agent=False, deployment_name=None, azure_endpoint=None, api_version=None, model_token_budget=None, construction_profile="agent-core", **kwargs):
         # Remove these from kwargs so the base class doesn't see them
         kwargs.pop('display_name', None)
         kwargs.pop('default_agent', None)
@@ -42,6 +45,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         self.azure_endpoint = azure_endpoint
         self.api_version = api_version
         self.model_token_budget = model_token_budget
+        self.construction_profile = construction_profile
         # tool_invocations is now properly declared as a Pydantic field
 
     def _merge_arguments(self, override_args):
@@ -67,7 +71,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
     async def _get_chat_completion_service_and_settings(self, kernel, arguments):
         service, settings = await super()._get_chat_completion_service_and_settings(kernel, arguments)
         if self.model_token_budget is None:
-            return service, settings
+            return wrap_agent_message_names(service), settings
         if (
             self.service is not None and service is not self.service
             or self.deployment_name is not None and service.ai_model_id != self.deployment_name
@@ -91,7 +95,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 extra={"agent_id": self.id, "code": error.code}, level=logging.ERROR,
             )
             raise
-        return service, settings
+        return wrap_agent_message_names(service), settings
 
     def log_tool_execution(self, tool_name, arguments=None, result=None):
         """Manual method to log tool executions. Can be called by plugins."""

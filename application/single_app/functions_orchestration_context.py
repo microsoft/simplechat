@@ -1,0 +1,2489 @@
+# functions_orchestration_context.py
+
+"""
+What a request could act on: resources, seeds, signals, and the conversation's own history.
+
+Three ideas live here, and the first two are the ones that decide whether a plan is any
+good.
+
+**Candidates, not a catalogue.** The planner has to be able to name documents, which
+tempts an implementation into listing the user's workspace. That does not survive contact
+with a real deployment: a user with several hundred documents would spend the planner's
+entire context on file names, most of them irrelevant, and the planner would still be
+guessing. So candidates are resolved by *relevance* instead -- a cheap search probe using
+the user's own message, aggregated to distinct documents. The list is bounded by
+construction and is made of the documents that stand a chance of mattering. When the user
+has already picked documents, no probe runs at all; their choice is the candidate set.
+
+**The run ledger.** Every turn re-plans, so a conversation accumulates runs. Without any
+memory of them, turn five re-searches exactly what turn two already found and re-asks a
+question the user has already answered. The ledger is a compact, byte-bounded summary of
+what earlier runs did, and it is a planner *input* rather than a display artefact. It is
+what lets a plan say "use what we already gathered" instead of gathering again, and it is
+why an elicitation never asks the same thing twice in one conversation.
+
+**Seeds are constraints, not hints.** Anything the user explicitly chose in the composer --
+a document, an agent, a model, a prompt -- narrows the plan rather than suggesting to it.
+A user who picked a document and then watched the planner search their whole workspace
+would rightly conclude the control did nothing.
+
+Version: 0.261.140
+"""
+
+import hashlib
+import json
+import logging
+import math
+import re
+from copy import deepcopy
+from datetime import datetime, timezone
+
+from functions_appinsights import log_event, workflow_log_context
+from public_chat_scope_state import (
+    PublicChatScopeError, aggregate_public_workspace_ids, current_public_chat_scope,
+    normalize_public_workspace_selection,
+)
+from public_source_policy import ALL_AVAILABLE, current_public_source_policy, normalize_public_source_policy
+from functions_action_catalog import build_action_planner_projection
+from functions_assist_references import sanitize_reference_label
+from functions_message_block_revisions import resolve_block_sources_in_content
+from functions_message_deletion import is_soft_deleted_message
+from functions_message_masking import remove_masked_content
+from functions_orchestration_attempts import (
+    is_superseded_orchestration_attempt, superseded_orchestration_run_ids,
+)
+from functions_orchestration_registry import (
+    CAPABILITY_ACTION_INVOKE,
+    CAPABILITY_AGENT_INVOKE,
+    WORKSPACE_SCOPE_SETTINGS,
+    build_agent_planner_projection,
+    required_capability_ids,
+    resolve_available_capability_ids,
+)
+from functions_orchestration_schema import validate_elicitation_response
+from functions_prompt_metadata import build_prompt_selection_metadata
+from functions_model_catalog import ModelCatalogError
+from functions_image_formats import is_reference_image_file_name
+from functions_image_references import parse_image_references
+
+# Relevance probe bounds. Deliberately small: this runs before planning on every
+# non-trivial message, so it is on the latency path of the whole feature.
+CANDIDATE_PROBE_TOP_N = 30
+CANDIDATE_DOCUMENT_LIMIT = 15
+CANDIDATE_TITLE_LENGTH = 160
+
+# Ledger bounds, defaults for when the administrator has not set them.
+LEDGER_DEFAULT_MAX_RUNS = 10
+LEDGER_DEFAULT_MAX_BYTES = 16384
+LEDGER_SUMMARY_LENGTH = 240
+LEDGER_MAX_DOCUMENTS_PER_RUN = 8
+LEDGER_MAX_ANSWERED_QUESTIONS = 12
+
+HISTORY_MAX_TURNS = 6
+HISTORY_MAX_MESSAGES = 50
+HISTORY_MAX_BYTES = 16384
+HISTORY_SCAN_LIMIT = 200
+HISTORY_SCHEMA_VERSION = 2
+CLARIFICATION_MAX_BYTES = 32768
+
+# How much of a selected prompt the planner is shown.
+#
+# The name alone was not enough to plan with: "Quarterly review" says nothing about whether the
+# work involves reading documents, searching the web or comparing two things, which is precisely
+# what the plan has to decide. The wording says all of it.
+#
+# Capped rather than sent whole because a saved prompt has no length limit and the planner's
+# budget does. A prompt long enough to be truncated here has said what kind of work it is well
+# before this point.
+SELECTED_PROMPT_LENGTH = 2000
+ELICITATION_TEXT_LIMIT = 16000
+ELICITATION_CONTEXT_BYTE_LIMIT = 131072
+ELICITATION_REFERENCE_LIMIT = 100
+ELICITATION_IDENTIFIER_LIMIT = 512
+
+
+def _text(value, limit=None):
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if limit is not None and len(text) > limit:
+        text = text[:limit].rstrip()
+    return text
+
+
+def _string_list(value, limit=None):
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)):
+        value = [value]
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    out = []
+    seen = set()
+    for item in value:
+        text = _text(item)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        out.append(text)
+        if limit is not None and len(out) >= limit:
+            break
+    return out
+
+
+def _byte_length(payload):
+    try:
+        return len(json.dumps(payload, default=str).encode('utf-8'))
+    except (TypeError, ValueError):
+        return 0
+
+
+# --------------------------------------------------------------------------------------
+# Seeds
+# --------------------------------------------------------------------------------------
+
+def resolve_seeds(request_data):
+    """Read the composer's explicit selections out of a plan request.
+
+    Field names match the existing chat request contract rather than inventing new ones,
+    so a client that already knows how to name a document selection does not need a second
+    vocabulary for orchestration.
+    """
+    request_data = request_data if isinstance(request_data, dict) else {}
+    source_policy = normalize_public_source_policy(
+        request_data.get('public_source_policy', current_public_source_policy()),
+    )
+    if current_public_source_policy() == ALL_AVAILABLE:
+        source_policy = ALL_AVAILABLE
+    public_selection = normalize_public_workspace_selection(request_data.get('public_workspace_selection'))
+    if source_policy == ALL_AVAILABLE and public_selection == 'visible':
+        public_selection = 'all'
+
+    document_ids = _string_list(
+        request_data.get('selected_document_ids')
+        or request_data.get('selected_document_id')
+    )
+
+    agent = request_data.get('agent_info')
+    agent = agent if isinstance(agent, dict) else None
+
+    model = {
+        key: _text(request_data.get(key))
+        for key in ('model_deployment', 'model_id', 'model_endpoint_id', 'model_provider')
+        if _text(request_data.get(key))
+    }
+    routing = request_data.get('model_routing', 'manual')
+    if routing not in ('manual', 'auto'):
+        raise ModelCatalogError("Choose Auto or a specific model.", "model_routing")
+    if routing == 'auto' and model:
+        raise ModelCatalogError("Auto cannot be combined with a pinned model.", "model_routing")
+    raw_image_references = request_data.get('image_references')
+    image_references = [] if raw_image_references is None else parse_image_references(raw_image_references)
+
+    prompt = request_data.get('prompt_info')
+    prompt = prompt if isinstance(prompt, dict) else None
+    filter_mode = _text(request_data.get('document_filter_mode')).lower()
+    if filter_mode in ('union', 'or', 'additive'):
+        filter_mode = 'union'
+    elif filter_mode != 'intersection':
+        filter_mode = ''
+
+    # Display names for the picked documents, sent by the composer because it already knows
+    # them. Used for labels only -- what the user may actually read is decided from the ids
+    # against Cosmos, never from anything the browser asserts about them.
+    document_labels = {}
+    for entry in request_data.get('context_documents') or ():
+        if not isinstance(entry, dict):
+            continue
+        document_id = _text(entry.get('id') or entry.get('document_id'))
+        label = _text(entry.get('label') or entry.get('file_name'), 200)
+        if document_id and label:
+            document_labels[document_id] = label
+
+    from functions_conversation_references import normalize_conversation_references
+
+    return {
+        'conversation_references': normalize_conversation_references(request_data.get('conversation_references')),
+        **({'model_routing': 'auto'} if routing == 'auto' else {}),
+        **({'document_source_selection': request_data['document_source_selection']}
+           if request_data.get('document_source_selection') is not None else {}),
+        'public_workspace_selection': public_selection,
+        'public_source_policy': source_policy,
+        'document_ids': document_ids,
+        'document_labels': document_labels,
+        'doc_scope': _text(request_data.get('doc_scope')) or 'all',
+        # Tags narrow a search rather than naming documents, so they are a separate seed
+        # from document_ids and are treated differently: a picked document replaces the
+        # candidate probe, a picked tag scopes it.
+        'tags': _string_list(request_data.get('tags')),
+        'document_filter_mode': filter_mode,
+        'agent': agent,
+        'model': model or None,
+        'reasoning_effort': _text(request_data.get('reasoning_effort')),
+        'prompt': prompt,
+        'web_search': request_data.get('web_search_enabled') is True,
+        # The composer's Image control. In orchestration it asks the answer to propose
+        # images for approval; the answer step honors it only when image generation is on.
+        'image_generation': request_data.get('image_generation_enabled') is True,
+        'image_references': image_references,
+        'image_reference_documents': [],
+        'image_reference_messages': [],
+        'required_capabilities': _string_list(request_data.get('required_capabilities')),
+        'active_group_ids': _string_list(
+            request_data.get('active_group_ids') or request_data.get('active_group_id')
+        ),
+        'active_public_workspace_ids': _string_list(
+            request_data.get('active_public_workspace_ids')
+            or request_data.get('active_public_workspace_id')
+        ),
+    }
+
+
+def _message_file_name(message):
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
+    for key in ('file_name', 'filename', 'name'):
+        if message.get(key):
+            return _text(message.get(key), 500)
+    for key in ('file_name', 'filename', 'original_file_name', 'upload_file_name'):
+        if metadata.get(key):
+            return _text(metadata.get(key), 500)
+    return ''
+
+
+def _workspace_document_id(message):
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
+    return _text(message.get('workspace_document_id') or metadata.get('workspace_document_id'))
+
+
+def _image_reference_message_candidates(seeds, conversation_id):
+    refs = [item for item in seeds.get('image_references') or [] if item.get('type') == 'message']
+    if not refs:
+        return []
+    from azure.cosmos.exceptions import CosmosResourceNotFoundError
+    from config import cosmos_messages_container
+
+    candidates = []
+    for reference in refs:
+        message_id = reference['message_id']
+        if not message_id.startswith(f'{conversation_id}_'):
+            raise CatalogResolutionError(
+                'A reference image is not part of this conversation.',
+                code='image_reference_unavailable',
+            )
+        try:
+            message = cosmos_messages_container.read_item(item=message_id, partition_key=conversation_id)
+        except CosmosResourceNotFoundError as exc:
+            raise CatalogResolutionError(
+                'A reference image could not be opened. Review your image selection.',
+                code='image_reference_unavailable',
+            ) from exc
+        if message.get('conversation_id') != conversation_id:
+            raise CatalogResolutionError(
+                'A reference image is not part of this conversation.',
+                code='image_reference_unavailable',
+            )
+        role = _text(message.get('role')).lower()
+        file_name = _message_file_name(message) or 'image.png'
+        if role == 'image':
+            if not is_reference_image_file_name(file_name):
+                raise CatalogResolutionError(
+                    'A reference image format is not supported. Convert it to JPG or PNG and retry.',
+                    code='image_reference_unavailable',
+                )
+        elif role == 'file':
+            if not _workspace_document_id(message) or not is_reference_image_file_name(file_name):
+                raise CatalogResolutionError(
+                    'A reference image could not be opened. Review your image selection.',
+                    code='image_reference_unavailable',
+                )
+        else:
+            raise CatalogResolutionError(
+                'A reference image could not be opened. Review your image selection.',
+                code='image_reference_unavailable',
+            )
+        candidates.append({
+            'message_id': message_id,
+            'file_name': file_name,
+            'label': file_name,
+            # Only used to fold an upload into its selected workspace document; never kept.
+            'workspace_document_id': _workspace_document_id(message) if role == 'file' else '',
+        })
+    return candidates
+
+
+_REFERENCE_DOCUMENT_SCOPES = frozenset({'personal', 'group', 'public'})
+
+
+def _image_reference_document_candidates(seeds, user_id, conversation_id, candidates=None):
+    """Authorized, reference-capable image documents among the user's own selections.
+
+    ``candidates`` are the enriched planner candidates. Their file names come from the
+    authorized source manifest, so only the selected images need a second manifest read,
+    however many other documents were selected.
+    """
+    selected = _string_list(seeds.get('document_ids'))
+    if candidates is not None:
+        file_names = {
+            candidate.get('document_id'): _text(candidate.get('file_name'), 500)
+            for candidate in candidates if isinstance(candidate, dict)
+        }
+        selected = [
+            document_id for document_id in selected
+            if is_reference_image_file_name(file_names.get(document_id) or '')
+        ]
+    selected_ids = set(selected)
+    reference_documents = [
+        reference for reference in seeds.get('image_references') or []
+        if reference.get('type') == 'document' and reference.get('document_id') not in selected_ids
+    ]
+    if not selected and not reference_documents:
+        return []
+
+    from functions_mixed_source_orchestration import SOURCE_MANIFEST_MAX_SOURCES
+    from functions_orchestration_source_access import resolve_orchestration_source_manifest
+
+    def manifest_for(ids, *, doc_scope='all', active_group_ids=None, active_public_workspace_ids=None):
+        manifest = []
+        for start in range(0, len(ids), SOURCE_MANIFEST_MAX_SOURCES):
+            manifest.extend(resolve_orchestration_source_manifest(
+                ids[start:start + SOURCE_MANIFEST_MAX_SOURCES], user_id, conversation_id=conversation_id,
+                doc_scope=doc_scope,
+                active_group_ids=active_group_ids,
+                active_public_workspace_ids=active_public_workspace_ids,
+            ))
+        return manifest
+
+    manifests = []
+    try:
+        manifests.extend(manifest_for(
+            selected,
+            doc_scope=seeds.get('doc_scope') or 'all',
+            active_group_ids=seeds.get('active_group_ids') or None,
+            active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
+        ))
+        scoped = {}
+        for reference in reference_documents:
+            scoped.setdefault((reference['scope'], reference.get('scope_id')), []).append(reference['document_id'])
+        for (scope, scope_id), ids in scoped.items():
+            manifests.extend(manifest_for(
+                ids,
+                doc_scope=scope,
+                active_group_ids=[scope_id] if scope == 'group' else None,
+                active_public_workspace_ids=[scope_id] if scope == 'public' else None,
+            ))
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Reference image metadata could not be loaded.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'image_reference_metadata', 'error_type': type(exc).__name__,
+            },
+        )
+        raise CatalogResolutionError(
+            'Reference images could not be checked. Review your image selection.',
+            code='image_reference_unavailable',
+        ) from exc
+
+    reference_candidates = []
+    seen = set()
+    for source in manifests:
+        if not isinstance(source, dict):
+            continue
+        document_id = _text(source.get('document_id'))
+        file_name = _text(source.get('file_name') or source.get('display_name'), 500)
+        scope = _text(source.get('scope'))
+        # The resolver reads workspace documents only; a chat-scoped source is not one.
+        scope_id = None if scope == 'personal' else _text(source.get('scope_id')) or None
+        if (
+            not document_id or document_id in seen
+            or source.get('authorization_status') != 'authorized'
+            or scope not in _REFERENCE_DOCUMENT_SCOPES
+            or (scope != 'personal' and not scope_id)
+            or not is_reference_image_file_name(file_name)
+        ):
+            continue
+        seen.add(document_id)
+        reference_candidates.append({
+            'document_id': document_id,
+            'scope': scope,
+            'scope_id': scope_id,
+            'file_name': file_name,
+        })
+    return reference_candidates
+
+
+def resolve_image_reference_candidates(seeds, user_id, conversation_id, candidates=None, *, settings=None):
+    """Attach server-validated image reference candidates to orchestration seeds.
+
+    A ready workspace upload arrives twice, as a selected document and as its upload
+    message. It is offered once, as the document, so a plan that binds it also uses the
+    selected document, and the user's reference is rewritten to that document to match.
+
+    With ``settings``, nothing is offered unless planned images can use references, so the
+    planner is never shown candidates its image step cannot accept.
+    """
+    seeds = deepcopy(seeds or {})
+    if settings is not None:
+        from functions_orchestration_images import image_generation_readiness
+
+        readiness = image_generation_readiness(settings)
+        if readiness.get('status') != 'available' or not readiness.get('max_reference_images'):
+            if readiness.get('status') == 'available' and seeds.get('image_references'):
+                raise CatalogResolutionError(
+                    'The configured image model cannot use reference images. Remove them and retry.',
+                    code='image_reference_unavailable',
+                )
+            seeds['image_reference_documents'] = []
+            seeds['image_reference_messages'] = []
+            return seeds
+    documents = _image_reference_document_candidates(seeds, user_id, conversation_id, candidates)
+    documents_by_id = {item['document_id']: item for item in documents}
+    # An image the user chose as a reference is never dropped silently from the plan.
+    if any(
+        reference.get('type') == 'document' and reference.get('document_id') not in documents_by_id
+        for reference in seeds.get('image_references') or []
+    ):
+        raise CatalogResolutionError(
+            'A reference image could not be opened. Review your image selection.',
+            code='image_reference_unavailable',
+        )
+    messages = []
+    folded = {}
+    for item in _image_reference_message_candidates(seeds, conversation_id):
+        workspace_document_id = item.pop('workspace_document_id', '')
+        if workspace_document_id and workspace_document_id in documents_by_id:
+            folded[item['message_id']] = documents_by_id[workspace_document_id]
+        else:
+            messages.append(item)
+    references = []
+    seen = set()
+    for reference in seeds.get('image_references') or []:
+        document = folded.get(reference.get('message_id')) if reference.get('type') == 'message' else None
+        if document is not None:
+            reference = {
+                'type': 'document', 'document_id': document['document_id'],
+                'scope': document['scope'], 'scope_id': document['scope_id'],
+            }
+        key = (reference.get('type'), reference.get('message_id') or reference.get('document_id'))
+        if key not in seen:
+            seen.add(key)
+            references.append(reference)
+    seeds['image_references'] = references
+    seeds['image_reference_documents'] = documents
+    seeds['image_reference_messages'] = messages
+    return seeds
+
+
+def image_reference_provenance_from_seeds(seeds):
+    """Sanitized provenance for the user's orchestrate bubble, in reference order."""
+    seeds = seeds or {}
+    documents = {item['document_id']: item for item in seeds.get('image_reference_documents') or []}
+    messages = {item['message_id']: item for item in seeds.get('image_reference_messages') or []}
+    provenance = []
+    for reference in seeds.get('image_references') or []:
+        if reference.get('type') == 'message':
+            item = messages.get(reference.get('message_id'))
+            if item:
+                provenance.append({
+                    'type': 'message', 'message_id': item['message_id'], 'file_name': item.get('file_name') or item.get('label') or '',
+                })
+        elif reference.get('type') == 'document':
+            item = documents.get(reference.get('document_id'))
+            if item:
+                provenance.append({
+                    'type': 'document', 'document_id': item['document_id'],
+                    'scope': item.get('scope') or 'personal', 'scope_id': item.get('scope_id'),
+                    'file_name': item.get('file_name') or '',
+                })
+    return provenance
+
+
+def seeds_are_explicit(seeds):
+    """Whether the user named documents, which turns the candidate probe off.
+
+    Naming a tag deliberately does not count. A document is an answer to "which documents";
+    a tag is an answer to "which shelf", and the probe is still the thing that decides which
+    documents on that shelf are worth naming. Treating a tag as explicit would hand the
+    planner every document carrying it, which is the opposite of narrowing.
+    """
+    selection = (seeds or {}).get('document_source_selection')
+    if selection and (selection['mode'] == 'all' or any(
+        source['kind'] != 'document' for source in selection['sources']
+    )):
+        return False
+    return bool((seeds or {}).get('document_ids'))
+
+
+# --------------------------------------------------------------------------------------
+# Accepted clarification context
+# --------------------------------------------------------------------------------------
+
+class ElicitationContextError(ValueError):
+    """User-safe, field-addressable validation failure for supplemental context.
+
+    ``reason`` is a stable, machine-readable cause and ``reference_index`` the position of
+    the failing entry in the caller's reference list, when one reference is at fault.
+    Neither is part of the message.
+    """
+
+    def __init__(self, message, field=None, *, reason=None, reference_index=None):
+        super().__init__(message)
+        self.message = message
+        self.field = field
+        self.reason = reason
+        self.reference_index = reference_index
+
+
+def _bounded_answer_text(value, limit=ELICITATION_TEXT_LIMIT):
+    if not isinstance(value, str) or len(value) > limit:
+        raise ElicitationContextError(f'Use text of at most {limit} characters.')
+    return value.strip()
+
+
+def normalize_elicitation_reference(reference):
+    """Validate only shape here. Labels and scope claims are never authorization."""
+    if not isinstance(reference, dict) or set(reference) - {'kind', 'id', 'label', 'scope'}:
+        raise ElicitationContextError('Choose a file, tag, or workspace from the context picker.')
+    kind = reference.get('kind')
+    scope = reference.get('scope')
+    if kind not in ('document', 'tag', 'scope', 'chat_attachment') or not isinstance(scope, dict):
+        raise ElicitationContextError('The context reference is invalid.')
+    if set(scope) - {'kind', 'id', 'name'} or scope.get('kind') not in ('personal', 'group', 'public', 'chat'):
+        raise ElicitationContextError('The context scope is invalid.')
+    reference_id = _bounded_answer_text(reference.get('id'), ELICITATION_IDENTIFIER_LIMIT)
+    scope_kind = scope['kind']
+    scope_id = scope.get('id')
+    if scope_id is not None:
+        scope_id = _bounded_answer_text(scope_id, ELICITATION_IDENTIFIER_LIMIT)
+    if not reference_id and not (kind == 'scope' and scope_kind == 'personal'):
+        raise ElicitationContextError('The context reference has no identity.')
+    if scope_kind != 'personal' and not scope_id:
+        raise ElicitationContextError('Select the workspace or conversation that owns this reference.')
+    if (kind == 'chat_attachment') != (scope_kind == 'chat'):
+        raise ElicitationContextError('Conversation attachments must use their owning conversation.')
+    return {
+        'kind': kind, 'id': reference_id,
+        'scope': {'kind': scope_kind, 'id': scope_id},
+    }
+
+
+def _owned_elicitation_conversation(user_id, conversation_id):
+    # The import is lazy because config initializes Azure clients at module import time.
+    from config import cosmos_conversations_container
+
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id, partition_key=conversation_id,
+        )
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Could not authorize clarification conversation.',
+            extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+        )
+        raise ElicitationContextError('That conversation is no longer available.') from exc
+    if conversation.get('user_id') != user_id:
+        raise ElicitationContextError('That conversation is no longer available.')
+    return conversation
+
+
+def conversation_workspace_lock(conversation):
+    """The workspaces a scope-locked conversation allows, or None when it is not locked."""
+    if not isinstance(conversation, dict) or not conversation.get('scope_locked'):
+        return None
+    return conversation.get('locked_contexts') or conversation.get('context') or []
+
+
+def _authorize_reference_scope(scope, user_id, settings, locked_contexts=None):
+    """Authorize a personal, group or public workspace for ``user_id`` as of now.
+
+    ``locked_contexts`` is a scope-locked conversation's allowlist, or None when no lock
+    applies. Membership and source eligibility are rechecked on every call: a workspace id from
+    the browser, or an active workspace, is never evidence of access.
+    """
+    kind, scope_id = scope['kind'], scope['id']
+    aggregate = current_public_chat_scope(user_id)
+    if aggregate and kind != 'public':
+        raise ElicitationContextError('Public search cannot use personal or group sources.', reason='workspace_unavailable')
+    if not settings.get(WORKSPACE_SCOPE_SETTINGS[kind], False):
+        raise ElicitationContextError(
+            'That workspace capability is currently disabled.', reason='workspace_disabled',
+        )
+    if kind == 'personal' and scope_id not in (None, '', user_id):
+        raise ElicitationContextError(
+            'That personal workspace is not available.', reason='workspace_unavailable',
+        )
+
+    if locked_contexts is not None:
+        if not any(
+            item.get('scope') == kind
+            and (item.get('id') == (user_id if kind == 'personal' else scope_id))
+            for item in locked_contexts if isinstance(item, dict)
+        ):
+            raise ElicitationContextError(
+                'This conversation is locked to different workspaces.', reason='workspace_locked',
+            )
+
+    if kind == 'personal':
+        return {'kind': kind, 'id': None, 'name': 'My workspace'}
+    if kind == 'group':
+        # Membership must be rechecked at this boundary, not inferred from an active ID.
+        from functions_group import assert_group_role, find_group_by_id
+
+        assert_group_role(user_id, scope_id, allowed_roles=('Owner', 'Admin', 'DocumentManager', 'User'))
+        workspace = find_group_by_id(scope_id)
+    else:
+        from functions_public_workspaces import (
+            find_public_workspace_by_id,
+            get_public_source_workspace_ids,
+        )
+
+        public_ids = aggregate_public_workspace_ids(user_id) if aggregate else get_public_source_workspace_ids(user_id)
+        if scope_id not in public_ids:
+            raise ElicitationContextError(
+                'That public workspace is not available.', reason='workspace_unavailable',
+            )
+        workspace = find_public_workspace_by_id(scope_id)
+    if not workspace:
+        raise ElicitationContextError(
+            'That workspace is no longer available.', reason='workspace_unavailable',
+        )
+    return {'kind': kind, 'id': scope_id, 'name': _text(workspace.get('name'), 200)}
+
+
+def _authorize_elicitation_scope(scope, user_id, conversation, settings):
+    if scope['kind'] == 'chat':
+        if scope['id'] != conversation['id']:
+            raise ElicitationContextError(
+                'Select an attachment from this conversation.', reason='workspace_unavailable',
+            )
+        return {'kind': 'chat', 'id': conversation['id'], 'name': 'This conversation'}
+    return _authorize_reference_scope(
+        scope, user_id, settings, conversation_workspace_lock(conversation),
+    )
+
+
+def _elicitation_document_ready(document):
+    status = _text(document.get('status')).lower()
+    if any(value in status for value in ('error', 'failed', 'cancelled', 'canceled')):
+        return False
+    if 'complete' not in status and any(
+        value in status for value in ('queued', 'pending', 'uploading', 'processing')
+    ):
+        return False
+    percentage = document.get('percentage_complete')
+    if percentage is not None:
+        try:
+            return math.isfinite(float(percentage)) and float(percentage) >= 100
+        except (TypeError, ValueError):
+            return False
+    # Historical documents have no progress field; explicit in-flight states were checked.
+    return True
+
+
+def _authorize_references(
+    references, user_id, *, normalize, authorize_scope, conversation_id=None,
+    omit_unresolved=False, log_label='Clarification',
+):
+    """Authorize ``references`` in order: the core every `#` reference path shares.
+
+    Each reference is normalized and deduplicated, and its workspace is authorized once,
+    before any document is read. Documents are then resolved per workspace through the
+    document-context and manifest boundaries mixed-source reads use, checked for
+    readiness, and labeled from the server's record. Tags must still exist in their
+    workspace. Nothing is dropped silently: the first failure raises, carrying the
+    failing entry's position in ``references``.
+
+    ``omit_unresolved`` keeps a document with no readable context out of the manifest
+    call. Under strict source authority such a context fails the whole call, which would
+    report a missing document as a failed check instead of as that document.
+    """
+    normalized = []
+    positions = []
+    seen = set()
+    scopes = {}
+    for index, raw in enumerate(references):
+        try:
+            reference = normalize(raw)
+        except ElicitationContextError as exc:
+            exc.reference_index = index
+            raise
+        key = (reference['kind'], reference['id'], reference['scope']['kind'], reference['scope']['id'])
+        if key in seen:
+            continue
+        seen.add(key)
+        scope_key = (reference['scope']['kind'], reference['scope']['id'])
+        if scope_key not in scopes:
+            try:
+                scopes[scope_key] = authorize_scope(reference['scope'])
+            except ElicitationContextError as exc:
+                exc.reference_index = index
+                raise
+            except Exception as exc:
+                log_event(
+                    f'[ORCHESTRATION_CONTEXT] {log_label} workspace authorization failed.',
+                    extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+                )
+                raise ElicitationContextError(
+                    'That workspace is not available. Select another reference.',
+                    reason='workspace_unavailable', reference_index=index,
+                ) from exc
+        reference['scope'] = scopes[scope_key]
+        normalized.append(reference)
+        positions.append(index)
+
+    documents = [
+        (position, reference) for position, reference in zip(positions, normalized)
+        if reference['kind'] in ('document', 'chat_attachment')
+    ]
+    if documents:
+        # Reuse the same document-context and manifest boundaries as mixed-source reads.
+        # Keeping metadata locally lets us check processing without exposing storage URLs.
+        from functions_mixed_source_orchestration import resolve_authorized_source_manifest
+        from functions_search_service import resolve_document_contexts
+
+        batches = {}
+        for _, reference in documents:
+            scope = reference['scope']
+            batches.setdefault((scope['kind'], scope['id']), []).append(reference['id'])
+        contexts_by_reference = {}
+        sources_by_reference = {}
+        try:
+            # A shared document can resolve in more than one authorized workspace.
+            # Batch by the selected scope so the first accessible group cannot change
+            # another reference's identity or make acceptance depend on selection order.
+            for (scope_kind, scope_id), document_ids in batches.items():
+                ids = _string_list(document_ids)
+                lookup_scope = 'all' if scope_kind == 'chat' else scope_kind
+                group_ids = [scope_id] if scope_kind == 'group' else []
+                public_ids = [scope_id] if scope_kind == 'public' else []
+                contexts = resolve_document_contexts(
+                    ids, user_id, doc_scope=lookup_scope, active_group_ids=group_ids,
+                    active_public_workspace_id=public_ids, conversation_id=conversation_id,
+                    include_content=False,
+                )
+                if not isinstance(contexts, list) or len(contexts) != len(ids):
+                    raise ElicitationContextError(
+                        'The selected files could not be verified. Please retry.',
+                        reason='verification_failed',
+                    )
+                by_id = dict(zip(ids, contexts))
+                manifest_ids = ids
+                if omit_unresolved:
+                    manifest_ids = [
+                        document_id for document_id in ids if isinstance(by_id[document_id], dict)
+                    ]
+                manifest = resolve_authorized_source_manifest(
+                    manifest_ids, user_id, conversation_id=conversation_id, doc_scope=lookup_scope,
+                    active_group_ids=group_ids, active_public_workspace_ids=public_ids,
+                    context_resolver=lambda document_id, resolved=by_id, **kwargs: resolved.get(document_id),
+                ) if manifest_ids else []
+                for document_id, document_context in by_id.items():
+                    contexts_by_reference[(scope_kind, scope_id, document_id)] = document_context
+                for source in manifest:
+                    sources_by_reference[(scope_kind, scope_id, source['document_id'])] = source
+        except ElicitationContextError:
+            raise
+        except Exception as exc:
+            log_event(
+                f'[ORCHESTRATION_CONTEXT] {log_label} source resolution failed.',
+                extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+            )
+            raise ElicitationContextError(
+                'The selected files could not be verified. Please retry.', reason='verification_failed',
+            ) from exc
+        for position, reference in documents:
+            scope = reference['scope']
+            key = (scope['kind'], scope['id'], reference['id'])
+            source = sources_by_reference.get(key) or {}
+            if (
+                source.get('authorization_status') != 'authorized'
+                or source.get('scope') != scope['kind']
+                or (scope['kind'] != 'personal' and source.get('scope_id') != scope['id'])
+            ):
+                raise ElicitationContextError(
+                    'A selected file is unavailable or no longer authorized. Select another file.',
+                    reason='document_unavailable', reference_index=position,
+                )
+            document = (contexts_by_reference.get(key) or {}).get('document') or {}
+            if scope['kind'] == 'chat':
+                # The manifest proved ownership of this conversation and file message.
+                # Workspace upload wrapper messages are not synchronous chat attachments;
+                # accepting one would bypass the workspace document's processing gate.
+                from config import cosmos_messages_container
+
+                try:
+                    rows = list(cosmos_messages_container.query_items(
+                        query=(
+                            'SELECT c.id, c.workspace_document_id, c.file_content_source, '
+                            'c.status, c.percentage_complete FROM c WHERE c.id = @document_id'
+                        ),
+                        parameters=[{'name': '@document_id', 'value': reference['id']}],
+                        partition_key=conversation_id,
+                    ))
+                except Exception as exc:
+                    log_event(
+                        f'[ORCHESTRATION_CONTEXT] {log_label} attachment readiness could not be checked.',
+                        extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+                    )
+                    raise ElicitationContextError(
+                        'That attachment could not be checked. Please retry.',
+                        reason='verification_failed', reference_index=position,
+                    ) from exc
+                if not rows:
+                    raise ElicitationContextError(
+                        'That attachment is no longer available.',
+                        reason='document_unavailable', reference_index=position,
+                    )
+                document = rows[0]
+                if document.get('workspace_document_id') or document.get('file_content_source') == 'workspace':
+                    raise ElicitationContextError(
+                        'Select the workspace document for this upload and wait for its processing to finish.',
+                        reason='document_not_ready', reference_index=position,
+                    )
+            if not _elicitation_document_ready(document):
+                raise ElicitationContextError(
+                    'A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.',
+                    reason='document_not_ready', reference_index=position,
+                )
+            reference['label'] = _text(source.get('display_name') or source.get('file_name'), 200) or reference['id']
+
+    for position, reference in zip(positions, normalized):
+        scope = reference['scope']
+        if reference['kind'] == 'scope':
+            allowed_ids = ('', 'personal', user_id) if scope['kind'] == 'personal' else (scope['id'],)
+            if reference['id'] not in allowed_ids:
+                raise ElicitationContextError(
+                    'The workspace identity does not match its scope.',
+                    reason='invalid_reference', reference_index=position,
+                )
+            reference['id'] = scope['id'] or 'personal'
+            reference['label'] = scope['name']
+        elif reference['kind'] == 'tag':
+            from functions_documents import get_workspace_tags
+
+            tags = get_workspace_tags(
+                user_id,
+                group_id=scope['id'] if scope['kind'] == 'group' else None,
+                public_workspace_id=scope['id'] if scope['kind'] == 'public' else None,
+            )
+            tag = next((item for item in tags or [] if item.get('name') == reference['id']), None)
+            if not tag:
+                raise ElicitationContextError(
+                    'That tag is no longer available in the selected workspace.',
+                    reason='tag_unavailable', reference_index=position,
+                )
+            reference['label'] = tag['name']
+    return normalized
+
+
+def resolve_elicitation_references(references, user_id, conversation_id, settings=None):
+    """Reauthorize exact source identities and readiness, without a silent-drop path."""
+    settings = settings or {}
+    if not isinstance(references, list) or len(references) > ELICITATION_REFERENCE_LIMIT:
+        raise ElicitationContextError(
+            f'Select at most {ELICITATION_REFERENCE_LIMIT} context references.', reason='too_many',
+        )
+    if not references:
+        return []
+    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+    return _authorize_references(
+        references, user_id, conversation_id=conversation_id,
+        normalize=normalize_elicitation_reference,
+        authorize_scope=lambda scope: _authorize_elicitation_scope(scope, user_id, conversation, settings),
+    )
+
+
+def _readable_attachment(message):
+    metadata = message.get('metadata') or {}
+    return (
+        message.get('role') in ('file', 'image')
+        and not is_soft_deleted_message(message)
+        and not any(metadata.get(key) for key in ('masked', 'masked_ranges', 'is_generated_chat_artifact'))
+        and not (metadata.get('content_moderation') or {}).get('removed')
+        and (metadata.get('thread_info') or {}).get('active_thread') is not False
+        and _elicitation_document_ready(message)
+        and (message.get('role') != 'image' or metadata.get('is_user_upload') or message.get('is_user_upload'))
+    )
+
+
+def validate_conversation_attachment(document_id, user_id, conversation_id):
+    """Recheck visibility at the read boundary, not just at planning time."""
+    from config import cosmos_messages_container
+
+    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+    authorize_conversation_source_access(conversation, user_id)
+    message = cosmos_messages_container.read_item(item=document_id, partition_key=conversation_id)
+    if message.get('conversation_id') != conversation_id or not _readable_attachment(message):
+        raise ElicitationContextError('That attachment is no longer available.', reason='document_unavailable')
+    return message
+
+
+def resolve_conversation_attachments(message, user_id, conversation_id, *, seeds, settings=None):
+    """Discover only this conversation's attachments and resolve a clear reading reference."""
+    from config import cosmos_messages_container
+    from functions_orchestration_source_access import resolve_orchestration_source_manifest
+
+    conversation = _owned_elicitation_conversation(user_id, conversation_id)
+    authorize_conversation_source_access(conversation, user_id)
+    rows = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT TOP 17 c.id, c.conversation_id, c.role, c.filename, c.file_name, '
+            'c.status, c.percentage_complete, c.workspace_document_id, c.file_content_source, '
+            'c.metadata, c.timestamp, c.is_user_upload FROM c WHERE c.conversation_id = @conversation_id '
+            'AND c.role IN ("file", "image") ORDER BY c.timestamp DESC'
+        ),
+        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+        partition_key=conversation_id,
+    ))
+    inventory = []
+    references = {}
+    for row in rows[:16]:
+        if row.get('conversation_id') != conversation_id or not _readable_attachment(row):
+            continue
+        identifier = _workspace_document_id(row) or row.get('id')
+        if not identifier or identifier in references:
+            continue
+        try:
+            if _workspace_document_id(row):
+                manifest = resolve_orchestration_source_manifest(
+                    [identifier], user_id, conversation_id=conversation_id,
+                    doc_scope=seeds.get('doc_scope') or 'all',
+                    active_group_ids=seeds.get('active_group_ids') or None,
+                    active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
+                )
+                if len(manifest) != 1 or manifest[0].get('authorization_status') != 'authorized':
+                    continue
+                source = manifest[0]
+                reference = {
+                    'kind': 'document', 'id': identifier,
+                    'scope': {'kind': source['scope'], 'id': source.get('scope_id')},
+                }
+            else:
+                reference = {
+                    'kind': 'chat_attachment', 'id': identifier,
+                    'scope': {'kind': 'chat', 'id': conversation_id},
+                }
+            authorized = resolve_elicitation_references([reference], user_id, conversation_id, settings)[0]
+        except (ElicitationContextError, PermissionError):
+            continue
+        except LookupError as exc:
+            if type(exc) is not LookupError:
+                raise
+            continue
+        name = authorized['label']
+        references[identifier] = authorized
+        inventory.append({
+            'document_id': identifier, 'message_id': row['id'], 'file_name': name,
+            'media_kind': 'image' if is_reference_image_file_name(name) else 'file',
+            'availability': 'available',
+        })
+    resolved = deepcopy(seeds)
+    resolved['conversation_attachments'] = inventory
+    resolved['conversation_attachments_truncated'] = len(rows) > 16
+    # Explicit selections and scope filters always win. Discovery is not selection.
+    if seeds_are_explicit(seeds) or seeds.get('tags') or seeds.get('image_generation'):
+        return resolved
+    text = _text(message).casefold()
+    matches = [
+        item for item in inventory
+        if any(re.search(rf'(?<!\w){re.escape(value.casefold())}(?!\w)', text)
+               for value in (item['document_id'], item['file_name']) if value)
+    ]
+    if not matches and re.search(
+        r'\b(?:the|this|that|attached|uploaded)\s+(?:image|picture|photo|screenshot)\b', text,
+    ):
+        matches = [item for item in inventory if item['media_kind'] == 'image']
+    if len(matches) == 1 and len(rows) <= 16:
+        chosen = matches[0]
+        identifier = chosen['document_id']
+        resolved['document_ids'] = [identifier]
+        resolved['document_labels'] = {identifier: chosen['file_name']}
+        resolved['elicitation_references'] = [references[identifier]]
+        resolved['resolved_attachment_ids'] = [identifier]
+    return resolved
+
+
+# --------------------------------------------------------------------------------------
+# Workspace references outside a conversation
+# --------------------------------------------------------------------------------------
+
+SCOPE_REFERENCE_KINDS = ('document', 'tag')
+SCOPE_REFERENCE_WORKSPACES = ('personal', 'group', 'public')
+
+# Every message names the reference by the label its user picked, never by a title read
+# from the server: a document the user can no longer read must not describe itself.
+_SCOPE_REFERENCE_MESSAGES = {
+    'document_unavailable': '{subject} is no longer available to you. Remove it and pick another {noun}.',
+    'document_not_ready': '{subject} is still processing or failed to process. Wait for it to finish, or remove it.',
+    'tag_unavailable': '{subject} no longer exists in its workspace. Remove it and pick another tag.',
+    'workspace_disabled': '{subject} is in a workspace type that is turned off. Remove it to continue.',
+    'workspace_unavailable': '{subject} is in a workspace you can no longer use. Remove it and pick another {noun}.',
+    'workspace_locked': '{subject} is outside the workspaces allowed here. Remove it and pick one from an allowed workspace.',
+    'unsupported_kind': '{subject} cannot be used here. Pick documents or tags from your workspaces.',
+    'invalid_reference': '{subject} is not a valid reference. Remove it and pick it again from the # list.',
+}
+
+
+class ScopeReferenceError(ElicitationContextError):
+    """A workspace reference that cannot be used, named by the label its user picked."""
+
+    def __init__(self, message, *, reason, reference_index=None, label=''):
+        super().__init__(message, reason=reason, reference_index=reference_index)
+        self.label = label
+
+
+def _scope_reference_error(reason, raw, limit, reference_index=None):
+    if reason == 'too_many':
+        return ScopeReferenceError(f'Attach at most {limit} documents or tags.', reason=reason)
+    if reason == 'verification_failed':
+        return ScopeReferenceError(
+            'The selected documents or tags could not be checked right now. Please retry.',
+            reason=reason, reference_index=reference_index,
+        )
+    if reason not in _SCOPE_REFERENCE_MESSAGES:
+        reason = 'invalid_reference'
+    kind = raw.get('kind') if isinstance(raw, dict) and isinstance(raw.get('kind'), str) else None
+    label = sanitize_reference_label(raw.get('label')) if isinstance(raw, dict) else ''
+    if label:
+        subject = f'The tag \u201c{label}\u201d' if kind == 'tag' else f'\u201c{label}\u201d'
+    else:
+        subject = {'document': 'A selected document', 'tag': 'A selected tag'}.get(kind, 'A selected reference')
+    noun = {'document': 'document', 'tag': 'tag'}.get(kind, 'document or tag')
+    return ScopeReferenceError(
+        _SCOPE_REFERENCE_MESSAGES[reason].format(subject=subject, noun=noun),
+        reason=reason, reference_index=reference_index, label=label,
+    )
+
+
+def _normalize_scope_reference(reference):
+    if not isinstance(reference, dict):
+        raise ElicitationContextError('The context reference is invalid.', reason='invalid_reference')
+    scope = reference.get('scope')
+    if reference.get('kind') in ('scope', 'chat_attachment') or (
+        isinstance(scope, dict) and scope.get('kind') == 'chat'
+    ):
+        raise ElicitationContextError('That reference cannot be used here.', reason='unsupported_kind')
+    if reference.get('kind') not in SCOPE_REFERENCE_KINDS or not isinstance(scope, dict) or (
+        scope.get('kind') not in SCOPE_REFERENCE_WORKSPACES
+    ):
+        raise ElicitationContextError('The context reference is invalid.', reason='invalid_reference')
+    try:
+        return normalize_elicitation_reference(reference)
+    except ElicitationContextError as exc:
+        raise ElicitationContextError(exc.message, reason='invalid_reference') from exc
+
+
+def resolve_scope_references(
+    references, user_id, settings=None, *, allowed_workspaces=None,
+    limit=ELICITATION_REFERENCE_LIMIT,
+):
+    """Authorize `#` document and tag references for ``user_id``, with no conversation.
+
+    The authorizer for AI-assist inputs other than the question card: the plan editor's
+    Ask AI now, and the workflow assistant later. It accepts only documents and tags in
+    personal, group and public workspaces the user can read *now*; chat attachments,
+    whole workspaces and the ``chat`` scope are refused. It keeps the question card's
+    readiness checks, count bound and data-access pattern, and reads no Flask request
+    state and no conversation.
+
+    The result has the question card's normalized shape -- ``kind``, ``id``, ``scope``
+    with the workspace's ``kind``, ``id`` and ``name``, and a ``label`` from the server's
+    record -- so ``merge_elicitation_context`` can take it. The documents it names are
+    untrusted content wherever they are later read.
+
+    ``allowed_workspaces`` is an allowlist shaped like a scope-locked conversation's
+    (items with ``scope`` and ``id``); None means no allowlist applies.
+
+    Raises ``ScopeReferenceError``, whose ``reason`` is one of ``document_unavailable``,
+    ``document_not_ready``, ``tag_unavailable``, ``workspace_disabled``,
+    ``workspace_unavailable``, ``workspace_locked``, ``unsupported_kind``,
+    ``invalid_reference``, ``too_many`` or ``verification_failed``. The message names the
+    failing reference by the label the user picked, or generically when it has none.
+    A deleted document and one the user may no longer read are deliberately the same.
+    """
+    settings = settings or {}
+    if not isinstance(references, list):
+        raise _scope_reference_error('invalid_reference', None, limit)
+    if len(references) > limit:
+        raise _scope_reference_error('too_many', None, limit)
+    if not references:
+        return []
+    try:
+        return _authorize_references(
+            references, user_id, normalize=_normalize_scope_reference,
+            authorize_scope=lambda scope: _authorize_reference_scope(
+                scope, user_id, settings, allowed_workspaces,
+            ),
+            omit_unresolved=True, log_label='Assist reference',
+        )
+    except ElicitationContextError as exc:
+        index = exc.reference_index
+        raw = references[index] if isinstance(index, int) and 0 <= index < len(references) else None
+        error = _scope_reference_error(exc.reason or 'invalid_reference', raw, limit, index)
+        # Reason and position only: labels and identities are user content.
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Assist reference rejected.',
+            extra={'reason': error.reason, 'reference_index': index}, level=logging.INFO,
+        )
+        raise error from exc
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Assist reference check failed.',
+            extra={'exception_type': type(exc).__name__}, level=logging.WARNING,
+        )
+        raise _scope_reference_error('verification_failed', None, limit) from exc
+
+
+def resolve_elicitation_candidates(candidates, user_id, conversation_id, seeds=None, settings=None):
+    """Enrich only actual candidate IDs. Unavailable suggestions are never an allowlist."""
+    seeds = seeds or {}
+    ids = _string_list([item.get('document_id') for item in candidates or []], CANDIDATE_DOCUMENT_LIMIT)
+    if not ids:
+        return []
+    # Lazy: the search service imports config and its live clients.
+    from functions_search_service import resolve_document_contexts
+    contexts = resolve_document_contexts(
+        ids, user_id, doc_scope=seeds.get('doc_scope') or 'all',
+        active_group_ids=seeds.get('active_group_ids') or None,
+        active_public_workspace_id=seeds.get('active_public_workspace_ids') or None,
+        conversation_id=conversation_id, include_content=False,
+    )
+    references = []
+    for document_id, context in zip(ids, contexts or []):
+        if not isinstance(context, dict):
+            continue
+        scope_kind = context.get('scope')
+        if scope_kind not in ('personal', 'group', 'public', 'chat'):
+            continue
+        scope_id = {
+            'personal': None,
+            'group': context.get('group_id'),
+            'public': context.get('public_workspace_id'),
+            'chat': context.get('conversation_id'),
+        }[scope_kind]
+        try:
+            references.extend(resolve_elicitation_references([{
+                'kind': 'chat_attachment' if scope_kind == 'chat' else 'document',
+                'id': document_id, 'scope': {'kind': scope_kind, 'id': scope_id},
+            }], user_id, conversation_id, settings=settings))
+        except ElicitationContextError:
+            log_event(
+                '[ORCHESTRATION_CONTEXT] Omitted an unavailable clarification suggestion.',
+                level=logging.INFO, debug_only=True,
+            )
+    return references
+
+
+def _normalize_answer_prompt(prompt):
+    if not isinstance(prompt, dict) or set(prompt) - {
+        'id', 'name', 'content', 'original_content', 'variables', 'edited', 'user_text',
+        'template_content', 'composer_text', 'composer_embedded', 'scope_type', 'scope_name', 'index',
+    }:
+        raise ElicitationContextError('The attached prompt metadata is invalid.')
+    clean = {}
+    for key in (
+        'id', 'name', 'content', 'original_content', 'user_text',
+        'template_content', 'composer_text', 'scope_type', 'scope_name',
+    ):
+        if key in prompt:
+            if prompt[key] is None and key in ('id', 'name', 'scope_type', 'scope_name'):
+                clean[key] = None
+            else:
+                _bounded_answer_text(prompt[key])
+                clean[key] = prompt[key]
+    for key in ('edited', 'composer_embedded'):
+        if key in prompt:
+            if not isinstance(prompt[key], bool):
+                raise ElicitationContextError('The attached prompt metadata is invalid.')
+            clean[key] = prompt[key]
+    if 'index' in prompt:
+        if prompt['index'] is not None and type(prompt['index']) not in (str, int):
+            raise ElicitationContextError('The attached prompt metadata is invalid.')
+        clean['index'] = prompt['index']
+    if 'variables' in prompt:
+        variables = prompt['variables']
+        if not isinstance(variables, dict) or len(variables) > 50:
+            raise ElicitationContextError('The attached prompt has too many variables.')
+        clean['variables'] = {}
+        for key, value in variables.items():
+            _bounded_answer_text(key, 128)
+            _bounded_answer_text(value, 4000)
+            clean['variables'][key] = value
+    return clean
+
+
+def normalize_elicitation_answer(question, response, answer_context, user_id, conversation_id, settings=None):
+    """Validate primitive answers plus optional rich context against a stored question."""
+    if isinstance(response, dict) and response.get('action') in ('decline', 'cancel'):
+        return {'action': response['action'], 'content': {}}, {}
+    if not isinstance(response, dict) or response.get('action') != 'accept':
+        raise ElicitationContextError('Choose Finish, Decline, or Cancel for this question.')
+    answer_context = {} if answer_context is None else answer_context
+    if not isinstance(answer_context, dict) or _byte_length(answer_context) > ELICITATION_CONTEXT_BYTE_LIMIT:
+        raise ElicitationContextError('The answer context is too large or invalid.')
+    properties = question['requested_schema']['properties']
+    if set(answer_context) - set(properties):
+        raise ElicitationContextError('Answer context names an unknown question field.')
+    content = response.get('content', {})
+    if not isinstance(content, dict) or set(content) - set(properties):
+        raise ElicitationContextError('Answer content names an unknown question field.')
+    content = deepcopy(content)
+    fields = (question.get('ui_hints') or {}).get('fields') or {}
+    normalized_context = {}
+    reference_count = 0
+    for name, rules in properties.items():
+        try:
+            raw = answer_context.get(name, {})
+            if not isinstance(raw, dict) or set(raw) - {'text', 'prompt_info', 'references'}:
+                raise ElicitationContextError('Use text, a prompt, or context references for this answer.')
+            context = {}
+            if 'text' in raw:
+                context['text'] = _bounded_answer_text(raw['text'])
+            if 'prompt_info' in raw:
+                context['prompt_info'] = _normalize_answer_prompt(raw['prompt_info'])
+                if not context.get('text'):
+                    context['text'] = context['prompt_info'].get('content', '')
+                if any(key in context['prompt_info'] for key in (
+                    'template_content', 'composer_text', 'composer_embedded',
+                )) and build_prompt_selection_metadata(
+                    context['prompt_info'], _elicitation_answer_text(context),
+                ) is None:
+                    raise ElicitationContextError('The attached prompt snapshot does not match this answer.')
+            references = raw.get('references', [])
+            if not isinstance(references, list):
+                raise ElicitationContextError('Context references must be a list.')
+            references = list(references)
+            hint = fields.get(name) or {}
+            if hint.get('input') == 'files':
+                offered = {item['id']: item for item in hint.get('candidates') or []}
+                supplied = {
+                    item.get('id') for item in references
+                    if isinstance(item, dict) and item.get('kind') in ('document', 'chat_attachment')
+                }
+                chosen = content.get(name)
+                chosen = [] if chosen in (None, '') else chosen if isinstance(chosen, list) else [chosen]
+                for document_id in chosen:
+                    if not isinstance(document_id, str):
+                        raise ElicitationContextError('Select a real file rather than entering a filename.')
+                    if document_id not in supplied:
+                        if document_id not in offered:
+                            raise ElicitationContextError('Select that file from the context picker or upload it first.')
+                        references.append(offered[document_id])
+                        supplied.add(document_id)
+            references = resolve_elicitation_references(references, user_id, conversation_id, settings)
+            reference_count += len(references)
+            if reference_count > ELICITATION_REFERENCE_LIMIT:
+                raise ElicitationContextError(f'Select at most {ELICITATION_REFERENCE_LIMIT} context references.')
+            if references:
+                context['references'] = references
+            if hint.get('input') == 'files':
+                file_ids = _string_list([
+                    item['id'] for item in references if item['kind'] in ('document', 'chat_attachment')
+                ])
+                if not file_ids and name in question['requested_schema'].get('required', []):
+                    raise ElicitationContextError('Select or upload a file to answer this question. Tags and workspaces alone are not files.')
+                if rules['type'] == 'array':
+                    content[name] = file_ids
+                elif len(file_ids) > 1:
+                    raise ElicitationContextError('This question accepts one file. Remove the extra files.')
+                elif file_ids:
+                    content[name] = file_ids[0]
+                else:
+                    content.pop(name, None)
+            if context:
+                normalized_context[name] = context
+        except ElicitationContextError as exc:
+            exc.field = name
+            raise
+    validated, errors = validate_elicitation_response(question, {'action': 'accept', 'content': content})
+    if errors:
+        raise ElicitationContextError(' '.join(errors))
+    return validated, normalized_context
+
+
+def merge_elicitation_context(seeds, answer_context):
+    """Add accepted resources without replacing the original prompt/agent/model settings."""
+    merged = deepcopy(seeds or {})
+    references = [
+        reference for context in (answer_context or {}).values()
+        for reference in context.get('references') or []
+    ]
+    if not references:
+        return merged
+    had_selection = bool(
+        merged.get('document_ids') or merged.get('tags')
+        or merged.get('active_group_ids') or merged.get('active_public_workspace_ids')
+    )
+    had_document_tag_filter = bool(merged.get('document_ids') and merged.get('tags'))
+    existing = merged.setdefault('elicitation_references', [])
+    keys = {(item['kind'], item['id'], item['scope']['kind'], item['scope']['id']) for item in existing}
+    for reference in references:
+        key = (reference['kind'], reference['id'], reference['scope']['kind'], reference['scope']['id'])
+        if key not in keys:
+            existing.append(deepcopy(reference))
+            keys.add(key)
+        kind = reference['kind']
+        if kind in ('document', 'chat_attachment'):
+            merged['document_ids'] = _string_list((merged.get('document_ids') or []) + [reference['id']])
+            merged.setdefault('document_labels', {})[reference['id']] = reference.get('label', '')
+        elif kind == 'tag':
+            merged['tags'] = _string_list((merged.get('tags') or []) + [reference['id']])
+        scope = reference['scope']
+        if scope['kind'] == 'group':
+            merged['active_group_ids'] = _string_list((merged.get('active_group_ids') or []) + [scope['id']])
+        elif scope['kind'] == 'public':
+            merged['active_public_workspace_ids'] = _string_list((merged.get('active_public_workspace_ids') or []) + [scope['id']])
+    if references:
+        kinds = {item['scope']['kind'] for item in references}
+        original_scope = merged.get('doc_scope') or 'all'
+        if original_scope != 'all':
+            kinds.add(original_scope)
+        merged['doc_scope'] = (
+            next(iter(kinds))
+            if len(kinds) == 1 and 'chat' not in kinds and not (had_selection and original_scope == 'all')
+            else 'all'
+        )
+    if (
+        merged.get('document_ids') and merged.get('tags')
+        and not merged.get('document_filter_mode') and not had_document_tag_filter
+    ):
+        # New complementary selections use the composer's additive default. An existing
+        # explicit mode, or an existing implicit intersection, remains a constraint.
+        merged['document_filter_mode'] = 'union'
+    return merged
+
+
+def _elicitation_answer_text(context):
+    """Support separate prompt/text fields and the V2 prompt-first combined text."""
+    text = _text(context.get('text'))
+    prompt = context.get('prompt_info') if isinstance(context.get('prompt_info'), dict) else {}
+    prompt_text = _text(prompt.get('content'))
+    if not prompt_text or text == prompt_text or text.startswith(f'{prompt_text}\n\n'):
+        return text
+    return f'{prompt_text}\n\n{text}' if text else prompt_text
+
+
+def build_elicitation_user_request(user_message, answered_questions):
+    accepted = []
+    for answer in answered_questions or []:
+        if answer.get('action', 'accept') != 'accept':
+            continue
+        accepted.append({
+            'question': answer.get('question', ''),
+            'answer': answer.get('answer', {}),
+            'context': {
+                name: {
+                    'text': _elicitation_answer_text(context),
+                    'references': context.get('references', []),
+                }
+                for name, context in (answer.get('context') or {}).items()
+            },
+        })
+    if not accepted:
+        return _text(user_message)
+    return (
+        f'{_text(user_message)}\n\nAccepted clarification answers (supplemental to the original request; '
+        'reference labels identify sources, not file contents):\n'
+        + json.dumps(accepted, ensure_ascii=False, sort_keys=True)
+    )
+
+
+# --------------------------------------------------------------------------------------
+# Candidate documents
+# --------------------------------------------------------------------------------------
+
+def _aggregate_candidates(results):
+    """Collapse chunk hits into distinct documents, best score first.
+
+    Search returns chunks, and several chunks of one document say nothing more about
+    whether that document is worth planning around than the best of them does.
+    """
+    by_document = {}
+    for result in results or ():
+        if not isinstance(result, dict):
+            continue
+        document_id = _text(result.get('document_id'))
+        if not document_id:
+            continue
+
+        try:
+            score = float(result.get('score') or 0.0)
+        except (TypeError, ValueError):
+            score = 0.0
+
+        existing = by_document.get(document_id)
+        if existing and existing['score'] >= score:
+            continue
+
+        scope = 'personal'
+        if result.get('public_workspace_id'):
+            scope = 'public'
+        elif result.get('group_id'):
+            scope = 'group'
+
+        file_name = _text(result.get('file_name'))
+        by_document[document_id] = {
+            'document_id': document_id,
+            'file_name': file_name,
+            'title': _text(result.get('title'), CANDIDATE_TITLE_LENGTH) or file_name,
+            'scope': scope,
+            'scope_id': result.get('group_id') or result.get('public_workspace_id'),
+            'group_id': result.get('group_id'),
+            'public_workspace_id': result.get('public_workspace_id'),
+            'classification': _text(result.get('document_classification')),
+            'tags': _string_list(result.get('document_tags'), limit=6),
+            'score': score,
+        }
+
+    ranked = sorted(by_document.values(), key=lambda item: item['score'], reverse=True)
+    return ranked[:CANDIDATE_DOCUMENT_LIMIT]
+
+
+def resolve_candidate_documents(
+    user_message,
+    user_id,
+    seeds=None,
+    conversation_id=None,
+    settings=None,
+):
+    """Documents the plan could reasonably name.
+
+    Returns ``(candidates, probe_ran)``. A failed probe is not an error: it means the
+    planner works without document candidates and will lean on searching rather than on
+    naming a document, which is a worse plan but still a valid one. Failing the whole
+    request because a relevance probe timed out would be far worse.
+    """
+    seeds = seeds or {}
+
+    if seeds_are_explicit(seeds):
+        # The user already answered this question. Probing would only offer alternatives
+        # to a choice that has been made.
+        #
+        # The names come from the composer, which had them on screen when the user picked.
+        # Without them the planner reasons about bare uuids -- it cannot write "compare the
+        # Q3 and Q4 contracts" if it has never been told which document is which, and the
+        # approval card, whose whole purpose is letting someone check the planner picked the
+        # right document, would show a row of identifiers.
+        labels = seeds.get('document_labels') or {}
+        references = {item['id']: item for item in seeds.get('elicitation_references') or []}
+        return [
+            {
+                'document_id': document_id,
+                'file_name': labels.get(document_id, ''),
+                'title': labels.get(document_id, ''),
+                'scope': (references.get(document_id, {}).get('scope') or {}).get('kind') or seeds.get('doc_scope') or 'all',
+                'reference': references.get(document_id),
+                'classification': '',
+                'tags': [],
+                'score': None,
+                'selected_by_user': True,
+            }
+            for document_id in seeds['document_ids']
+        ], False
+
+    query = _text(user_message)
+    if not query:
+        return [], False
+
+    try:
+        from functions_search import hybrid_search
+
+        results = hybrid_search(
+            query,
+            user_id,
+            document_source_selection=seeds.get('document_source_selection'),
+            document_source_conversation_id=conversation_id,
+            top_n=CANDIDATE_PROBE_TOP_N,
+            doc_scope=seeds.get('doc_scope') or 'all',
+            active_group_ids=seeds.get('active_group_ids') or None,
+            active_public_workspace_id=seeds.get('active_public_workspace_ids') or None,
+            # A picked tag is part of the question. Probing without it would offer the
+            # planner documents the user has already excluded, and the plan would then be
+            # built around a candidate they did not want considered.
+            tags_filter=seeds.get('tags') or None,
+            document_filter_mode=seeds.get('document_filter_mode') or 'intersection',
+        )
+    except PublicChatScopeError:
+        raise
+    except Exception as exc:
+        log_event(
+            f"[ORCHESTRATION_CONTEXT] Candidate document probe failed; planning without "
+            f"document candidates: {exc}",
+            level=logging.WARNING,
+        )
+        return [], False
+
+    return _aggregate_candidates(results), True
+
+
+# --------------------------------------------------------------------------------------
+# Agents
+# --------------------------------------------------------------------------------------
+
+class CatalogResolutionError(RuntimeError):
+    """A user-safe catalog failure, distinct from an empty authorized catalog."""
+
+    def __init__(self, message, *, code='catalog_unavailable'):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+
+
+def enrich_planner_candidates(
+    candidates, user_id, *, conversation_id, seeds=None, source_scopes=None,
+    selected_source_context_reader=None,
+):
+    """Use authorized source metadata, never display labels, to describe source kinds.
+
+    When ``source_scopes`` is a dict, it also receives each authorized document's owning scope
+    and file name (``{document_id: {'scope', 'scope_id', 'file_name'}}``) from the same current
+    authority check, for callers that need to name the document's workspace. The returned
+    candidates are unchanged either way.
+    """
+    seeds = seeds or {}
+    selected = set(seeds.get('document_ids') or [])
+    if not candidates and not selected:
+        return []
+
+    # These readers depend on initialized storage and belong at the request boundary.
+    from azure.core.exceptions import AzureError
+    from content_screening.contracts import ScreeningError, SourceAuthorityUnverifiedError
+    from functions_mixed_source_orchestration import SOURCE_KINDS, SOURCE_MANIFEST_MAX_SOURCES
+    from functions_orchestration_source_access import resolve_orchestration_source_manifest
+    from functions_orchestration_source_context import SourceContextError
+
+    identifiers = list(dict.fromkeys(candidate['document_id'] for candidate in candidates))
+    required = [identifier for identifier in identifiers if identifier in selected]
+    batches = [
+        required[start:start + SOURCE_MANIFEST_MAX_SOURCES]
+        for start in range(0, len(required), SOURCE_MANIFEST_MAX_SOURCES)
+    ]
+    batches.extend([identifier] for identifier in identifiers if identifier not in selected)
+    manifest = []
+    resolved_ids = []
+    inaccessible_optional = 0
+    try:
+        for batch in batches:
+            try:
+                sources = resolve_orchestration_source_manifest(
+                    batch, user_id, conversation_id=conversation_id,
+                    doc_scope=seeds.get('doc_scope') or 'all',
+                    active_group_ids=seeds.get('active_group_ids') or None,
+                    active_public_workspace_ids=seeds.get('active_public_workspace_ids') or None,
+                )
+            except (PermissionError, LookupError) as exc:
+                if isinstance(exc, LookupError) and type(exc) is not LookupError:
+                    raise SourceAuthorityUnverifiedError() from exc
+                if selected.intersection(batch):
+                    raise
+                inaccessible_optional += len(batch)
+                continue
+            manifest.extend(sources)
+            resolved_ids.extend(batch)
+        if (
+            len(manifest) != len(resolved_ids)
+            or any(
+                not isinstance(source, dict)
+                or source.get('document_id') not in resolved_ids
+                or source.get('source_kind') not in SOURCE_KINDS
+                or not isinstance(source.get('authorization_status'), str)
+                for source in manifest
+            )
+            or len({source['document_id'] for source in manifest}) != len(resolved_ids)
+        ):
+            raise ValueError('Source metadata did not match the requested documents.')
+    except (PermissionError, LookupError) as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Current document access could not be confirmed.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'error_type': type(exc).__name__,
+                'reason': 'selected_source_unavailable',
+            },
+        )
+        raise CatalogResolutionError(
+            'A document could not be opened. Review your document selection.',
+            code='selected_source_unavailable',
+        ) from exc
+    except (AzureError, ScreeningError, ValueError, TypeError, ConnectionError, TimeoutError) as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Current document metadata could not be loaded.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'error_type': type(exc).__name__,
+            },
+        )
+        raise CatalogResolutionError(
+            'The selected document metadata could not be loaded. Please retry.',
+            code='source_metadata_unavailable',
+        ) from exc
+    if inaccessible_optional:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Inaccessible discovery candidates were not offered to the planner.',
+            level=logging.INFO, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'unavailable_count': inaccessible_optional,
+            },
+        )
+    available = {
+        source['document_id']: source for source in manifest
+        if source.get('authorization_status') == 'authorized'
+    }
+    if selected - set(available):
+        log_event(
+            '[ORCHESTRATION_CONTEXT] A selected document is no longer available.',
+            level=logging.WARNING, extra={
+                **workflow_log_context(conversation_id=conversation_id),
+                'stage': 'source_metadata', 'unavailable_count': len(selected - set(available)),
+            },
+        )
+        raise CatalogResolutionError(
+            'A selected document could not be opened. Review your document selection.',
+            code='selected_source_unavailable',
+        )
+    if isinstance(source_scopes, dict):
+        for document_id, source in available.items():
+            source_scopes[document_id] = {
+                'scope': source.get('scope'),
+                'scope_id': source.get('scope_id'),
+                'file_name': source.get('file_name'),
+            }
+    planning_sources = {}
+    if selected_source_context_reader is not None and selected:
+        try:
+            planning_sources = {
+                source['document_id']: source for source in selected_source_context_reader(
+                    [available[identifier] for identifier in seeds['document_ids']],
+                )
+            }
+            if set(planning_sources) != selected:
+                raise ValueError('Selected source context did not match the selection.')
+            for identifier in seeds.get('resolved_attachment_ids') or []:
+                if identifier in planning_sources:
+                    planning_sources[identifier]['resolved_attachment'] = True
+        except (AzureError, ScreeningError, SourceContextError, ValueError, TypeError, ConnectionError, TimeoutError) as exc:
+            log_event(
+                '[ORCHESTRATION_CONTEXT] Selected source preparation failed.',
+                level=logging.WARNING, extra={
+                    **workflow_log_context(conversation_id=conversation_id),
+                    'stage': 'source_preparation', 'error_type': type(exc).__name__,
+                    'reason': 'selected_source_preparation_failed',
+                },
+            )
+            raise CatalogResolutionError(
+                'The selected source could not be prepared. Please retry or review the selection.',
+                code='selected_source_preparation_failed',
+            ) from exc
+    return [
+        {
+            **candidate,
+            'file_name': _text(available[candidate['document_id']].get('file_name'), 500),
+            'source_kind': available[candidate['document_id']].get('source_kind'),
+            **({'planning_source': planning_sources[candidate['document_id']]}
+               if candidate['document_id'] in planning_sources else {}),
+            **({'resolved_attachment': True}
+               if candidate['document_id'] in (seeds.get('resolved_attachment_ids') or []) else {}),
+        }
+        for candidate in candidates if candidate['document_id'] in available
+    ]
+
+
+def resolve_agent_catalog(user_id, seeds=None, settings=None, user_groups=None):
+    """The agents a plan may invoke, resolved once for the whole plan.
+
+    Returns full catalog records rather than the planner projection. Two very different
+    consumers read the same list, and they need different fields from it: the executor's
+    agent step needs the scope and identifiers to load a kernel, while the planner needs
+    only the handful of naming fields ``build_agent_planner_projection`` keeps. Feeding
+    both from one resolution is the point -- ``build_accessible_agent_catalog`` is a
+    multi-query Cosmos operation with no cache (personal, global and every group's agents,
+    plus the model and action label maps and the user's group memberships), so resolving
+    it once per plan and handing the result to ``build_planner_context`` *and* to
+    ``RunContext.agent_catalog`` is the difference between one such traversal and one per
+    step.
+
+    An explicit selection narrows current authorized records; its client-supplied name,
+    scope and labels are not proof of access. Discovery failures must not look like a
+    successfully resolved empty catalog.
+    """
+    seeds = seeds or {}
+
+    settings = settings or {}
+    seeded_agent = seeds.get('agent')
+    # Discovery asks whether agents are permitted at all; planning later checks that the
+    # runtime services an agent step needs are bound for this request.
+    available = resolve_available_capability_ids(
+        settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        candidate_ids=(CAPABILITY_AGENT_INVOKE,), include_runtime_bindings=False,
+    )
+    if CAPABILITY_AGENT_INVOKE not in available:
+        return []
+    if isinstance(seeded_agent, dict):
+        selected_group = seeded_agent.get('group_id') or (
+            seeded_agent.get('scope_id')
+            if seeded_agent.get('scope_type') == 'group' or seeded_agent.get('is_group') else None
+        )
+        if selected_group:
+            user_groups = [selected_group]
+
+    try:
+        # Lazy for the same reason as the candidate probe: functions_agent_catalog reaches
+        # config.py and its import-time Cosmos client, and this module is imported by the
+        # validator and by tests that have no Azure to talk to. Keeping the import inside
+        # the resolver is what lets those import functions_orchestration_context at all.
+        from functions_agent_catalog import build_accessible_agent_catalog, build_agent_catalog_key
+
+        catalog = build_accessible_agent_catalog(
+            user_id,
+            settings=settings,
+            user_groups=user_groups,
+        )
+    except Exception as exc:
+        log_event(
+            '[ORCHESTRATION_CONTEXT] The agent catalog could not be resolved.',
+            level=logging.WARNING,
+            extra={'reason': 'agent_catalog_failed', 'error_type': type(exc).__name__},
+        )
+        raise CatalogResolutionError('The available agents could not be loaded. Please retry.') from exc
+
+    if isinstance(seeded_agent, dict) and _text(seeded_agent.get('name')):
+        selected_key = build_agent_catalog_key({**seeded_agent, 'user_id': user_id})
+        selected_id = seeded_agent.get('id') or seeded_agent.get('agent_id')
+        catalog = [
+            agent for agent in catalog
+            if build_agent_catalog_key({
+                **agent, 'id': agent.get('id') if selected_id else agent.get('name'),
+            }) == selected_key
+        ]
+        if len(catalog) != 1:
+            log_event(
+                '[ORCHESTRATION_CONTEXT] The selected agent is no longer available.',
+                level=logging.WARNING, extra={'reason': 'selected_agent_unavailable'},
+            )
+            raise CatalogResolutionError(
+                'The selected agent is no longer available. Choose an agent you can access.',
+                code='selected_agent_unavailable',
+            )
+    return catalog
+
+
+# --------------------------------------------------------------------------------------
+# Run ledger
+# --------------------------------------------------------------------------------------
+
+def resolve_action_catalog(user_id, seeds=None, settings=None, user_groups=None, user_roles=None):
+    """Discover action metadata only when this request can use direct actions.
+
+    ``user_roles`` are the caller's authenticated app roles, which decide whether a
+    Control Center action is offered.
+    """
+    settings = settings or {}
+    seeds = seeds or {}
+    if (seeds.get('agent') or {}).get('name'):
+        return []
+    available = resolve_available_capability_ids(
+        settings, allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        candidate_ids=(CAPABILITY_ACTION_INVOKE,), include_runtime_bindings=False,
+    )
+    if CAPABILITY_ACTION_INVOKE not in available:
+        return []
+
+    # Storage imports initialize Azure clients; keep disabled orchestration lightweight.
+    from functions_action_catalog import build_accessible_action_catalog
+
+    return build_accessible_action_catalog(
+        user_id, settings=settings, user_groups=user_groups, user_roles=user_roles,
+    )
+
+
+def _compact_run_entry(entry):
+    """Reduce a ledger entry to one line, for when the ledger is over budget."""
+    return {
+        'run_id': entry.get('run_id'),
+        'turn_index': entry.get('turn_index'),
+        'intent_summary': _text(entry.get('intent_summary'), 120),
+        'status': entry.get('status'),
+    }
+
+
+def build_run_ledger(runs, settings=None, answered_questions=None):
+    """Summarise a conversation's earlier orchestration runs for the planner.
+
+    ``runs`` are records from ``functions_orchestration_runs.list_conversation_runs``,
+    newest last. Trimming happens oldest-first and in two passes -- drop the oldest runs
+    beyond the configured count, then compact remaining old entries to a single line until
+    the payload fits. Recent runs are what a follow-up question is usually about, so they
+    keep their detail longest.
+
+    ``truncated`` is reported honestly. A planner that believes it has seen the whole
+    conversation when it has not will confidently assert that something was never looked
+    at, which is worse than knowing its view is partial.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+
+    try:
+        max_runs = int(settings.get('chat_orchestration_ledger_max_runs', LEDGER_DEFAULT_MAX_RUNS))
+    except (TypeError, ValueError):
+        max_runs = LEDGER_DEFAULT_MAX_RUNS
+    max_runs = max(0, min(max_runs, 50))
+
+    try:
+        max_bytes = int(settings.get('chat_orchestration_ledger_max_bytes', LEDGER_DEFAULT_MAX_BYTES))
+    except (TypeError, ValueError):
+        max_bytes = LEDGER_DEFAULT_MAX_BYTES
+    max_bytes = max(1024, min(max_bytes, 131072))
+
+    ordered = [
+        run for run in (runs or ())
+        if isinstance(run, dict) and run.get('record_type') in (None, 'run', 'orchestration_run')
+    ]
+    # Zero runs is a real configuration: it makes every turn plan from scratch.
+    if max_runs == 0:
+        return {'runs': [], 'answered_questions': [], 'truncated': bool(ordered)}
+    truncated = len(ordered) > max_runs
+    ordered = ordered[-max_runs:]
+
+    entries = []
+    for run in ordered:
+        summary = run.get('plan_summary') if isinstance(run.get('plan_summary'), dict) else {}
+        entries.append({
+            'run_id': run.get('id') or run.get('run_id'),
+            'turn_index': run.get('turn_index'),
+            'intent_summary': _text(
+                summary.get('intent_summary') or run.get('intent_summary'),
+                LEDGER_SUMMARY_LENGTH,
+            ),
+            'status': _text(run.get('status')),
+            'capabilities_used': _string_list(
+                summary.get('capabilities_used') or run.get('capabilities_used'), limit=8
+            ),
+            'documents_touched': [
+                {
+                    'document_id': _text((item or {}).get('document_id')),
+                    'display_name': _text((item or {}).get('display_name') or (item or {}).get('file_name')),
+                }
+                for item in (run.get('documents_touched') or ())[:LEDGER_MAX_DOCUMENTS_PER_RUN]
+                if isinstance(item, dict) and _text(item.get('document_id'))
+            ],
+            'artifacts': [
+                {
+                    'kind': _text((item or {}).get('kind')),
+                    'name': _text((item or {}).get('name') or (item or {}).get('file_name')),
+                }
+                for item in (run.get('artifacts') or ())[:LEDGER_MAX_DOCUMENTS_PER_RUN]
+                if isinstance(item, dict)
+            ],
+            'unresolved': _string_list(run.get('unresolved'), limit=4),
+        })
+
+    answered = []
+    for item in (answered_questions or ())[-LEDGER_MAX_ANSWERED_QUESTIONS:]:
+        if not isinstance(item, dict):
+            continue
+        answered.append({
+            'elicitation_id': _text(item.get('elicitation_id')),
+            'question': _text(item.get('question'), LEDGER_SUMMARY_LENGTH),
+            'answer': item.get('answer'),
+        })
+
+    ledger = {'runs': entries, 'answered_questions': answered, 'truncated': truncated}
+
+    # Compact oldest-first until it fits. The newest entry is never compacted: a ledger
+    # that cannot afford to describe the turn immediately before this one has no value.
+    index = 0
+    while _byte_length(ledger) > max_bytes and index < len(entries) - 1:
+        entries[index] = _compact_run_entry(entries[index])
+        ledger['truncated'] = True
+        index += 1
+
+    # Still over budget: drop the oldest outright rather than return something unbounded.
+    while _byte_length(ledger) > max_bytes and len(entries) > 1:
+        entries.pop(0)
+        ledger['truncated'] = True
+
+    return ledger
+
+
+def collect_answered_questions(runs):
+    """Every elicitation already answered in this conversation.
+
+    Carried into the ledger so the planner can see what the user has been asked. Asking
+    the same question twice is the most obvious way for this feature to feel broken, and
+    it is entirely avoidable.
+    """
+    answered = []
+    for run in runs or ():
+        if not isinstance(run, dict) or run.get('record_type') not in (None, 'run', 'orchestration_run'):
+            continue
+        for item in run.get('answered_questions') or ():
+            if isinstance(item, dict) and _text(item.get('question')):
+                answered.append(item)
+    return answered
+
+
+# --------------------------------------------------------------------------------------
+# Conversation signals
+# --------------------------------------------------------------------------------------
+
+class ConversationContextError(ValueError):
+    """Conversation context could not be safely prepared or reused."""
+
+
+def authorize_conversation_source_access(conversation, user_id):
+    """Recheck the shared conversation behind an owned orchestration backing."""
+    # Collaboration initializes storage; ordinary personal history must not bootstrap it.
+    from functions_orchestration_collaboration import (
+        authorize_shared_orchestration, is_orchestration_backing, shared_conversation,
+    )
+
+    if not is_orchestration_backing(conversation):
+        return
+    collaboration = shared_conversation(conversation.get('collaboration_conversation_id'))
+    if not collaboration:
+        raise ConversationContextError('That conversation could not be opened.')
+    try:
+        authorize_shared_orchestration(collaboration, user_id)
+    except PermissionError as exc:
+        raise ConversationContextError('That conversation could not be opened.') from exc
+
+
+def history_message_limit(settings=None):
+    """Honor the chat history setting, rounding up to an even, bounded message count."""
+    try:
+        limit = math.ceil(float((settings or {}).get(
+            'conversation_history_limit', HISTORY_MAX_TURNS
+        )))
+    except (TypeError, ValueError, OverflowError):
+        log_event(
+            '[ORCHESTRATION_CONTEXT] Invalid history limit; using the default.',
+            level=logging.WARNING,
+        )
+        limit = HISTORY_MAX_TURNS
+    return max(0, min(HISTORY_MAX_MESSAGES, limit + limit % 2))
+
+
+def _history_text(content):
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return '\n'.join(
+            block['text'] for block in content
+            if isinstance(block, dict)
+            and block.get('type') in ('text', 'input_text')
+            and isinstance(block.get('text'), str)
+        )
+    return ''
+
+
+def normalize_history_message(message):
+    """Project one eligible stored message, after masks and current block revisions."""
+    if not isinstance(message, dict) or message.get('role') not in ('user', 'assistant'):
+        return None
+    metadata = message.get('metadata') or {}
+    if not isinstance(metadata, dict):
+        raise ConversationContextError('The conversation contains invalid message metadata.')
+    thread = metadata.get('thread_info') or {}
+    if not isinstance(thread, dict):
+        raise ConversationContextError('The conversation contains invalid thread metadata.')
+    if (
+        metadata.get('masked')
+        # Deleted while archiving was enabled; its mask is only the delete route's fail-safe.
+        or is_soft_deleted_message(message)
+        or metadata.get('is_generated_chat_artifact')
+        # Answers built from a stored workflow result, or inheriting one, stay out of
+        # orchestration history until orchestration can re-check that result itself.
+        or 'workflow_result' in metadata
+        or 'workflow_result_contexts' in metadata
+        or (metadata.get('chat_content_checks') or {}).get('decision') == 'block'
+        or (metadata.get('content_moderation') or {}).get('removed') is True
+        or thread.get('active_thread') is False
+    ):
+        return None
+
+    content = _history_text(message.get('content'))
+    ranges = metadata.get('masked_ranges') or []
+    if not isinstance(ranges, list):
+        raise ConversationContextError('The conversation contains invalid message masks.')
+    content = remove_masked_content(content, ranges)
+    content = resolve_block_sources_in_content(message, content).strip()
+    if not content:
+        return None
+
+    projected = {
+        'id': _text(message.get('id')),
+        'role': message['role'],
+        'content': content,
+        'timestamp': _text(message.get('timestamp')),
+    }
+    projected['fingerprint'] = hashlib.sha256(
+        json.dumps(projected, ensure_ascii=False, sort_keys=True).encode('utf-8')
+    ).hexdigest()
+    return projected
+
+
+def _history_order(message):
+    timestamp = _text(message.get('timestamp'))
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError:
+        raise ConversationContextError('The conversation contains an invalid timestamp.') from None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed, message['id']
+
+
+def conversation_snapshot_size(snapshot):
+    return len(json.dumps(snapshot, ensure_ascii=False, separators=(',', ':')).encode('utf-8'))
+
+
+def _history_preview(content, length):
+    """Sample both constraints and the middle without claiming the omitted source is present."""
+    if len(content) <= length:
+        return content
+    head = (length + 2) // 3
+    tail = length // 3
+    middle = length - head - tail
+    start = max(head, (len(content) - middle) // 2)
+    marker = '\n[Conversation discovery preview; source text omitted.]\n'
+    return (
+        content[:head] + marker + content[start:start + middle]
+        + marker + (content[-tail:] if tail else '')
+    )
+
+
+def build_conversation_snapshot(
+    messages, settings=None, *, turn_id=None, truncated=False, logical_order=False,
+):
+    """Keep the recent eligible conversation, bounded independently of the current request.
+
+    An attempt a later retry replaced is left out: its failure text no longer describes the
+    request, and the retry's own answer is what the conversation now says.
+    """
+    eligible = []
+    rows = list(messages or ())
+    superseded = superseded_orchestration_run_ids(rows)
+    if logical_order:
+        # Ordering is needed only for retry snapshots; the helper has no bootstrap dependencies.
+        from functions_chat_retry import order_retry_messages
+
+        rows = order_retry_messages([message for message in rows if isinstance(message, dict)])
+    for message in rows:
+        if not isinstance(message, dict):
+            continue
+        metadata = message.get('metadata') or {}
+        orchestration = (metadata.get('orchestration') or {}) if isinstance(metadata, dict) else {}
+        if turn_id and isinstance(orchestration, dict) and orchestration.get('turn_id') == turn_id:
+            continue
+        if is_superseded_orchestration_attempt(message, superseded):
+            continue
+        normalized = normalize_history_message(message)
+        if normalized is not None:
+            if not normalized['id']:
+                raise ConversationContextError('The conversation contains a message without an ID.')
+            eligible.append(normalized)
+    if not logical_order:
+        eligible.sort(key=_history_order)
+    limit = history_message_limit(settings)
+    retained = eligible[-limit:] if limit else []
+    excluded_count = len(eligible) - len(retained)
+    if retained and any(item['role'] == 'user' for item in eligible[:excluded_count]):
+        # Do not begin a bounded window with an answer whose source turn was excluded.
+        while retained and retained[0]['role'] == 'assistant':
+            retained.pop(0)
+    for item in retained:
+        item.update(
+            content_complete=True,
+            source={'kind': 'stored_message', 'message_id': item['id'], 'role': item['role']},
+            source_characters=len(item['content']),
+        )
+    snapshot = {
+        'schema_version': HISTORY_SCHEMA_VERSION,
+        'messages': retained,
+        'truncated': bool(truncated or len(eligible) > len(retained)),
+    }
+    if logical_order:
+        snapshot['logical_order'] = True
+    if retained and conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        # Very long IDs or many turns can exhaust the reference metadata allowance
+        # itself. Evict oldest whole turns only after reserving discovery text for each.
+        def minimum_size():
+            return conversation_snapshot_size({
+                **snapshot,
+                'messages': [
+                    {**item, 'content': _history_preview(item['content'], 32),
+                     'content_complete': False, 'truncated': True}
+                    for item in retained
+                ],
+            })
+
+        while len(retained) > 2 and minimum_size() > HISTORY_MAX_BYTES:
+            next_turn = next(
+                (index for index, item in enumerate(retained[1:], 1) if item['role'] == 'user'),
+                1,
+            )
+            del retained[:next_turn]
+        # Share the discovery allowance across turns instead of evicting the user's
+        # source to retain only the associated assistant answer.
+        originals = [item['content'] for item in retained]
+        snapshot['truncated'] = True
+        lower, upper = 0, max(map(len, originals))
+
+        def project(length):
+            for item, original in zip(retained, originals):
+                item['content'] = _history_preview(original, length)
+                item['content_complete'] = len(original) <= length
+                if item['content_complete']:
+                    item.pop('truncated', None)
+                else:
+                    item['truncated'] = True
+
+        while lower < upper:
+            length = (lower + upper + 1) // 2
+            project(length)
+            if conversation_snapshot_size(snapshot) <= HISTORY_MAX_BYTES:
+                lower = length
+            else:
+                upper = length - 1
+        project(lower)
+    if conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES:
+        raise ConversationContextError('The conversation context exceeds its size limit.')
+    return snapshot
+
+
+def validate_conversation_snapshot(snapshot, messages):
+    """Reject a saved context if a source was edited, hidden, or removed after planning."""
+    if (
+        not isinstance(snapshot, dict)
+        or snapshot.get('schema_version') not in (1, HISTORY_SCHEMA_VERSION)
+        or not isinstance(snapshot.get('messages'), list)
+        or len(snapshot['messages']) > HISTORY_MAX_MESSAGES
+        or conversation_snapshot_size(snapshot) > HISTORY_MAX_BYTES
+    ):
+        raise ConversationContextError('This plan needs to be created again.')
+    current = {}
+    sources = {}
+    for message in messages or ():
+        normalized = normalize_history_message(message)
+        if normalized is not None:
+            current[normalized['id']] = normalized
+            sources[normalized['id']] = message
+    seen = set()
+    for previous in snapshot['messages']:
+        if not isinstance(previous, dict):
+            raise ConversationContextError('This plan needs to be created again.')
+        message_id = previous.get('id')
+        if (
+            not message_id
+            or message_id in seen
+            or message_id not in current
+            or previous.get('fingerprint') != current[message_id]['fingerprint']
+        ):
+            raise ConversationContextError(
+                'Conversation context changed. Create a new plan before running this request.'
+            )
+        seen.add(message_id)
+    if snapshot['schema_version'] == 1:
+        # Complete historical snapshots remain usable after current-access checks.
+        # A clipped legacy snapshot cannot prove which user source it discarded.
+        legacy = {
+            'schema_version': 1,
+            'messages': [current[item['id']] for item in snapshot['messages']],
+            'truncated': False,
+        }
+        if snapshot.get('logical_order'):
+            legacy['logical_order'] = True
+        if snapshot != legacy:
+            raise ConversationContextError('This plan needs to be created again with complete conversation sources.')
+        return legacy
+    rebuilt = build_conversation_snapshot(
+        [sources[item['id']] for item in snapshot['messages']],
+        {'conversation_history_limit': len(snapshot['messages'])},
+        truncated=bool(snapshot.get('truncated')),
+        logical_order=bool(snapshot.get('logical_order')),
+    )
+    if rebuilt != snapshot:
+        raise ConversationContextError('This plan needs to be created again.')
+    return rebuilt
+
+
+def conversation_reference_messages(snapshot, message_ids=None):
+    """Discovery only: preserve completeness and provenance, never private stored metadata."""
+    allowed = set(message_ids) if message_ids is not None else None
+    return [
+        {
+            key: deepcopy(message[key])
+            for key in ('id', 'role', 'content', 'content_complete', 'source', 'source_characters', 'truncated')
+            if key in message
+        }
+        for message in (snapshot or {}).get('messages', [])
+        if allowed is None or message['id'] in allowed
+    ]
+
+
+def resolve_conversation_source_messages(snapshot, messages, message_ids=None):
+    """Resolve exact, currently checked stored text; never upgrade discovery previews."""
+    selected = conversation_reference_messages(snapshot, message_ids)
+    if message_ids is not None and {item['id'] for item in selected} != set(message_ids):
+        raise ConversationContextError('The selected conversation source is unavailable. Create a new plan.')
+    current = {}
+    for message in messages:
+        normalized = normalize_history_message(message)
+        if normalized:
+            current[normalized['id']] = normalized
+    expected = {item['id']: item for item in snapshot.get('messages') or []}
+    resolved = []
+    for entry in selected:
+        source = current.get(entry['id'])
+        if not source or source['fingerprint'] != expected[entry['id']].get('fingerprint'):
+            raise ConversationContextError('Conversation context changed. Create a new plan before running this request.')
+        resolved.append({'id': source['id'], 'role': source['role'], 'content': source['content']})
+    return resolved
+
+
+def execution_conversation_messages(context):
+    """Read selected full messages through the runtime owner, with no preview fallback."""
+    snapshot = getattr(context, 'conversation_context', None) or {}
+    ids = getattr(context, 'context_message_ids', None)
+    reader = getattr(context, 'read_conversation_messages', None)
+    if callable(reader):
+        return reader()
+    selected = conversation_reference_messages(snapshot, ids)
+    if any(item.get('truncated') or item.get('content_complete') is False for item in selected):
+        raise ConversationContextError('The complete conversation source must be reloaded. Create a new plan.')
+    return selected
+
+
+def validate_clarification_answers(answers):
+    primitive_answers = [
+        {key: value for key, value in answer.items() if key != 'context'}
+        if isinstance(answer, dict) else answer
+        for answer in answers
+    ]
+    if (
+        len(answers) > LEDGER_MAX_ANSWERED_QUESTIONS
+        or len(json.dumps(primitive_answers, ensure_ascii=False).encode('utf-8')) > CLARIFICATION_MAX_BYTES
+        or len(json.dumps(answers, ensure_ascii=False).encode('utf-8')) > ELICITATION_CONTEXT_BYTE_LIMIT
+    ):
+        raise ConversationContextError('The clarification limit was reached. Start a new request.')
+
+
+def conversation_user_urls(user_message, snapshot=None, message_ids=None, answered_questions=None):
+    """URL provenance comes from user text, not from a model's interpretation."""
+    urls = []
+    for answer in reversed(answered_questions or []):
+        if not isinstance(answer, dict) or answer.get('action', 'accept') != 'accept':
+            continue
+        content = answer.get('answer')
+        values = list(content.values()) if isinstance(content, dict) else [content]
+        for value in values:
+            texts = value if isinstance(value, list) else [value]
+            for text in texts:
+                if isinstance(text, str):
+                    urls.extend(_extract_urls(text))
+        for context in (answer.get('context') or {}).values():
+            if isinstance(context, dict):
+                urls.extend(_extract_urls(_elicitation_answer_text(context)))
+    urls.extend(_extract_urls(user_message))
+    allowed = set(message_ids or [])
+    for message in (snapshot or {}).get('messages', []):
+        if message['id'] in allowed and message['role'] == 'user' and not message.get('truncated'):
+            urls.extend(_extract_urls(message['content']))
+    return _string_list(urls, limit=8)
+
+
+def build_capability_request_context(
+    user_id, identity, user_message, agent_catalog, action_catalog=None, *, allowed_user_urls=None,
+    native_bridge_for_step=None, rendering_service=None,
+    external_source_admission=None, external_source_authorizer=None, external_source_preflight=None,
+    capture_external_source_configuration=None, workflow_planning=None,
+    document_transform_source_reader=None, document_transform_source_resolver=None,
+):
+    """Apply the same caller-specific capability gates to planning, revisions, and execution.
+
+    ``workflow_planning`` is the server-built workflow proposal context stored with the turn.
+    It is added only when the caller has one, so a request without workflow proposals keeps
+    exactly the context it had before they existed.
+    """
+    if native_bridge_for_step is not None and not callable(native_bridge_for_step):
+        raise ValueError('A server native bridge factory is required.')
+    transform_bindings = {
+        'document_transform_source_reader': document_transform_source_reader,
+        'document_transform_source_resolver': document_transform_source_resolver,
+    }
+    if any(callback is not None for callback in transform_bindings.values()) and not all(
+        callable(callback) for callback in transform_bindings.values()
+    ):
+        raise ValueError('Complete server document-transform bindings are required.')
+    if rendering_service is not None:
+        # Legacy discovery does not depend on the optional initialized output runtime.
+        from functions_orchestration_rendering import OrchestrationRenderingService
+
+        if (
+            not isinstance(rendering_service, OrchestrationRenderingService)
+            or rendering_service.results.access.user_id != user_id
+        ):
+            raise ValueError('An actor-bound server rendering service is required.')
+    external_bindings = {
+        'external_source_preflight': external_source_preflight,
+        'external_source_admission': external_source_admission,
+        'external_source_authorizer': external_source_authorizer,
+        'capture_external_source_configuration': capture_external_source_configuration,
+    }
+    has_external_bindings = any(callback is not None for callback in external_bindings.values())
+    if has_external_bindings and not all(callable(callback) for callback in external_bindings.values()):
+        raise ValueError('Complete server external-source bindings are required.')
+    identity = identity or {}
+    urls = (
+        list(allowed_user_urls) if allowed_user_urls is not None
+        else conversation_user_urls(user_message)
+    )
+    context = {
+        'user_id': user_id,
+        'user_message': user_message or '',
+        'message_urls': urls,
+        'user_roles': identity.get('user_roles') or [],
+        'user_email': identity.get('user_email'),
+        'user_enable_agents': identity.get('user_enable_agents', True),
+        'agent_catalog': list(agent_catalog or ()),
+        'action_catalog': list(action_catalog or ()),
+    }
+    if native_bridge_for_step is not None:
+        context['native_bridge_for_step'] = native_bridge_for_step
+    if rendering_service is not None:
+        context['rendering_service'] = rendering_service
+    if has_external_bindings:
+        context.update(external_bindings)
+    if document_transform_source_reader is not None:
+        context.update(transform_bindings)
+    if workflow_planning is not None:
+        context['workflow_planning'] = deepcopy(workflow_planning)
+    return context
+
+
+def build_conversation_signals(messages, user_message, *, truncated=False, message_ids=None):
+    """Project already bounded history for the planner; the route owns loading it."""
+    allowed = set(message_ids) if message_ids is not None else None
+    turns = [
+        {
+            key: deepcopy(message[key])
+            for key in ('id', 'role', 'content', 'content_complete', 'source', 'source_characters', 'truncated')
+            if key in message
+        }
+        for message in messages or ()
+        if isinstance(message, dict)
+        and message.get('role') in ('user', 'assistant')
+        and (allowed is None or message.get('id') in allowed)
+        and _history_text(message.get('content'))
+    ]
+
+    return {
+        'recent_turns': turns,
+        'truncated': bool(truncated),
+        'urls': _extract_urls(user_message),
+    }
+
+
+def _extract_urls(text):
+    """URLs present in the message, matching the client's own detection."""
+    import re
+
+    return _string_list(re.findall(r'https?://[^\s<>\'"]+', _text(text)), limit=8)
+
+
+# --------------------------------------------------------------------------------------
+# The planner's view
+# --------------------------------------------------------------------------------------
+
+def _selected_prompt(seeds):
+    """The prompt the user attached, as the planner should see it.
+
+    Both the name and the wording, because a plan is chosen from what the work involves and
+    only the wording says that. Returns ``None`` rather than an empty dict when there is no
+    prompt, so the planner context omits it the same way it omits the other selections.
+    """
+    prompt = seeds.get('prompt')
+    if not isinstance(prompt, dict):
+        return None
+
+    name = _text(prompt.get('name'))
+    content = _text(prompt.get('content'), SELECTED_PROMPT_LENGTH)
+    if not name and not content:
+        return None
+
+    return {'name': name, 'content': content}
+
+
+def build_planner_context(
+    user_message,
+    candidates=None,
+    seeds=None,
+    ledger=None,
+    signals=None,
+    capabilities=None,
+    agents=None,
+    answered_questions=None,
+    actions=None,
+    original_message=None,
+    request_resolution=None,
+    memory_context=None,
+    document_transform_candidates=None,
+    selected_sources=None,
+):
+    """Assemble everything the planner is shown, in one place.
+
+    Kept as a single builder so that what the planner sees is auditable and testable
+    rather than being spread across the prompt construction. Nothing enters the planner's
+    context that is not visible here.
+
+    ``agents`` are the full catalog records from ``resolve_agent_catalog``; they are
+    projected here rather than trusted as-is so the planner is only ever shown the naming
+    fields ``AGENT_PLANNER_FIELDS`` allows. Projecting at the single point the context is
+    built means an agent's instructions cannot leak into the prompt even if a caller passes
+    raw records, which is exactly what the executor is handed for ``RunContext.agent_catalog``.
+    """
+    seeds = seeds or {}
+    return {
+        'message': _text(user_message),
+        'user_request': build_elicitation_user_request(user_message, answered_questions),
+        'clarifications': deepcopy(answered_questions or []),
+        'original_message': _text(original_message) if original_message is not None else _text(user_message),
+        'request_resolution': request_resolution or {},
+        'request_time_utc': datetime.now(timezone.utc).isoformat(),
+        'capabilities': capabilities or [],
+        'required_capabilities': required_capability_ids(seeds),
+        'agents': build_agent_planner_projection(agents),
+        'actions': build_action_planner_projection(actions),
+        'candidate_documents': [
+            {key: value for key, value in candidate.items() if key not in ('score', 'planning_source')}
+            for candidate in (candidates or ())
+        ],
+        'selected_sources': deepcopy(selected_sources or [
+            candidate['planning_source'] for candidate in candidates or []
+            if candidate.get('planning_source')
+        ]),
+        'conversation_references': deepcopy(seeds.get('conversation_references') or []),
+        'conversation_attachments': deepcopy(seeds.get('conversation_attachments') or []),
+        'image_reference_documents': deepcopy(seeds.get('image_reference_documents') or []),
+        'image_reference_messages': deepcopy(seeds.get('image_reference_messages') or []),
+        'document_transform_references': deepcopy(
+            document_transform_candidates if document_transform_candidates is not None
+            else seeds.get('document_transform_references') or []
+        ),
+        'user_selected': {
+            'documents': seeds.get('document_ids') or [],
+            'conversation_references': deepcopy(seeds.get('conversation_references') or []),
+            'context_references': deepcopy(seeds.get('elicitation_references') or []),
+            'agent': (seeds.get('agent') or {}).get('name') if seeds.get('agent') else None,
+            'prompt': _selected_prompt(seeds),
+            **({'web_search': True} if seeds.get('web_search') is True else {}),
+        },
+        'memory': {
+            'status': (memory_context or {}).get('status', 'disabled'),
+            'scope_type': (memory_context or {}).get('scope_type'),
+            'messages': deepcopy((memory_context or {}).get('context_messages') or []),
+            'citations': deepcopy((memory_context or {}).get('citations') or []),
+            'notices': list((memory_context or {}).get('notices') or []),
+        },
+        'earlier_runs': ledger or {'runs': [], 'answered_questions': [], 'truncated': False},
+        'conversation': signals or {'recent_turns': [], 'urls': []},
+    }

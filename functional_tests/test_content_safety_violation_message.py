@@ -25,14 +25,19 @@ APPLICATION_PATH = os.path.join(
 ADMIN_SETTINGS_TEMPLATE_PATH = Path(APPLICATION_PATH) / 'templates' / 'admin_settings.html'
 sys.path.insert(0, APPLICATION_PATH)
 
+from types import SimpleNamespace
+from unittest.mock import Mock
+
 from test_support.templates import read_admin_settings_template
 
+from functions_chat_content_checks import evaluate_chat_content
 from functions_content_safety import (
     CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
     CONTENT_SAFETY_CATEGORY_THRESHOLD_HIGH,
     CONTENT_SAFETY_CATEGORY_THRESHOLD_LOW,
     CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
     CONTENT_SAFETY_VIOLATION_MESSAGE_MAX_LENGTH,
+    analyze_content_safety_text,
     build_content_safety_violation_message,
     get_content_safety_category_label,
     get_content_safety_category_threshold,
@@ -94,6 +99,40 @@ def test_content_safety_category_thresholds_are_bounded_for_admin_storage():
         'SelfHarm': 6,
     }
     assert get_content_safety_category_label('self-harm') == 'Self-harm'
+
+
+def test_analyze_and_evaluate_respect_category_thresholds():
+    """Low thresholds block severity 2; High thresholds allow severity 4 and block severity 6."""
+    client = Mock()
+    client.analyze_text.return_value = SimpleNamespace(
+        categories_analysis=[
+            SimpleNamespace(category='Violence', severity=2),
+            SimpleNamespace(category='Hate', severity=4),
+            SimpleNamespace(category='Sexual', severity=0),
+            SimpleNamespace(category='SelfHarm', severity=0),
+        ],
+        blocklists_match=[],
+    )
+    settings = {
+        'enable_content_safety': True,
+        'enable_content_safety_chat_input': True,
+        'content_safety_category_thresholds': {
+            'Violence': 2,
+            'Hate': 6,
+            'Sexual': 4,
+            'SelfHarm': 4,
+        },
+    }
+    analysis = analyze_content_safety_text('sample prompt', client, settings=settings)
+    assert analysis.status == 'findings'
+    categories_by_name = {item['category']: item for item in analysis.categories}
+    assert categories_by_name['Violence']['threshold'] == 2
+    assert categories_by_name['Hate']['threshold'] == 6
+
+    decision = evaluate_chat_content('sample prompt', 'chat_input', settings, safety_client=client)
+    assert decision.blocked is True
+    assert 'Violence severity >= 2' in decision.notice
+    assert 'Hate severity' not in decision.notice
 
 
 def test_admin_settings_uses_the_markdown_editor_toolbar():
@@ -201,6 +240,7 @@ def test_trigger_information_can_be_hidden_and_blank_templates_fall_back():
 if __name__ == '__main__':
     test_message_normalization_preserves_safe_admin_defaults()
     test_content_safety_category_thresholds_are_bounded_for_admin_storage()
+    test_analyze_and_evaluate_respect_category_thresholds()
     test_admin_settings_uses_the_markdown_editor_toolbar()
     test_default_message_preserves_trigger_information()
     test_custom_markdown_message_precedes_trigger_information()

@@ -1,9 +1,28 @@
-#!/usr/bin/env python3
 # test_route_blueprint_policy_inventory.py
+#!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.250.055
+Version: 0.261.411
 Implemented in: 0.242.069
+Plan editor policy coverage: 0.261.102
+Selected-group context policy coverage: 0.261.126
+Group model endpoint policy coverage: 0.261.140
+Group directory policy coverage: 0.261.146
+Group membership policy coverage: 0.261.151
+Workflow proposal policy coverage: 0.261.207
+Workflow assistant policy coverage: 0.261.208
+Workflow result context policy coverage: 0.261.214
+Workflow run status policy coverage: 0.261.227
+Workflow hand-off policy coverage: 0.261.250
+Global agent and action editor policy coverage: 0.261.271
+Control Center dashboard route policy coverage: 0.261.279
+V2 Support menu Latest Features route policy coverage: 0.261.296
+Access restricted screen and safety warning policy coverage: 0.261.297
+Review center ids, bulk, detail and approvals summary policy coverage: 0.261.298
+Review center AI assist policy coverage: 0.261.299
+V2 Agents catalogue policy coverage: 0.261.305
+Native personal identity policy coverage: 0.261.315
+V2 user input policy coverage: 0.261.411
 
 This test ensures every SimpleChat route is assigned to a Blueprint-based
 security policy or an explicit reviewed route exemption.
@@ -34,10 +53,18 @@ ROUTE_POLICY_BLUEPRINTS = {
 }
 
 REGISTERED_BLUEPRINT_POLICIES = {
+    # Login-only on purpose: user_required sends a suspended or blocked user to these
+    # Access restricted pages, which only describe the signed-in user's own restriction.
+    "access_restriction": ("login_required",),
+    "backend_analysis_results": ("login_required", "user_required"),
+    "backend_action_credentials": ("login_required", "user_required"),
+    "backend_user_input": ("login_required", "user_required"),
     "backend_chats": ("login_required", "user_required"),
     "backend_collaboration": ("login_required", "user_required"),
+    "backend_content_screening": ("login_required", "user_required"),
     "backend_control_center": ("login_required",),
     "backend_conversation_export": ("login_required", "user_required"),
+    "backend_conversation_handoffs": ("login_required", "user_required"),
     "backend_conversations": ("login_required", "user_required"),
     "backend_data_management": ("login_required", "admin_required"),
     "backend_documents": ("login_required", "user_required"),
@@ -46,15 +73,35 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_governance": ("login_required", "admin_required"),
     "backend_group_documents": ("login_required", "user_required"),
     "backend_group_prompts": ("login_required", "user_required"),
+    "backend_group_prompts_scoped": ("login_required", "user_required"),
+    "backend_group_actions_scoped": ("login_required", "user_required"),
+    "backend_group_agents_scoped": ("login_required", "user_required"),
+    "backend_group_identities_scoped": ("login_required", "user_required"),
+    "backend_personal_identities_scoped": ("login_required", "user_required"),
+    "backend_group_endpoints_scoped": ("login_required", "user_required"),
+    "backend_group_file_sources_scoped": ("login_required", "user_required"),
+    "backend_group_directory": ("login_required", "user_required"),
+    "backend_group_membership": ("login_required", "user_required"),
+    "backend_group_settings": ("login_required", "user_required"),
     "backend_groups": ("login_required", "user_required"),
     "backend_models": ("login_required", "user_required"),
     "backend_msgraph_pending_actions": ("login_required", "user_required"),
     "backend_m365": ("login_required", "user_required"),
     "backend_notifications": ("login_required", "user_required"),
+    "backend_orchestration": ("login_required", "user_required"),
     "backend_prompts": ("login_required", "user_required"),
     "backend_public_documents": ("login_required", "user_required"),
+    "backend_public_document_reads": ("login_required", "user_required"),
+    "backend_public_document_management": ("login_required", "user_required"),
+    "backend_public_document_collaboration": ("login_required", "user_required"),
+    "backend_public_membership": ("login_required", "user_required"),
     "backend_public_prompts": ("login_required", "user_required"),
+    "backend_public_prompts_scoped": ("login_required", "user_required"),
+    "backend_public_identities_scoped": ("login_required", "user_required"),
+    "backend_public_file_sources_scoped": ("login_required", "user_required"),
     "backend_public_workspaces": ("login_required", "user_required"),
+    "backend_public_directory": ("login_required", "user_required"),
+    "backend_public_settings": ("login_required", "user_required"),
     "backend_retention_policy": ("login_required",),
     "backend_safety": ("login_required", "user_required"),
     "backend_search": ("login_required", "user_required"),
@@ -64,6 +111,9 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_tts": ("login_required", "user_required"),
     "backend_user_agreement": ("login_required", "user_required"),
     "backend_users": ("login_required", "user_required"),
+    "backend_v2": ("login_required", "user_required"),
+    "backend_v2_admin": ("login_required", "admin_required"),
+    "backend_v2_admin_agents_actions": ("login_required", "admin_required"),
     "backend_workflows": ("login_required", "user_required"),
     "backend_workspace_identities": ("login_required",),
     "custom_pages": ("login_required",),
@@ -77,6 +127,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "frontend_chats": ("login_required", "user_required"),
     "frontend_control_center": ("login_required",),
     "frontend_conversations": ("login_required", "user_required"),
+    "frontend_content_screening": ("login_required", "user_required"),
     "frontend_feedback": ("login_required",),
     "frontend_group_workspaces": ("login_required", "user_required"),
     "frontend_groups": ("login_required", "user_required"),
@@ -85,6 +136,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "frontend_public_workspaces": ("login_required", "user_required"),
     "frontend_safety": ("login_required",),
     "frontend_support": ("login_required", "user_required"),
+    "frontend_v2": ("login_required", "user_required"),
     "frontend_workspace": ("login_required", "user_required"),
     "inbound_mcp": ("inbound_mcp_required",),
     "openapi": ("login_required", "user_required"),
@@ -114,8 +166,246 @@ EXPECTED_PUBLIC_PATHS = {
 }
 
 SENSITIVE_ROUTE_POLICIES = {
+    ("route_backend_file_sync.py", "api_file_sync_personal_source_options"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_file_sync.py", "api_file_sync_personal_source_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_dashboard_summary"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_dashboard_insights"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_dashboard_chat_readiness"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_activity_logs"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_activity_summary"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_activity_export"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_activity_people"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_activity_workspaces"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_users"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_user_detail"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_users_bulk_action"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_users_export"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_groups"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_group_detail"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_groups_bulk_status"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_group_status"): ("login_required", "control_center_required"),
+    ("route_backend_control_center.py", "api_v2_control_center_groups_export"): ("login_required", "control_center_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_document_upload"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_document_metadata"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_document_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_document_download"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_download"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_extract"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_reprocess"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_tag_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_tag_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_tag_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_tag"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_documents"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document_facets"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document_tags"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_get_group_document_versions"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_prompts_scoped.py", "api_scoped_group_prompts_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_prompts_scoped.py", "api_scoped_group_prompts_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_prompts_scoped.py", "api_scoped_group_prompt_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_prompts_scoped.py", "api_scoped_group_prompt_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_prompts_scoped.py", "api_scoped_group_prompt_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_actions_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_actions_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_actions_types"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_action_options"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_action_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_action_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_actions_scoped.py", "api_scoped_group_action_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_agents_scoped.py", "api_scoped_group_agents_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_agents_scoped.py", "api_scoped_group_agents_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_agents_scoped.py", "api_scoped_group_agent_options"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_agents_scoped.py", "api_scoped_group_agent_knowledge"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_agents_scoped.py", "api_scoped_group_agent_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_agents_scoped.py", "api_scoped_group_agent_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_agents_scoped.py", "api_scoped_group_agent_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_identities_scoped.py", "api_scoped_group_identities_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_identities_scoped.py", "api_scoped_group_identity_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_identities_scoped.py", "api_scoped_group_identity_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_identities_scoped.py", "api_scoped_group_identity_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_identities_scoped.py", "api_scoped_group_identity_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identities_list"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_read"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_create"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_update"): ("login_required", "user_required"),
+    ("route_backend_personal_identities_scoped.py", "api_personal_identity_delete"): ("login_required", "user_required"),
+    ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoints_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoints_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoint_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoint_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_endpoints_scoped.py", "api_scoped_group_model_endpoint_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_models.py", "fetch_model_list_named_group"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_models.py", "test_model_connection_named_group"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_models.py", "list_foundry_agents_named_group"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_sources_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_test_new"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_test_saved"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_browse_new"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_browse_saved"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_sync"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_runs"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_ignore_path"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_file_sources_scoped.py", "api_scoped_group_file_source_options"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_directory.py", "api_group_directory_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_directory.py", "api_group_directory_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_directory.py", "api_group_join_request_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_directory.py", "api_group_join_request_cancel"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_directory.py", "api_public_directory_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_settings_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_settings_profile_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_settings_logo_replace"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_settings_logo_remove"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_settings_downloads_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_settings_retention_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_insights_activity"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_insights_stats"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_settings.py", "api_public_insights_file_count"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompts_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompts_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompt_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompt_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_prompts_scoped.py", "api_scoped_public_prompt_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_identities_scoped.py", "api_scoped_public_identities_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_identities_scoped.py", "api_scoped_public_identity_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_identities_scoped.py", "api_scoped_public_identity_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_identities_scoped.py", "api_scoped_public_identity_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_identities_scoped.py", "api_scoped_public_identity_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_sources_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_test_new"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_test_saved"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_browse_new"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_browse_saved"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_sync"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_runs"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_ignore_path"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_file_sources_scoped.py", "api_scoped_public_file_source_options"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_add"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_role"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_remove"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_requests"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_request_approve"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_request_reject"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_membership.py", "api_group_membership_owner"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_profile_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_logo_replace"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_logo_remove"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_downloads_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_settings_retention_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_insights_activity"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_insights_stats"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_settings.py", "api_group_insights_file_count"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_retention_policy.py", "update_group_retention_settings"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_v2.py", "v2_group_workspace_context"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_v2.py", "v2_public_workspace_context"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_v2.py", "v2_support_latest_features"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_v2.py", "v2_agents_catalog"): ("login_required", "user_required", "enabled_required"),
+    # Global agent and action editors: the organisation's records, Admin role only.
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agents_list"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agents_create"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_options"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_read"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_update"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_agent_delete"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_actions_list"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_actions_create"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_types"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_options"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_read"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_update"): ("login_required", "admin_required"),
+    ("route_backend_v2_admin_agents_actions.py", "v2_admin_global_action_delete"): ("login_required", "admin_required"),
+    ("route_backend_public_document_reads.py", "api_get_public_workspace_documents"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_reads.py", "api_get_public_workspace_document_facets"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_reads.py", "api_get_public_workspace_document_tags"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_reads.py", "api_get_public_workspace_document"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_reads.py", "api_get_public_workspace_document_versions"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_document_upload"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_document_metadata"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_document_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_documents_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_document_download"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_documents_download"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_documents_extract"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_documents_reprocess"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_tag_create"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_tag_update"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_tag_delete"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_documents_tag"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_collaboration.py", "api_scoped_public_document_publication"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_collaboration.py", "api_scoped_public_document_approve_artifact"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_collaboration.py", "api_scoped_public_document_reject_artifact"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_collaboration.py", "api_scoped_public_document_cancel_artifact"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_list"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_add"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_role"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_remove"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_requests"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_request_approve"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_request_reject"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_membership.py", "api_public_membership_owner"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_workflows.py", "get_user_workflow_flow"): ("login_required", "user_required", "workflow_user_required"),
+    ("route_backend_workflows.py", "get_group_workflow_flow"): ("login_required", "user_required"),
+    ("route_backend_workflows.py", "get_user_workflow_run_flow"): ("login_required", "user_required", "workflow_user_required"),
+    ("route_backend_workflows.py", "get_group_workflow_run_flow"): ("login_required", "user_required"),
+    ("route_backend_workflows.py", "preview_user_workflow_flow"): ("login_required", "user_required", "workflow_user_required"),
+    ("route_backend_workflows.py", "preview_group_workflow_flow"): ("login_required", "user_required"),
+    ("route_backend_workflows.py", "assist_user_workflow"): (
+        "login_required", "user_required", "enabled_required", "workflow_user_required", "workflow_assistant_required",
+    ),
+    ("route_backend_workflows.py", "get_user_workflow_run_result_context"): (
+        "login_required", "user_required", "enabled_required", "workflow_user_required", "workflow_results_required",
+    ),
+    ("route_backend_analysis_results.py", "get_saved_analysis_result"): ("login_required", "user_required"),
+    # The warned user's own safety warnings: a user session, deliberately not gated on the
+    # content checks report, so a warning already sent stays acknowledgeable.
+    ("route_backend_safety.py", "get_pending_safety_warnings"): ("login_required", "user_required"),
+    ("route_backend_v2.py", "v2_scope"): ("login_required", "user_required"),
+    ("route_backend_safety.py", "acknowledge_pending_safety_warning"): ("login_required", "user_required"),
+    # The Review center: each section's reviewer role and its feature gate, like the
+    # single-record review routes they sit beside.
+    ("route_backend_safety.py", "get_safety_log_ids"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    ("route_backend_safety.py", "get_safety_log"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    ("route_backend_safety.py", "bulk_update_safety_logs"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    ("route_backend_feedback.py", "feedback_review_ids"): ("login_required", "feedback_admin_required", "enabled_required"),
+    ("route_backend_feedback.py", "feedback_review_bulk"): ("login_required", "feedback_admin_required", "enabled_required"),
+    # The Review center's AI assist: the same reviewer role and feature gate as the records it
+    # reads; the assistant's own Admin Settings toggle is checked in the route body.
+    ("route_backend_feedback.py", "feedback_review_assist"): (
+        "login_required", "feedback_admin_required", "enabled_required",
+    ),
+    ("route_backend_safety.py", "safety_review_assist"): (
+        "login_required", "safety_violation_admin_required", "content_checks_report_enabled",
+    ),
+    # The Approvals dashboard: any signed-in user, counting only the requests GET /api/approvals shows them.
+    ("route_backend_control_center.py", "api_get_approval_stats"): ("login_required",),
+    # The Access restricted screen: login-only, see REGISTERED_BLUEPRINT_POLICIES.
+    ("route_access_restriction.py", "v2_access_restricted"): ("login_required",),
+    ("route_access_restriction.py", "v2_access_restriction"): ("login_required",),
+    ("route_access_restriction.py", "access_restricted"): ("login_required",),
     ("app.py", "session_heartbeat"): ("login_required",),
     ("app.py", "list_semantic_kernel_plugins"): ("login_required", "admin_required"),
+    ("route_backend_plugins.py", "get_agent_action_targets"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "initiate_delegated_foundry_auth"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "update_personal_agent_action_bindings"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "update_group_agent_action_bindings"): ("login_required", "user_required"),
+    ("route_backend_agents.py", "update_global_agent_action_bindings"): ("login_required", "admin_required"),
 }
 
 
@@ -283,6 +573,245 @@ def test_public_routes_are_explicitly_listed() -> None:
     )
 
 
+def test_plan_editor_routes_keep_the_orchestration_security_policy() -> None:
+    """Editor and initial-turn operations stay on the authenticated orchestration Blueprint."""
+    expected = {
+        "/api/v2/orchestration/turns/<turn_id>": "orchestration_turn_status",
+        "/api/v2/orchestration/turns/<turn_id>/cancel": "orchestration_turn_cancel",
+        "/api/v2/orchestration/runs/<run_id>/editor": "orchestration_plan_editor",
+        "/api/v2/orchestration/runs/<run_id>/edit": "orchestration_begin_plan_edit",
+        "/api/v2/orchestration/runs/<run_id>/revisions": "orchestration_revise_plan",
+        "/api/v2/orchestration/runs/<run_id>/retry": "orchestration_retry",
+        "/api/v2/orchestration/export-catalog": "orchestration_export_catalog",
+        "/api/v2/orchestration/runs/<run_id>/outputs/<output_id>/retry": "orchestration_retry_output",
+    }
+    routes = {
+        route.path: route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path in expected
+    }
+    assert set(routes) == set(expected)
+    for path, route in routes.items():
+        assert route.function_name == expected[path]
+        assert route.route_target == "bp"
+        assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
+def test_workflow_proposal_routes_keep_the_orchestration_security_policy() -> None:
+    """Every workflow proposal decision stays on the authenticated orchestration Blueprint."""
+    prefix = "/api/v2/orchestration/runs/<run_id>/workflow-proposals"
+    expected = {
+        prefix: "orchestration_workflow_proposals",
+        f"{prefix}/<proposal_id>/accept": "orchestration_accept_workflow_proposal",
+        f"{prefix}/<proposal_id>/deny": "orchestration_deny_workflow_proposal",
+        f"{prefix}/<proposal_id>/draft": "orchestration_workflow_proposal_draft",
+    }
+    routes = {
+        route.path: route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path in expected
+    }
+    assert set(routes) == set(expected)
+    for path, route in routes.items():
+        assert route.function_name == expected[path]
+        assert route.route_target == "bp"
+        assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
+def test_message_regeneration_keeps_the_authenticated_orchestration_policy() -> None:
+    """A fresh generation never bypasses the owned conversation or authenticated Blueprint."""
+    path = "/api/v2/orchestration/messages/<message_id>/regenerate"
+    routes = [route for route in iter_route_functions() if route.path == path]
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.file_name == "route_backend_orchestration.py"
+    assert route.function_name == "regenerate_orchestration_message"
+    assert route.route_target == "bp"
+    assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
+def test_workflow_run_link_route_keeps_the_orchestration_security_policy() -> None:
+    """The links to runs a plan started stay on the authenticated orchestration Blueprint, read-only."""
+    path = "/api/v2/orchestration/runs/<run_id>/workflow-runs"
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path == path
+    ]
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.function_name == "orchestration_workflow_run_links"
+    assert route.route_target == "bp"
+    assert {"swagger_route", "login_required", "user_required"} <= set(route.decorator_names)
+
+
+def test_workflow_run_status_route_keeps_the_personal_workflow_security_policy() -> None:
+    """The run status rows stay owner-only, behind the same gates as the personal runtime routes.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    path = "/api/v2/orchestration/workflow-runs/status"
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path == path
+    ]
+    if len(routes) != 1:
+        raise AssertionError(f"Expected one status route, found {len(routes)}.")
+    route = routes[0]
+    if route.function_name != "orchestration_workflow_run_status" or route.route_target != "bp":
+        raise AssertionError(f"Unexpected status route registration: {route.function_name} on {route.route_target}.")
+    expected = (
+        "bp.route", "swagger_route", "login_required", "user_required",
+        "enabled_required", "workflow_user_required",
+    )
+    if route.decorator_names != expected:
+        raise AssertionError(f"Status route decorators changed: {route.decorator_names}.")
+
+
+def test_workflow_handoff_routes_keep_the_personal_workflow_security_policy() -> None:
+    """Every hand-off read and decision stays requester-only, behind the personal workflow gates.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    prefix = "/api/v2/orchestration/runs/<run_id>/workflow-handoffs"
+    expected_routes = {
+        prefix: "orchestration_workflow_handoffs",
+        f"{prefix}/<handoff_id>/accept": "orchestration_accept_workflow_handoff",
+        f"{prefix}/<handoff_id>/deny": "orchestration_deny_workflow_handoff",
+        f"{prefix}/<handoff_id>/draft": "orchestration_workflow_handoff_draft",
+    }
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path.startswith(prefix)
+    ]
+    found = {route.path: route.function_name for route in routes}
+    if len(routes) != len(expected_routes) or found != expected_routes:
+        raise AssertionError(f"Unexpected hand-off routes: {sorted(found.items())}.")
+    expected = (
+        "bp.route", "swagger_route", "login_required", "user_required",
+        "enabled_required", "workflow_user_required",
+    )
+    for route in routes:
+        if route.route_target != "bp":
+            raise AssertionError(f"{route.function_name} is registered on {route.route_target}.")
+        if route.decorator_names != expected:
+            raise AssertionError(f"{route.function_name} decorators changed: {route.decorator_names}.")
+
+
+def test_plan_replay_routes_keep_the_personal_workflow_security_policy() -> None:
+    """Saving a chat plan as a repeating workflow stays requester-only, behind the personal workflow gates.
+
+    Explicit raises keep this check under ``python -O``.
+    """
+    path = "/api/v2/orchestration/runs/<run_id>/plan-replay"
+    expected_routes = {
+        "orchestration_plan_replay_preview": path,
+        "orchestration_create_plan_replay": path,
+    }
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_orchestration.py" and route.path.startswith(path)
+    ]
+    found = {route.function_name: route.path for route in routes}
+    if len(routes) != len(expected_routes) or found != expected_routes:
+        raise AssertionError(f"Unexpected plan replay routes: {sorted(found.items())}.")
+    expected = (
+        "bp.route", "swagger_route", "login_required", "user_required",
+        "enabled_required", "workflow_user_required",
+    )
+    for route in routes:
+        if route.route_target != "bp":
+            raise AssertionError(f"{route.function_name} is registered on {route.route_target}.")
+        if route.decorator_names != expected:
+            raise AssertionError(f"{route.function_name} decorators changed: {route.decorator_names}.")
+
+
+def test_content_screening_routes_keep_authenticated_blueprint_guards() -> None:
+    """Evidence and decisions never become public, even while enrollment is off."""
+    routes = [
+        route for route in iter_route_functions()
+        if route.file_name in {"route_backend_content_screening.py", "route_frontend_content_screening.py"}
+    ]
+    assert routes
+    attachments = {
+        "/api/content-screening/reviews/<scan_id>/downloads/original": "content_screening_download_original",
+        "/api/content-screening/reviews/<scan_id>/downloads/clean": "content_screening_download_clean",
+    }
+    for path, endpoint in attachments.items():
+        matches = [route for route in routes if route.path == path]
+        assert len(matches) == 1 and matches[0].function_name == endpoint
+        assert "user_required" in matches[0].decorator_names
+    for route in routes:
+        assert route.route_target == "bp"
+        assert {"swagger_route", "login_required"} <= set(route.decorator_names)
+        assert {"user_required", "admin_required"} & set(route.decorator_names)
+    for name in ("route_backend_content_screening.py", "route_frontend_content_screening.py"):
+        assert "bp.before_request(user_required_blueprint())" in read_text(APP_DIR / name)
+
+
+def test_access_restricted_routes_are_login_only() -> None:
+    """The Access restricted screen is reachable by exactly the users user_required refuses.
+
+    It must require a signed-in session, and must not require the User role check that
+    refuses restricted users, or a suspended user could never read why. Explicit raises keep
+    this check under ``python -O``.
+    """
+    expected_routes = {
+        "/v2/access-restricted": "v2_access_restricted",
+        "/api/v2/access-restriction": "v2_access_restriction",
+        "/access-restricted": "access_restricted",
+    }
+    routes = [route for route in iter_route_functions() if route.path in expected_routes]
+    found = {route.path: route.function_name for route in routes}
+    if len(routes) != len(expected_routes) or found != expected_routes:
+        raise AssertionError(f"Unexpected Access restricted routes: {sorted(found.items())}.")
+    for route in routes:
+        if route.file_name != "route_access_restriction.py" or route.route_target != "bp":
+            raise AssertionError(f"{route.function_name} moved to {route.file_name}:{route.route_target}.")
+        if route.decorator_names != ("bp.route", "swagger_route", "login_required"):
+            raise AssertionError(f"{route.function_name} decorators changed: {route.decorator_names}.")
+
+    app_source = read_text(APP_DIR / "app.py")
+    registration = (
+        "register_route_blueprint('access_restriction', register_route_access_restriction, "
+        "login_required_blueprint)"
+    )
+    if registration not in app_source:
+        raise AssertionError("The Access restricted Blueprint must be registered with login_required_blueprint.")
+
+
+def test_review_center_routes_keep_their_reviewer_policy() -> None:
+    """The Review center's ids, detail, bulk, AI assist and summary routes keep their exact guards.
+
+    Each feedback and safety route needs its section's reviewer role and feature gate, after
+    the swagger and login decorators. The approvals summary only needs a session: it counts
+    what GET /api/approvals already shows the caller. Explicit raises keep this under -O.
+    """
+    safety = ("bp.route", "swagger_route", "login_required", "safety_violation_admin_required", "content_checks_report_enabled")
+    feedback = ("bp.route", "swagger_route", "login_required", "feedback_admin_required", "enabled_required")
+    expected = {
+        ("route_backend_safety.py", "/api/safety/logs/ids"): ("get_safety_log_ids", safety),
+        ("route_backend_safety.py", "/api/safety/logs/bulk"): ("bulk_update_safety_logs", safety),
+        ("route_backend_feedback.py", "/feedback/review/ids"): ("feedback_review_ids", feedback),
+        ("route_backend_feedback.py", "/feedback/review/bulk"): ("feedback_review_bulk", feedback),
+        ("route_backend_feedback.py", "/api/admin/review/feedback/assist"): ("feedback_review_assist", feedback),
+        ("route_backend_safety.py", "/api/admin/review/safety/assist"): ("safety_review_assist", safety),
+        ("route_backend_control_center.py", "/api/approvals/stats"): (
+            "api_get_approval_stats", ("bp.route", "swagger_route", "login_required"),
+        ),
+    }
+    routes = {(route.file_name, route.path): route for route in iter_route_functions()}
+    for key, (function_name, decorators) in expected.items():
+        route = routes.get(key)
+        if route is None or route.function_name != function_name or route.route_target != "bp":
+            raise AssertionError(f"Review center route {key} moved or was renamed.")
+        if route.decorator_names != decorators:
+            raise AssertionError(f"{function_name} decorators changed: {route.decorator_names}.")
+    detail = [
+        route for route in iter_route_functions()
+        if route.file_name == "route_backend_safety.py" and route.function_name == "get_safety_log"
+    ]
+    if len(detail) != 1 or detail[0].decorator_names != safety or detail[0].path != "/api/safety/logs/<string:log_id>":
+        raise AssertionError(f"The violation detail route changed: {detail}.")
+
+
 if __name__ == "__main__":
     tests = [
         test_route_policy_inventory_assets_and_version_are_current,
@@ -291,6 +820,15 @@ if __name__ == "__main__":
         test_registered_route_blueprints_have_policy_classification,
         test_explicit_app_route_exemptions_have_expected_security,
         test_public_routes_are_explicitly_listed,
+        test_plan_editor_routes_keep_the_orchestration_security_policy,
+        test_workflow_proposal_routes_keep_the_orchestration_security_policy,
+        test_workflow_run_link_route_keeps_the_orchestration_security_policy,
+        test_workflow_run_status_route_keeps_the_personal_workflow_security_policy,
+        test_workflow_handoff_routes_keep_the_personal_workflow_security_policy,
+        test_plan_replay_routes_keep_the_personal_workflow_security_policy,
+        test_content_screening_routes_keep_authenticated_blueprint_guards,
+        test_access_restricted_routes_are_login_only,
+        test_review_center_routes_keep_their_reviewer_policy,
     ]
     results = []
     for test in tests:

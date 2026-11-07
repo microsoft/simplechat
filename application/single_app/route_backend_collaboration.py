@@ -3,7 +3,10 @@
 import json
 import threading
 import time
+import uuid
 
+from content_screening.access import build_available_document_response, public_history_messages
+from content_screening.contracts import ScreeningError
 import app_settings_cache
 from azure.core.exceptions import AzureError
 from flask import Response, current_app, jsonify, redirect, request, session, stream_with_context
@@ -11,10 +14,16 @@ from flask import Response, current_app, jsonify, redirect, request, session, st
 from config import *
 from collaboration_models import COLLABORATION_KIND, MEMBERSHIP_STATUS_PENDING, MESSAGE_KIND_AI_REQUEST, add_seconds_to_iso, normalize_collaboration_user, utc_now_iso
 from functions_appinsights import log_event
+from functions_chat_content_checks import (
+    CHECK_CONTEXT_KEY, CHECK_METADATA, blocked_chat_payload, check_chat_content,
+    strip_private_chat_checks,
+)
+from functions_chat_content_review import record_blocked_chat_attempt, refresh_checked_message
 from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
     assert_user_can_view_collaboration_conversation,
+    build_collaboration_image_url,
     create_collaboration_message_notifications,
     create_group_collaboration_conversation_record,
     create_personal_collaboration_conversation_record,
@@ -46,6 +55,14 @@ from functions_collaboration import (
     update_personal_collaboration_title,
 )
 from functions_conversation_cache import bump_conversation_cache_version
+from functions_collaboration_ai_activity import describe_ai_activity_step
+from functions_collaboration_generated_documents import (
+    authorize_generated_document_download,
+    can_download_generated_document,
+    collect_generated_documents,
+)
+from functions_documents import build_document_download_response
+from functions_saved_analysis import sanitize_saved_analysis_messages
 from functions_chat_stream_events import (
     USER_MESSAGE_PERSISTED_EVENT_TYPE,
     build_user_message_persisted_stream_event,
@@ -58,7 +75,72 @@ from functions_message_masking import (
     copy_message_mask_metadata,
     resolve_mask_display_name,
 )
+from functions_message_deletion import NOT_SOFT_DELETED_COSMOS_FILTER, is_soft_deleted_message
+from functions_message_block_revisions import (
+    BLOCK_REVISIONS_METADATA_KEY,
+    MAX_CHAT_CONTENT_LENGTH as BLOCK_MAX_CHAT_CONTENT_LENGTH,
+    ORIGIN_AI,
+    ORIGIN_CONTROL,
+    ORIGIN_MANUAL,
+    BlockRevisionConflictError,
+    BlockRevisionError,
+    append_block_chat_turn,
+    apply_block_revision,
+    current_block_source,
+    read_block_chat,
+    read_block_entry,
+    read_block_revisions,
+    set_current_revision,
+    validate_block_index,
+    validate_block_kind,
+    validate_source_hash,
+)
+from functions_block_revision_assist import (
+    BlockAssistError,
+    normalize_instruction,
+    request_block_edit,
+)
+# Aliased because the block revision module above exports the same origin names for its own
+# revisions, and the two vocabularies are deliberately separate.
+from functions_message_image_revisions import (
+    IMAGE_REVISIONS_METADATA_KEY,
+    MAX_CHAT_CONTENT_LENGTH as IMAGE_MAX_CHAT_CONTENT_LENGTH,
+    ORIGIN_AI as IMAGE_ORIGIN_AI,
+    ORIGIN_CONTROL as IMAGE_ORIGIN_CONTROL,
+    ORIGIN_PROMPT as IMAGE_ORIGIN_PROMPT,
+    ImageRevisionConflictError,
+    ImageRevisionError,
+    append_image_chat_turn,
+    apply_image_revision,
+    current_image_prompt,
+    normalize_instruction as normalize_image_instruction,
+    read_image_chat,
+    read_image_revisions,
+    resolve_current_revision as resolve_current_image_revision,
+    resolve_served_revision,
+    serialize_image_revisions,
+    set_current_image_revision,
+)
+from functions_image_edit import revise_image_message
+from functions_assist_submissions import (
+    SUBMISSION_CONFLICT,
+    SUBMISSION_CONFLICT_CODE,
+    SUBMISSION_CONFLICT_MESSAGE,
+    SUBMISSION_REPLAY,
+    SubmissionIdError,
+    classify_submission,
+    normalize_submission_id,
+)
+from functions_image_api_route import ImageGenerationError
+from functions_image_generation import image_generation_error_response
+from functions_ai_connections import AIConnectionError
+from functions_message_visual_styles import (
+    UNSET as VISUAL_STYLE_HEIGHT_UNSET,
+    VisualStyleError,
+    apply_visual_style,
+)
 from functions_notifications import mark_collaboration_message_notifications_read_for_conversation
+from functions_azure_maps import refresh_azure_maps_message_citations
 from functions_message_artifacts import make_json_serializable
 from functions_m365_runtime import read_pending_m365_chat_request
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
@@ -69,6 +151,7 @@ from functions_simplechat_operations import (
     resolve_generated_file_approval_for_user,
 )
 from functions_settings import get_settings
+from functions_prompt_metadata import build_prompt_selection_metadata
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -76,8 +159,12 @@ COLLABORATION_EVENT_HEARTBEAT_SECONDS = 15
 COLLABORATION_EVENT_TTL_SECONDS = 3600
 
 
-def _stream_blob_backed_image_message(message_doc):
-    """Stream a blob-backed source image for authorized collaboration viewers."""
+def _stream_blob_backed_image_message(message_doc, cache_control='private, max-age=300'):
+    """Stream a blob-backed source image for authorized collaboration viewers.
+
+    ``message_doc`` only needs the three blob fields, so a stored image revision -- which uses
+    the same key names deliberately -- can be streamed through here directly.
+    """
     blob_container = str(message_doc.get('blob_container') or '').strip()
     blob_path = str(message_doc.get('blob_path') or '').strip()
     mime_type = str(message_doc.get('mime_type') or '').strip() or 'image/png'
@@ -106,7 +193,7 @@ def _stream_blob_backed_image_message(message_doc):
             yield blob_chunk
 
     headers = {
-        'Cache-Control': 'private, max-age=300',
+        'Cache-Control': cache_control,
     }
     if content_length is not None:
         headers['Content-Length'] = str(content_length)
@@ -273,6 +360,83 @@ def _build_collaboration_event(conversation_id, event_type, payload):
     }
 
 
+AI_ACTIVITY_STEP_MAX_LENGTH = 140
+AI_ACTIVITY_NAME_MAX_LENGTH = 120
+
+
+def _describe_collaboration_ai_target(invocation_target, agent_info):
+    """Return the display name and kind of what an AI request asked, for its activity line."""
+    target = invocation_target if isinstance(invocation_target, dict) else {}
+    name = str(target.get('display_name') or '').strip()
+    target_type = str(target.get('target_type') or '').strip().lower()
+    if not name and isinstance(agent_info, dict):
+        name = str(agent_info.get('display_name') or agent_info.get('name') or '').strip()
+        target_type = target_type or 'agent'
+    if target_type not in ('agent', 'model', 'image'):
+        target_type = 'model'
+    return (name or 'Assistant')[:AI_ACTIVITY_NAME_MAX_LENGTH], target_type
+
+
+class CollaborationAiActivity:
+    """Tell every participant that an AI request is running, what it is doing, and when it ends.
+
+    One instance covers one request. ``started`` and ``finished`` bracket the run, and
+    ``step`` repeats the run's latest progress step in plain words
+    (``describe_ai_activity_step``), never a thought's technical text or detail. Publishing never
+    raises: an activity line is advisory and must not break the answer it describes.
+    """
+
+    def __init__(self, conversation_id, display_name, target_type, requested_by, request_message_id, publish=None):
+        self.conversation_id = conversation_id
+        self.run_id = uuid.uuid4().hex
+        self.display_name = display_name
+        self.target_type = target_type
+        self.requested_by = {
+            'user_id': str((requested_by or {}).get('user_id') or '').strip(),
+            'display_name': str((requested_by or {}).get('display_name') or '').strip(),
+        }
+        self.request_message_id = str(request_message_id or '').strip()
+        self.status = 'failed'
+        self._publish = publish or COLLABORATION_EVENT_REGISTRY.publish
+        self._last_step = ''
+        self._finished = False
+
+    def _emit(self, event_type, run_payload):
+        try:
+            self._publish(
+                self.conversation_id,
+                _build_collaboration_event(self.conversation_id, event_type, {'run': run_payload}),
+            )
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION] Could not publish {event_type} for {self.conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+
+    def started(self):
+        self._emit('collaboration.ai.started', {
+            'run_id': self.run_id,
+            'display_name': self.display_name,
+            'target_type': self.target_type,
+            'requested_by': self.requested_by,
+            'request_message_id': self.request_message_id,
+            'started_at': utc_now_iso(),
+        })
+
+    def step(self, content):
+        step = ' '.join(str(content or '').split())[:AI_ACTIVITY_STEP_MAX_LENGTH]
+        if not step or step == self._last_step or self._finished:
+            return
+        self._last_step = step
+        self._emit('collaboration.ai.progress', {'run_id': self.run_id, 'step': step})
+
+    def finished(self):
+        if self._finished:
+            return
+        self._finished = True
+        self._emit('collaboration.ai.finished', {'run_id': self.run_id, 'status': self.status})
+
+
 def _hydrate_collaboration_stream_actions(payload, viewer_user_id, conversation_id):
     """Resolve only record IDs, then remap the UI to the visible shared conversation."""
     creation = payload.get('type') == 'm365_pending_action'
@@ -312,7 +476,8 @@ def _collaboration_events_for_viewer(events, viewer_user_id, conversation_id):
         if isinstance(payload, dict) and isinstance(payload.get('message'), dict):
             try:
                 messages = hydrate_m365_pending_action_cards(
-                    [payload['message']], viewer_user_id, conversation_id,
+                    [strip_private_chat_checks(refresh_checked_message(payload["message"], source="shared"))],
+                    viewer_user_id, conversation_id,
                 )
             except Exception as error:
                 log_event(
@@ -494,7 +659,295 @@ def _sync_collaboration_mask_metadata_to_source(message_doc):
     source_container.upsert_item(source_message_doc)
 
 
+def _sync_collaboration_block_revisions_to_source(message_doc):
+    """Copy a shared message's diagram revisions onto the personal message behind it.
+
+    A shared conversation's messages are mirrors: the model's history, the conversation export
+    and the owner's own view of the thread are all built from the source message in the personal
+    container. Writing an edit only to the mirror would show the new diagram to whoever is
+    reading the shared thread while the model, the export and the owner all continued to see the
+    original.
+
+    The same problem and the same answer as ``_sync_collaboration_mask_metadata_to_source``
+    directly above, which is why they sit together.
+
+    Best effort: the edit has already been stored on the shared message by the time this runs,
+    so a missing source message is logged rather than failing a write that succeeded.
+    """
+    metadata = (message_doc or {}).get('metadata', {}) if isinstance((message_doc or {}).get('metadata'), dict) else {}
+    source_conversation_id = str(metadata.get('source_conversation_id') or '').strip()
+    source_message_id = str(metadata.get('source_message_id') or '').strip()
+    if not source_conversation_id or not source_message_id:
+        return
+
+    source_scope = str(metadata.get('source_conversation_scope') or '').strip().lower()
+    source_container = cosmos_group_messages_container if source_scope == 'group' else cosmos_messages_container
+
+    try:
+        source_message_doc = source_container.read_item(
+            item=source_message_id,
+            partition_key=source_conversation_id,
+        )
+    except CosmosResourceNotFoundError:
+        log_event(
+            '[COLLABORATION_BLOCK_REVISION] Linked source message was not found while syncing revisions',
+            extra={
+                'conversation_id': (message_doc or {}).get('conversation_id'),
+                'message_id': (message_doc or {}).get('id'),
+                'source_conversation_id': source_conversation_id,
+                'source_message_id': source_message_id,
+                'source_scope': source_scope or 'personal',
+            },
+            level=logging.WARNING,
+            debug_only=True,
+        )
+        return
+
+    source_metadata = source_message_doc.setdefault('metadata', {})
+    if not isinstance(source_metadata, dict):
+        source_metadata = {}
+        source_message_doc['metadata'] = source_metadata
+
+    stored = metadata.get(BLOCK_REVISIONS_METADATA_KEY)
+    if stored:
+        source_metadata[BLOCK_REVISIONS_METADATA_KEY] = stored
+    else:
+        source_metadata.pop(BLOCK_REVISIONS_METADATA_KEY, None)
+
+    source_container.upsert_item(source_message_doc)
+
+
+def _load_collaboration_image_revision_message(user_id, conversation_id, message_id):
+    """Return a shared image message together with the source image that holds its bytes.
+
+    A shared image is a mirror. Its bytes live on the source message in the personal container,
+    which is what the owner's own view, the export and the collaboration image route all read,
+    so a revision has to be applied there rather than to the mirror.
+
+    Participation rather than mere visibility is required, matching the diagram routes: editing
+    an image changes what everyone in the thread sees, so it is not something a pending invitee
+    should be able to do.
+    """
+    conversation_doc = get_collaboration_conversation(conversation_id)
+    assert_user_can_participate_in_collaboration_conversation(user_id, conversation_doc)
+
+    message_doc = get_collaboration_message(message_id)
+    if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+        raise CosmosResourceNotFoundError(message='Collaborative image not found')
+
+    metadata = message_doc.get('metadata', {}) if isinstance(message_doc.get('metadata'), dict) else {}
+    roles = {
+        str(message_doc.get('role') or '').strip().lower(),
+        str(metadata.get('source_role') or '').strip().lower(),
+    }
+    if 'image' not in roles:
+        raise ValueError('That message is not an image')
+
+    source_conversation_id = str(metadata.get('source_conversation_id') or '').strip()
+    source_message_id = str(metadata.get('source_message_id') or '').strip()
+    if not source_conversation_id or not source_message_id:
+        raise CosmosResourceNotFoundError(message='Source image not found')
+
+    source_doc, complete_content = get_complete_image_content(
+        cosmos_messages_container,
+        source_conversation_id,
+        source_message_id,
+    )
+
+    return {
+        'message': message_doc,
+        'source': source_doc,
+        'source_conversation_id': source_conversation_id,
+        'content': complete_content,
+    }
+
+
+def _save_collaboration_image_revisions(
+    conversation_id,
+    message_id,
+    message_doc,
+    source_doc,
+    user_id,
+):
+    """Persist an edited shared image to its source, mirror it, and tell the other readers.
+
+    The source is written first because it is the authoritative copy: the bytes, the owner's own
+    view and the export all come from it, and the collaboration image route reads it directly.
+    The mirror then receives a copy of the revision map so the shared thread can draw the history
+    and address the image by revision without a second lookup.
+
+    Should the mirror write fail, the shared view degrades to the untagged image URL, which the
+    image route answers with whatever version is current -- so participants still see the edit
+    rather than silently seeing the version it replaced.
+    """
+    cosmos_messages_container.upsert_item(source_doc)
+
+    source_metadata = source_doc.get('metadata') if isinstance(source_doc.get('metadata'), dict) else {}
+    stored = (source_metadata or {}).get(IMAGE_REVISIONS_METADATA_KEY)
+
+    metadata = message_doc.setdefault('metadata', {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+        message_doc['metadata'] = metadata
+    if stored:
+        metadata[IMAGE_REVISIONS_METADATA_KEY] = stored
+    else:
+        metadata.pop(IMAGE_REVISIONS_METADATA_KEY, None)
+
+    cosmos_collaboration_messages_container.upsert_item(message_doc)
+
+    revisions = serialize_image_revisions(read_image_revisions(source_doc))
+    COLLABORATION_EVENT_REGISTRY.publish(
+        conversation_id,
+        _build_collaboration_event(
+            conversation_id,
+            'collaboration.message.image_revised',
+            {
+                'message_id': message_id,
+                'image_revisions': make_json_serializable(revisions),
+                'image_url': build_collaboration_image_url(
+                    conversation_id, message_id, message_doc
+                ),
+                'updated_by_user_id': user_id,
+            },
+        ),
+    )
+    return revisions
+
+
+def _answer_stored_collaboration_image_submission(
+    submission,
+    conversation_id,
+    message_id,
+    source_doc,
+):
+    """Answer a shared image request its submission id shows was already handled, or return None.
+
+    The shared counterpart of the personal route's check. It answers from the source image,
+    which holds the transcript and the versions, so a retry that raced the request it repeats
+    sees what that request stored rather than the mirror as it was loaded.
+    """
+    if submission == SUBMISSION_CONFLICT:
+        return jsonify({
+            'error': SUBMISSION_CONFLICT_MESSAGE,
+            'code': SUBMISSION_CONFLICT_CODE,
+        }), 409
+    if submission != SUBMISSION_REPLAY:
+        return None
+    stored_entry = read_image_revisions(source_doc)
+    current_revision = resolve_current_image_revision(stored_entry) or {}
+    return jsonify({
+        'success': True,
+        'message_id': message_id,
+        'conversation_id': conversation_id,
+        'method': current_revision.get('method') or '',
+        'model_deployment_name': current_revision.get('model') or '',
+        # Only a stored version picks the URL. Without one the source's own content -- the
+        # owner's copy -- would come back in its place, and never belongs in a shared reply.
+        'image_url': build_collaboration_image_url(
+            conversation_id, message_id, source_doc if current_revision else None
+        ),
+        'image_revisions': make_json_serializable(serialize_image_revisions(stored_entry)),
+        'replayed': True,
+    }), 200
+
+
+def _load_collaboration_block_revision_message(user_id, conversation_id, message_id):
+    """Return the shared message a block revision request targets, authorizing the caller.
+
+    Participation rather than mere visibility is required, matching the mask route: editing a
+    diagram changes what everyone in the thread sees, so it is not something a pending invitee
+    should be able to do.
+    """
+    conversation_doc = get_collaboration_conversation(conversation_id)
+    assert_user_can_participate_in_collaboration_conversation(user_id, conversation_doc)
+
+    message_doc = get_collaboration_message(message_id)
+    if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+        raise CosmosResourceNotFoundError(message='Collaborative message not found')
+
+    return message_doc
+
+
+def _save_collaboration_block_revisions(conversation_id, message_id, message_doc, user_id):
+    """Persist an edited shared message, mirror it to its source, and tell the other readers."""
+    cosmos_collaboration_messages_container.upsert_item(message_doc)
+    _sync_collaboration_block_revisions_to_source(message_doc)
+
+    revisions = read_block_revisions(message_doc)
+    COLLABORATION_EVENT_REGISTRY.publish(
+        conversation_id,
+        _build_collaboration_event(
+            conversation_id,
+            'collaboration.message.block_revised',
+            {
+                'message_id': message_id,
+                'block_revisions': make_json_serializable(revisions),
+                'updated_by_user_id': user_id,
+            },
+        ),
+    )
+    return revisions
+
+
+def _read_collaboration_expected_revision_count(data):
+    """Return the caller's view of how many revisions exist, or None when it did not say."""
+    if 'expected_revision_count' not in data:
+        return None
+    value = data.get('expected_revision_count')
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise BlockRevisionError('expected_revision_count must be a non-negative integer')
+    return value
+
+
+def _find_collaboration_originating_request(conversation_id, message_doc):
+    """Return the request that produced a shared message, for grounding a diagram edit.
+
+    The nearest preceding human message in the shared thread. Only that one message is used, and
+    it is passed to the model as background rather than as instructions — sending a whole shared
+    conversation to redraw one flowchart would be expensive and would hand the model a great
+    deal of other people's writing. A message copied in already deleted is skipped.
+
+    Best effort: an edit works perfectly well with no grounding at all, so a failure here is
+    swallowed rather than failing the edit.
+    """
+    timestamp = str((message_doc or {}).get('timestamp') or '').strip()
+    if not timestamp:
+        return ''
+    try:
+        rows = list(cosmos_collaboration_messages_container.query_items(
+            query=(
+                'SELECT TOP 1 c.content FROM c '
+                'WHERE c.conversation_id = @conversation_id '
+                "AND c.role = 'user' AND c.timestamp < @timestamp "
+                f'AND {NOT_SOFT_DELETED_COSMOS_FILTER} '
+                'ORDER BY c.timestamp DESC'
+            ),
+            parameters=[
+                {'name': '@conversation_id', 'value': conversation_id},
+                {'name': '@timestamp', 'value': timestamp},
+            ],
+            partition_key=conversation_id,
+        ))
+    except Exception as exc:
+        log_event(
+            f'[COLLABORATION_BLOCK_REVISION] Could not read the originating request: {exc}',
+            level=logging.WARNING,
+            debug_only=True,
+        )
+        return ''
+    return str((rows[0] or {}).get('content') or '').strip() if rows else ''
+
+
 def register_route_backend_collaboration(bp):
+    @bp.after_request
+    def public_collaboration_json_response(response):
+        if response.is_json:
+            response.set_data(current_app.json.dumps(strip_private_chat_checks(response.get_json())))
+        return response
+
     @bp.route('/api/collaboration/file-approvals', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1354,8 +1807,11 @@ def register_route_backend_collaboration(bp):
             )
             event_cursor = COLLABORATION_EVENT_REGISTRY.get_session(conversation_id).get_event_cursor()
             messages = [serialize_collaboration_message(doc) for doc in list_collaboration_messages(conversation_id)]
+            messages = refresh_azure_maps_message_citations(messages)
+            messages = sanitize_saved_analysis_messages(messages, current_user['user_id'])
             attach_generated_file_approval_state(messages, current_user['user_id'])
             messages = hydrate_m365_pending_action_cards(messages, current_user['user_id'], conversation_id)
+            messages = public_history_messages(messages, current_user['user_id'])
             return jsonify({'messages': messages, 'event_cursor': event_cursor}), 200
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative conversation not found'}), 404
@@ -1368,6 +1824,116 @@ def register_route_backend_collaboration(bp):
                 exceptionTraceback=True,
             )
             return jsonify({'error': 'Failed to load collaborative conversation messages'}), 500
+
+    @bp.route('/api/collaboration/conversations/<conversation_id>/generated-documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def list_collaboration_generated_documents_api(conversation_id):
+        """List the documents agents generated in this conversation, and which the reader may download."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_view_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+                allow_pending=False,
+            )
+            settings = get_settings()
+            documents = []
+            for document in collect_generated_documents(list_collaboration_messages(conversation_id)):
+                documents.append({
+                    'document_id': document['document_id'],
+                    'file_name': document['file_name'],
+                    'workspace_scope': document['workspace_scope'],
+                    'preview': document['preview'],
+                    'message_id': document['message_id'],
+                    'created_at': document['created_at'],
+                    'can_download': can_download_generated_document(
+                        current_user['user_id'], document, settings=settings,
+                    ),
+                })
+            return jsonify({'documents': documents}), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative conversation not found'}), 404
+        except PermissionError as exc:
+            log_event(
+                f'[COLLABORATION] Permission denied while listing generated documents for {conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'You do not have access to this conversation'}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION] Failed to list generated documents for {conversation_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to list generated documents'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/generated-documents/<document_id>/download',
+        methods=['GET'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def download_collaboration_generated_document_api(conversation_id, document_id):
+        """Download a document an agent generated in this conversation, under its workspace's rules."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_view_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+                allow_pending=False,
+            )
+            # Only a document this conversation produced can be fetched through it.
+            document = next(
+                (
+                    candidate
+                    for candidate in collect_generated_documents(list_collaboration_messages(conversation_id))
+                    if candidate['document_id'] == document_id
+                ),
+                None,
+            )
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+            try:
+                document_record, group_id = authorize_generated_document_download(
+                    current_user['user_id'], document,
+                )
+            except LookupError:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            return build_document_download_response(
+                document_record,
+                user_id=current_user['user_id'],
+                group_id=group_id,
+            )
+        except FileNotFoundError:
+            return jsonify({'error': 'This document is not available yet.'}), 404
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative conversation not found'}), 404
+        except PermissionError as exc:
+            log_event(
+                f'[COLLABORATION] Permission denied while downloading a generated document for {conversation_id}: {exc}',
+                level=logging.WARNING,
+            )
+            return jsonify({'error': 'You do not have permission to download this document'}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION] Failed to download generated document for {conversation_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Unable to download document'}), 500
 
     @bp.route('/api/collaboration/conversations/<conversation_id>/messages/<message_id>/mask', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -1393,6 +1959,10 @@ def register_route_backend_collaboration(bp):
 
             message_doc = get_collaboration_message(message_id)
             if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+                return jsonify({'error': 'Collaborative message not found'}), 404
+            # A copy of a message deleted before the conversation was shared. Unmasking it would
+            # reveal deleted content, and the sync below would unmask the original too.
+            if is_soft_deleted_message(message_doc):
                 return jsonify({'error': 'Collaborative message not found'}), 404
 
             _assert_user_can_mask_collaboration_message(current_user['user_id'], message_doc)
@@ -1448,6 +2018,612 @@ def register_route_backend_collaboration(bp):
             )
             return jsonify({'error': 'Failed to update shared message mask state'}), 500
 
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/block-revision',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def add_collaboration_block_revision_api(conversation_id, message_id):
+        """Record a new version of one diagram in a shared message and make it the current one.
+
+        The shared counterpart of the personal route in ``route_backend_chats.py``. A shared
+        conversation keeps its messages in a different container, so the two cannot be one
+        route; what they must share is the storage rules, which both take from
+        ``functions_message_block_revisions``.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            origin = data.get('origin') or ORIGIN_MANUAL
+            # Only a human-driven edit is recorded here. An AI-authored revision is written by
+            # the assist route, which is the only place that knows a model produced the source.
+            if origin not in (ORIGIN_MANUAL, ORIGIN_CONTROL):
+                return jsonify({'error': 'Unsupported revision origin'}), 400
+
+            message_doc = _load_collaboration_block_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+
+            try:
+                apply_block_revision(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    data.get('source'),
+                    data.get('source_hash') or '',
+                    original_source=data.get('original_source') or '',
+                    author_id=current_user['user_id'],
+                    author_name=resolve_mask_display_name(current_user),
+                    origin=origin,
+                    note=data.get('note') or '',
+                    expected_revision_count=_read_collaboration_expected_revision_count(data),
+                )
+            except BlockRevisionConflictError as exc:
+                return jsonify({
+                    'error': str(exc),
+                    'block_revisions': make_json_serializable(read_block_revisions(message_doc)),
+                }), 409
+            except BlockRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            revisions = _save_collaboration_block_revisions(
+                conversation_id, message_id, message_doc, current_user['user_id']
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'block_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_BLOCK_REVISION] Failed to store a revision for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared diagram'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/block-revision/current',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_collaboration_block_revision_api(conversation_id, message_id):
+        """Point one diagram in a shared message at a different one of its stored versions."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            revision_id = str(data.get('revision_id') or '').strip()
+            if not revision_id:
+                return jsonify({'error': 'revision_id is required'}), 400
+
+            message_doc = _load_collaboration_block_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+
+            try:
+                set_current_revision(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    revision_id,
+                    data.get('source_hash') or '',
+                )
+            except BlockRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            revisions = _save_collaboration_block_revisions(
+                conversation_id, message_id, message_doc, current_user['user_id']
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'block_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_BLOCK_REVISION] Failed to restore a revision for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared diagram'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/block-revision/assist',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def assist_collaboration_block_revision_api(conversation_id, message_id):
+        """Ask the model to change one diagram in a shared message.
+
+        As on the personal route, the model is given the diagram's current source, that
+        diagram's own sub-conversation and the request that produced it — never the
+        conversation. In a shared thread that matters more rather than less: the surrounding
+        messages belong to other people.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            try:
+                instruction = normalize_instruction(data.get('instruction'))
+            except BlockAssistError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            block_kind = data.get('block_kind')
+            block_index = data.get('block_index')
+            source_hash = data.get('source_hash') or ''
+            original_source = data.get('original_source') or ''
+
+            # Validated before the model is called: a malformed request is the caller's fault
+            # and should say so rather than costing a completion first.
+            try:
+                validate_block_kind(block_kind)
+                validate_block_index(block_index)
+                validate_source_hash(source_hash, required=True)
+            except BlockRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+            try:
+                submission_id = normalize_submission_id(data.get('submission_id'))
+            except SubmissionIdError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            # What the block is called in anything the reader sees, so an error about a chart
+            # does not tell them their diagram is broken.
+            block_noun = 'chart' if block_kind == 'simplechart' else 'diagram'
+
+            message_doc = _load_collaboration_block_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+
+            entry = read_block_entry(message_doc, block_kind, block_index, source_hash)
+            current_source = current_block_source(entry, fallback=original_source)
+            if not current_source:
+                return jsonify({'error': f'The {block_noun} source is required'}), 400
+
+            # Checked only once participation is established, and only against this block's own
+            # sub-conversation. A retry of a request already answered is answered from what was
+            # stored: no second completion, no second revision and no second event for the room.
+            submission = classify_submission(
+                (entry or {}).get('chat'), submission_id, instruction, BLOCK_MAX_CHAT_CONTENT_LENGTH
+            )
+            if submission == SUBMISSION_CONFLICT:
+                return jsonify({
+                    'error': SUBMISSION_CONFLICT_MESSAGE,
+                    'code': SUBMISSION_CONFLICT_CODE,
+                }), 409
+            if submission == SUBMISSION_REPLAY:
+                return jsonify({
+                    'success': True,
+                    'message_id': message_id,
+                    'conversation_id': conversation_id,
+                    'source': current_source,
+                    'block_revisions': make_json_serializable(read_block_revisions(message_doc)),
+                    'replayed': True,
+                }), 200
+            try:
+                result = request_block_edit(
+                    get_settings(),
+                    current_source,
+                    instruction,
+                    chat_turns=read_block_chat(entry),
+                    originating_request=_find_collaboration_originating_request(
+                        conversation_id, message_doc
+                    ),
+                    block_kind=block_kind,
+                )
+            except BlockAssistError as exc:
+                log_event(
+                    f'[COLLABORATION_BLOCK_REVISION] Assist failed for {message_id}: {exc}',
+                    level=logging.WARNING,
+                )
+                return jsonify({'error': str(exc)}), 502
+
+            try:
+                # The revision is written first, so a model reply that is not a storable diagram
+                # leaves no transcript behind describing an edit that never happened.
+                apply_block_revision(
+                    message_doc,
+                    block_kind,
+                    block_index,
+                    result['source'],
+                    source_hash,
+                    original_source=original_source,
+                    author_id=current_user['user_id'],
+                    author_name=resolve_mask_display_name(current_user),
+                    origin=ORIGIN_AI,
+                    note=instruction,
+                    expected_revision_count=_read_collaboration_expected_revision_count(data),
+                )
+                append_block_chat_turn(
+                    message_doc, block_kind, block_index, 'user', instruction, source_hash,
+                    submission_id=submission_id,
+                )
+                append_block_chat_turn(
+                    message_doc, block_kind, block_index, 'assistant', result['source'], source_hash,
+                    submission_id=submission_id,
+                )
+            except BlockRevisionConflictError as exc:
+                return jsonify({
+                    'error': str(exc),
+                    'block_revisions': make_json_serializable(read_block_revisions(message_doc)),
+                }), 409
+            except BlockRevisionError as exc:
+                return jsonify({'error': f'The model returned an unusable {block_noun}: {exc}'}), 502
+
+            revisions = _save_collaboration_block_revisions(
+                conversation_id, message_id, message_doc, current_user['user_id']
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'source': result['source'],
+                'block_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_BLOCK_REVISION] Assist raised for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared diagram'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/image-revision',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def add_collaboration_image_revision_api(conversation_id, message_id):
+        """Produce a new version of a shared generated image and make it the current one.
+
+        The shared counterpart of ``/api/message/<message_id>/image-revision``, with a request
+        and response shape deliberately identical so the client picks an endpoint from the
+        conversation's kind and sends the same body either way.
+
+        Unlike the diagram routes there is no separate "save" and "assist" pair, because a
+        browser cannot author an image: every version comes from the model.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            settings = get_settings()
+            if not settings.get('enable_image_generation'):
+                return jsonify({'error': 'Image generation is not enabled'}), 403
+
+            data = request.get_json(silent=True) or {}
+            loaded = _load_collaboration_image_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+            source_doc = loaded['source']
+            try:
+                submission_id = normalize_submission_id(data.get('submission_id'))
+            except SubmissionIdError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            # Only an instruction produces transcript turns to carry the id, so only an
+            # instruction can be recognised as a retry of a request that was already answered.
+            # Checked against the source image's own transcript, once participation is known.
+            revision_origin = data.get('origin') or IMAGE_ORIGIN_AI
+            if revision_origin != IMAGE_ORIGIN_AI:
+                submission_id = None
+            answered = _answer_stored_collaboration_image_submission(
+                classify_submission(
+                    read_image_revisions(source_doc).get('chat'),
+                    submission_id,
+                    data.get('instruction'),
+                    IMAGE_MAX_CHAT_CONTENT_LENGTH,
+                ),
+                conversation_id,
+                message_id,
+                source_doc,
+            )
+            if answered:
+                return answered
+
+            try:
+                result = revise_image_message(
+                    settings,
+                    source_doc,
+                    # The revision is stored beside the image it revises, which belongs to the
+                    # conversation's owner rather than to whichever participant asked for it.
+                    owner_user_id=str(source_doc.get('user_id') or '').strip(),
+                    conversation_id=loaded['source_conversation_id'],
+                    complete_content=loaded['content'],
+                    origin=revision_origin,
+                    operation=data.get('operation', ''),
+                    instruction=data.get('instruction') or '',
+                    prompt=data.get('prompt') or '',
+                    mask_data_url=data.get('mask', ''),
+                    mask_regions=data.get('mask_regions') or 0,
+                    size=data.get('size') or '',
+                    quality=data.get('quality') or '',
+                    background=data.get('background') or '',
+                    author_id=current_user['user_id'],
+                    author_name=resolve_mask_display_name(current_user),
+                    expected_revision_count=_read_collaboration_expected_revision_count(data),
+                    expected_current_revision_id=data.get('expected_current_revision_id') or '',
+                    # Re-read after the model call, which takes seconds. Another participant can
+                    # land their own version inside that window, and writing to the copy loaded
+                    # before it would silently discard theirs.
+                    reload_message=lambda: cosmos_messages_container.read_item(
+                        item=str(source_doc.get('id') or ''),
+                        partition_key=loaded['source_conversation_id'],
+                    ),
+                    submission_id=submission_id,
+                )
+            except ImageRevisionConflictError as exc:
+                # A conflict found after the model call was found in the source read again then,
+                # which holds the versions that beat this request.
+                latest_doc = getattr(exc, 'message_doc', None) or source_doc
+                return jsonify({
+                    'error': str(exc),
+                    'image_revisions': make_json_serializable(
+                        serialize_image_revisions(read_image_revisions(latest_doc))
+                    ),
+                }), 409
+            except ImageRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+            except (ImageGenerationError, AIConnectionError) as exc:
+                log_event(
+                    '[COLLABORATION_IMAGE_REVISION] Image operation failed',
+                    extra={'message_id': message_id, 'error_code': exc.code},
+                    level=logging.WARNING,
+                )
+                payload, status = image_generation_error_response(exc)
+                return jsonify(payload), status
+
+            # From here on the freshly re-read source document is the one being written.
+            source_doc = result['message']
+            # Checked again in that document: a retry sent while the request it repeats was still
+            # running only finds that request's turns now.
+            answered = _answer_stored_collaboration_image_submission(
+                result.get('submission'), conversation_id, message_id, source_doc
+            )
+            if answered:
+                return answered
+
+            if result['instruction']:
+                try:
+                    append_image_chat_turn(
+                        source_doc, 'user', result['instruction'], submission_id=submission_id
+                    )
+                    append_image_chat_turn(
+                        source_doc, 'assistant', result['prompt'], submission_id=submission_id
+                    )
+                except ImageRevisionError:
+                    pass
+
+            revisions = _save_collaboration_image_revisions(
+                conversation_id,
+                message_id,
+                loaded['message'],
+                source_doc,
+                current_user['user_id'],
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'method': result['method'],
+                'model_deployment_name': result['model'],
+                'image_url': build_collaboration_image_url(
+                    conversation_id, message_id, loaded['message']
+                ),
+                'image_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative image not found'}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_IMAGE_REVISION] Failed to store a version for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared image'}), 500
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/image-revision/current',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_collaboration_image_revision_api(conversation_id, message_id):
+        """Point a shared image at a different one of its stored versions."""
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+            revision_id = str(data.get('revision_id') or '').strip()
+            if not revision_id:
+                return jsonify({'error': 'revision_id is required'}), 400
+
+            loaded = _load_collaboration_image_revision_message(
+                current_user['user_id'], conversation_id, message_id
+            )
+            source_doc = loaded['source']
+
+            try:
+                set_current_image_revision(source_doc, revision_id)
+            except ImageRevisionError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            revisions = _save_collaboration_image_revisions(
+                conversation_id,
+                message_id,
+                loaded['message'],
+                source_doc,
+                current_user['user_id'],
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'image_url': build_collaboration_image_url(
+                    conversation_id, message_id, loaded['message']
+                ),
+                'image_revisions': make_json_serializable(revisions),
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative image not found'}), 404
+        except ValueError as exc:
+            return jsonify({'error': str(exc)}), 400
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_IMAGE_REVISION] Failed to restore a version for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update the shared image'}), 500
+
+
+
+    @bp.route(
+        '/api/collaboration/conversations/<conversation_id>/messages/<message_id>/visual-style',
+        methods=['POST'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def set_collaboration_message_visual_style_api(conversation_id, message_id):
+        """Save or clear the colours and height of one diagram or chart in a shared message.
+
+        The shared counterpart of ``/api/message/<message_id>/visual-style``. That route resolves
+        the conversation through the personal container, which a shared conversation is not in, so
+        recolouring a chart in a shared thread had no endpoint that could answer it.
+
+        The choice is stored on the shared message and therefore applies for everyone reading the
+        conversation, exactly as a mask does. That is why it takes participate-level access rather
+        than mere visibility: a read-only viewer recolouring a chart would be changing what the
+        other participants see.
+
+        Unlike a mask, this is not copied back to the hidden source message. A mask changes what
+        is exported and what the model is later shown; colours change neither, and the owner reads
+        the thread through the shared conversation anyway.
+        """
+        try:
+            _require_collaboration_feature_enabled()
+            current_user = _get_current_collaboration_user()
+            if not current_user:
+                return jsonify({'error': 'User not authenticated'}), 401
+
+            data = request.get_json(silent=True) or {}
+
+            conversation_doc = get_collaboration_conversation(conversation_id)
+            assert_user_can_participate_in_collaboration_conversation(
+                current_user['user_id'],
+                conversation_doc,
+            )
+
+            message_doc = get_collaboration_message(message_id)
+            if str(message_doc.get('conversation_id') or '').strip() != str(conversation_id or '').strip():
+                return jsonify({'error': 'Collaborative message not found'}), 404
+
+            try:
+                visual_styles = apply_visual_style(
+                    message_doc,
+                    data.get('block_kind'),
+                    data.get('block_index'),
+                    data.get('style'),
+                    data.get('source_hash') or '',
+                    # A body that never mentions the height leaves the stored one alone; one that
+                    # sends null is asking for it to be cleared.
+                    data.get('height') if 'height' in data else VISUAL_STYLE_HEIGHT_UNSET,
+                )
+            except VisualStyleError as exc:
+                return jsonify({'error': str(exc)}), 400
+
+            cosmos_collaboration_messages_container.upsert_item(message_doc)
+
+            serialized_message = serialize_collaboration_message(message_doc)
+            COLLABORATION_EVENT_REGISTRY.publish(
+                conversation_id,
+                _build_collaboration_event(
+                    conversation_id,
+                    'collaboration.message.visual_style_updated',
+                    {
+                        'message_id': message_id,
+                        'message': serialized_message,
+                        'visual_styles': visual_styles,
+                        'updated_by_user_id': current_user['user_id'],
+                    },
+                ),
+            )
+
+            return jsonify({
+                'success': True,
+                'message_id': message_id,
+                'conversation_id': conversation_id,
+                'visual_styles': visual_styles,
+                'message': serialized_message,
+            }), 200
+        except CosmosResourceNotFoundError:
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except LookupError:
+            # Raised when the stored conversation document is not a collaborative one, which is
+            # indistinguishable from it not being there as far as this request is concerned.
+            return jsonify({'error': 'Collaborative message not found'}), 404
+        except PermissionError as exc:
+            return jsonify({'error': str(exc)}), 403
+        except Exception as exc:
+            log_event(
+                f'[COLLABORATION_VISUAL_STYLE] Failed to update block style for {message_id}: {exc}',
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to update shared message visual style'}), 500
+
+
     @bp.route('/api/collaboration/conversations/<conversation_id>/images/<message_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -1481,6 +2657,26 @@ def register_route_backend_collaboration(bp):
                 source_conversation_id,
                 source_message_id,
             )
+            if source_image_doc.get("workspace_document_id"):
+                return build_available_document_response(
+                    source_image_doc["workspace_document_id"],
+                    user_id=current_user["user_id"], purpose="image_preview",
+                )
+
+            # Revisions are stored on the source image, which is the authoritative copy for
+            # everyone: the owner's own view, the export and this shared view all read it. The
+            # `rev` parameter names which version is wanted, and exists because this URL is
+            # otherwise identical before and after an edit while being served with an hour of
+            # public caching.
+            requested_revision = str(request.args.get('rev') or '').strip()
+            served_revision = resolve_served_revision(source_image_doc, requested_revision)
+            if served_revision:
+                return _stream_blob_backed_image_message(
+                    served_revision,
+                    cache_control='private, max-age=31536000, immutable'
+                    if requested_revision
+                    else 'private, max-age=60',
+                )
 
             if is_blob_backed_image_message(source_image_doc):
                 return _stream_blob_backed_image_message(source_image_doc)
@@ -1497,6 +2693,8 @@ def register_route_backend_collaboration(bp):
                     'Cache-Control': 'public, max-age=3600',
                 },
             )
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Collaborative image not found'}), 404
         except PermissionError as exc:
@@ -1530,16 +2728,25 @@ def register_route_backend_collaboration(bp):
 
             conversation_doc = get_collaboration_conversation(conversation_id)
             assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
+            input_check = check_chat_content(message_content, "chat_input", user_id=current_user["user_id"])
+            if input_check.blocked:
+                record_blocked_chat_attempt(input_check, current_user["user_id"], conversation_id)
+                return jsonify({"error": input_check.notice, "blocked": True}), 422
             mentioned_participants = resolve_collaboration_mentions(
                 conversation_doc,
                 data.get('mentioned_participants'),
             )
+            prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message_content)
             message_doc, updated_conversation_doc = persist_collaboration_message(
                 conversation_doc,
                 current_user,
                 message_content,
                 reply_to_message_id=reply_to_message_id,
                 mentioned_participants=mentioned_participants,
+                extra_metadata={
+                    **({'prompt_selection': prompt_selection} if prompt_selection else {}),
+                    **({CHECK_METADATA: input_check.metadata} if input_check.metadata else {}),
+                },
             )
             create_collaboration_message_notifications(updated_conversation_doc, message_doc)
             serialized_message = serialize_collaboration_message(message_doc)
@@ -1590,6 +2797,13 @@ def register_route_backend_collaboration(bp):
 
             conversation_doc = get_collaboration_conversation(conversation_id)
             assert_user_can_participate_in_collaboration_conversation(current_user['user_id'], conversation_doc)
+            input_check = check_chat_content(message_content, "chat_input", user_id=current_user["user_id"])
+            if input_check.blocked:
+                record_blocked_chat_attempt(input_check, current_user["user_id"], conversation_id)
+                return Response(
+                    f"data: {json.dumps(blocked_chat_payload(input_check, conversation_id=conversation_id))}\n\n",
+                    mimetype="text/event-stream",
+                )
             source_conversation_doc, conversation_doc = ensure_collaboration_source_conversation(
                 conversation_doc,
                 current_user,
@@ -1604,8 +2818,13 @@ def register_route_backend_collaboration(bp):
             )
             invocation_target = data.get('invocation_target') if isinstance(data.get('invocation_target'), dict) else None
             extra_metadata = {}
+            if input_check.metadata:
+                extra_metadata[CHECK_METADATA] = input_check.metadata
             if invocation_target:
                 extra_metadata['ai_invocation_target'] = invocation_target
+            prompt_selection = build_prompt_selection_metadata(data.get('prompt_info'), message_content)
+            if prompt_selection:
+                extra_metadata['prompt_selection'] = prompt_selection
 
             m365_resume_id = str(data.get('m365_request_id') or '').strip()
             if m365_resume_id:
@@ -1656,6 +2875,7 @@ def register_route_backend_collaboration(bp):
             )
 
             session_snapshot = dict(session)
+            content_check_context = request.environ.get(CHECK_CONTEXT_KEY)
             source_owner_user = normalize_collaboration_user({
                 'user_id': updated_conversation_doc.get('created_by_user_id'),
                 'display_name': updated_conversation_doc.get('created_by_display_name'),
@@ -1668,6 +2888,16 @@ def register_route_backend_collaboration(bp):
             stream_request_payload['m365_collaboration_message_id'] = user_message_doc['id']
             pending_cards = {}
             pending_request_id = None
+            target_name, target_type = _describe_collaboration_ai_target(
+                invocation_target, data.get('agent_info'),
+            )
+            ai_activity = CollaborationAiActivity(
+                conversation_id,
+                target_name,
+                target_type,
+                requested_by=current_user,
+                request_message_id=serialized_user_message.get('id'),
+            )
 
             def collaboration_stream_error(error_message, **extra_fields):
                 """Serialize a stream error that stays attributed to this shared conversation.
@@ -1689,6 +2919,7 @@ def register_route_backend_collaboration(bp):
                 )
 
             def generate_stream():
+                ai_activity.started()
                 try:
                     yield build_user_message_persisted_stream_event(
                         conversation_id,
@@ -1709,6 +2940,8 @@ def register_route_backend_collaboration(bp):
 
                     buffer = ''
                     with current_app.test_request_context('/api/chat/stream', method='POST', json=stream_request_payload):
+                        if content_check_context is not None:
+                            request.environ[CHECK_CONTEXT_KEY] = content_check_context
                         session.clear()
                         session.update(session_snapshot)
                         internal_response = current_app.make_response(internal_stream_view())
@@ -1744,6 +2977,26 @@ def register_route_backend_collaboration(bp):
                                 stream_payload = json.loads(json_text)
                             except json.JSONDecodeError:
                                 return normalized_event_block + '\n\n'
+
+                            credential_event = stream_payload.get('type') == 'action_credentials_required' or any(
+                                line.strip() == 'event: action_credentials_required'
+                                for line in normalized_event_block.split('\n')
+                            )
+                            if credential_event:
+                                # This response belongs only to its requesting actor.
+                                # Never publish a credential DTO to the shared event registry.
+                                from functions_action_credentials import authorize_request, safe_request
+
+                                pending = stream_payload.get('credential_request') or {}
+                                item, manifest = authorize_request(current_user['user_id'], pending.get('id'))
+                                if (
+                                    item['conversation_id'] != source_conversation_id
+                                    or item['continuation'].get('collaboration_message_id') != user_message_doc['id']
+                                ):
+                                    return collaboration_stream_error('This action sign-in request is no longer available.')
+                                return f'data: {json.dumps({"type": "action_credentials_required", "credential_request": safe_request(item, manifest)})}\n\n'
+
+                            ai_activity.step(describe_ai_activity_step(stream_payload))
 
                             if stream_payload.get('type') == 'm365_pending_action' or 'm365_pending_actions' in stream_payload:
                                 stream_payload = _hydrate_collaboration_stream_actions(
@@ -1805,6 +3058,7 @@ def register_route_backend_collaboration(bp):
 
                             source_message_id = str(stream_payload.get('message_id') or '').strip()
                             if stream_payload.get('cancelled') or stream_payload.get('canceled'):
+                                ai_activity.status = 'cancelled'
                                 if not source_message_id:
                                     transformed_payload = {
                                         **stream_payload,
@@ -1894,6 +3148,8 @@ def register_route_backend_collaboration(bp):
                                     },
                                 ),
                             )
+                            if ai_activity.status != 'cancelled':
+                                ai_activity.status = 'completed'
                             serialized_assistant_message = hydrate_m365_pending_action_cards(
                                 [serialized_assistant_message], current_user['user_id'], conversation_id,
                             )[0]
@@ -1918,6 +3174,7 @@ def register_route_backend_collaboration(bp):
                                 'cited_hybrid_citations': serialized_assistant_message.get('cited_hybrid_citations', []),
                                 'cited_web_search_citations': serialized_assistant_message.get('cited_web_search_citations', []),
                                 'agent_citations': serialized_assistant_message.get('agent_citations', []),
+                                'm365_citations': serialized_assistant_message.get('m365_citations', []),
                                 'agent_display_name': serialized_assistant_message.get('agent_display_name'),
                                 'agent_name': serialized_assistant_message.get('agent_name'),
                                 'full_content': serialized_assistant_message.get('content') if serialized_assistant_message.get('role') != 'image' else stream_payload.get('full_content', ''),
@@ -1953,6 +3210,10 @@ def register_route_backend_collaboration(bp):
                         exceptionTraceback=True,
                     )
                     yield collaboration_stream_error('Failed to stream collaborative AI response')
+                finally:
+                    # Also reached when the requester disconnects: nothing more will arrive
+                    # through this request, so its activity line must not outlive it.
+                    ai_activity.finished()
 
             return Response(stream_with_context(generate_stream()), mimetype='text/event-stream')
         except CosmosResourceNotFoundError:

@@ -2,8 +2,9 @@
 #!/usr/bin/env python3
 """
 Functional test for core service key deployment path and OpenAI endpoint-only fallback.
-Version: 0.240.005
+Version: 0.261.405
 Implemented in: 0.240.005
+Optional Web IQ supplied-secret exception added in: 0.261.405
 
 This test ensures that core service key authentication is populated directly from
 Azure resources during deployment and that reused OpenAI-compatible endpoints fall
@@ -57,7 +58,6 @@ def test_postconfig_uses_direct_core_key_retrieval():
         'get_secret("search-service-key")',
         'get_secret("document-intelligence-key")',
         'get_secret("speech-service-key")',
-        "SecretClient",
     ]
 
     for snippet in required_snippets:
@@ -70,6 +70,8 @@ def test_postconfig_uses_direct_core_key_retrieval():
             print(f"❌ Found forbidden Key Vault dependency in postconfig: {snippet}")
             return False
 
+    # Portal-issued Web IQ credentials use Key Vault; core Azure keys still use direct retrieval.
+    assert "configure_optional_settings(" in content
     print("✅ Postconfig retrieves core keys directly from Azure resources")
     return True
 

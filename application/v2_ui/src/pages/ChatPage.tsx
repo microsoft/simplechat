@@ -1,0 +1,554 @@
+// ChatPage.tsx
+// Chat surface: header, message thread, composer, and the right-hand drawer.
+
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { clsx } from 'clsx';
+import {
+    Files,
+    Info,
+    ListOrdered,
+    ListTree,
+    Maximize2,
+    Minimize2,
+    MessageSquarePlus,
+    MoreHorizontal,
+    Users,
+} from 'lucide-react';
+import { useChatStore, type DrawerMode } from '../stores/chatStore';
+import { useCollaborationStore } from '../stores/collaborationStore';
+import { useBootstrapStore } from '../stores/bootstrapStore';
+import {
+    useConversationGeneratedDocuments,
+    useConversationGeneratedFiles,
+} from '../stores/generatedDocumentsStore';
+import { useUiStore } from '../stores/uiStore';
+import { useImageProposalStore } from '../stores/imageProposalStore';
+import { chatPendingActionsStore } from '../stores/m365PendingActionsStore';
+import {
+    selectActiveTurn,
+    selectPlan,
+    useOrchestrationStore,
+} from '../stores/orchestrationStore';
+import { enabledSteps, isPlanAwaitingApproval } from '../lib/orchestrationPlan';
+import { countConversationDocuments } from '../lib/conversationGeneratedFiles';
+import { resumeOrchestrationForConversation } from '../lib/orchestrationResume';
+import {
+    hasWorkflowResultLaunch,
+    readConversationParam,
+    readPendingActionFocus,
+    readWorkflowResultLaunch,
+    syncedConversationParams,
+} from '../lib/conversationUrl';
+import { WORKFLOW_RESULT_INVALID_LINK_MESSAGE } from '../lib/workflowResults';
+import { MessageList } from '../components/chat/MessageList';
+import { Composer } from '../components/chat/Composer';
+import { MobileNavigation } from '../components/layout/MobileNavigation';
+import { ConversationDrawer } from '../components/chat/ConversationDrawer';
+import { OrchestrationPlanEditorHost } from '../components/chat/OrchestrationPlanEditor';
+import { ConversationDetails } from '../components/chat/ConversationDetails';
+import { ConversationBadges } from '../components/chat/ConversationBadges';
+import { ParticipantsPanel } from '../components/chat/ParticipantsPanel';
+import { InviteBanner } from '../components/chat/InviteBanner';
+import { FileApprovals } from '../components/chat/FileApprovals';
+import { useTourLauncher } from '../components/tour/TourLauncher';
+import { ActionPopover } from '../components/ui/ActionPopover';
+import { HeaderActionControl } from '../components/layout/HeaderActions';
+import { useMobileViewport } from '../lib/useMobileViewport';
+import { panelTargetForConversation, canShareConversation } from '../lib/sharing';
+import {
+    readWorkspaceAgentLaunch, workspaceAgentForLaunch, workspaceAgentLaunchUnavailableMessage,
+} from '../lib/workspaceAgentLaunch';
+import { agentSelectionKey } from '../lib/agents';
+import { toast } from '../stores/toastStore';
+import type { BootstrapPayload } from '../lib/types';
+import { readPublicWorkspaceSelection } from '../lib/publicChatScope';
+
+/**
+ * Keep the address bar and the open conversation describing each other.
+ *
+ * The two directions are not symmetrical, and that asymmetry is the whole design. The URL
+ * is read exactly once, when the page first renders, and written on every change of the
+ * open conversation after that. Reading continuously would fight the writing.
+ *
+ * The incoming id is captured in a lazy `useState` initialiser rather than inside an effect
+ * because effect order would otherwise decide the outcome: the effect that writes the URL
+ * also runs on mount, and with nothing open yet it would strip the parameter before the
+ * effect that reads it ever ran. A lazy initialiser runs during the first render, before
+ * any effect, so the link cannot be lost that way.
+ */
+function useConversationUrlSync() {
+    const [searchParams, setSearchParams] = useSearchParams();
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const openLinkedConversation = useChatStore((state) => state.openLinkedConversation);
+
+    const [linkedConversationId] = useState(() => readConversationParam(searchParams));
+    const [hasPublicLaunch] = useState(() => searchParams.has('public_workspace_selection'));
+    const [publicLaunch] = useState(() => readPublicWorkspaceSelection(searchParams.get('public_workspace_selection')));
+    const [publicLaunchHandled, setPublicLaunchHandled] = useState(!hasPublicLaunch);
+    const publicLaunchConsumed = useRef(false);
+    const [agentLaunch] = useState(() => readWorkspaceAgentLaunch(searchParams));
+    const [hasAgentRequest] = useState(() => !readConversationParam(searchParams) && searchParams.has('agent_id'));
+    const [agentLaunchHandled, setAgentLaunchHandled] = useState(!hasAgentRequest);
+    const [launchAgentSelection, setLaunchAgentSelection] = useState<string>();
+    const agentLinkConsumed = useRef(false);
+    const agentLaunchRequest = useRef<Promise<BootstrapPayload> | null>(null);
+    // Ask in chat (phase 6a): a new chat asking about one finished workflow run. Captured
+    // during the first render like the others, and handled once.
+    const [resultLaunch] = useState(() => readWorkflowResultLaunch(searchParams));
+    const [hasResultRequest] = useState(() => hasWorkflowResultLaunch(searchParams));
+    const [resultLaunchHandled, setResultLaunchHandled] = useState(!hasResultRequest);
+    const resultLinkConsumed = useRef(false);
+    // Two flags with two jobs. The ref makes opening the link happen exactly once: React's
+    // StrictMode runs effects twice on mount, and a state flag is still false in the second
+    // invocation's closure, so it would open the conversation — and refetch its messages —
+    // twice. The state flag is what the write effect waits on, and has to be state because
+    // that effect must re-run once the link has been dealt with.
+    const linkConsumed = useRef(false);
+    const [linkHandled, setLinkHandled] = useState(!linkedConversationId);
+    // A Microsoft 365 notice names the saved action to bring into view. Like the conversation
+    // id it is captured during the first render and asked for once; the store holds the request
+    // across the conversation opening, and the thread acts on it once the card is on screen.
+    const [pendingActionFocus] = useState(() => readPendingActionFocus(searchParams));
+    const pendingActionRequested = useRef(false);
+
+    useEffect(() => {
+        if (!hasPublicLaunch || publicLaunchConsumed.current) return;
+        publicLaunchConsumed.current = true;
+        if (!publicLaunch || linkedConversationId || hasAgentRequest || hasResultRequest) {
+            toast.error('That public chat link is not valid.');
+        } else if (!useBootstrapStore.getState().data?.features?.enable_public_workspaces) {
+            toast.error('Public workspaces are currently disabled.');
+        } else {
+            useChatStore.getState().startNewConversation();
+            useChatStore.getState().setPublicWorkspaceSelection(publicLaunch);
+        }
+        setSearchParams((current) => {
+            const next = new URLSearchParams(current);
+            next.delete('public_workspace_selection');
+            return next;
+        }, { replace: true });
+        setPublicLaunchHandled(true);
+    }, [hasPublicLaunch, publicLaunch, linkedConversationId, hasAgentRequest, hasResultRequest, setSearchParams]);
+
+    useEffect(() => {
+        if (pendingActionRequested.current || !pendingActionFocus || !linkedConversationId) {
+            return;
+        }
+        pendingActionRequested.current = true;
+        chatPendingActionsStore.getState().requestFocus(pendingActionFocus, linkedConversationId);
+    }, [pendingActionFocus, linkedConversationId]);
+
+    useEffect(() => {
+        if (linkConsumed.current || !linkedConversationId) {
+            return;
+        }
+        linkConsumed.current = true;
+
+        // Read from the store rather than the subscribed value: leaving the chat page and
+        // coming back re-runs this with a conversation already open, and re-opening it
+        // would throw away a running stream for no reason.
+        if (linkedConversationId === useChatStore.getState().activeConversationId) {
+            setLinkHandled(true);
+            return;
+        }
+
+        // Released only once the open has settled, either way. Releasing it up front would
+        // let the write effect run during the moment before the conversation is open, see
+        // nothing open, and strip the very parameter that named it.
+        void openLinkedConversation(linkedConversationId).finally(() => setLinkHandled(true));
+    }, [linkedConversationId, openLinkedConversation]);
+
+    useEffect(() => {
+        if (!hasAgentRequest || agentLinkConsumed.current) return;
+        if (!agentLaunch) {
+            agentLinkConsumed.current = true;
+            toast.error('That agent link is not valid.');
+            setAgentLaunchHandled(true);
+            return;
+        }
+        let active = true;
+        // Both StrictMode setups observe one request, but only the active setup can launch.
+        agentLaunchRequest.current ??= useBootstrapStore.getState().refreshRequired();
+        void agentLaunchRequest.current.then((fresh) => {
+            if (!active || agentLinkConsumed.current) return;
+            agentLinkConsumed.current = true;
+            const agent = workspaceAgentForLaunch(fresh.catalogs?.agents, agentLaunch);
+            if (!agent) {
+                toast.error(workspaceAgentLaunchUnavailableMessage(agentLaunch, fresh.scope?.groups, fresh.catalogs?.agents));
+            } else {
+                useChatStore.getState().startNewConversation();
+                setLaunchAgentSelection(agentSelectionKey(agent));
+            }
+            setAgentLaunchHandled(true);
+        }, () => {
+            if (!active || agentLinkConsumed.current) return;
+            agentLinkConsumed.current = true;
+            toast.error('Could not refresh available agents. Try again.');
+            setAgentLaunchHandled(true);
+        });
+        return () => { active = false; };
+    }, [hasAgentRequest, agentLaunch]);
+
+    useEffect(() => {
+        if (!hasResultRequest || resultLinkConsumed.current) return;
+        resultLinkConsumed.current = true;
+        if (!resultLaunch) {
+            toast.error(WORKFLOW_RESULT_INVALID_LINK_MESSAGE);
+        } else {
+            // Starts the new chat synchronously, then reads the run; the store reports a run
+            // that cannot be asked about, and drops the launch if the reader moves on first.
+            void useChatStore.getState().launchWorkflowResult(resultLaunch.workflow_id, resultLaunch.run_id);
+        }
+        // Released after the new chat is open, so the write effect strips the link rather
+        // than writing back the conversation that was open before it.
+        setResultLaunchHandled(true);
+    }, [hasResultRequest, resultLaunch]);
+
+    useEffect(() => {
+        // Held back until the link has been consumed, so the parameter survives long enough
+        // to be read.
+        if (!linkHandled || !agentLaunchHandled || !resultLaunchHandled || !publicLaunchHandled) {
+            return;
+        }
+
+        const next = syncedConversationParams(searchParams, activeConversationId);
+        if (!next) {
+            return;
+        }
+
+        // `replace` rather than a new entry, matching the classic interface's
+        // `history.replaceState`: the address bar should describe what is open, not turn the
+        // back button into a list of every conversation visited.
+        setSearchParams(next, { replace: true });
+    }, [activeConversationId, linkHandled, agentLaunchHandled, resultLaunchHandled, publicLaunchHandled, searchParams, setSearchParams]);
+
+    return { launchAgentSelection, agentLaunchPending: !agentLaunchHandled };
+}
+
+function ChatHeader({ onOpenDetails }: { onOpenDetails: () => void }) {
+    const [actionsOpen, setActionsOpen] = useState(false);
+    const mobile = useMobileViewport();
+    const actionsTrigger = useRef<HTMLButtonElement>(null);
+    const tour = useTourLauncher('chat');
+    const closeActions = useCallback((returnFocus: boolean) => {
+        setActionsOpen(false);
+        if (returnFocus) actionsTrigger.current?.focus();
+    }, []);
+    const { activeConversationId, conversations, drawerMode, setDrawerMode, metadata } =
+        useChatStore();
+    useEffect(() => setActionsOpen(false), [activeConversationId, mobile]);
+    const contentsEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_conversation_contents_drawer),
+    );
+    const collaborationEnabled = useBootstrapStore((state) =>
+        Boolean(state.data?.features?.enable_collaborative_conversations),
+    );
+    const openPanel = useCollaborationStore((state) => state.openPanel);
+    // Guarded on the id: the participants panel keeps its own slot, but this badge describes
+    // the conversation on screen and must not count another one's people.
+    const participantCount = useCollaborationStore((state) =>
+        state.conversation?.id === activeConversationId
+            ? (state.conversation?.participants?.length ?? 0)
+            : 0,
+    );
+    const chatWidth = useUiStore((state) => state.chatWidth);
+    const toggleChatWidth = useUiStore((state) => state.toggleChatWidth);
+
+    // The Plan toggle only exists when orchestration is switched on for this deployment, so a
+    // build that never plans keeps the same header it always had.
+    const orchestrationEnabled = useBootstrapStore((state) =>
+        Boolean(
+            state.data?.features?.enable_chat_orchestration &&
+                state.data?.orchestration?.enabled,
+        ),
+    );
+    // Keyed on the active turn so the badge describes the plan for the conversation on screen and
+    // not a plan left running in another one. selectActiveTurn/selectPlan both return stable refs,
+    // so subscribing to them directly does not trip zustand's re-render guard.
+    const activeTurnId = useOrchestrationStore((state) =>
+        activeConversationId ? selectActiveTurn(state, activeConversationId) : null,
+    );
+    const activePlan = useOrchestrationStore((state) =>
+        activeConversationId && activeTurnId
+            ? selectPlan(state, activeConversationId, activeTurnId)
+            : null,
+    );
+    const planRunning = useOrchestrationStore((state) =>
+        activeConversationId && activeTurnId
+            ? Object.values(state.inFlight).some(
+                  (run) =>
+                      run.conversationId === activeConversationId &&
+                      run.turnId === activeTurnId,
+              )
+            : false,
+    );
+    const planStepCount = activePlan ? enabledSteps(activePlan).length : 0;
+    const planAwaiting = activePlan ? isPlanAwaitingApproval(activePlan) : false;
+
+    const active = conversations.find(
+        (conversation) => conversation.id === activeConversationId,
+    );
+
+    // Metadata is preferred over the rail row because a conversation opened from a link may
+    // have no row yet, and the metadata response is what actually describes what it is.
+    const shareSource = metadata ?? active;
+    const shareable = collaborationEnabled && canShareConversation(shareSource);
+
+    // Counted from what has loaded so the badge stays honest: it shows nothing rather than a guess
+    // until the document list, or a reply that produced a file, has arrived. Generated files and
+    // documents agents created count alongside the documents answers used, each once.
+    const generatedFiles = useConversationGeneratedFiles();
+    const { documents: generatedDocuments } = useConversationGeneratedDocuments();
+    const documentCount = useMemo(
+        () => countConversationDocuments(metadata, generatedFiles, generatedDocuments),
+        [metadata, generatedFiles, generatedDocuments],
+    );
+
+    const toggle = (mode: Exclude<DrawerMode, null>) =>
+        setDrawerMode(drawerMode === mode ? null : mode);
+
+    return (
+        <header
+            data-tour="chat-header"
+            className="chat-header glass glass-edge relative flex min-h-14 shrink-0 items-center gap-2 rounded-none border-t-0 border-r-0 px-2 md:flex-wrap md:gap-3 md:px-5"
+        >
+            <MobileNavigation />
+            <h1 className="min-w-0 flex-1 truncate text-[15px] font-semibold text-text-1">
+                {active?.title || 'New chat'}
+            </h1>
+            {/* Derived from this conversation's own metadata. Reading the user's active
+                group here instead made every conversation show the same badge. */}
+            <ConversationBadges metadata={metadata} className="min-w-0 max-md:max-w-[20%] max-md:overflow-hidden" />
+            <button type="button" aria-label="Start a new chat"
+                onClick={() => useChatStore.getState().startNewConversation()}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-2 hover:bg-surface-2 md:hidden">
+                <MessageSquarePlus size={18} />
+            </button>
+            {activeConversationId && <button ref={actionsTrigger} type="button" aria-label="Conversation actions"
+                aria-expanded={actionsOpen} aria-controls="mobile-conversation-actions"
+                onClick={() => setActionsOpen((open) => !open)}
+                className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg text-text-2 hover:bg-surface-2 md:hidden">
+                <MoreHorizontal size={20} />
+            </button>}
+
+            {activeConversationId && (!mobile || actionsOpen) && (
+                <ActionPopover id="mobile-conversation-actions" label="Conversation actions"
+                    anchorRef={actionsTrigger} onClose={closeActions} inline={!mobile}>
+                <div onClick={(event) => {
+                    if (mobile && event.target instanceof Element && event.target.closest('button')) {
+                        closeActions(true);
+                    }
+                }} className={clsx('chat-header-actions ml-auto flex items-center gap-1', mobile && 'flex-wrap')}>
+                    {shareable && (
+                        <button
+                            type="button"
+                            onClick={() =>
+                                openPanel(
+                                    panelTargetForConversation(activeConversationId, shareSource),
+                                )
+                            }
+                            title={
+                                participantCount > 0
+                                    ? 'View and manage the people in this conversation'
+                                    : 'Share this conversation with other people'
+                            }
+                            aria-label="People in this conversation"
+                            className="relative rounded-lg p-2 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                        >
+                            <Users size={17} />
+                            {participantCount > 0 && (
+                                <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-on-accent">
+                                    {participantCount}
+                                </span>
+                            )}
+                        </button>
+                    )}
+
+                    <button
+                        type="button"
+                        onClick={toggleChatWidth}
+                        aria-pressed={chatWidth === 'wide'}
+                        title={
+                            chatWidth === 'wide'
+                                ? 'Use a narrower reading width'
+                                : 'Use the full width of the pane'
+                        }
+                        aria-label="Toggle chat width"
+                        className={clsx(
+                            'hidden rounded-lg p-2 transition-colors md:inline-flex',
+                            chatWidth === 'wide'
+                                ? 'bg-accent-soft text-accent'
+                                : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        {chatWidth === 'wide' ? (
+                            <Minimize2 size={17} />
+                        ) : (
+                            <Maximize2 size={17} />
+                        )}
+                    </button>
+
+                    <button
+                        type="button"
+                        onClick={onOpenDetails}
+                        title="View conversation details"
+                        aria-label="View conversation details"
+                        className="rounded-lg p-2 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <Info size={17} />
+                    </button>
+
+                    {contentsEnabled && (
+                        <button
+                            type="button"
+                            onClick={() => toggle('contents')}
+                            aria-pressed={drawerMode === 'contents'}
+                            title="Open conversation contents"
+                            aria-label="Open conversation contents"
+                            className={clsx(
+                                'rounded-lg p-2 transition-colors',
+                                drawerMode === 'contents'
+                                    ? 'bg-accent-soft text-accent'
+                                    : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
+                            )}
+                        >
+                            <ListOrdered size={17} />
+                        </button>
+                    )}
+
+                    <button
+                        type="button"
+                        onClick={() => toggle('documents')}
+                        aria-pressed={drawerMode === 'documents'}
+                        title="Open used documents"
+                        aria-label="Open used documents"
+                        className={clsx(
+                            'relative rounded-lg p-2 transition-colors',
+                            drawerMode === 'documents'
+                                ? 'bg-accent-soft text-accent'
+                                : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        <Files size={17} />
+                        {documentCount ? (
+                            <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-on-accent">
+                                {documentCount}
+                            </span>
+                        ) : null}
+                    </button>
+
+                    {orchestrationEnabled && (
+                        <button
+                            type="button"
+                            onClick={() => toggle('plan')}
+                            aria-pressed={drawerMode === 'plan'}
+                            title="Open orchestration plan"
+                            aria-label="Open orchestration plan"
+                            className={clsx(
+                                'relative rounded-lg p-2 transition-colors',
+                                drawerMode === 'plan'
+                                    ? 'bg-accent-soft text-accent'
+                                    : 'text-text-3 hover:bg-surface-2 hover:text-text-1',
+                            )}
+                        >
+                            <ListTree size={17} />
+                            {/* A running plan shows how many steps it is working through; a plan
+                                that has stopped to ask for approval shows only a dot, because the
+                                count is not the point when the point is "look at me". */}
+                            {planRunning && planStepCount ? (
+                                <span className="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] font-semibold text-on-accent">
+                                    {planStepCount}
+                                </span>
+                            ) : planAwaiting ? (
+                                <span
+                                    className="absolute -top-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-warn"
+                                    aria-hidden="true"
+                                />
+                            ) : null}
+                        </button>
+                    )}
+                    {tour.action && <HeaderActionControl action={tour.action} inPopover={mobile} />}
+                </div>
+                </ActionPopover>
+            )}
+
+            {/* Pushed right on its own when there is no conversation and so no tool row. */}
+            {!activeConversationId && tour.action && <div className="ml-auto"><HeaderActionControl action={tour.action} /></div>}
+            {tour.dialog}
+        </header>
+    );
+}
+
+export function ChatPage() {
+    const [detailsOpen, setDetailsOpen] = useState(false);
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const messages = useChatStore((state) => state.messages);
+    const messagesLoading = useChatStore((state) => state.messagesLoading);
+    const setVisibleConversation = useImageProposalStore(
+        (state) => state.setVisibleConversation,
+    );
+    const setOrchestrationVisible = useOrchestrationStore(
+        (state) => state.setVisibleConversation,
+    );
+
+    const { launchAgentSelection, agentLaunchPending } = useConversationUrlSync();
+
+    // Image approvals keep running after the reader goes elsewhere, and are reported by a
+    // notice when they do. Only this page knows whether their cards are actually on screen:
+    // the open conversation stays open while the reader is in My Workspace, where the cards
+    // are as invisible as they are in another conversation.
+    useEffect(() => {
+        setVisibleConversation(activeConversationId);
+        return () => setVisibleConversation(null);
+    }, [activeConversationId, setVisibleConversation]);
+
+    // The orchestration controller's auto-open rule only fires for the conversation actually on
+    // screen, so it needs the same signal. Without this the guard `visibleConversationId ===
+    // conversationId` never holds and a manual-mode plan never opens its drawer for the reader.
+    useEffect(() => {
+        setOrchestrationVisible(activeConversationId);
+        return () => setOrchestrationVisible(null);
+    }, [activeConversationId, setOrchestrationVisible]);
+
+    // Read the conversation's stored runs once it is genuinely on screen.
+    //
+    // Waits for the thread because both things this does need it: the plan drawer's history is
+    // only worth having next to the messages it describes, and deciding whether an unanswered plan
+    // is still unanswered means looking at what follows its question. Runs itself once per
+    // conversation, so the dependency on `messages` costs nothing after the first pass.
+    //
+    // Declared above the pending-launch return below, because a hook that runs only on some
+    // renders is not a hook.
+    useEffect(() => {
+        if (!activeConversationId || messagesLoading) {
+            return;
+        }
+        void resumeOrchestrationForConversation(activeConversationId);
+    }, [activeConversationId, messagesLoading, messages]);
+
+    if (agentLaunchPending) {
+        return <div role="status" className="flex flex-1 items-center justify-center text-sm text-text-3">Opening agent chat...</div>;
+    }
+
+    return (
+        <div className="relative flex min-h-0 min-w-0 flex-1">
+            <div className="flex min-w-0 flex-1 flex-col">
+                <ChatHeader onOpenDetails={() => setDetailsOpen(true)} />
+                <FileApprovals />
+                <InviteBanner />
+                <MessageList />
+                <Composer initialAgentSelection={launchAgentSelection} />
+            </div>
+            <ConversationDrawer />
+            <OrchestrationPlanEditorHost />
+            {/* Gated on there being a conversation as well as on the panel being open, so
+                starting a new chat cannot leave a details panel describing the conversation
+                just left. The button that opened it is drawn from the same condition. */}
+            {detailsOpen && activeConversationId && (
+                <ConversationDetails onClose={() => setDetailsOpen(false)} />
+            )}
+            <ParticipantsPanel />
+        </div>
+    );
+}

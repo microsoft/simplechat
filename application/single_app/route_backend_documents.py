@@ -1,17 +1,33 @@
 # route_backend_documents.py
 
+from content_screening.access import (
+    assert_blob_available,
+    assert_document_available,
+    assert_document_chunks_available,
+    assert_evidence_available,
+    get_available_blob_reference,
+    read_available_document_bytes,
+    register_document_api_guards,
+)
+from content_screening.contracts import SCREENING_FIELD, ScreeningError
 from config import *
 from functions_authentication import *
 from functions_documents import *
+from content_screening.service import prepare_document_upload
+from functions_appinsights import log_event
 from functions_settings import *
 from functions_group import get_user_groups
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_public_workspaces import get_public_source_workspace_ids
 from functions_file_sync import (
     FILE_SYNC_SCOPE_PERSONAL,
     apply_synced_document_delete_action,
     build_synced_document_delete_guard,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_orchestration_result_contracts import ResultContractError, ResultRef
+from functions_orchestration_result_runtime import read_native_citation_evidence
+from functions_orchestration_results import ResultUnavailableError
+from functions_workflow_result_store import WorkflowResultIntegrityError
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_PERSONAL,
     is_document_access_shadow_validation_enabled,
@@ -20,10 +36,23 @@ from functions_document_access_index import (
     query_document_access_index_legacy_count,
     query_document_access_index_tag_counts,
 )
+from functions_document_queries import (
+    DOCUMENT_PLACE_FILTERS,
+    DOCUMENT_RECENT_DAYS,
+    build_document_facets,
+    filter_documents_by_place as filter_workspace_documents_by_place,
+)
+from functions_document_provenance import DocumentOriginFilterError, origin_list_filter, summary_requested
 from utils_cache import invalidate_personal_search_cache
 from functions_debug import *
 from functions_activity_logging import log_document_upload, log_document_metadata_update_transaction
+from functions_chat_upload_extraction import build_workspace_upload_file_content
+# Imported explicitly rather than relying on the star imports above: several functions in
+# this module re-import these names locally, which is a sign the star-imported bindings
+# cannot be counted on to be the classes rather than the module.
+from datetime import datetime, timezone
 import io
+import logging
 import os
 import requests
 from flask import current_app
@@ -40,6 +69,40 @@ def _extract_citation_document_id(chunk, citation_id):
         return citation_id.rsplit('_', 1)[0]
 
     return citation_id
+
+
+def _workspace_upload_file_content_response(message_item, linked_document, user_id, file_id):
+    """Return what ingestion extracted for the workspace document behind a chat upload."""
+    try:
+        linked_chunks = get_ordered_document_chunks(
+            linked_document['id'],
+            user_id=user_id,
+            group_id=linked_document.get('group_id'),
+            public_workspace_id=linked_document.get('public_workspace_id'),
+        )
+    except ScreeningError as screening_error:
+        return jsonify({
+            'error': screening_error.public_message,
+            'error_code': screening_error.code,
+        }), screening_error.status_code
+    except (LookupError, PermissionError):
+        return jsonify({'error': 'File not found in conversation'}), 404
+    except Exception as chunk_error:
+        log_event(
+            "[GET_FILE_CONTENT] Failed to read the indexed content of a workspace-backed upload.",
+            extra={
+                'file_id': file_id,
+                'document_id': linked_document.get('id'),
+                'error_type': type(chunk_error).__name__,
+            },
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+        return jsonify({'error': 'Unable to load the extracted content for this file.'}), 500
+
+    filename = linked_document.get('file_name') or message_item.get('filename') or 'Untitled'
+    payload, status_code = build_workspace_upload_file_content(filename, linked_document, linked_chunks)
+    return jsonify(payload), status_code
 
 
 def _normalize_citation_lookup_value(value):
@@ -168,6 +231,15 @@ def _create_personal_document_share_decision_notification(document_item, target_
             'decision': normalized_decision,
         },
     )
+
+
+def _document_search_acl_error_response(error):
+    """Return the safe response for a sharing change the search index could not apply."""
+    message, status_code, retry_after_seconds = describe_document_search_acl_error(error)
+    response = jsonify({'error': message})
+    if retry_after_seconds:
+        response.headers['Retry-After'] = str(retry_after_seconds)
+    return response, status_code
 
 
 def _escape_citation_odata_literal(value):
@@ -334,7 +406,7 @@ def _find_accessible_citation_document(user_id, document_id, scope_name):
             return None
 
         try:
-            workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
+            workspace_ids = get_public_source_workspace_ids(user_id)
         except Exception:
             return None
 
@@ -354,7 +426,111 @@ def _find_accessible_citation_document(user_id, document_id, scope_name):
 
     return None
 
+
+def _load_personal_document_for_delete(user_id, document_id):
+    """Fetch a document the caller may delete, or None when there is no such document."""
+    try:
+        return get_document_record(user_id=user_id, document_id=document_id)
+    except Exception:
+        return None
+
+
+def _personal_document_delete_guard(
+    document_record,
+    document_id,
+    user_id,
+    *,
+    conversation_linked_delete_confirmed=False,
+    file_sync_delete_action=None,
+):
+    """Return the payload that blocks deleting this document, or None to proceed.
+
+    Shared by the single and the bulk delete routes so the two cannot drift. A guard added
+    to one of them alone would otherwise turn the other into a way around it, which matters
+    here because both guards exist to stop a delete that silently damages something else:
+    a conversation that still cites the document, or a file sync pairing that would simply
+    re-create it.
+    """
+    if (
+        document_record.get('created_from_chat_upload')
+        and document_record.get('conversation_id')
+        and not conversation_linked_delete_confirmed
+    ):
+        conversation_id = document_record.get('conversation_id')
+        conversation_url = (
+            document_record.get('conversation_url')
+            or f'/chats?conversation_id={conversation_id}'
+        )
+        return {
+            'error': 'conversation_linked_document_delete_requires_confirmation',
+            'message': 'This document was uploaded through chat and is part of a conversation.',
+            'conversation': {
+                'id': conversation_id,
+                'title': document_record.get('conversation_title_at_upload') or 'Conversation',
+                'url': conversation_url,
+            },
+            'document': {
+                'id': document_id,
+                'file_name': document_record.get('file_name'),
+            },
+        }
+
+    return build_synced_document_delete_guard(
+        FILE_SYNC_SCOPE_PERSONAL,
+        document_id,
+        user_id,
+        requested_action=file_sync_delete_action,
+    ) or None
+
+
+def _load_accessible_personal_documents(user_id):
+    """Every current-revision document the user can see, with no list filters applied.
+
+    Takes the same two paths as the list route: the document access index when it is ready,
+    and the source container otherwise. Kept filter-free on purpose -- the counts built from
+    this describe the whole workspace, so the navigation rail reads as a table of contents
+    instead of shifting underneath the user as they filter.
+    """
+    index_read_result = query_document_access_index_documents(
+        source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+        user_id=user_id,
+        filters={},
+    )
+    if index_read_result.get('success'):
+        return index_read_result.get('documents', []) or []
+
+    query = """
+        SELECT *
+        FROM c
+        WHERE (c.user_id = @user_id
+            OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+            OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix)))
+    """
+    parameters = [
+        {"name": "@user_id", "value": user_id},
+        {"name": "@user_id_prefix", "value": f"{user_id},"},
+    ]
+    matching_documents = list(
+        cosmos_user_documents_container.query_items(
+            query=query,
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+    )
+    return select_current_documents(matching_documents)
+
+
+def build_personal_document_facets(documents, user_id, recent_days=DOCUMENT_RECENT_DAYS):
+    return build_document_facets(documents, user_id, recent_days)
+
+
+def filter_documents_by_place(documents, place, user_id, recent_days=DOCUMENT_RECENT_DAYS):
+    return filter_workspace_documents_by_place(documents, place, user_id, recent_days)
+
+
 def register_route_backend_documents(bp):
+    register_document_api_guards(bp)
+
     @bp.route('/api/get_file_content', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -409,6 +585,36 @@ def register_route_backend_documents(bp):
                 add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File not found in conversation")
                 return jsonify({'error': 'File not found in conversation'}), 404
 
+            assert_evidence_available(items, user_id)
+            linked_document = None
+            if items[0].get("workspace_document_id"):
+                linked_document = assert_document_available(
+                    items[0]["workspace_document_id"], user_id=user_id, purpose="chat_file",
+                )
+                if SCREENING_FIELD in linked_document:
+                    linked_document, linked_container, linked_path = get_available_blob_reference(
+                        linked_document, user_id=user_id, purpose="chat_file",
+                    )
+                    items = [{
+                        **items[0],
+                        "filename": linked_document.get("file_name"),
+                        "file_content_source": "blob",
+                        "blob_container": linked_container,
+                        "blob_path": linked_path,
+                    }]
+
+            # A workspace-backed upload keeps no text on the chat message; its content is
+            # whatever ingestion indexed for the linked document. Tables keep their own path.
+            if (
+                linked_document is not None
+                and SCREENING_FIELD not in linked_document
+                and not items[0].get('is_table')
+                and not items[0].get('file_content')
+            ):
+                return _workspace_upload_file_content_response(
+                    items[0], linked_document, user_id, file_id,
+                )
+
             debug_print(f"[GET_FILE_CONTENT] Found {len(items)} items for file_id={file_id}")
             debug_print(f"[GET_FILE_CONTENT] First item structure: {json.dumps(items[0], default=str, indent=2)}")
             add_file_task_to_file_processing_log(document_id=file_id, user_id=user_id, content="File found, processing content: " + str(items))
@@ -433,12 +639,13 @@ def register_route_backend_documents(bp):
                     if not blob_service_client:
                         return jsonify({'error': 'Blob storage client not available'}), 500
 
-                    blob_client = blob_service_client.get_blob_client(
-                        container=blob_container,
-                        blob=blob_path
-                    )
-                    stream = blob_client.download_blob()
-                    blob_data = stream.readall()
+                    if linked_document is not None and SCREENING_FIELD in linked_document:
+                        _, blob_data = read_available_document_bytes(linked_document, user_id=user_id, purpose="chat_file")
+                    else:
+                        assert_blob_available(blob_container, blob_path, user_id=user_id)
+                        blob_client = blob_service_client.get_blob_client(container=blob_container, blob=blob_path)
+                        blob_data = blob_client.download_blob().readall()
+                        assert_blob_available(blob_container, blob_path, user_id=user_id)
 
                     # Convert to CSV using pandas for display
                     file_ext = os.path.splitext(filename)[1].lower()
@@ -602,6 +809,12 @@ def register_route_backend_documents(bp):
 
                 # 3) Now run heavy-lifting in a background thread
                 # --- CHANGE: Pass original_filename ---
+                prepare_document_upload(
+                    document_id=parent_document_id,
+                    user_id=user_id,
+                    temp_file_path=temp_file_path,
+                    original_filename=original_filename,
+                )
                 future = current_app.extensions['executor'].submit_stored(
                     parent_document_id, 
                     process_document_upload_background, 
@@ -636,7 +849,13 @@ def register_route_backend_documents(bp):
                     debug_print(f"Activity logging error for document upload: {log_error}")
 
             except Exception as e:
-                upload_errors.append(f"Failed to queue processing for {original_filename}: {e}")
+                log_event(
+                    "[CONTENT_SCREENING] Workspace upload preparation or queueing failed.",
+                    extra={"document_id": parent_document_id, "scope": "personal", "exception_type": type(e).__name__},
+                    level=logging.ERROR,
+                )
+                message = e.public_message if isinstance(e, ScreeningError) else "Unable to prepare or queue this upload."
+                upload_errors.append(f"Upload failed for {original_filename}: {message}")
                 # Clean up temp file if queuing failed after saving
                 if temp_file_path and os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
@@ -680,6 +899,13 @@ def register_route_backend_documents(bp):
         keywords_filter = request.args.get('keywords', default=None, type=str)
         abstract_filter = request.args.get('abstract', default=None, type=str)
         tags_filter = request.args.get('tags', default=None, type=str)  # Comma-separated tags
+        # Which of the workspace's standing views to narrow to. These describe the *state* of
+        # a document rather than its content, so unlike the filters above they cannot be
+        # expressed in the Cosmos query -- processing state and tag emptiness are derived, and
+        # ownership is only known once the caller is compared against each document.
+        place_filter = str(request.args.get('place', default='', type=str) or '').strip().lower()
+        if place_filter not in DOCUMENT_PLACE_FILTERS:
+            place_filter = 'all'
         sort_by = request.args.get('sort_by', default='_ts', type=str)
         sort_order = request.args.get('sort_order', default='desc', type=str)
 
@@ -687,10 +913,10 @@ def register_route_backend_documents(bp):
         if page < 1: page = 1
         if page_size < 1: page_size = 10
 
-        # Validate sort parameters
-        allowed_sort_fields = {'_ts', 'file_name', 'title'}
-        if sort_by not in allowed_sort_fields:
-            sort_by = '_ts'
+        # Validate sort parameters against the shared allow-list, which also decides
+        # whether the field is compared as a number or as text.
+        if sort_by not in ALLOWED_DOCUMENT_SORT_FIELDS:
+            sort_by = DEFAULT_DOCUMENT_SORT_FIELD
         sort_order = sort_order.upper() if sort_order.lower() in ('asc', 'desc') else 'DESC'
         # Limit page size to prevent abuse? (Optional)
         # page_size = min(page_size, 100)
@@ -772,6 +998,16 @@ def register_route_backend_documents(bp):
                     query_params.append({"name": param_name, "value": tag})
                 param_count += len(tags_list)
 
+        # Origin filters (workflow, run, or conversation) are checked against what this user may
+        # open, then appended as parameterized conditions inside the same ownership scope.
+        try:
+            origin_filter = origin_list_filter(user_id, request.args)
+        except DocumentOriginFilterError as filter_error:
+            return jsonify({'error': filter_error.public_message}), filter_error.status_code
+        if origin_filter is not None:
+            query_conditions.extend(origin_filter[0])
+            query_params.extend(origin_filter[1])
+
         # Combine conditions into the WHERE clause
         where_clause = " AND ".join(query_conditions)
         shadow_filters = {
@@ -794,11 +1030,16 @@ def register_route_backend_documents(bp):
                 FROM c
                 WHERE {where_clause}
             """
-            index_read_result = query_document_access_index_documents(
-                source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
-                user_id=user_id,
-                filters=shadow_filters,
-            )
+            # The document access index holds no origin fields, so origin-filtered lists read the
+            # source container directly and skip shadow validation against the unfiltered index.
+            if origin_filter is None:
+                index_read_result = query_document_access_index_documents(
+                    source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                    user_id=user_id,
+                    filters=shadow_filters,
+                )
+            else:
+                index_read_result = {'success': False}
 
             if index_read_result.get('success'):
                 used_document_access_index = True
@@ -840,7 +1081,7 @@ def register_route_backend_documents(bp):
                 matching_docs, source_query_metrics = query_items_with_cosmos_diagnostics(
                     cosmos_user_documents_container,
                     diagnostics_label='source_documents',
-                    collect_diagnostics=is_document_access_shadow_validation_enabled(),
+                    collect_diagnostics=origin_filter is None and is_document_access_shadow_validation_enabled(),
                     query=data_query_str,
                     parameters=query_params,
                     enable_cross_partition_query=True
@@ -851,14 +1092,18 @@ def register_route_backend_documents(bp):
                     sort_by=sort_by,
                     sort_order=sort_order,
                 )
-                validate_document_access_index_shadow(
-                    current_docs,
-                    source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
-                    user_id=user_id,
-                    filters=shadow_filters,
-                    source_query_metrics=source_query_metrics,
-                    context='api_get_user_documents',
-                )
+                if origin_filter is None:
+                    validate_document_access_index_shadow(
+                        current_docs,
+                        source_scope=DOCUMENT_ACCESS_SCOPE_PERSONAL,
+                        user_id=user_id,
+                        filters=shadow_filters,
+                        source_query_metrics=source_query_metrics,
+                        context='api_get_user_documents',
+                    )
+            # Narrow to the requested standing view before counting, so the total the client
+            # paginates against describes the view it is actually looking at.
+            current_docs = filter_documents_by_place(current_docs, place_filter, user_id)
             total_count = len(current_docs)
             docs = current_docs[offset:offset + page_size]
 
@@ -928,7 +1173,11 @@ def register_route_backend_documents(bp):
         if not user_id:
             return jsonify({'error': 'User not authenticated'}), 401
         
-        return get_document(user_id, document_id)
+        return get_document(
+            user_id,
+            document_id,
+            include_origin_summary=summary_requested(request.args),
+        )
 
     @bp.route('/api/documents/<document_id>/versions', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -1144,11 +1393,13 @@ def register_route_backend_documents(bp):
                 response_payload['search_sync'] = update_result['search_sync']
 
             return jsonify(response_payload), 200
+        except exceptions.CosmosResourceNotFoundError:
+            return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
             log_event(
                 '[DOCUMENT_METADATA] Failed to update personal document metadata',
                 {'document_id': document_id, 'error_type': type(e).__name__},
-                debug_only=True,
+                level=logging.ERROR,
             )
             return jsonify({'error': 'Unable to update document metadata'}), 500
 
@@ -1166,43 +1417,20 @@ def register_route_backend_documents(bp):
         if delete_mode not in {'all_versions', 'current_only'}:
             return jsonify({'error': 'Invalid delete mode'}), 400
         conversation_linked_delete_confirmed = request.args.get('conversation_linked_delete_confirmed') == 'true'
-        try:
-            document_record = get_document_record(user_id=user_id, document_id=document_id)
-        except Exception:
-            document_record = None
+        document_record = _load_personal_document_for_delete(user_id, document_id)
         if not document_record:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        if (
-            document_record.get('created_from_chat_upload')
-            and document_record.get('conversation_id')
-            and not conversation_linked_delete_confirmed
-        ):
-            conversation_id = document_record.get('conversation_id')
-            conversation_url = document_record.get('conversation_url') or f'/chats?conversation_id={conversation_id}'
-            return jsonify({
-                'error': 'conversation_linked_document_delete_requires_confirmation',
-                'message': 'This document was uploaded through chat and is part of a conversation.',
-                'conversation': {
-                    'id': conversation_id,
-                    'title': document_record.get('conversation_title_at_upload') or 'Conversation',
-                    'url': conversation_url,
-                },
-                'document': {
-                    'id': document_id,
-                    'file_name': document_record.get('file_name'),
-                },
-            }), 409
-
         file_sync_delete_action = request.args.get('file_sync_delete_action')
-        file_sync_guard = build_synced_document_delete_guard(
-            FILE_SYNC_SCOPE_PERSONAL,
+        delete_guard = _personal_document_delete_guard(
+            document_record,
             document_id,
             user_id,
-            requested_action=file_sync_delete_action,
+            conversation_linked_delete_confirmed=conversation_linked_delete_confirmed,
+            file_sync_delete_action=file_sync_delete_action,
         )
-        if file_sync_guard:
-            return jsonify(file_sync_guard), 409
+        if delete_guard:
+            return jsonify(delete_guard), 409
         
         try:
             apply_synced_document_delete_action(
@@ -1222,6 +1450,145 @@ def register_route_backend_documents(bp):
             }), 200
         except Exception as e:
             return jsonify({'error': f'Error deleting document: {str(e)}'}), 500
+
+    @bp.route('/api/documents/bulk-delete', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_bulk_delete_user_documents():
+        """Delete several documents in one request.
+
+        Request body:
+        {
+            "document_ids": ["doc1", "doc2", ...],
+            "delete_mode": "all_versions" | "current_only",
+            "conversation_linked_delete_confirmed": false,
+            "file_sync_delete_action": null
+        }
+
+        Reports per document instead of failing the batch, because the two delete guards
+        apply to individual documents: one document uploaded through chat would otherwise
+        block the deletion of everything selected alongside it. A guarded document comes back
+        in ``errors`` carrying the same payload the single delete answers 409 with, so the
+        client can ask about exactly those documents and resubmit them with the confirmation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True) or {}
+        document_ids = data.get('document_ids')
+        if not isinstance(document_ids, list) or not document_ids:
+            return jsonify({'error': 'document_ids must be a non-empty array'}), 400
+
+        delete_mode = data.get('delete_mode', 'all_versions')
+        if delete_mode not in {'all_versions', 'current_only'}:
+            return jsonify({'error': 'Invalid delete mode'}), 400
+
+        conversation_linked_delete_confirmed = bool(
+            data.get('conversation_linked_delete_confirmed')
+        )
+        file_sync_delete_action = data.get('file_sync_delete_action')
+
+        deleted = []
+        errors = []
+        seen_document_ids = set()
+
+        for raw_document_id in document_ids:
+            document_id = str(raw_document_id or '').strip()
+            if not document_id or document_id in seen_document_ids:
+                continue
+            seen_document_ids.add(document_id)
+
+            document_record = _load_personal_document_for_delete(user_id, document_id)
+            if not document_record:
+                errors.append({
+                    'document_id': document_id,
+                    'error': 'document_not_found',
+                    'message': 'Document not found or access denied',
+                    'needs_confirmation': False,
+                })
+                continue
+
+            delete_guard = _personal_document_delete_guard(
+                document_record,
+                document_id,
+                user_id,
+                conversation_linked_delete_confirmed=conversation_linked_delete_confirmed,
+                file_sync_delete_action=file_sync_delete_action,
+            )
+            if delete_guard:
+                errors.append({
+                    'document_id': document_id,
+                    'needs_confirmation': True,
+                    **delete_guard,
+                })
+                continue
+
+            try:
+                apply_synced_document_delete_action(
+                    FILE_SYNC_SCOPE_PERSONAL,
+                    document_id,
+                    user_id,
+                    file_sync_delete_action,
+                )
+                delete_result = delete_document_revision(
+                    user_id, document_id, delete_mode=delete_mode
+                )
+                deleted.append({
+                    'document_id': document_id,
+                    **(delete_result or {}),
+                })
+            except Exception as delete_error:
+                errors.append({
+                    'document_id': document_id,
+                    'error': 'document_delete_failed',
+                    'message': str(delete_error),
+                    'needs_confirmation': False,
+                })
+
+        # Once for the batch rather than per document: the cache is keyed by user, so
+        # invalidating it inside the loop would repeat identical work for every document.
+        if deleted:
+            invalidate_personal_search_cache(user_id)
+
+        return jsonify({
+            'message': f'Deleted {len(deleted)} of {len(seen_document_ids)} documents',
+            'deleted': deleted,
+            'errors': errors,
+            'deleted_count': len(deleted),
+            'error_count': len(errors),
+        }), 200
+
+    @bp.route('/api/documents/facets', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_user_workspace")
+    def api_get_user_document_facets():
+        """Counts describing the caller's whole document workspace.
+
+        Deliberately unfiltered. These counts drive a navigation rail, and a rail whose
+        entries re-count themselves against the current filter would collapse to zeroes the
+        moment a user selected anything in it.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            documents = _load_accessible_personal_documents(user_id)
+        except Exception as facet_error:
+            log_event(
+                f"[DOCUMENT_FACETS] Failed to load documents for facets: {facet_error}",
+                extra={'user_id': user_id},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Error building document facets'}), 500
+
+        return jsonify(build_personal_document_facets(documents, user_id)), 200
 
     @bp.route('/api/documents/<document_id>/extract_metadata', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -1402,6 +1769,38 @@ def register_route_backend_documents(bp):
         if not citation_id:
             return jsonify({"error": "Missing citation_id"}), 400
 
+        if data.get("native_evidence") is not None or (
+            isinstance(citation_id, str) and ":native-comments:" in citation_id
+        ):
+            if not data.get("native_evidence") or not document_id or not data.get("conversation_id"):
+                return jsonify({"error": "Retained native citation evidence is unavailable."}), 404
+            try:
+                reference = ResultRef.from_dict(data["native_evidence"])
+                if (
+                    reference.producer.user_id != user_id
+                    or reference.producer.conversation_id != data["conversation_id"]
+                ):
+                    return jsonify({"error": "Unauthorized access to citation"}), 403
+                # Bootstrap depends on initialized config; load only for native citation reads.
+                from functions_orchestration_bootstrap import build_orchestration_services
+
+                services = build_orchestration_services(user_id, data["conversation_id"])
+                response = read_native_citation_evidence(
+                    services.results, reference, citation_id=citation_id, document_id=document_id,
+                )
+                return jsonify(response), 200
+            except ResultContractError:
+                return jsonify({"error": "Invalid native citation reference."}), 400
+            except (WorkflowResultIntegrityError, ResourceNotFoundError):
+                return jsonify({"error": "Retained native citation evidence is unavailable."}), 404
+            except ScreeningError as error:
+                return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+            except (ResultUnavailableError, PermissionError):
+                return jsonify({"error": "The cited workbook or retained evidence is no longer available."}), 403
+            except Exception as error:
+                log_event("[CITATION] Native citation lookup failed.", extra={"error_type": type(error).__name__}, level=logging.WARNING)
+                return jsonify({"error": "Unable to load retained native citation evidence."}), 500
+
         def build_citation_response(chunk):
             return jsonify({
                 "cited_text": chunk.get("chunk_text", ""),
@@ -1426,6 +1825,11 @@ def register_route_backend_documents(bp):
             if not accessible_document:
                 return jsonify({"error": "Unauthorized access to citation"}), 403
 
+            fresh_document = assert_document_available(
+                {"document_id": resolved_document_id, "version": chunk.get("version")},
+                user_id=user_id, purpose="citation",
+            )
+            chunk = assert_document_chunks_available([chunk], fresh_document, user_id=user_id)[0]
             return build_citation_response(chunk)
 
         for scope_name, client_key in (
@@ -1439,10 +1843,13 @@ def register_route_backend_documents(bp):
 
             try:
                 citation_response = get_citation_for_scope(search_client, scope_name)
+            except ScreeningError as error:
+                return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
             except ResourceNotFoundError:
                 continue
             except Exception as e:
-                return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+                log_event("[CITATION] Citation lookup failed.", extra={"error_type": type(e).__name__}, level=logging.WARNING)
+                return jsonify({"error": "Unable to load the cited passage."}), 500
 
             if citation_response:
                 return citation_response
@@ -1612,8 +2019,8 @@ def register_route_backend_documents(bp):
             return jsonify({'error': 'action must be add_tags, remove_tags, or set_tags'}), 400
         
         from functions_documents import (
-            validate_tags, get_document, update_document, 
-            get_or_create_tag_definition
+            validate_tags, get_document, update_document,
+            get_or_create_tag_definition, summarize_document_search_sync
         )
         
         # Validate and normalize tags
@@ -1629,6 +2036,7 @@ def register_route_backend_documents(bp):
             'success': [],
             'errors': []
         }
+        search_syncs = []
         
         try:
             for doc_id in document_ids:
@@ -1687,11 +2095,12 @@ def register_route_backend_documents(bp):
                     debug_print(f"[BULK_TAG] New tags for doc {doc_id}: {new_tags}")
                     
                     # Update document; search chunks and blob tags sync in the background
-                    update_document(
+                    update_result = update_document(
                         document_id=doc_id,
                         user_id=user_id,
                         tags=new_tags
-                    )
+                    ) or {}
+                    search_syncs.append(update_result.get('search_sync'))
                     
                     results['success'].append({
                         'document_id': doc_id,
@@ -1700,24 +2109,31 @@ def register_route_backend_documents(bp):
                     debug_print(f"[BULK_TAG] Successfully updated doc {doc_id}")
                     
                 except Exception as doc_error:
-                    error_msg = str(doc_error)
-                    debug_print(f"[BULK_TAG] Exception for doc {doc_id}: {error_msg}")
-                    import traceback
-                    traceback.print_exc()
+                    log_event(
+                        '[DOCUMENT_METADATA] Failed to update personal document tags',
+                        {'document_id': doc_id, 'error_type': type(doc_error).__name__},
+                        level=logging.WARNING,
+                    )
                     results['errors'].append({
                         'document_id': doc_id,
-                        'error': error_msg
+                        'error': 'Unable to update tags for this document'
                     })
             
             # Invalidate cache
             if results['success']:
                 invalidate_personal_search_cache(user_id)
             
+            results['search_sync'] = summarize_document_search_sync(search_syncs)
             status_code = 200 if not results['errors'] else 207  # Multi-Status
             return jsonify(results), status_code
             
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            log_event(
+                '[DOCUMENT_METADATA] Failed to apply personal bulk tag changes',
+                {'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to update document tags'}), 500
     
     @bp.route('/api/documents/tags/<tag_name>', methods=['PATCH'])
     @swagger_route(security=get_auth_security())
@@ -1750,7 +2166,7 @@ def register_route_backend_documents(bp):
         
         from functions_documents import (
             normalize_tag, validate_tag_color, validate_tags, get_documents,
-            update_document
+            update_document, summarize_document_search_sync
         )
         from functions_settings import get_user_settings, update_user_settings
         from utils_cache import invalidate_personal_search_cache
@@ -1803,6 +2219,7 @@ def register_route_backend_documents(bp):
                 debug_print(f"[UPDATE_TAG] Processing {len(all_docs)} unique documents")
                 
                 updated_count = 0
+                search_syncs = []
                 
                 for doc in all_docs:
                     if normalized_old_tag in doc.get('tags', []):
@@ -1811,11 +2228,12 @@ def register_route_backend_documents(bp):
                         new_tags = [normalized_new_tag if t == normalized_old_tag else t for t in current_tags]
                         
                         # Search chunks and blob tags sync in the background
-                        update_document(
+                        update_result = update_document(
                             document_id=doc['id'],
                             user_id=user_id,
                             tags=new_tags
-                        )
+                        ) or {}
+                        search_syncs.append(update_result.get('search_sync'))
                         
                         updated_count += 1
                 
@@ -1848,7 +2266,8 @@ def register_route_backend_documents(bp):
                 debug_print(f"[UPDATE_TAG] Rename completed successfully")
                 return jsonify({
                     'message': f'Tag renamed from "{normalized_old_tag}" to "{normalized_new_tag}"',
-                    'documents_updated': updated_count
+                    'documents_updated': updated_count,
+                    'search_sync': summarize_document_search_sync(search_syncs),
                 }), 200
             
             # Handle color change only
@@ -1895,10 +2314,12 @@ def register_route_backend_documents(bp):
             return jsonify({'error': 'No updates specified'}), 400
             
         except Exception as e:
-            debug_print(f"[UPDATE_TAG] ERROR: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            log_event(
+                '[DOCUMENT_METADATA] Failed to update a personal tag',
+                {'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to update the tag'}), 500
     
     @bp.route('/api/documents/tags/<tag_name>', methods=['DELETE'])
     @swagger_route(security=get_auth_security())
@@ -1912,7 +2333,7 @@ def register_route_backend_documents(bp):
             return jsonify({'error': 'User not authenticated'}), 401
         
         from functions_documents import (
-            normalize_tag, update_document
+            normalize_tag, update_document, summarize_document_search_sync
         )
         from functions_settings import get_user_settings, update_user_settings
         
@@ -1950,6 +2371,7 @@ def register_route_backend_documents(bp):
             debug_print(f"[DELETE_TAG] Processing {len(all_docs)} unique documents")
             
             updated_count = 0
+            search_syncs = []
             
             for doc in all_docs:
                 if normalized_tag in doc.get('tags', []):
@@ -1957,11 +2379,12 @@ def register_route_backend_documents(bp):
                     new_tags = [t for t in doc['tags'] if t != normalized_tag]
                     
                     # Search chunks and blob tags sync in the background
-                    update_document(
+                    update_result = update_document(
                         document_id=doc['id'],
                         user_id=user_id,
                         tags=new_tags
-                    )
+                    ) or {}
+                    search_syncs.append(update_result.get('search_sync'))
                     
                     updated_count += 1
             
@@ -1981,11 +2404,17 @@ def register_route_backend_documents(bp):
                 invalidate_personal_search_cache(user_id)
             
             return jsonify({
-                'message': f'Tag "{normalized_tag}" deleted from {updated_count} document(s)'
+                'message': f'Tag "{normalized_tag}" deleted from {updated_count} document(s)',
+                'search_sync': summarize_document_search_sync(search_syncs),
             }), 200
             
         except Exception as e:
-            return jsonify({'error': str(e)}), 500
+            log_event(
+                '[DOCUMENT_METADATA] Failed to delete a personal tag',
+                {'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to delete the tag'}), 500
 
     # ============= DOCUMENT SHARING API ENDPOINTS =============
     @bp.route('/api/documents/<document_id>/share', methods=['POST'])
@@ -2077,14 +2506,17 @@ def register_route_backend_documents(bp):
                 return jsonify({'message': 'Document unshared successfully'}), 200
             else:
                 return jsonify({'error': 'Failed to unshare document'}), 500
-        except DocumentSearchAclProjectionDeferredError as exc:
-            response = jsonify({'error': str(exc)})
-            response.headers['Retry-After'] = '150'
-            return response, 503
+        except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError) as exc:
+            return _document_search_acl_error_response(exc)
         except exceptions.CosmosResourceNotFoundError:
             return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
-            return jsonify({'error': f'Error unsharing document: {str(e)}'}), 500
+            log_event(
+                '[DOCUMENT_SHARING] Failed to unshare a personal document',
+                {'document_id': document_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to unshare the document'}), 500
 
     @bp.route('/api/documents/<document_id>/shared-users', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -2200,11 +2632,17 @@ def register_route_backend_documents(bp):
                 return jsonify({'message': 'Successfully removed from shared document'}), 200
             else:
                 return jsonify({'error': 'Failed to remove from shared document'}), 500
+        except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError) as exc:
+            return _document_search_acl_error_response(exc)
         except exceptions.CosmosResourceNotFoundError:
             return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:
-            debug_print(f"[ERROR] /api/documents/{document_id}/remove-self: {e}", flush=True)
-            return jsonify({'error': f'Error removing from shared document: {str(e)}'}), 500
+            log_event(
+                '[DOCUMENT_SHARING] Failed to remove the user from a shared personal document',
+                {'document_id': document_id, 'error_type': type(e).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Unable to remove you from the shared document'}), 500
 
     @bp.route('/api/documents/<document_id>/approve-share', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -2237,12 +2675,14 @@ def register_route_backend_documents(bp):
                     new_shared_user_ids.append(entry)
             if updated:
                 # Project the approval to every chunk before saving it, so a failed search update
-                # leaves the share pending and a retry can complete it.
-                project_document_acl_to_chunks(
-                    document_id,
-                    {'shared_user_ids': new_shared_user_ids},
-                    document_item.get('user_id'),
-                )
+                # leaves the share pending and a retry can complete it. A held document has no
+                # released chunks; publication rebuilds them from the recorded list.
+                if document_is_available(document_item):
+                    project_document_acl_to_chunks(
+                        document_id,
+                        {'shared_user_ids': new_shared_user_ids},
+                        document_item.get('user_id'),
+                    )
                 document_item['shared_user_ids'] = new_shared_user_ids
                 document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
                 persisted_document = cosmos_user_documents_container.upsert_item(document_item)
@@ -2251,6 +2691,9 @@ def register_route_backend_documents(bp):
                     document_for_sync,
                     operation='document_share_approved',
                 )
+            elif f"{user_id},approved" in shared_user_ids:
+                # Approving again completes an approval that was saved before its search update finished.
+                reproject_document_search_acl(document_item, user_id)
             
             # Invalidate cache for user who approved (their search results changed)
             if updated:
@@ -2259,12 +2702,12 @@ def register_route_backend_documents(bp):
                 invalidate_personal_search_cache(user_id)
             
             return jsonify({'message': 'Share approved' if updated else 'Already approved'}), 200
-        except DocumentSearchAclProjectionDeferredError as exc:
-            response = jsonify({'error': str(exc)})
-            response.headers['Retry-After'] = '150'
-            return response, 503
-        except DocumentSearchAclProjectionError as exc:
-            return jsonify({'error': str(exc)}), 500
+        except (
+            DocumentSearchAclProjectionDeferredError,
+            DocumentSearchAclProjectionError,
+            DocumentMutationPropagationError,
+        ) as exc:
+            return _document_search_acl_error_response(exc)
         except exceptions.CosmosResourceNotFoundError:
             return jsonify({'error': 'Document not found or access denied'}), 404
         except Exception as e:

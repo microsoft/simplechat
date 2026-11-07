@@ -54,6 +54,15 @@
       "synonymMaps": []
     },
     {
+      "name": "embedding_profile_id",
+      "type": "Edm.String",
+      "searchable": false,
+      "filterable": true,
+      "retrievable": true,
+      "sortable": false,
+      "facetable": false
+    },
+    {
       "name": "embedding",
       "type": "Collection(Edm.Single)",
       "searchable": true,

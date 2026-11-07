@@ -1,8 +1,9 @@
 # test_deployment_configuration.py
 """Postconfig environment, cache publication and create-only Search regressions.
 
-Version: 0.261.028
+Version: 0.261.405
 Implemented in: 0.261.028
+Video Indexer settings preservation and region coverage added in: 0.261.264
 Uses the real settings store with fake services; never contacts Azure.
 """
 
@@ -23,6 +24,7 @@ import yaml
 from azure.core.exceptions import HttpResponseError, ResourceNotFoundError
 
 from test_app_settings_store_consistency import FakeCosmos, FakeRedis
+from test_deployer_optional_services import FakeVault, MODULE as OPTIONAL_MODULE, WEB_VALUES, vault_stager
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,6 +37,7 @@ SPEC.loader.exec_module(MODULE)
 
 @pytest.fixture
 def world(monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT / "deployers" / "bicep"))
     cosmos, redis = FakeCosmos(), FakeRedis()
     redis.ping = Mock(return_value=True)
     redis.close = Mock()
@@ -134,6 +137,72 @@ def test_concurrent_redis_change_is_not_overwritten(world):
         MODULE.persist_settings(world.cosmos, original, desired_redis(original), Mock())
     assert world.cosmos.document["redis_url"] == "configured-by-admin"
     assert world.cosmos.writes == 0
+
+
+def test_concurrent_optional_service_change_is_not_overwritten(world):
+    original = copy.deepcopy(world.cosmos.document)
+    desired = {**original, "web_iq": {"endpoint": "https://api.microsoft.ai/v3"}}
+    world.cosmos.document["web_iq"] = {"key": "administrator-change"}
+    with pytest.raises(MODULE.settings_store.SettingsConflictError, match="Optional service"):
+        MODULE.persist_settings(world.cosmos, original, desired, Mock(), guarded_fields=("web_iq",))
+    assert world.cosmos.document["web_iq"]["key"] == "administrator-change"
+    assert world.cosmos.writes == 0
+
+
+@pytest.mark.parametrize("authentication_type,field", [("key", "key"), ("service_principal", "client_secret")])
+@pytest.mark.parametrize("already_enabled", [False, True])
+def test_web_iq_final_cosmos_and_cache_publication_contains_only_secret_references(world, authentication_type, field, already_enabled):
+    world.cosmos.document.update(
+        enable_key_vault_secret_storage=already_enabled,
+        key_vault_name="deployment-vault" if already_enabled else "",
+        key_vault_identity="existing-compatible-identity",
+        operator_setting="preserve-unrelated-settings",
+    )
+    original = copy.deepcopy(world.cosmos.document)
+    desired = desired_redis(original)
+    raw_secret = "raw-dummy-web-iq-secret-never-publish"
+    vault = FakeVault({"portal-source": raw_secret})
+    OPTIONAL_MODULE.configure_optional_settings(
+        desired, {
+            **WEB_VALUES, "WEB_IQ_AUTHENTICATION_TYPE": authentication_type,
+            f"WEB_IQ_{field.upper()}_SECRET_NAME": "portal-source",
+            "WEB_IQ_TENANT_ID": "tenant", "WEB_IQ_CLIENT_ID": "client", "WEB_IQ_APP_ID": "app",
+        }, Mock(), stage_secret=vault_stager(vault),
+    )
+    stored = MODULE.persist_settings(
+        world.cosmos, original, desired, Mock(), guarded_fields=OPTIONAL_MODULE.OPTIONAL_SETTINGS_FIELDS,
+    )
+    published = json.loads(world.redis.raw)["document"]
+    assert raw_secret not in json.dumps(world.cosmos.document)
+    assert raw_secret.encode("utf-8") not in world.redis.raw
+    assert OPTIONAL_MODULE.is_web_iq_secret_reference(stored["web_iq"][field])
+    assert published == stored
+    assert stored["enable_key_vault_secret_storage"] is True
+    assert stored["key_vault_name"] == "deployment-vault"
+    assert stored["key_vault_identity"] == "existing-compatible-identity"
+    assert stored["operator_setting"] == "preserve-unrelated-settings"
+    assert vault.secrets["portal-source"] == raw_secret
+    assert vault.writes == [stored["web_iq"][field]]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("key_vault_name", "concurrently-selected-vault"),
+    ("enable_key_vault_secret_storage", False),
+    ("key_vault_identity", "concurrently-selected-identity"),
+])
+def test_concurrent_unchanged_vault_context_dependency_blocks_web_iq_publication(world, field, value):
+    world.cosmos.document.update(
+        key_vault_name="deployment-vault", enable_key_vault_secret_storage=True, key_vault_identity="",
+    )
+    original = copy.deepcopy(world.cosmos.document)
+    desired = {**original, "web_iq": {"key": OPTIONAL_MODULE.WEB_IQ_SECRET_PREFIX + "staged-key"}}
+    world.cosmos.document[field] = value
+    with pytest.raises(MODULE.settings_store.SettingsConflictError, match="Optional service"):
+        MODULE.persist_settings(
+            world.cosmos, original, desired, Mock(), guarded_fields=OPTIONAL_MODULE.OPTIONAL_SETTINGS_FIELDS,
+        )
+    assert world.cosmos.writes == 0
+    assert world.cosmos.document[field] == value
 
 
 def test_repeated_redis_configuration_preserves_values(world):
@@ -325,6 +394,80 @@ def test_real_postconfig_entrypoint_writes_once_and_initializes_search(monkeypat
     assert json.loads(world.redis.raw)["document"] == world.cosmos.document
     assert set(search.indexes) == {"simplechat-user-index", "simplechat-group-index", "simplechat-public-index"}
     cosmos.close.assert_called_once()
+
+
+POSTCONFIG_VIDEO_BASE_ENVIRONMENT = {
+    "AZURE_TENANT_ID": "tenant", "var_authenticationType": "managed_identity",
+    "var_openAIEndpoint": "https://example.openai.azure.com/",
+    "var_subscriptionId": "subscription", "var_rgName": "group",
+    "var_openAIGPTModels": '[{"modelName":"gpt"}]',
+    "var_openAIEmbeddingModels": '[{"modelName":"embedding"}]',
+    "var_blobStorageEndpoint": "https://example.blob.core.windows.net",
+    "var_searchServiceEndpoint": "https://example.search.windows.net",
+    "var_deploymentLocation": "northcentralus",
+    "var_videoIndexerEndpoint": "https://api.videoindexer.ai",
+    "var_videoIndexerArmApiVersion": "2025-04-01",
+}
+MANUAL_VIDEO_INDEXER_SETTINGS = {
+    "enable_video_file_support": True,
+    "video_indexer_resource_group": "manual-group",
+    "video_indexer_subscription_id": "manual-subscription",
+    "video_indexer_account_name": "manual-video",
+    "video_indexer_account_id": "manual-account-id",
+    "video_indexer_location": "centralus",
+    "video_indexer_endpoint": "https://custom.videoindexer.example",
+    "video_indexer_arm_api_version": "2024-01-01",
+}
+
+
+def run_postconfig_entrypoint(monkeypatch, world, environment):
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(MODULE, "load_deployment_environment", lambda: environment)
+    search = FakeSearch()
+    monkeypatch.setattr(MODULE, "configure_search", lambda *_: MODULE.ensure_search_indexes(search))
+    cosmos = Mock()
+    cosmos.get_database_client.return_value.get_container_client.return_value = world.cosmos
+    monkeypatch.setitem(sys.modules, "deployment_cosmos", SimpleNamespace(create_deployment_cosmos_client=lambda: cosmos))
+    monkeypatch.setitem(sys.modules, "deployment_configuration", MODULE)
+    runpy.run_path(str(ROOT / "deployers" / "bicep" / "postconfig.py"), run_name="__main__")
+
+
+def test_postconfig_preserves_manual_video_indexer_settings(monkeypatch, world):
+    """A provision without Video Indexer must not blank an administrator-configured account (0.261.264)."""
+    world.cosmos.document.update(MANUAL_VIDEO_INDEXER_SETTINGS)
+    environment = {
+        **POSTCONFIG_VIDEO_BASE_ENVIRONMENT,
+        "var_videoIndexerName": "", "var_videoIndexerAccountId": "", "var_videoIndexerLocation": "",
+    }
+    run_postconfig_entrypoint(monkeypatch, world, environment)
+    assert world.cosmos.writes == 1
+    for key, value in MANUAL_VIDEO_INDEXER_SETTINGS.items():
+        assert world.cosmos.document[key] == value, key
+
+
+@pytest.mark.parametrize("reported_location,expected_location", [
+    ("centralus", "centralus"),
+    ("", "northcentralus"),
+])
+def test_postconfig_writes_deployed_video_indexer_region(monkeypatch, world, reported_location, expected_location):
+    """A deployed account is written with its own region; older outputs fall back to the deployment region."""
+    environment = {
+        **POSTCONFIG_VIDEO_BASE_ENVIRONMENT,
+        "var_videoIndexerName": "app-env-video",
+        "var_videoIndexerAccountId": "deployed-account-id",
+        "var_videoIndexerLocation": reported_location,
+    }
+    run_postconfig_entrypoint(monkeypatch, world, environment)
+    document = world.cosmos.document
+    assert document["enable_video_file_support"] is True
+    assert document["video_indexer_account_name"] == "app-env-video"
+    assert document["video_indexer_account_id"] == "deployed-account-id"
+    assert document["video_indexer_location"] == expected_location
+    assert document["video_indexer_resource_group"] == "group"
+    assert document["video_indexer_subscription_id"] == "subscription"
+    assert document["video_indexer_endpoint"] == "https://api.videoindexer.ai"
+    assert document["video_indexer_arm_api_version"] == "2025-04-01"
 
 
 @pytest.mark.parametrize("failure", [False, True])

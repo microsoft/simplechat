@@ -106,6 +106,7 @@ function showPublicSelectedMetadataExtractionResult(data) {
 }
 
 async function extractPublicSelectedMetadata() {
+  if (window.ContentScreening && !window.ContentScreening.checkUsable(publicSelectedDocuments)) return;
   const documentIds = Array.from(publicSelectedDocuments);
   if (documentIds.length === 0) {
     return;
@@ -248,6 +249,7 @@ async function downloadPublicFile(endpoint, options = {}, fallbackFileName = 'do
 }
 
 async function downloadPublicDocumentFile(documentId, event) {
+  if (window.ContentScreening && !window.ContentScreening.checkUsable([documentId])) return;
   if (event) {
     event.preventDefault();
     event.stopPropagation();
@@ -1069,9 +1071,8 @@ function getPublicDocumentProcessingState(doc) {
   const pctString = String((doc.percentage_complete ?? doc.percentage) || '0');
   const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
   const docStatus = doc.status || '';
-  const normalizedStatus = docStatus.toLowerCase();
-  const hasError = normalizedStatus.includes('error') || normalizedStatus.includes('failed');
-  const isComplete = pct >= 100 || normalizedStatus.includes('complete') || hasError;
+  const hasError = window.DocumentStatus.isFailure(docStatus);
+  const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
   return { pct, docStatus, hasError, isComplete };
 }
 
@@ -1400,6 +1401,9 @@ function createPublicDropdownHeader(label) {
 }
 
 function createPublicDocumentCard(doc) {
+  if (window.ContentScreening?.isHeld(doc)) {
+    return window.ContentScreening.createHeldDocument(doc, { scopeType: "public", scopeId: activePublicId }, "card");
+  }
   const docId = doc.id;
   const { pct, docStatus, hasError, isComplete } = getPublicDocumentProcessingState(doc);
   const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
@@ -1571,6 +1575,7 @@ function createPublicDocumentCard(doc) {
     pollPublicDocumentStatus(docId);
   }
 
+  window.ContentScreening?.decorateDocument(column, doc, { scopeType: "public", scopeId: activePublicId });
   return column;
 }
 
@@ -1617,6 +1622,14 @@ async function fetchPublicDocs(){
     const r=await fetch(`/api/public_documents?${params}`);
     if(!r.ok) throw await r.json(); const data=await r.json();
     publicFileDownloadsEnabled = Boolean(data.file_downloads_enabled);
+    window.ContentScreening?.registerWorkspace({
+      scopeType: "public", scopeId: activePublicId, documents: data.documents || [],
+      getSelectedIds: () => Array.from(publicSelectedDocuments),
+      refresh: fetchPublicDocs, render: fetchPublicDocs
+    });
+    if (window.ContentScreening) {
+      data.documents = window.ContentScreening.filterDocuments(data.documents || [], { scopeType: "public", scopeId: activePublicId });
+    }
     publicDocsTableBody.innerHTML='';
     if (publicDocumentsCardView) publicDocumentsCardView.innerHTML = '';
     if(!data.documents.length){
@@ -1639,6 +1652,10 @@ async function fetchPublicDocs(){
 }
 
 function renderPublicDocumentRow(doc) {
+  if (window.ContentScreening?.isHeld(doc)) {
+    publicDocsTableBody.appendChild(window.ContentScreening.createHeldDocument(doc, { scopeType: "public", scopeId: activePublicId }));
+    return;
+  }
   const canManage = ['Owner', 'Admin', 'DocumentManager'].includes(userRoleInActivePublic);
   const currentWorkspaceStatus = window.currentPublicStatus || 'active';
 
@@ -1649,8 +1666,8 @@ function renderPublicDocumentRow(doc) {
   const pctString = String((doc.percentage_complete ?? doc.percentage) || "0");
   const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
   const docStatus = doc.status || "";
-  const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
-  const hasError = docStatus.toLowerCase().includes("error") || docStatus.toLowerCase().includes("failed");
+  const hasError = window.DocumentStatus.isFailure(docStatus);
+  const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
   const isPendingGeneratedArtifact = isPendingGeneratedArtifactDocument(doc);
 
   let firstTdHtml = "";
@@ -1813,6 +1830,7 @@ function renderPublicDocumentRow(doc) {
 
   // Append main and details rows
   const tbody = document.querySelector('#public-documents-table tbody');
+  window.ContentScreening?.decorateDocument(tr, doc, { scopeType: "public", scopeId: activePublicId });
   tbody.append(tr);
 
   // --- Status Row Logic (like private workspace) ---
@@ -1877,8 +1895,8 @@ function pollPublicDocumentStatus(documentId) {
       const pctString = String((doc.percentage_complete ?? doc.percentage) || "0");
       const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
       const docStatus = doc.status || "";
-      const isComplete = pct >= 100 || docStatus.toLowerCase().includes("complete") || docStatus.toLowerCase().includes("error");
-      const hasError = docStatus.toLowerCase().includes("error") || docStatus.toLowerCase().includes("failed");
+      const hasError = window.DocumentStatus.isFailure(docStatus);
+      const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
       if (!isComplete && statusRow) {
         // Update progress bar and status text if still processing
@@ -2229,6 +2247,7 @@ window.cancelPublicGeneratedArtifactDocument = async function(id, triggerButton 
 };
 
 window.searchPublicDocumentInChat = function(docId) {
+  if (window.ContentScreening && !window.ContentScreening.checkUsable([docId])) return;
   window.location.href = `/chats?search_documents=true&doc_scope=public&document_id=${docId}&workspace_id=${activePublicId}`;
 };
 
@@ -2483,6 +2502,7 @@ function deletePublicSelectedDocuments() {
 }
 
 function chatWithPublicSelected() {
+  if (window.ContentScreening && !window.ContentScreening.checkUsable(publicSelectedDocuments)) return;
   if (publicSelectedDocuments.size === 0) return;
   const idsParam = encodeURIComponent(Array.from(publicSelectedDocuments).join(','));
   window.location.href = `/chats?search_documents=true&doc_scope=public&document_ids=${idsParam}&workspace_id=${activePublicId}`;
@@ -2554,6 +2574,7 @@ async function reprocessPublicSelectedDocumentExtraction(extractionMode) {
 }
 
 async function downloadPublicSelectedDocuments() {
+  if (window.ContentScreening && !window.ContentScreening.checkUsable(publicSelectedDocuments)) return;
   if (publicSelectedDocuments.size === 0) {
     return;
   }
@@ -3052,6 +3073,7 @@ async function onSavePublicDocMetadata(e) {
 }
 
 window.onExtractPublicMetadata = function(docId, event) {
+  if (window.ContentScreening && !window.ContentScreening.checkUsable([docId])) return;
   if (!confirm("Run metadata extraction for this document? This may overwrite existing metadata.")) return;
 
   const extractBtn = event ? event.target.closest('button') : null;
@@ -3333,6 +3355,7 @@ function wirePublicBackButton(container) {
 }
 
 function buildPublicFolderDocumentsTable(docs) {
+  docs = docs.filter(doc => !window.ContentScreening?.isHeld(doc));
   function getSortIcon(field) {
     if (publicFolderSortBy === field) {
       return publicFolderSortOrder === 'asc' ? 'bi-sort-up' : 'bi-sort-down';
@@ -3350,8 +3373,8 @@ function buildPublicFolderDocumentsTable(docs) {
     const pctString = String((doc.percentage_complete ?? doc.percentage) || '0');
     const pct = /^\d+(\.\d+)?$/.test(pctString) ? parseFloat(pctString) : 0;
     const docStatus = doc.status || '';
-    const isComplete = pct >= 100 || docStatus.toLowerCase().includes('complete') || docStatus.toLowerCase().includes('error');
-    const hasError = docStatus.toLowerCase().includes('error') || docStatus.toLowerCase().includes('failed');
+    const hasError = window.DocumentStatus.isFailure(docStatus);
+    const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
     const isSelected = publicSelectedDocuments.has(doc.id);
     let firstColHtml = `<input type="checkbox" class="form-check-input document-checkbox${publicSelectionMode ? '' : ' d-none'}" data-document-id="${doc.id}"${isSelected ? ' checked' : ''}>`;
     let actionsHtml = '';
@@ -3497,6 +3520,13 @@ async function renderPublicFolderContents(tagName) {
       docs = data.documents || []; totalCount = data.total_count || docs.length;
     }
 
+    window.ContentScreening?.registerWorkspace({
+      scopeType: "public", scopeId: activePublicId, documents: docs,
+      getSelectedIds: () => Array.from(publicSelectedDocuments),
+      refresh: () => renderPublicFolderContents(tagName),
+      render: () => renderPublicFolderContents(tagName)
+    });
+    if (window.ContentScreening) docs = window.ContentScreening.filterDocuments(docs, { scopeType: "public", scopeId: activePublicId });
     let html = buildPublicBreadcrumbHtml(displayName, tagColor, publicCurrentFolderType || 'tag');
     html += `<div class="d-flex align-items-center gap-2 mb-2">
       <div class="input-group input-group-sm" style="max-width: 320px;">
@@ -3525,10 +3555,11 @@ async function renderPublicFolderContents(tagName) {
 
     container.innerHTML = html;
     wirePublicBackButton(container);
+    window.ContentScreening?.decorateFolderTable(container.querySelector("#public-folder-docs-table"), docs, { scopeType: "public", scopeId: activePublicId });
     if (publicCurrentView === 'folders-cards' && docs.length > 0) {
       renderPublicFolderDocumentCards(docs);
     } else {
-      wirePublicFolderGeneratedArtifactApproveButtons(docs);
+      wirePublicFolderGeneratedArtifactApproveButtons(docs.filter(doc => !window.ContentScreening?.isHeld(doc)));
     }
     syncPublicSelectionModeUI();
 

@@ -1,0 +1,417 @@
+# v2_admin_settings.py
+"""
+Schema-backed browser fixtures for V2 Admin Settings.
+Version: 0.261.276
+Implemented in: 0.261.093
+Separate release check boundary: 0.261.133
+The rail's notification count is answered: 0.261.195
+Selectable sections, Model Catalog, and AI Connections stubs: 0.261.258
+Seeded user preferences on open: 0.261.267
+Test-supplied routes for operational APIs such as the Scale group's: 0.261.274
+Help group: catalogue tabs, Latest Features, Send Feedback and registration stubs: 0.261.276
+
+Serve the real built SPA through Playwright request interception, using the real
+Agents field schema and synthetic settings. No application server, signed-in
+account, or live settings writes are needed. Unexpected requests fail the test.
+The release check is its own request, so a test can hold it to stand in for a slow
+GitHub check and prove the settings do not wait on it.
+
+The default browser is local. To use Azure Playwright, set PLAYWRIGHT_SERVICE_URL
+and PLAYWRIGHT_WORKSPACE_RESOURCE_ID. The workspace is read with
+azure-mgmt-playwright and authenticated with DefaultAzureCredential; no resources
+are created and no access tokens are stored.
+"""
+
+import copy
+import sys
+from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+import pytest
+from playwright.sync_api import Page, Route, expect
+
+from playwright_connection import connect_options  # noqa: F401
+from v2_notification_stubs import is_notification_count, notification_count_payload
+
+# Reuse the existing isolated application imports rather than initializing Azure clients.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
+
+from test_support.app_stubs import import_app_module
+from test_support.nav import ADMIN_NAV
+
+
+STATIC_ROOT = REPO_ROOT / "application" / "single_app" / "static"
+SPA_INDEX = STATIC_ROOT / "v2" / "index.html"
+ORIGIN = "http://simplechat.test"
+AGENT_SECTION_IDS = (
+    "agents-config",
+    "agent-toggles-card",
+    "agents-page-customization-card",
+    "agent-template-approvals-section",
+)
+
+
+def _select_navigation(sections):
+    """The real navigation, narrowed to the named sections of the named groups.
+
+    A tab drawn from a catalogue rather than from sections -- Admin Latest Features
+    declares none -- is selected by naming its tab id among the group's sections.
+    """
+    nav = []
+    section_ids = []
+    render_tab_ids = []
+    for group in ADMIN_NAV:
+        wanted = sections.get(group["id"])
+        if not wanted:
+            continue
+        group = copy.deepcopy(group)
+        for tab in group["tabs"]:
+            tab["sections"] = [section for section in tab["sections"] if section["id"] in wanted]
+            section_ids.extend(section["id"] for section in tab["sections"])
+            if tab.get("render") and tab["id"] in wanted:
+                render_tab_ids.append(tab["id"])
+        group["tabs"] = [
+            tab for tab in group["tabs"] if tab["sections"] or tab["id"] in render_tab_ids
+        ]
+        nav.append(group)
+    found = set(section_ids) | set(render_tab_ids)
+    missing = {section for wanted in sections.values() for section in wanted} - found
+    assert not missing, f"Unknown fixture sections: {sorted(missing)}"
+    return nav, tuple(section_ids)
+
+
+class AdminSettingsFixture:
+    """Load the production admin page with a closed, in-memory API boundary."""
+
+    def __init__(self, page: Page, *, validate_updates=False, sections=None):
+        """Serve the Agents settings, or the sections named per navigation group.
+
+        ``sections`` maps a navigation group id to the section ids to include, in
+        navigation order, for tests that need more than the Agents group.
+        """
+        self.page = page
+        fields_module = import_app_module("admin_settings_fields")
+        self.catalog_module = import_app_module("functions_model_catalog")
+        self.normalize_updates = fields_module.normalize_admin_settings_updates if validate_updates else None
+        schema = fields_module.get_admin_settings_fields()
+        if sections is None:
+            group = copy.deepcopy(next(item for item in ADMIN_NAV if item["id"] == "agents-actions"))
+            agents_tab = next(tab for tab in group["tabs"] if tab["id"] == "agents")
+            actions_tab = next(tab for tab in group["tabs"] if tab["id"] == "actions")
+            actions_tab["sections"] = [
+                section for section in actions_tab["sections"] if section["id"] == "core-plugin-toggles"
+            ]
+            group["tabs"] = [agents_tab, actions_tab]
+            nav = [group]
+            section_ids = (*AGENT_SECTION_IDS, "core-plugin-toggles")
+        else:
+            nav, section_ids = _select_navigation(sections)
+        self.schema = {section_id: copy.deepcopy(schema[section_id]) for section_id in section_ids}
+        self.settings = {
+            field["key"]: copy.deepcopy(field["default"])
+            for fields in self.schema.values()
+            for field in fields
+            if field.get("key") and "default" in field
+        }
+        self.settings.update({
+            "enable_semantic_kernel": True,
+            "per_user_semantic_kernel": True,
+            "allow_user_agents": True,
+        })
+        self.payload = {
+            "settings": self.settings,
+            "admin_nav": nav,
+            "field_schema": self.schema,
+            # The real status rules, for the sections this fixture serves.
+            "section_status": {
+                section_id: rule
+                for section_id, rule in fields_module.get_admin_section_status().items()
+                if section_id in self.schema
+            },
+            "runtime_flags": {},
+            "suppressed_capabilities": fields_module.get_suppressed_capability_keys(),
+        }
+        # The Help group's catalogues come from the real payload builder, resolved the
+        # way the route resolves them. Feedback and registration posts are recorded.
+        self.latest_features_module = import_app_module("functions_support_latest_features")
+        self.latest_features_requests = 0
+        self.feedback_posts = []
+        self.registration_posts = []
+        # The Model Catalog and AI Connections read their own endpoints. Catalog writes go
+        # through the real validator and transform, as test_model_catalog_management does.
+        self.catalog_settings = {}
+        self.catalog_revision = 1
+        self.catalog_writes = []
+        self.endpoints = []
+        self.update_payload = {
+            "version": "0.261.093",
+            "update_status": {
+                "latest_version": "0.261.093", "update_available": False,
+                "status": "checked", "checked_at": "2026-09-21T12:00:00+00:00",
+                "attempted_at": "2026-09-21T12:00:00+00:00", "error": None,
+            },
+        }
+        self.hold_update_status = False
+        self.held_update_status = []
+        self.preferences = {}
+        self.catalog_agents = [
+            {
+                "catalog_key": "global:research",
+                "display_name": "Quarterly Research Assistant",
+                "scope_label": "Enterprise",
+                "scope_type": "global",
+                "window": "both",
+            },
+            {
+                "catalog_key": "global:roadmap",
+                "display_name": "Roadmap Advisor",
+                "scope_label": "Enterprise",
+                "scope_type": "global",
+                "window": "both",
+            },
+        ]
+        self.patches = []
+        self.reject_next_save = False
+        # Further APIs a test serves itself, keyed by (method, path). Each handler receives
+        # the Playwright route and fulfils it; anything unlisted still fails the test.
+        self.extra_routes = {}
+        self.errors = []
+        self.unexpected_requests = []
+        page.on("pageerror", lambda error: self.errors.append(str(error)))
+        page.on(
+            "console",
+            lambda message: self.errors.append(message.text) if message.type == "error" else None,
+        )
+        page.route("**/*", self._route)
+
+    def _bootstrap(self):
+        return {
+            "version": "0.261.093",
+            "user": {
+                "id": "test-admin",
+                "display_name": "Test Admin",
+                "email": "test.admin@contoso.test",
+                "is_admin": True,
+                "roles": ["Admin"],
+            },
+            "branding": {"app_title": "SimpleChat", "show_logo": False, "hide_app_title": False},
+            "features": {},
+            "catalogs": {"models": [], "agents": [], "prompts": [], "initial_model_selection": None},
+            "scope": {"groups": [], "public_workspaces": []},
+            "navigation": {
+                "custom_pages": {"enabled": False, "items": []},
+                "external_links": {"enabled": False, "items": []},
+            },
+            "workspace": {"sections": {}},
+            "admin_nav": self.payload["admin_nav"],
+            "settings": {},
+        }
+
+    def _route(self, route: Route):
+        request = route.request
+        parsed = urlsplit(request.url)
+        path = parsed.path
+        if f"{parsed.scheme}://{parsed.netloc}" != ORIGIN:
+            self.unexpected_requests.append(request.url)
+            route.abort()
+            return
+
+        if request.method == "GET" and path == "/v2/admin":
+            route.fulfill(path=str(SPA_INDEX), content_type="text/html")
+        elif request.method == "GET" and path.startswith("/static/"):
+            asset = (STATIC_ROOT / path.removeprefix("/static/")).resolve()
+            if asset.is_relative_to(STATIC_ROOT.resolve()) and asset.is_file():
+                route.fulfill(path=str(asset))
+            else:
+                self.unexpected_requests.append(path)
+                route.fulfill(status=404, body="Fixture asset not found")
+        elif path == "/api/v2/bootstrap" and request.method == "GET":
+            route.fulfill(json=self._bootstrap())
+        elif path == "/api/user/settings" and request.method == "GET":
+            route.fulfill(json={"settings": self.preferences})
+        elif path == "/api/user/settings" and request.method == "POST":
+            self.preferences.update(request.post_data_json["settings"])
+            route.fulfill(json={"message": "Saved fixture preferences."})
+        elif is_notification_count(request.method, path):
+            # The rail's notification bell reads the count on every page.
+            route.fulfill(json=notification_count_payload())
+        elif path == "/api/v2/admin/settings" and request.method == "GET":
+            route.fulfill(json=self.payload)
+        elif path == "/api/v2/admin/update-status" and request.method == "GET":
+            if self.hold_update_status:
+                self.held_update_status.append(route)
+            else:
+                route.fulfill(json=self.update_payload)
+        elif path == "/api/v2/admin/settings" and request.method == "PATCH":
+            updates = request.post_data_json["settings"]
+            self.patches.append(copy.deepcopy(updates))
+            if self.reject_next_save:
+                self.reject_next_save = False
+                route.fulfill(status=400, json={
+                    "error": "Invalid settings.",
+                    "field_errors": {key: "Fixture validation error." for key in updates},
+                })
+            else:
+                normalized = updates
+                warnings = {}
+                if self.normalize_updates:
+                    normalized, errors, warnings = self.normalize_updates(updates, self.settings)
+                    if errors:
+                        route.fulfill(status=400, json={
+                            "error": "Invalid settings.", "field_errors": errors, "warnings": warnings,
+                        })
+                        return
+                self.settings.update(normalized)
+                route.fulfill(json={
+                    "settings": normalized, "updated_keys": list(normalized), "warnings": warnings,
+                })
+        elif path == "/api/orchestration_types" and request.method == "GET":
+            route.fulfill(json=[{"value": "default_agent", "label": "Single agent"}])
+        elif path == "/api/orchestration_settings" and request.method == "GET":
+            route.fulfill(json={"orchestration_type": "default_agent", "max_rounds_per_agent": 1})
+        elif path == "/api/agents/catalog" and request.method == "GET":
+            route.fulfill(json={"agents": self.catalog_agents})
+        elif path.startswith("/api/admin/model-catalog"):
+            self._model_catalog(route)
+        elif path == "/api/models/catalog" and request.method == "GET":
+            route.fulfill(json=self._catalog_payload(admin=False))
+        elif path == "/api/v2/admin/model-endpoints" and request.method == "GET":
+            route.fulfill(json={"endpoints": self.endpoints, "custom_api_types": [], "default_notices": {}})
+        elif path == "/api/v2/admin/latest-features" and request.method == "GET":
+            self.latest_features_requests += 1
+            route.fulfill(json=self._latest_features_payload())
+        elif path == "/api/admin/settings/send_feedback_email" and request.method == "POST":
+            body = request.post_data_json
+            self.feedback_posts.append(copy.deepcopy(body))
+            label = "Bug Report" if body.get("feedbackType") == "bug_report" else "Feature Request"
+            route.fulfill(json={
+                "success": True,
+                "recipientEmail": "simplechat@microsoft.com",
+                "subjectLine": f"[SIMPLE_CHAT_ADMIN_FEEDBACK] {label} - {body.get('organization', '')}",
+                "feedbackLabel": label,
+            })
+        elif path == "/api/admin/settings/release_notifications_registration" and request.method == "POST":
+            body = request.post_data_json
+            self.registration_posts.append(copy.deepcopy(body))
+            route.fulfill(json={
+                "success": True,
+                "recipientEmail": "simplechat@microsoft.com",
+                "subjectLine": (
+                    "[SIMPLE_CHAT_REGISTRATION] Release and Community Call Notifications - "
+                    f"{body.get('organization', '')}"
+                ),
+                "registered": True,
+                "registeredAt": "2026-10-06T12:00:00+00:00",
+                "updatedAt": "2026-10-06T12:00:00+00:00",
+            })
+        elif (request.method, path) in self.extra_routes:
+            self.extra_routes[(request.method, path)](route)
+        else:
+            self.unexpected_requests.append(f"{request.method} {path}")
+            route.fulfill(status=404, json={"error": "Unexpected fixture request."})
+
+    def _latest_features_payload(self):
+        """Both catalogues, resolved as ``v2_admin_get_latest_features`` resolves them."""
+        endpoints = {
+            "frontend_chats.chats": "/chats",
+            "frontend_profile.profile": "/profile",
+            "frontend_support.support_latest_features": "/support/latest-features",
+            "frontend_support.support_send_feedback": "/support/send-feedback",
+        }
+        return self.latest_features_module.build_latest_features_payload(
+            self.settings,
+            resolve_endpoint_url=lambda endpoint: endpoints.get(endpoint, ""),
+            resolve_static_url=lambda path: f"/static/{path}",
+            version="0.261.093",
+        )
+
+    def _catalog_payload(self, *, admin):
+        profiles = self.catalog_module.get_effective_model_profiles(self.catalog_settings)
+        if not admin:
+            return {
+                "profiles": [profile for profile in profiles if not profile["archived"]],
+                "tasks": self.catalog_module.TASKS,
+            }
+        for profile in profiles:
+            profile["linked_models"] = [
+                {
+                    "connection": endpoint["name"], "connection_id": endpoint["id"],
+                    "model": model.get("displayName") or model["deploymentName"],
+                    "model_id": model.get("id", ""), "enabled": True,
+                    "capabilities": {
+                        key: value for key, value in (profile["capabilities"] or {}).items()
+                        if type(value) is bool
+                    },
+                }
+                for endpoint in self.endpoints
+                for model in endpoint.get("models", [])
+                if model.get("catalogProfileId") == profile["id"]
+            ]
+        return {"profiles": profiles, "tasks": self.catalog_module.TASKS, "etag": str(self.catalog_revision)}
+
+    def _model_catalog(self, route: Route):
+        request = route.request
+        if request.method == "GET":
+            route.fulfill(json=self._catalog_payload(admin=True))
+            return
+        body = request.post_data_json
+        self.catalog_writes.append(copy.deepcopy(body))
+        if body.get("etag") != str(self.catalog_revision):
+            route.fulfill(status=409, json={"error": "The catalog changed. Reload and review before saving."})
+            return
+        profile_id = unquote(request.url.rsplit("/", 1)[-1]) if request.method == "PATCH" else None
+        try:
+            self.catalog_settings = self.catalog_module.change_catalog(
+                self.catalog_settings,
+                profile_id=profile_id,
+                profile=body.get("profile"),
+                preferences=body.get("preferences"),
+            )
+        except self.catalog_module.ModelCatalogError as error:
+            route.fulfill(status=400, json={"error": error.public_message})
+            return
+        self.catalog_revision += 1
+        route.fulfill(json=self._catalog_payload(admin=True))
+
+    def open(self, theme="light", width=1440, font_size="m", *, wait_until="networkidle",
+             height=1000, ready_region="Agent Runtime", preferences=None):
+        if not SPA_INDEX.is_file():
+            pytest.fail("Build the V2 SPA first: npm --prefix application/v2_ui run build")
+        source_root = REPO_ROOT / "application" / "v2_ui" / "src"
+        if any(
+            path.stat().st_mtime > SPA_INDEX.stat().st_mtime
+            for path in source_root.rglob("*")
+            if path.is_file()
+        ):
+            pytest.fail("The V2 bundle is stale. Run npm --prefix application/v2_ui run build")
+        self.preferences = {
+            "darkModeEnabled": theme == "dark",
+            "v2RailCollapsed": width < 1024,
+            "fontSizePreference": font_size,
+            # Saved user preferences the page should start from, e.g. a collapsed rail.
+            **(preferences or {}),
+        }
+        self.page.set_viewport_size({"width": width, "height": height})
+        # A held release check keeps a request open, which networkidle would wait on.
+        self.page.goto(f"{ORIGIN}/v2/admin", wait_until=wait_until)
+        expect(self.page.get_by_role("region", name=ready_region, exact=True)).to_be_visible()
+        expect(self.page.locator("html")).to_have_attribute("data-font-size", font_size)
+
+    def release_update_status(self):
+        """Answer release checks held by `hold_update_status`, as a slow check finishing would."""
+        self.hold_update_status = False
+        while self.held_update_status:
+            self.held_update_status.pop(0).fulfill(json=self.update_payload)
+
+    def capture(self, name, folder="v2_admin_agents"):
+        artifacts = REPO_ROOT / "ui_tests" / "artifacts" / folder
+        artifacts.mkdir(parents=True, exist_ok=True)
+        self.page.screenshot(
+            path=str(artifacts / f"{name}.png"), full_page=True, animations="disabled"
+        )
+
+    def assert_clean(self):
+        assert not self.held_update_status, "A held release check was never answered."
+        assert not self.unexpected_requests, self.unexpected_requests
+        assert not self.errors, self.errors

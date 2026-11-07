@@ -31,6 +31,39 @@
                     <p class="text-muted small mb-0">
                         Required app role value: <code>WorkflowUser</code>. Assign this role to users or groups in the Enterprise App before enabling the requirement.
                     </p>
+                    <div class="form-group form-check form-switch mt-3 mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_workflow_ai_assistant"
+                            name="enable_workflow_ai_assistant"
+                            {% if settings.enable_workflow_ai_assistant %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_workflow_ai_assistant">
+                            Enable AI Workflow Assistant
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Let users describe a change in plain language and review the assistant's proposed edit in the V2 workflow editor before they save it. It applies only where personal workflows are enabled."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mt-3 mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_chat_workflow_results"
+                            name="enable_chat_workflow_results"
+                            {% if settings.enable_chat_workflow_results %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_chat_workflow_results">
+                            Use Workflow Results In Chat
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Let users ask chat about the stored result of one of their own finished workflow runs, in their private chats only. With Chat Orchestration on, a plan can also read such a result when the user asks about it. The workflow is not re-run. It applies only where personal workflows are enabled."></i>
+                    </div>
+                    <div class="form-group form-check form-switch mt-3 mb-2">
+                        <input type="checkbox"
+                            class="form-check-input"
+                            id="enable_workflow_alert_sounds"
+                            name="enable_workflow_alert_sounds"
+                            {% if settings.enable_workflow_alert_sounds %}checked{% endif %}>
+                        <label class="form-check-label ms-2" for="enable_workflow_alert_sounds">
+                            Enable Workflow Alert Sounds
+                        </label>
+                        <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Workflow alert rules can play a sound once, or repeat it until someone acknowledges the alert. Turning this off silences every workflow alert sound for everyone, while alerts still pop up and still require acknowledgment."></i>
+                    </div>
 
                     <div class="form-group mt-3 mb-3">
                         <label for="workflow_max_auto_invoke_attempts" class="form-label">
@@ -46,6 +79,17 @@
                             value="{{ settings.workflow_max_auto_invoke_attempts|default(60, true) }}">
                         <div class="form-text">
                             Maximum automatic tool or action calls an agent can make during one workflow run. Default is 60; increase for large document sets.
+                        </div>
+
+                        <div class="form-check form-switch mt-3 mb-2">
+                            <input type="checkbox" class="form-check-input" id="enable_workflow_completeness_check" name="enable_workflow_completeness_check" aria-describedby="workflow-completeness-help" {% if settings.get('enable_workflow_completeness_check', true) %}checked{% endif %} />
+                            <label class="form-check-label" for="enable_workflow_completeness_check">Check workflow answer completeness</label>
+                        </div>
+                        <p class="form-text" id="workflow-completeness-help">Check generated task answers against their instructions and available evidence before downstream use. Model-assisted checking adds model calls and can be uncertain; it never replays tools to repair an answer.</p>
+                        <div class="mb-3">
+                            <label class="form-label" for="workflow_completeness_max_corrections">Maximum answer corrections per task</label>
+                            <input type="number" class="form-control" id="workflow_completeness_max_corrections" name="workflow_completeness_max_corrections" min="0" max="5" step="1" value="{{ settings.get('workflow_completeness_max_corrections', 2) }}" aria-describedby="workflow-corrections-help" />
+                            <div class="form-text" id="workflow-corrections-help">Default: 2. Every correction is checked again. Zero checks without correcting. Turning checking off restores the previous behavior.</div>
                         </div>
                         <div class="alert alert-warning small mb-0 mt-2" role="alert">
                             Values above 100 are capacity-sensitive. Enable Cosmos DB Throughput automation in SimpleChat so the app can monitor RU pressure and scale up Cosmos when needed, and also monitor Azure OpenAI throttling, App Service CPU and memory, and downstream service latency.
@@ -70,6 +114,73 @@
                     </div>
 
                     <hr>
+                    <div class="form-group mb-3">
+                        <label for="workflow_max_loop_items" class="form-label">
+                            Workflow Loop Item Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_loop_items"
+                            name="workflow_max_loop_items"
+                            min="1"
+                            max="5000"
+                            step="1"
+                            required
+                            aria-describedby="workflow-max-loop-items-help"
+                            value="{{ settings.workflow_max_loop_items|default(500) }}">
+                        <div class="form-text" id="workflow-max-loop-items-help">
+                            Maximum actual items visited by each For each loop in a new personal or group
+                            workflow run. Default is 500; supported range is 1-5,000. Authors may choose a
+                            lower maximum. Oversized inputs are rejected, never truncated. Active runs
+                            keep their admitted limit. This is not a searchable-document or token limit.
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label for="workflow_max_repeat_iterations" class="form-label">
+                            Workflow Repeat Iteration Limit
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_max_repeat_iterations"
+                            name="workflow_max_repeat_iterations"
+                            min="1"
+                            max="1000"
+                            step="1"
+                            required
+                            aria-describedby="workflow-max-repeat-iterations-help"
+                            value="{{ settings.workflow_max_repeat_iterations|default(25) }}" />
+                        <div class="form-text" id="workflow-max-repeat-iterations-help">
+                            Maximum rounds allowed in one automatic Repeat until batch in a new personal
+                            or group workflow run. Default is 25; supported range is 1-1,000. Authors must
+                            choose a per-block maximum; new runs above this ceiling are rejected, never
+                            shortened. Active runs and manual continuation keep their admitted limit.
+                            Another batch does not reset the run's execution-admission budget or elapsed deadline.
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label for="workflow_min_schedule_interval_seconds" class="form-label">
+                            Workflow Minimum Schedule Interval (seconds)
+                        </label>
+                        <input type="number"
+                            class="form-control"
+                            id="workflow_min_schedule_interval_seconds"
+                            name="workflow_min_schedule_interval_seconds"
+                            min="1"
+                            max="86400"
+                            step="1"
+                            required
+                            aria-describedby="workflow-min-schedule-interval-help"
+                            value="{{ settings.workflow_min_schedule_interval_seconds|default(1) }}" />
+                        <div class="form-text" id="workflow-min-schedule-interval-help">
+                            Shortest repeat interval, in seconds, allowed when a personal or group workflow
+                            interval schedule is created or changed, including workflows from chat.
+                            Default is 1; supported range is 1-86,400.
+                            Workflows already saved keep their schedule and keep running when this is raised.
+                            Calendar schedules are not affected.
+                        </div>
+                    </div>
 
                     <div class="form-group form-check form-switch mb-3">
                         <input type="checkbox"

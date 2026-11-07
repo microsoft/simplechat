@@ -31,3 +31,11 @@ Code changes summary:
 Functional coverage is provided by `functional_tests/test_admin_update_banner_version_comparison.py`.
 
 Before the fix, cached settings could show an older release as available. After the fix, older or equal cached versions are suppressed and only strictly newer versions show the update banner.
+
+## Shared classic and V2 checker
+
+In **0.261.126**, the cached comparison and release check moved into
+`functions_settings.get_application_update_status` so both admin interfaces use
+the same result. The regression test now executes the shared checker, parser,
+and numeric comparator rather than requiring the former route-local helper.
+See [V2 Admin Version Status Fix](V2_ADMIN_VERSION_STATUS_FIX.md).

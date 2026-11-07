@@ -4,11 +4,14 @@ title: "Create a workflow"
 description: "Save a repeatable multi-step task that can run manually or on a schedule."
 section: "Guides"
 audience: user
+version: "0.261.382"
 ---
 
 ## What this does
 
-A workflow is an ordered set of instruction tasks that runs with a selected model or agent. This guide creates a workflow with runner, trigger, tasks, reliability choices, and review.
+A workflow saves repeatable work with a selected model or agent, using an ordered task list or explicitly structured branches and loops. This guide creates a workflow with runner, trigger, tasks, reliability choices, and review.
+
+{% include media.html id="slide-workflows" %}
 
 {% include media.html type="video"
                       title="Create a workflow walkthrough"
@@ -19,13 +22,1130 @@ A workflow is an ordered set of instruction tasks that runs with a selected mode
 
 Use workflows for repeatable work where sequence matters: weekly document checks, multi-stage summaries, or group processes that should run the same way each time. It replaces copying a checklist into chat; it is not ideal for exploratory conversations that need a human decision after every answer.
 
+## Read answer completeness outcomes
+
+From **0.261.382**, run task details can show **Complete**, **Corrected and
+complete**, **Incomplete** or **Verification unavailable** independently of output
+format validation. Expand **Answer completeness** to review requested requirements
+and the number of answer-only corrections. Older runs have no retroactive assessment.
+
+Admins enable this by default with up to two corrections and can choose check-only
+or opt out. Corrections use existing evidence; they do not rerun connectors. A task
+that cannot verify required content does not supply a successful downstream result.
+See [Workflow settings]({{ '/admin/workflow/' | relative_url }}).
+
 ## Before you start
 
-- Personal workflows require `allow_user_workflows`; group workflows require `allow_group_workflows`; see [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}).
+- Personal workflows require `allow_user_workflows`; group workflows require `allow_group_workflows`; see [Workflow settings]({{ '/admin/workflow/' | relative_url }}).
 - Admins may require `require_member_of_workflow_user` before users can create workflows.
 - If tasks use documents, upload them or configure File Sync first.
 
-## Steps
+## Create or edit in V2
+
+Starting in **0.261.108**, open `/v2/workspace/workflows` for personal workflows,
+or select a group under `/v2/groups`. Choose **Create workflow** or edit an
+existing workflow in the native V2 editor. Ordered drafts still use List;
+explicitly structured drafts also offer Flow authoring as described below.
+
+From **0.261.271**, Workflows lists each workflow on one line: its name, how it
+stands (for example **Running**, **Awaiting approval**, **Completed** or
+**Failed**), and its trigger. Select a workflow to see its **Overview**, which
+starts with when it last ran and how that run ended, its recent **Runs**, and,
+for a structured workflow, its saved **Flow**. **Run**, **Edit** and **Delete**
+sit beside its name. To find one in a long list, search, or narrow the list by
+**Status**, such as **Needs attention** for workflows waiting on you or whose
+last run failed, was cancelled or completed with task errors, or by **Trigger**.
+
+{% include media.html src="guides/create-a-workflow-workbench.png"
+                      alt="The V2 Workflows section with a list of workflows on the left, each showing its status and trigger, one selected, and its detail on the right showing Run, Edit and Delete beside its name and the Overview tab listing when it last ran, its runner, trigger, File Sync, execution, references, tasks and alerts."
+                      title="Choosing a workflow"
+                      capture="Open V2 My workspace > Workflows at a wide window size with four or five sample workflows, one of them failed, and select a manual workflow so its Overview shows. Use sample data." %}
+
+**Create workflow** and **Edit** open the editor as a page of its own. The
+workflow is laid out in sections: **Basics**, **Trigger and schedule**, **File
+Sync**, **Execution**, **Shared references**, **Tasks**, **Results** and **Alerts**, with
+**Limits** for a structured workflow. Each section's header says what it is set
+to, and a chip points out a section that isn't ready, such as **Needs
+configuration** on Basics until the workflow has a name, or on File Sync until
+it has a source. On a wide screen, **On this page** jumps to a section and shows
+the same chips. The chips are a guide only; saving still checks the whole
+workflow.
+
+**Save workflow** returns to the list with the workflow selected. If you choose
+**Cancel** or **Back**, or follow another link, with unsaved changes, you're
+asked whether to keep editing or discard them. The editor page has the
+workflow's own address, such as `/v2/workspace/workflows/<workflow id>`, so you
+can bookmark it.
+
+Choose a runner and manual or interval trigger, then add tasks in execution
+order. Task details separate document-action evidence from shared reference
+documents, private conversation references (`~`), and prior-task outputs. For a
+synthesis task, select a specific earlier task under **Previous-task inputs**
+instead of depending on an intermediate note's reply. Reordering never silently
+retargets that binding. Personal workflows can also bind your own private
+conversations as shared references so each run pulls fresh bounded excerpts from
+their latest visible messages; see
+[Reference and send between conversations]({{ '/guides/reference-and-send-conversations/' | relative_url }}).
+
+Use optional output requirements when later work needs a particular JSON
+shape, record identity, count, or complete source coverage. Partial acceptance
+is off by default and remains visibly partial when enabled. These requirements
+validate returned data; they do not prove factual correctness or undo an
+agent's earlier tool actions.
+
+Legacy single-prompt instructions and existing settings are retained when
+opened in V2. Advanced definitions cannot be saved through the classic editor
+because it cannot represent their data-flow fields. A stale edit retains its
+draft instead of overwriting another editor's changes.
+
+From version **0.261.149**, a refused save names the rule that failed, such as
+"Schedule value for minutes must be between 1 and 59.", and the editor checks
+the same rules before you save. If someone deletes the workflow while you have
+it open, saving is refused with "This workflow was deleted after it was opened,
+so your changes were not saved." The draft stays open so you can copy anything
+you need; saving in V2 never brings a deleted workflow back.
+
+See [Workflows]({{ '/features/workflows/' | relative_url }})
+for an overview of reusable tasks, declared inputs, and retained results.
+
+## Choose chat capabilities
+
+Starting in **0.261.343**, new ordinary workflows use **Orchestration
+(automatic)** when your administrator has enabled chat orchestration. Each new
+run plans the saved instructions using the existing available chat tools, under
+the workflow user's identity. A scheduled run does not require an open browser.
+Where orchestration is unavailable, new workflows retain the supported core
+capability default instead.
+
+Choose **Selected capabilities** when a tool is essential. For example, select
+**Search the web** for an events digest that must use current information. A
+checked tool is a requirement, not just permission to consider it: the task
+fails rather than substituting a model-only answer when required execution
+cannot finish. Existing administrator settings, source access and optional role
+policies still apply. Select charts or diagrams when the final answer needs
+those outputs; they are output requirements, not separate search tools.
+
+Tasks inherit the workflow selection unless you choose a task override. An
+override replaces the workflow selection. **Off** uses the existing plain-model
+path where supported. Existing saved workflows keep their former behavior
+until you change their selection; a saved, frozen chat plan keeps its separate
+replay rules.
+
+Ask AI can change the workflow default, a task override, or restore inheritance.
+For example: "Search the web for current Washington, DC events every Friday,
+and create a personal conversation with the results." Review the capability
+and Results changes, not only the task's wording, before saving.
+
+## Choose where results appear
+
+The **Results** section separates the workflow's execution history from the
+outcome people should read:
+
+| Choice | What happens |
+| --- | --- |
+| Run history only | Keep the run's audit and outputs without another automatically delivered conversation. |
+| Create a results conversation | Publish that run's outcome into a new, dated conversation. New ordinary workflows default to a private conversation in their own scope. |
+| Delivered by a task/agent | Let an existing task or agent choose its delivery destination, without an automatic extra result copy. |
+
+A personal workflow can create personal or shared personal results. A group
+workflow can create private group-scoped or shared group results, bound to its
+own group. For shared results, choose named recipients; a shared group result
+also offers **All current group members**, resolved when the run delivers.
+Dynamic recipient discovery remains the responsibility of existing agent
+actions.
+
+Each run has a separate audit conversation. Generated titles use the workflow
+name and run date/time; **Workflow** appears as a tag beneath the title rather
+than a title prefix. Existing conversations and titles are not bulk-renamed.
+Retries reuse the same run and delivery records.
+
+Open the delivered conversation to continue with normal chat capabilities.
+Sharing results does not grant access to the private audit. Alerts open the
+saved results destination, with run history available separately to authorized
+readers. This is distinct from **Ask in chat**, which deliberately answers only
+from a selected saved run.
+
+## Create a workflow from chat
+
+Starting in **0.261.207**, the V2 chat can propose a personal workflow when you
+ask for work that repeats, such as "Every Monday at 8, read my email and tell me
+what I should focus on this week." Chat answers for the current period once, as
+a preview, and a **Proposed workflow** card follows the answer. Nothing is
+created until you choose.
+
+Proposals appear only when your administrator has turned on **Propose Workflows
+From Chat**, you can create personal workflows, and the conversation is private
+to you. They never appear in a shared or collaborative conversation.
+
+The card shows what the workflow would do:
+
+- **When** and **How often**: the schedule, in your browser's time zone, and
+  about how many runs a month. A workflow that watches File Sync "Runs when File
+  Sync finds changes in" its source; its first run covers whatever that source's
+  next sync reports.
+- **Alerts**: a notification after every run, or only when a run fails. It
+  appears in your notifications and never pops up.
+- **Microsoft 365** and **Run as**: the Microsoft 365 data the workflow uses,
+  whether it can send email or calendar invitations, and whose account it uses.
+- Each task, with the agent or model that runs it and the documents it reads.
+  Expand **Instructions** to read exactly what the task is told to do on every
+  run. From version **0.261.241**, a task that merges spreadsheets says so
+  instead, for example "Merges the input files below, in order, into one Excel
+  file with code. No model runs.", and lists the files under **Files to merge,
+  in order**.
+- Similar workflows you already have, so you don't create a duplicate.
+
+A proposed task reads only documents you named in that request: the documents
+you picked in the chat composer and the ones you referenced with `#`. Chat never
+adds a document it found by searching, even one that helped answer your question.
+To have the workflow read other documents, choose **Edit** and add them to the
+task.
+
+Then choose one of these:
+
+- **Create & start** creates the workflow and turns it on.
+- **Create paused** creates it turned off. Turn it on in Workflows when you're
+  ready.
+- **Create** appears instead for a manual workflow. It runs only when you start
+  it from Workflows.
+- **Edit** opens the proposal in the workflow editor. **Save** creates it as you
+  edited it, and it stays off unless you turn on **Workflow enabled**.
+- **Deny** declines the proposal. Nothing is created.
+
+From **0.261.317**, chat uses the same administrator minimum as the workflow editor.
+An explicit allowed request such as "every minute" should keep that cadence;
+if you ask for recurring work without saying when, planner guidance asks you
+how often rather than assuming hourly. This is model guidance, not a guarantee
+of a particular model's answer.
+
+Use **Edit**, then **Ask AI**, to change the schedule. Review the AI changes and
+choose **Confirm and save**. If the interval is below policy, the error names the
+shortest permitted interval and is brought into view. Your edited draft stays
+open; choose an allowed interval and save again. No policy warning is shown for
+valid timing.
+
+Once it's created, **Open workflow** opens it in Workflows. If you delete it
+later, **Create again** creates it again, paused. A proposal expires 14 days
+after chat made it; after that, ask in chat again.
+
+A workflow created from chat can't turn on URL Access. Create it first, then
+turn on URL Access in the workflow editor. A task that uses Microsoft 365 needs
+a connected Run as account. Saving a revision as that account's owner counts
+as reviewing it; a revision someone else saved needs that person's approval,
+as described under [Microsoft 365 Run as](#microsoft-365-run-as).
+When Microsoft 365 isn't connected for workflows, the card links to the
+connection in your profile.
+
+See [Workflow proposal controls]({{ '/reference/chat-controls/#workflow-proposals-v2-interface' | relative_url }})
+for reviewing and creating a proposed workflow.
+
+### Repeat a chat plan on a schedule
+
+Starting in **0.261.308**, you can save a plan that chat already ran as a
+personal workflow that repeats the same steps, for example every Monday. Use it
+when an orchestrated answer was worth having once and you want the same
+searches, analysis and answer again without asking each time. A workflow
+proposal, described above, writes new workflow tasks for you. A saved plan
+instead repeats the exact steps that ran in chat, so the steps you approved are
+the steps that run.
+
+Starting in **0.261.338**, **Repeat on a schedule** is the calendar icon in an
+orchestrated answer's message action bar, beside Copy and Retry. Hover over the
+answer or tab into its actions to reveal the icon. It is available when your
+administrator has turned on **Repeat Chat Plans On A Schedule**, you can create
+personal workflows, the conversation is private to you and the plan finished.
+It doesn't appear under a masked answer, or under a plan that proposed, started
+or handed off a workflow.
+
+Choosing the calendar icon expands **Save this chat plan** below the answer.
+The card stays visible while you review it, even after moving the pointer away.
+**Collapse** hides it and returns focus to the icon; choosing the icon again
+also closes the card. Before anything is saved, the card shows:
+
+- **Request**: what you asked, as each run will repeat it.
+- **Time**: dates written in the plan stay as written, so "March 3" always
+  means March 3. Each run is also told the current date and time in the time
+  zone the card names, so a request about "this week" can be read against the
+  day the run happens. That is the schedule's own time zone when it has one,
+  otherwise the time zone of the chat the plan came from, or UTC.
+- **Cadence**: the shortest repeat interval allowed.
+- **Step cap**: the most steps a saved plan can have.
+- **Runs as**: you, in the workflow's own conversation.
+- **Alerts**: If a run fails, you'll get a 'Run failed' notification in the
+  bell. You can change this in the workflow's alerts.
+- Every step, numbered, with its title and the kind of work it does.
+
+Only steps that **Search documents**, **Analyse documents**, **Compare
+documents**, **Merge documents**, **Inspect spreadsheets**, **Prepare content**
+or **Generate image** from a written prompt can be repeated. A plan that
+searches the web, researches in depth, reads linked pages, analyses or merges
+spreadsheets, uses an action, asks an agent, creates a file to download, edits a
+reference image, works with workflows, or asked you a question before it ran
+can't be saved. In that case the card lists each problem under **This plan has
+replay notes**, with the step it applies to, and offers no way to save.
+
+To save, optionally give the workflow a name and description, choose whether it
+should **Run on a schedule** and pick the schedule, then choose **Save
+workflow**. The workflow is saved paused unless you also turn on **Turn on the
+schedule now**. Without a schedule, it runs only when you start it from
+Workflows. **Open workflow** takes you to it.
+
+The saved steps can't be changed. In the workflow editor, the **Saved chat
+plan** section lists them read-only; you can still change the name,
+description, schedule, alerts and whether the workflow is on. To change the
+steps, ask again in chat and save the new plan. The Classic workflow page sends
+you to V2 to edit it.
+
+The workflow starts with one alert rule, **Run failed**. When a run fails or
+finishes with task errors, it sends a high-severity notification to your bell,
+never a pop-up; a run that succeeds sends nothing. You can rename, change or
+delete the rule under **Alerts** in the workflow editor, and saving the same
+plan again doesn't add it back.
+
+Every run:
+
+- Runs as you, the person who saved it, whether it was started by the schedule
+  or by hand, and is allowed the same steps either way.
+- Checks first that the setting is still on, every step is still allowed and
+  you can still open every document, group and public workspace the plan reads.
+- Repeats the saved steps in order. The model writes the answer again from that
+  run's results, but never adds, removes or changes a step.
+- Runs in the workflow's own conversation, not the chat you saved it from, so
+  sharing that chat later doesn't change what the workflow reads or where its
+  answer goes.
+- Stops after 15 minutes.
+
+If a check fails, the run stops without running any step and shows a fixed
+reason, such as "Repeating chat plans is turned off" or "A document, group or
+public workspace this plan reads is no longer available to you", in the run
+history and in the **Run failed** notification in your bell, unless you changed
+the workflow's alerts.
+
+## Run on a calendar schedule
+
+From version **0.261.193**, a scheduled workflow can run at a local time rather
+than at a fixed interval, for example every Monday at 08:00 in New York. This
+works in personal and group workflows, and you set it in the V2 editor:
+
+1. Set **Trigger** to **Schedule**. A group workflow that watches File Sync can
+   use **Monitor File Sync changes** instead.
+2. In **Repeats**, choose how often it runs:
+   - **At an interval** keeps a fixed interval, set with **Interval value** and
+     **Interval unit**.
+   - **Daily** runs every day.
+   - **Weekdays (Monday to Friday)** skips weekends.
+   - **Weekly on chosen days** runs on the days you select under **Days of the
+     week**.
+   - **Monthly on a day of the month** runs on the **Day of the month** you
+     enter, from 1 to 31. A month without that day runs on its last day, so day
+     31 runs on 30 April, and on 28 February or, in a leap year, 29 February.
+3. Set **Time** and **Time zone**. The time zone is an IANA name, such as
+   `America/New_York` or `Europe/London`; start typing to choose one from the
+   list. A new calendar schedule starts at 09:00 in your browser's time zone.
+   If the server doesn't offer your browser's zone, the schedule starts in UTC
+   and the editor says so; choose the zone the schedule should follow.
+4. Check the summary under the fields, such as "Schedule: Mondays 08:00
+   America/New_York", then save. The workflow list shows the same summary.
+
+Runs follow the local time in the zone you chose, through daylight saving
+changes. "Mondays 08:00 America/New_York" runs at 12:00 UTC in summer and 13:00
+UTC in winter. On the night the clocks go forward, a time they skip runs later
+by the amount skipped, so 02:30 in New York runs at 03:30. On the night the
+clocks go back, a time that happens twice runs once, the first time it happens.
+
+If a run was missed, for example while the app was stopped, the workflow runs
+once when the scheduler catches up, then waits for its next scheduled time. It
+doesn't make up each missed run.
+
+From version **0.261.202**, each run of a calendar workflow tells the model when
+it started, in the schedule's time zone, for example "Current date and time:
+Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list
+this week's to-dos" then mean the week of the run. Scheduled runs and **Run
+now** both include it. Workflows that run at a fixed interval, or only when
+started by hand, don't.
+
+Existing interval workflows keep their schedules, and their Microsoft 365 Run
+as approvals stay valid. The schedule is part of that approval, so changing it,
+including to a calendar schedule, is a material change that needs renewed
+approval.
+
+The classic editor can't edit calendar schedules. Opening one there shows
+"This workflow uses a calendar schedule. Open V2 to edit it without losing its
+configuration. Run and Cancel remain available here."
+
+From version **0.261.202**, the V2 editor also opens a workflow read-only when
+it can't show the workflow's schedule exactly, such as a kind of schedule or a
+**Repeats** frequency saved by a newer version of SimpleChat, or an interval
+unit or value it doesn't recognize. The editor says so, and the schedule stays
+exactly as saved, so a save never swaps in a schedule you didn't choose.
+
+Your administrator can set a minimum interval. A new or changed interval that
+runs more often is refused with a message that names the minimum, such as
+"This schedule runs more often than the administrator allows. Choose an
+interval of at least 5 minutes." Workflows already saved on a shorter interval
+keep running, and calendar schedules aren't affected.
+
+See [Workflow settings]({{ '/admin/workflow/' | relative_url }})
+for deployment-wide scheduling limits.
+
+## Run a workflow when File Sync finds changes
+
+From version **0.261.141**, the V2 editor for group workflows can author File
+Sync, and from version **0.261.207** so can the editor for personal workflows.
+Owners, Admins, and other workflow managers of a group, and anyone editing
+their own personal workflow, see these choices when there are File Sync
+sources to choose from:
+
+- **Monitor File Sync changes** is a trigger. On the schedule you set, it syncs
+  the selected sources, waits for the sync to finish, and runs the workflow only
+  when files changed.
+- **Run File Sync before each run** syncs the selected sources first on a manual
+  or interval workflow. **Wait for File Sync** and **Continue the workflow**
+  decide whether the workflow waits, and whether it runs when nothing changed.
+- **Use changed files as Analyze targets** lets an Analyze task with no
+  selected documents work on the files each sync changed. From version
+  **0.261.241**, it also lets a **Merge files** task merge them; see
+  [Merge files in a workflow](#merge-files-in-a-workflow).
+
+A group workflow uses between 1 and 10 of the group's own sources. A source the
+group no longer offers is marked **No longer available**; remove it before
+saving. From version **0.261.149**, if a source is deleted while you're editing,
+saving is refused with "A selected File Sync source is no longer available.
+Remove it and save again." Your changes stay in the editor, and the source is
+marked so you can remove it. When File Sync is turned off for the group, the
+editor says so instead of showing an empty list.
+
+A personal workflow uses between 1 and 10 of the sources you may sync: your own
+personal sources, and those of your active group and active public workspace
+when you're an Owner, Admin or DocumentManager there. Each source is labelled
+with where it lives, such as "Home share (Personal)". Your personal sources are
+offered only while your administrator allows personal File Sync for you, which
+can require the **PersonalFileSyncUser** role. When it's off, the editor says so,
+and sources the workflow already uses stay selected so you can keep or remove
+them. The save checks every source again: a deleted source is refused with the
+same message as for a group, and a source you're no longer allowed to use with
+"Workflow settings or sources are not allowed for this account."
+
+## Merge files in a workflow
+
+From version **0.261.241**, a task can merge many CSV and Excel files into one CSV
+or Excel file, from **0.261.242** it can also join PDFs into one PDF or put
+several spreadsheets on separate sheets of one workbook, from **0.261.243** it
+can append Word documents into one Word document, and from **0.261.244** it can
+append PowerPoint decks into one deck. Use it for a merge that's
+too big for one chat turn, such as a year of weekly exports, or one that should
+happen on its own, such as every Monday or whenever a synced folder gets a new
+export. A merge task runs with code, not a model or agent: rows and pages are
+copied exactly and the task's answer summarizes what was merged.
+
+1. Add a task and choose **Merge files** as its **Document action**. Write a
+   short note in **Instructions** describing the merge; the merge itself
+   doesn't read it. **Merge files** isn't offered while your administrator has
+   Merge turned off.
+2. Choose a **Merge type**:
+   - **Combine rows (CSV/Excel)** stacks the rows of CSV and Excel files into
+     one table.
+   - **One workbook, a sheet per file** keeps each CSV or Excel file as its own
+     sheet of one Excel workbook, named after the file.
+   - **Combine PDFs** joins PDFs into one PDF, with a bookmark for each file.
+   - **Combine Word documents** appends Word documents into one Word document,
+     each keeping its own styles, numbering and images.
+   - **Combine PowerPoint decks** appends the slides of PowerPoint decks into one
+     deck, with a section for each deck.
+3. Under **Files to merge**, choose:
+   - **Selected files, in this order** to merge files you pick, at least two.
+     Set their order under **Merge order**.
+   - **All matching files in scope** to merge every file of that type in the
+     workflow's workspace when the run starts.
+   - **Recently added or updated files** to merge those added or changed within
+     **Recent window in minutes** before the run, 60 by default.
+   - **Files changed by File Sync** to merge the files each sync adds or
+     changes. It's offered when File Sync is on and **Use changed files as
+     Analyze targets** is selected.
+
+   Files found when the run starts are merged in file-name order.
+4. For row merges, choose **Output format**, CSV or Excel workbook. Workbook
+   merges create an Excel workbook, PDF merges a PDF, Word merges a Word
+   document and PowerPoint merges a deck. Optionally set an **Output file name**
+   without an extension.
+5. Open **More merge options**. For row merges, decide how columns are matched,
+   add column aliases, choose sheets or a header row, leave out files whose
+   columns don't match, remove duplicates, or sort; these are the same settings
+   you can ask for in a [chat merge]({{ '/guides/merge-files/' | relative_url }}).
+   For workbooks, choose the first sheet, every sheet, or a named sheet of each
+   file. For PDFs, turn **Add bookmarks** off if you don't want a bookmark per
+   file. For Word documents, **Word formatting** keeps each document's look or
+   uses the first document's styles for all of them; **Page break between
+   documents** starts each one on a new page; and **Add source headings** puts a
+   heading with the file name before each one. For PowerPoint decks,
+   **PowerPoint formatting** keeps each deck's look or puts every slide on the
+   first deck's theme, and **Create one section per deck** groups each deck's
+   slides.
+
+Each run attaches the merged file to the run's conversation, and later tasks
+can read the merge task's summary. A workflow merges up to 100 files and
+1,000,000 rows by default; your administrator sets these limits under
+[Document Action Capabilities]({{ '/admin/agents-actions/' | relative_url }}#document-action-capabilities-card).
+A PDF, Word or PowerPoint merge reads at most 300 MB of files in total. Merged
+PDFs keep links to pages and to web and email addresses, but not scripts, form
+actions, or links that open other files or programs, and the task's answer says
+when any were removed. A merged Word document uses the first document's headers,
+footers and page setup, and leaves out comments. A merged deck uses the first
+deck's slide size and leaves out slide comments.
+
+A run with nothing to merge finishes and says so without creating a file.
+Files that can't be merged are handled by how they were chosen:
+
+- For **Selected files**, a file that's no longer available, or isn't a CSV or
+  Excel file, fails the task and says which.
+- For files found at run time, those files are skipped and named in the
+  task's answer.
+- When more files match than the limit allows, the task fails rather than
+  merging only some of them. Narrow the files, or ask your administrator to
+  raise the limit.
+
+A merge failure caused by the files or settings is shown on the task and isn't
+retried, because the same merge would fail the same way.
+
+## Set up alerts
+
+From version **0.261.144**, personal and group workflows are given alerts in the
+V2 editor, under **Alerts** after the tasks. The alert settings are:
+
+- **When to alert:** **Never notify me**, **On every run** (choose a **Pop-up
+  alert priority**), or **Only when a condition is met**.
+- **Alert rules**, up to 20, used by **Only when a condition is met**. Each rule
+  has a condition:
+  - the run finished with a status;
+  - a task finished with a status;
+  - the output text contains, lacks or matches a pattern;
+  - a File Sync result;
+  - the run produced no output;
+  - a model judges a condition you describe;
+  - the agent raised an alert.
+
+  A rule that reads output (task status, output text, no output, or a model's
+  judgement) can look at the final output, any task's output, or one task. Run
+  status, File Sync results and agent alerts apply to the whole run. A rule's
+  **severity** decides where the alert lands: info and low go to the
+  notification bell, and medium and above open the pop-up alert, unless you
+  choose the delivery yourself. A new rule is named after its condition until you
+  give it a name.
+- **If a model evaluated condition cannot be judged** appears when a rule asks a
+  model to judge. It either skips the rule silently, or alerts anyway so a
+  failure isn't missed.
+
+When several rules match one run, the highest severity wins and every matched
+rule is listed. Rules you keep while alerts are off, or on every run, are still
+saved and still checked.
+
+If you delete a task that a rule watches, the rule is marked, and the editor
+won't save until you choose another task or remove the rule. A problem with the
+alert settings is shown with the rule's number.
+
+Members who can't manage the workflow see a read-only summary. A workflow saved
+in V2 can no longer be opened by the classic editor.
+
+### Make an alert hard to miss
+
+From version **0.261.235**, each rule also has **Pop-up options**. Use them for
+alerts someone must see and act on, such as a failure that an operations team has to
+pick up:
+
+- **Require acknowledgment** keeps the alert coming back after a refresh, in every
+  tab, and on every device, until someone selects **Acknowledge** or opens it.
+  Closing the alert only shrinks it, and **Mark all read** never clears it.
+- **Sound** plays a tone that gets more urgent with the severity. **Play once**
+  sounds when the alert pops up. **Repeat until acknowledged** sounds every five
+  seconds until someone acknowledges the alert, so choosing it also turns on
+  **Require acknowledgment**.
+- **Size** decides how much of the screen the alert takes. **Small** is the usual
+  pop-up. **Medium** opens the full alert straight away. **Large (full screen)**
+  fills the screen, which suits a wall display.
+
+These options only apply to alerts that pop up. A rule that goes to the bell, such
+as an info rule left at **Default for severity**, can't use them until you set its
+delivery to **Pop-up alert**. When several rules match one run, the alert gets the
+strongest option any of them asked for, even if the rule with the highest severity
+didn't ask for it. **On every run** alerts don't have these options. To get them,
+use a rule such as **Run finished with a status: Completed**.
+
+### Alert everyone in the group
+
+In a group workflow, **Who gets it** chooses between the **Workflow owner** and
+**Everyone in the group**. A team alert is a single shared alert. When any member
+acknowledges it, it stops popping up and sounding for everyone, and each member's
+bell shows who acknowledged it and when.
+
+Members other than the owner see a simpler alert: its severity, the workflow, the rules
+that matched, and **Open** to what the run created in the group, such as a group
+conversation. The full alert describes the owner's side of the run, including
+conversations in the owner's own space, so only the owner sees it.
+
+The classic workflow editor has the same options.
+
+## Choose the Microsoft 365 Run as account
+
+Native V2 **Run as** authoring is implemented in version **0.261.122**. Use
+**Microsoft 365 Run as** in the editor when a workflow needs someone's Microsoft
+365 account for manual or scheduled actions. Personal workflows offer your
+account; group workflows load eligible choices for the selected group.
+
+New workflows start with **No Microsoft 365 account selected**. Neither workflow
+ownership nor having an account in the list grants consent; the selected person
+must connect Microsoft 365. Since version **0.261.229**, a revision the selected
+person saved themselves runs as them without a separate approval: their save is
+their review. When someone else saves the workflow, or changes an agent or
+action it uses, the selected person approves that revision before it runs as
+them. A change to the conversation audience never asks again. See
+[Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
+
+Save the workflow to persist your choice. To explicitly remove it, choose **No
+Microsoft 365 account selected** and save. If the list cannot load or a saved
+account is absent from it, V2 retains the current selection rather than silently
+clearing it or choosing someone else. Retry the account list or review the
+unavailable selection before running; unrelated edits can still be saved without
+changing that account, subject to the usual workflow permissions and validation.
+
+In a structured workflow, Undo and Redo also restore unsaved Run as selections
+across List and Flow, including an explicitly cleared account (version
+**0.261.124**). This does not grant consent or restore an earlier approval.
+
+People who can't manage the workflow see only whether an account is selected
+(version **0.261.149**). Only workflow managers can see who it is or change it.
+
+## Choose branches and optional work
+
+{% include media.html id="slide-workflow-logic" %}
+
+Use the illustration to reason about paths and named results, then configure
+the actual bindings and limits in List or Flow. A human checkpoint approves
+specific work; it does not repair missing evidence or grant new source access.
+
+In **0.261.116**, **Enable structured control flow** explicitly converts a V2
+draft to definition version 3. Existing workflows stay ordered unless you
+choose this conversion; nothing is persisted until **Save workflow**.
+
+Use a JSON output contract with **Structured decision fields** when a task
+must supply a Boolean, number, or enum for a decision. Add **If/else**, bind
+that saved output by name, and choose the field and comparison. Put the
+appropriate tasks in **Then** and **Else**, then configure **Join outputs**
+to give later tasks one explicit result from the selected path.
+
+**Run when** skips a task when its condition is false. A skipped task produces
+no output, so downstream consumers need an optional binding or a required join
+output. **Forward route** may bypass optional work only by selecting a later
+sibling or exiting the current branch to its join. Invalid dependencies are
+shown before saving; moving a block never silently changes its input source.
+
+Declare promised deliverables under **Final outputs**. This prevents a run from
+reporting completion when a selected path did not produce the required result.
+Structured definitions require durable execution and preserve their choices
+across waits and restarts. For each and Collect are added in **0.261.117** below.
+Repeat until is added in **0.261.120** below. Version **0.261.121** adds the
+read-only saved/run Flow inspection described below. Version **0.261.122**
+adds **List authoring** and **Flow authoring** for the same structured draft.
+
+See [Inspect a structured path]({{ '/guides/trigger-a-workflow/#inspect-a-structured-path' | relative_url }})
+for run-time decisions, execution identity, and continuation limits.
+
+## Edit with List or Flow
+
+In **0.261.122**, the structured editor offers **List authoring** and
+**Flow authoring** over one draft. List is the default, including on small
+screens. Use Flow when seeing branches, joins, and loop boundaries helps you
+place work in the right region; use List when a compact sequence of forms is
+easier to follow. Switching does not convert an ordered workflow or create a
+different saved definition.
+
+1. Open the structured workflow in Edit, then choose **Flow authoring**.
+   Workflow basics, runner, schedule, shared references, limits, and Save
+   remain common to both surfaces.
+2. Select the block you want to configure. Tasks retain their instructions,
+   runner, approval, document-action, reporting, publication, and typed-input
+   fields. If/else, Forward route, For each, Repeat until, and Collect use the
+   same forms as List. Select the owning structure to edit join, body, or
+   final outputs.
+3. Add a block with an explicit destination region and a position before or
+   after a sibling, or at the end. For example, add a review task inside
+   **Else**, not after the entire If/else, when only that branch needs review.
+   A new Repeat maximum stays unset until you choose it.
+4. To change execution order or move work into another region, use the move
+   controls and choose the destination and position. Dragging a box only
+   rearranges your view. You cannot create a dependency, reconnect a route,
+   or reparent work by drawing or dragging a connector.
+5. Before confirming a reference-breaking move or removal, review the listed
+   consumers and exact selectors. Confirming retains those references, even
+   if they now point to a missing or out-of-scope producer. Repair them before
+   saving; the editor does not cascade removal into consumers or silently
+   select a replacement source. Cancel the confirmation to keep the draft
+   unchanged.
+6. Finish required fields and use **Save workflow**. The same validation,
+   active-run protection, and saved-revision checks apply in either surface.
+   Saving does not start the workflow.
+
+Incomplete supported boxes stay selectable as **Unvalidated draft**, including
+an empty task, an unfinished schema, or a Repeat with no maximum yet.
+Executable control arrows appear only after the server compiler accepts that
+exact current draft. Old successful arrows cannot describe newer invalid
+edits. Typed bindings are authored relationships, not extra execution paths.
+An unknown executable shape stays intact and read-only rather than being
+silently converted.
+
+List/Flow switches and selecting another node preserve unfinished schema text,
+field errors, and other in-progress fields. They also preserve the current
+selection and unsaved-change/discard protection. A stale-save conflict or
+ordinary network error retains your draft; it does not overwrite someone
+else's saved changes or automatically rebase your work.
+
+All editing operations have keyboard/button alternatives. Use the controls
+that focus the selected configuration form and return to its block. Selection
+is revealed when switching surfaces; after removal, focus recovers to a
+surviving sibling or its parent/root. Flow's panel stacks on narrow screens,
+and page scrolling and browser zoom remain available.
+
+Pan, zoom, collapse, and temporary box positions are not executable edits and
+are not saved. There is no autosave or implicit execution, Analyze invocation,
+publication, or readiness check when switching or configuring blocks.
+
+### Undo unsaved edits
+
+Starting in **0.261.123**, use the shared **Undo** and **Redo** buttons in a
+structured editor to reverse and restore edits across List and Flow. This
+includes common fields, block configuration, moves/removals, unfinished
+schema text and errors, and Repeat state fields. Typing during one field visit
+is one action; schema-builder and other compound changes stay together.
+
+Inside text fields, Ctrl/Cmd+Z keeps native text undo. Outside text fields,
+Ctrl/Cmd+Z undoes a workflow action; Ctrl/Cmd+Shift+Z or Ctrl+Y redoes one.
+Replay that removes blocks or affects other references asks for confirmation.
+Review the impact and repair any resulting invalid selectors before Save.
+Undo/Redo does not start work, reverse a publication, or change a saved run.
+
+The editor retains up to 100 actions across both directions and 32 MiB of
+additional accounted history data, not total browser memory. It announces
+when old steps are removed. An individually oversized edit asks before
+applying its complete contents and clearing history; **Keep draft unchanged**
+retains your previous work.
+
+Successful Save, discard, reload, or switching to a different workflow/scope
+starts a fresh history session. Failed saves keep your draft and history
+without replacing the original saved revision. Confirmed loss of authoring
+access clears protected history and requires reopening after access returns.
+Converting an ordered workflow starts empty v3 history; Undo does not reverse
+that explicit conversion.
+
+## Review your changes
+
+Starting in **0.261.203**, the V2 editor tracks what changed since you opened
+the workflow. You can check a long editing session before you save, and take
+back one change without undoing everything you did after it. This works for
+personal and group workflows, in every format.
+
+### See what changed
+
+Each changed field is framed and labeled **Edited**. Changes made by AI assist
+are framed in blue and labeled **AI assist** instead. From **0.261.213**,
+[**Ask AI**](#ask-ai-to-change-a-workflow) and **Draft with AI** make them.
+
+- **Previously** shows the value the field had when you opened the editor.
+  Long values are cut short, with **Show more**.
+- **Revert** puts back that one field and keeps every other change.
+- A task or block you added is labeled **Added · by you**, and its **Revert**
+  removes it.
+- A removed task leaves a **Removed task** row where it was, with **Restore**.
+  Restore puts back the saved version of the task in its saved place. On the
+  Flow surface, removed blocks are listed under **Removed blocks** above the
+  canvas.
+- Moving tasks around is one **Task order** change, not a change to every task.
+
+{% include media.html src="guides/create-a-workflow-review-changes.png"
+                      alt="The V2 workflow editor with a renamed workflow and an edited task instruction each framed and labeled Edited, and the Changes panel beside the editor listing the unsaved changes with Jump and Revert buttons."
+                      title="Reviewing unsaved workflow changes"
+                      capture="Open a saved workflow in the V2 editor at a wide window size, rename it, edit one task's instructions, remove another task, then choose Changes. Use sample data." %}
+
+### Use the Changes panel
+
+Choose **Changes** at the top of the editor page (in the footer when the editor
+opens from a chat proposal). The button shows how many changes are unsaved, and
+the panel lists them in two parts:
+
+- **Unsaved changes**: each change with its before and after values and who
+  made it. **Jump** moves to the field, switching from Flow to List when the
+  field isn't on Flow. **Revert** (or **Restore** for a removed item) takes
+  back that change.
+- **This session**: the steps you took, newest first. **Restore to here**
+  returns the workflow to how it was after that step. It is added as a new
+  step, so the later steps stay in the list and nothing is lost. The last row,
+  **Opened version**, is the workflow as you opened it.
+
+On wide screens the panel opens beside the editor. On narrower screens it
+takes the editor's place until you close it or choose **Jump**. Press Escape to
+close the panel and return to the **Changes** button.
+
+When the workflow runs as a Microsoft 365 account, the panel notes when your
+changes mean **Saving requires re-approving Run as**. See
+[Microsoft 365 Run as](#microsoft-365-run-as).
+
+### Save after reviewing
+
+Saving your own changes is still one click. When some unsaved changes came
+from AI assist, the first **Save workflow** opens **Review before saving** in
+the Changes panel instead. Check the changes, then choose **Confirm and save**.
+
+Read-only editors show none of this. In a workflow that has never been saved,
+everything is new, so only AI assist changes are pointed out. After you convert
+an ordered workflow to the structured format, changes are still listed, but
+they can only be discarded together, with **Cancel**.
+
+## Rolling documents for each task
+
+From **0.261.333**, each task has a visible **Documents** section beside its
+instructions, outside **Runner, inputs, references and outputs**. Choose an
+action first: **Analyze** reads whole documents, **Search** retrieves relevant
+passages, **Compare** evaluates differences, and **Merge** assembles compatible
+files. Then choose **Selected documents** or **Recent documents by criteria**.
+Search also offers relevant content across chosen workspaces without a time
+filter; this is not exhaustive file processing. Merge and Analyze retain their
+all-files modes, and applicable loop/File Sync inputs remain available.
+An older recent-document action stays unchanged until you opt into guided filters.
+All-files mode shows its effective workspace scope. A group/public-only union
+that the older all-files contract cannot express is refused without adding
+My workspace; keep recent criteria or explicit documents for that combination.
+
+Find source workspaces by name and source kind, choose **Add**, and review the
+separate selected list. **Remove** changes only the selected source, not other
+filters. Search covers all authorized workspace names, while at most 25 results
+are rendered at once. The 20-workspace limit applies to selections, not discovery.
+
+Choose **Added** for current files uploaded during the window, including newly
+uploaded revisions. It uses the current record's upload time, not the creation
+date of its original revision family. Records with missing or invalid upload
+metadata do not qualify; modification time is never silently substituted.
+**Added or updated** includes metadata/content edits through Cosmos `_ts` and
+remains the meaning of older selectors without an explicit event.
+
+Choose a window in minutes, hours, days, or weeks.
+The maximum is 365 days. The window is relative to the start of that task's
+selection, not to the day you saved the workflow.
+Group workflow tasks can select only their own group workspace.
+
+### Build a useful document filter
+
+Use **Add filter** for a metadata condition, or **Add AND / OR group** for
+alternatives inside a larger rule. **Match all** requires every child;
+**Match any** accepts any child. Workspace and time boundaries always apply,
+even when a metadata group uses OR.
+
+For example, to process PDFs or CSVs from the last five days whose names start
+with Tim **or** have tag X, choose five days and create:
+
+- A **Match all** root.
+- A File type condition with PDF and CSV checked.
+- A **Match any** child with File name / Starts with / Tim and Tags / X.
+
+Tags and file types offer searchable choices rather than requiring you to
+remember their spelling. A literal tag can also be entered. Other conditions
+match the recorded classification, authors, or keywords. Missing metadata does
+not match that condition. Authors are document metadata, not necessarily uploaders.
+Matching is case-insensitive unless you select **Match case**. Filename
+regular expressions run only on the server, with syntax and execution limits;
+they never run in your browser.
+
+The plain-language summary shows the whole condition. **Preview matching
+documents** returns the current exact count and up to 50 sample names. Preview
+does not reserve those documents or run a model; execution takes a fresh
+selection. A changed filter clears the old preview. An incomplete catalog,
+invalid expression, unavailable scope, or an over-limit selection produces an
+error instead of a partial list presented as complete.
+
+Each task's selection is frozen for its retries; durable execution also keeps
+it across resume and rechecks access and source versions. A new run selects
+again. Choose **Report no recent documents** to return an informational result
+without calling a processing model, or **Fail this task** to require matches.
+Explicit output contracts remain enforced and do not receive fabricated data.
+Comparison needs at least two matches and uses the newest as its Source.
+Search ranks matching content; Analyze is the choice for processing every
+selected document completely.
+
+### Choose the action at run time
+
+Select **Choose at run time** only when the goal should determine the action
+on each visit. The source must still be explicit selected files or bounded
+recent criteria. This is one Analyze, Search, Compare, or Merge action, not an
+unrestricted planner. For several steps, author several workflow tasks.
+
+The workflow captures authorized inputs before choosing. The chooser cannot add
+documents, workspaces, tasks or external tools. Compare needs at least two
+inputs and clear source/target roles. Merge requires explicit type/output
+settings and compatible files; provide them under **Optional runtime Merge
+output constraints**, rather than asking the chooser to guess.
+
+Ambiguous goals, missing details, unavailable capabilities or changed source
+proofs fail the task under its normal error/alert policy. No background chat
+asks for more information. Retries and durable resume reuse the same capture
+and decision, rechecking access, integrity and capabilities, rather than
+silently replanning. A new run chooses again.
+If a worker is interrupted after sending a selection request but before retaining
+its response, the outcome is unknown and that visit refuses to replan. Start a
+new run rather than silently issuing another decision request.
+
+This option adds a selection-model call even if it chooses non-model Merge.
+Run history shows the selected action, brief outcome summary, input count and
+selection-model tokens separately from processing. No matches avoid both model
+selection and document processing. Frozen chat-plan replay remains unchanged.
+
+## Ask AI to create or change a workflow
+
+Starting in **0.261.213**, the V2 editor's **Ask AI** tab changes a personal
+workflow from a plain-language request, such as "run this at 7 AM on weekdays
+and only alert me when something is urgent". Use it when you know what you want
+the workflow to do but not which fields hold it, or to make the same kind of
+change across many tasks. It never saves. Its changes are highlighted like your
+own, and you review them before you save.
+
+From **0.261.343**, this also works for group workflows you can manage, and can
+change chat-capability defaults, task overrides and Results delivery.
+
+From **0.261.332**, a new-workflow goal can generate a name, description, and
+initial task instead of only explaining how to use the editor. Follow-ups such
+as “Give this a name and a description” use the goal already in the thread.
+Clear edits can be applied while the assistant asks for a missing time,
+lookback window, workspace, or other execution detail. It does not invent a
+time for “Tuesday and Thursday” or a window for “latest”.
+
+From **0.261.333**, “every Tuesday summarize new docs added to My workspace over
+the last week” fills the name, description, task instructions, Analyze action,
+workspace, Added event and seven-day window. It also creates a visibly incomplete
+Tuesday recurrence with **Time** blank and asks only for that time. Saving and
+running remain blocked until it is supplied. A time follow-up completes the same
+schedule without replacing the document policy. The assistant never saves,
+enables or runs the draft.
+
+For a complete document workflow, include the workspace, selection window,
+filters, task goal, schedule time, and time zone. For example:
+
+> Analyze PDFs or CSVs in My workspace updated in the last five days whose
+> filename starts with Tim or which have tag X. Run Tuesday and Thursday at
+> 9 AM in America/New_York. Report no matches without a processing model call.
+
+Ask AI can author Analyze, Search, Compare and Merge, choosing a concrete action
+from your goal and explaining it for review. It authors runtime choice only
+when explicitly requested. Later, ask to change just the window
+or replace one filename condition; the targeted operations preserve other
+filters and other tasks.
+
+From **0.261.315**, you can also ask “Require acknowledgment on Rule 2” or change a rule's
+sound and size. Acknowledgment is separate from task approvals. For an explicit request
+for the strongest available attention, AI guidance proposes critical severity, a pop-up,
+required acknowledgment, repeating sound and full-screen size for your review; quieter
+requests retain their defaults, and device sound preferences still apply.
+
+Chat-created monitoring proposals can use these same native conditional alerts. A read-only
+agent can fetch external telemetry and SimpleChat can alert on actual adverse findings without
+changing the source system's alarm configuration or sending email. Review each rule's condition
+and attention options on the proposal card before creating it. Personal workflows alert their
+owner, not a whole group.
+
+**Ask AI** appears when your administrator has turned the assistant on for an
+available workflow scope and you can edit that workflow.
+
+### Ask for a change
+
+1. Open a personal or authorized group workflow in the V2 editor, or choose **Edit** on a workflow
+   proposal in chat.
+2. Choose **Ask AI** at the top of the editor page, or in the footer when the
+   editor opens from a chat proposal. To ask about one task, choose
+   **Ask AI** on that task instead. The tab shows **About:** with the task's
+   name until you clear it.
+3. Type what you want and send it, or choose a quick action such as **Explain
+   this workflow** or **Add a schedule**.
+4. Wait for the answer. The editor is locked while Ask AI works, so the answer
+   fits the draft you sent. **Cancel request** stops it, and nothing changes.
+
+A message can be up to 2,000 characters, and an emoji counts as one. When your
+browser's time zone is one the schedule editor offers, Ask AI sends it, so
+"7 AM" means 7 AM where you are.
+
+{% include media.html src="guides/create-a-workflow-ask-ai.png"
+                      alt="The V2 workflow editor with the Ask AI tab open beside it, showing a request to run the workflow at 7 AM on weekdays, the assistant's reply, and a card listing the schedule changes with Jump to and Undo this change, while the changed schedule fields are framed in blue and labeled AI assist."
+                      title="Asking AI to change a workflow"
+                      capture="Open a saved personal workflow in the V2 editor at a wide window size, choose Ask AI, and send 'Run this at 7 AM on weekdays'. Capture the answered turn with its card and the highlighted schedule fields. Use sample data." %}
+
+### Point it at a document
+
+Type `#` in your message to pick a document from a personal, group or public
+workspace you can use. Depending on what you ask, Ask AI reads it as
+background, adds it as a reference shared by every task or used by particular
+tasks, or makes it the document a task works on. For example, "Use #X to
+design the steps" only reads it, and "Summarize #X every Friday" adds it to
+that task. When it can't tell, it asks.
+
+You can attach up to 20 documents in one message. Tags and whole workspaces
+aren't offered here, because a workflow refers to documents.
+
+### Review what it changed
+
+An answer that changes the draft shows a card listing the changes, and the
+changed fields are framed in blue and labeled **AI assist**.
+
+- **Jump to** moves to a change. On the Flow surface it selects the block.
+- **Read as context** names the documents Ask AI read.
+- **Warnings** point out anything to check, such as a change that means saving
+  requires re-approving [Run as](#microsoft-365-run-as).
+- **Undo this change** takes back the whole answer. A field you changed again
+  afterwards keeps your value, and the card says it was skipped.
+- **Revert** on one field, and the editor's Undo, work as they do for your own
+  edits.
+
+An explanation-only answer or question-only answer changes nothing. An answer
+that applies clear edits and asks a clarification shows both the edits and the
+question. Ask your
+follow-up in the same thread: Ask AI sees the earlier turns, and which of their
+changes you kept or undid.
+
+Because the draft now has AI changes, the first **Save workflow** opens
+[**Review before saving**](#save-after-reviewing). Choose **Confirm and save**.
+
+### Draft task instructions
+
+A task with empty instructions has **Draft with AI**. It writes instructions
+from the workflow's name and description and the task's name, adds them as one
+change you can undo, and moves you to them. Give the workflow or the task a
+name first, so it has something to go on.
+
+### When Ask AI can't help
+
+- If someone saved the workflow after you opened it, Ask AI keeps your draft
+  and offers **Reload workflow**. Reloading discards your unsaved changes.
+- If you've sent a lot of requests, Ask AI tells you when you can send again.
+- A failed or cancelled request changes nothing. **Retry** sends it again with
+  the draft as it is now.
+- The conversation isn't saved with the workflow. Reopening a saved workflow
+  in the same page shows it again; reloading the page starts over.
+
+## Preview the structure without changing execution
+
+In **0.261.121**, choose **View Flow for ...** beside a saved structured
+workflow to see its branches, joins, routes, and single loop templates. From
+**0.261.271**, select the workflow and choose its **Flow** tab instead.
+This is independent of Edit, so an authorized reader can inspect a saved
+definition while it has an active run. This viewer remains read-only in
+**0.261.122**. The List/Flow authoring switch replaces only the old preview-only
+control inside Edit; it does not change the saved or historical Flow entries.
+For unsaved changes, return to the editor and choose **Flow authoring**.
+A compiler-checked draft picture is not a saved definition or permission to
+execute.
+
+Select a node to read its configuration, condition, contracts, or source
+selection. Solid arrows describe execution order. Dashed arrows describe
+declared data connections for the selected detail page, not extra execution
+paths. Expand a loop to see its template once, not one box per item or round.
+
+Use **Structure list** for a textual view of the same definition. In the
+diagram, arrow keys move focus, Enter selects, and **Inspect selected node**
+opens the inspection focus target. **Return to selected node** takes focus
+back. Pan, zoom, fit, collapse, and moving a box are temporary viewing choices:
+they do not reorder executable work, save it, invalidate approval, or restart
+it.
+
+Saved Flow has no historical run coloring. To see what a run actually used,
+open its [frozen-definition Flow]({{ '/guides/trigger-a-workflow/' | relative_url }}#inspect-a-runs-frozen-flow)
+rather than comparing it with today's edited definition.
+
+## Process a frozen collection
+
+In **0.261.117**, add a **For each** block to apply its body to selected
+documents, an earlier complete saved collection, or a workspace query. For a
+query, choose exhaustive metadata/keyword matches or an explicit **Best N**
+relevance selection. A preview is advisory; the loop freezes its actual
+membership when it starts and does not reselect documents on Resume.
+
+The default administrator ceiling is 500 items, configurable from 1-5,000 for
+new runs only, and the editor shows the effective limit. This counts actual
+loop visits, not the searchable workspace. If the selection is too large,
+narrow it before running; no first-500 subset is silently substituted.
+
+Bind the current item to body tasks and choose current-document Analyze when
+appropriate. Keep shared criteria in shared references. Declare the body's
+exact output, then add **Collect** outside the loop to preserve every eligible
+record in item/producer order. A later task binds to Collect, not to whichever
+child ran last.
+
+For a qualitative explanation of a large collected dataset, explicitly choose
+**Saved-record report** processing. Original records remain stored while the
+report uses bounded calls and source-linked support. Ordinary tasks pause if
+their full input cannot safely fit; they do not silently become summary tasks.
+
+See [Inspect loop progress]({{ '/guides/trigger-a-workflow/#inspect-loop-progress' | relative_url }})
+for frozen selections, exact results, partial coverage, and continuation limits.
+
+## Refine saved state with Repeat until
+
+In **0.261.120**, use **Repeat until** when each round should work on saved
+state from the preceding round, such as a report draft and a structured review
+decision. It is a serial, post-body loop: the body always runs at least once.
+Select an eligible model or local agent; hosted non-loop workflows are
+unchanged, but hosted loop execution is unavailable.
+
+1. Produce the initial data in earlier tasks, then add **Repeat until**.
+   Declare named state with explicit `text`, `json`, `records`, or
+   `document_results` contracts. Select each initial saved output; entering
+   starting literals is not supported.
+2. Choose **Maximum rounds before manual continuation** explicitly. The field
+   starts unset. The administrator ceiling defaults to 25 and can be 1-1,000;
+   this is separate from For each's 500-item default and the global run budgets.
+3. Bind body tasks to **Current Repeat state**, declare their body outputs, and
+   select a next body output for every state slot. To keep data unchanged,
+   explicitly pass through its current-state receipt rather than asking a
+   model to echo it.
+4. Under **Stop after a round when**, select typed next-state fields. Use a
+   schema-validated Boolean such as `review.ready`, not a sentence saying the
+   work is complete. Configure explicit final exports for later tasks.
+5. Save and reopen the workflow to review those exact bindings. An invalid
+   removal or move keeps the binding and reports the problem rather than
+   silently choosing another producer.
+
+The final exports become available only when the condition is true, including
+when it first becomes true on the last allowed round. Otherwise the workflow
+pauses at the batch limit with prior outputs and next state retained. See
+[manual continuation]({{ '/guides/trigger-a-workflow/#continue-a-repeat-batch' | relative_url }}) before
+granting another batch.
+
+Partial state is rejected unless the producer, state slot, and relevant
+consumers explicitly accept it. Accepted coverage limitations remain visible
+through later rounds and final results. Approval cannot repair failed,
+invalid, pending, missing, or unauthorized data.
+
+See [Continue a Repeat batch]({{ '/guides/trigger-a-workflow/#continue-a-repeat-batch' | relative_url }})
+for retained state, frozen limits, and manual continuation.
+
+## Durable execution and task approval
+
+Starting in **0.261.111**, new V2 workflows enable **Durable execution**.
+Existing workflows keep their previous setting until you opt in. The run saves
+its definition, completed task results, and decisions so closing the browser or
+restarting a worker does not discard progress.
+
+{% include media.html id="slide-durable-workflows" %}
+
+Saved progress, result delivery, and alerts are separate choices. Configure
+the destinations and alerts you need, and inspect the saved run before
+retrying an uncertain external action. A follow-up on saved results explains
+that run rather than verifying the sources again.
+
+For a task that needs a review before execution, enable its approval requirement
+and explain what the reviewer should inspect. In run history, review the gate
+and choose whether to approve or reject it. Approval applies only to those
+specific inputs; it cannot make an invalid output valid.
+
+Run memory shows checkpoint units, attempts, and decisions. If a worker may have
+performed an external action without saving its result, a recovery gate asks you
+to check the destination before retrying. This is different from rerunning every
+task. See [Continue a durable run]({{ '/guides/trigger-a-workflow/#continue-a-durable-run' | relative_url }})
+for approval, recovery, and cancellation limits.
+
+## Classic interface steps
 
 1. Open **Personal Workspace** or a **Group Workspace**.
 2. Choose **Workflows** from **Section** or the tab row.
@@ -37,7 +1157,8 @@ Use workflows for repeatable work where sequence matters: weekly document checks
                       capture="Capture the create a workflow task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 4. In **General**, enter a name, description, and default runner.
-5. In **Trigger**, choose manual execution or a scheduled interval.
+5. In **Trigger**, choose manual execution or a scheduled interval. Calendar
+   schedules, such as weekdays at 08:00, are set in the V2 editor.
 6. In **Tasks**, write the first task instructions and add more tasks with **Add Task**.
 7. For each task, decide whether it inherits the runner or uses a specific **Direct Model** or **Agent**.
 8. Optionally set a document action such as **Search**, **Analyze**, or **Compare**.
@@ -55,10 +1176,12 @@ When a workflow uses Calendar, Email, OneDrive, or SharePoint actions, select an
 explicit **Microsoft 365 Run as** account. Manual and scheduled runs use that
 account, not the person pressing Run or an application identity.
 
-The selected person must connect Microsoft 365 from Profile and approve the
-workflow's sources, instructions, and destinations. Material changes require
-renewed approval. Missing approval or sign-in pauses the operation and creates
-a notification; the person can respond from Approvals without reopening the
+The selected person must connect Microsoft 365 from Profile. Their own save
+reviews the workflow's current revision; a revision saved by someone else, or
+a later relevant agent/action change, needs their approval of its sources,
+instructions, and destinations. Explicit denial or revocation still takes
+precedence. Missing approval or sign-in pauses the operation and creates a
+notification; the person can respond from Approvals without reopening the
 conversation.
 
 When a mail or calendar action uses manual delivery, its separate review is sent
@@ -70,7 +1193,145 @@ for the controls introduced in **0.261.029**.
 
 ## Verify it worked
 
-The workflow appears in the Workflows table with **Name**, **Runner**, **Trigger**, **Last Run**, and **Actions** columns.
+The workflow appears in the Workflows table with **Name**, **Runner**, **Trigger**, **Last Run**, and **Actions** columns. In V2, it appears in the Workflows list, selected, and its **Overview** shows the runner, trigger and tasks you saved.
+
+## How task results are passed
+
+Starting in **0.261.106**, each task saves its final output separately from presentation and diagnostic notes. The next task reads the preceding successful task's authoritative output directly; generated results do not need to be uploaded into a workspace or re-indexed first.
+
+The former 12,000-character task-handoff cap no longer clips the middle of a result. The effective model's context budget determines whether the complete selected output fits. If it does not, the result remains stored and the dependent task reports the budget problem instead of receiving a shortened substitute.
+
+This preserves the producer's final data; it does not guarantee that an extraction is semantically complete. Prefer a clear final output format, such as a JSON record array, when another task must consume structured findings. Use [explicit task inputs](#create-or-edit-in-v2) to bind a particular producer rather than relying on whichever task ran last.
+
+For Analyze results produced in **0.261.109**, a later explanation uses accepted
+findings and their saved provenance. Ordinary narrative analysis does not require
+you to configure columns or scoring. Read
+[Saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}) for the difference between source
+coverage, accepted findings, and validation.
+
+## Publish an existing analysis artifact
+
+In the V2 editor, enable **Publish a workflow file** on a later task and
+choose **Existing Analyze file** as its **Publication source**. Servers without
+the new source options retain **Publish an existing analysis artifact**.
+Choose an **Existing artifact format** and **Destination scope**. A group or
+public destination also requires its **Destination workspace ID**. That
+destination is saved with the task; changing your active workspace later
+does not redirect the publication.
+
+This task copies an existing artifact rather than calling a model to recreate
+it. Ensure the analysis produced the selected format. Passing validation alone
+does not publish anything: this explicit task or a manual workspace-save action
+is required. This native-artifact path does not publish partial or invalid
+results as final outputs. Existing definitions with no explicit publication
+source keep native Analyze behavior.
+
+Group and public copies retain their approval process. An uncertain publication
+shows the existing destination/receipt instead of blindly creating another copy.
+Once explicitly published, the copy follows the destination's access rules.
+
+## Publish saved workflow records
+
+In **0.261.119**, a version-3 durable workflow can publish records from a real
+task, **Collect**, or an explicit **Join outputs** selection. Use this when you
+need the complete collected dataset as a file, rather than an explanation of
+the dataset or a copy of one native Analyze artifact.
+
+In **0.261.120**, a satisfied **Repeat until** boundary can also supply a named
+eligible records export, directly or through a join. An exhausted batch does
+not expose a final export; current-state metadata is not a publication source.
+The same exact JSON renderer, immutable file identity, and destination receipt
+remain in use.
+
+1. Produce an eligible records output. For example, Analyze each document in a
+   frozen For each selection, then Collect the records outside the loop.
+2. In a later task, enable **Publish a workflow file** and explicitly select
+   **Saved workflow output**. Bind exactly one required records output from
+   the chosen producer. Do not select the current loop item, diagnostics,
+   text, an arbitrary JSON value, or a per-document results bundle.
+3. Choose **JSON - exact saved records**, an explicit destination, and the
+   completion level described below.
+
+The JSON array contains every selected saved record object, including nested
+values and retained provenance, in the saved order. Repeated records stay
+repeated. It is not a preview or a model reconstruction; serialization preserves
+JSON values rather than an uploaded document's original formatting. The
+original records remain available to later tasks through their typed bindings.
+
+Partial coverage is usable only when both the producer/Collect policy and the
+publishing input explicitly accept it. It stays visibly partial. Invalid
+uniqueness, failed or pending results, unavailable sources, and files exceeding
+the configured limit fail rather than being silently repaired or truncated.
+
+This Publish task creates a downloadable file through the shared Generated
+File Export Framework **and submits it to the selected workspace**; it is not
+a new download-only mode. Generic CSV, Markdown, Word/DOCX, PDF, PowerPoint/PPTX
+and XML mappings are not enabled. Those are future extensions of the same
+framework; existing native formats keep their behavior.
+
+If the server does not advertise saved-output publication, the option is
+unavailable rather than silently falling back to native Analyze. Unsupported
+saved source/format configurations remain intact and read-only.
+
+## Choose when publication completes
+
+Starting in **0.261.118**, a version-3 durable publication task can choose
+**Complete publication when**: **Submitted**, **Approved**, or **Indexed and
+ready**. Use Submitted to hand a deliverable into a review queue; use Indexed
+and ready when the next step depends on workspace retrieval. Personal
+workspaces do not have a destination approval gate, so Approved reports
+approval as not required. These same levels apply to Saved workflow output
+in **0.261.119**.
+
+New publication tasks default to Submitted when the server advertises support.
+Existing tasks retain their previous behavior until you explicitly choose a
+policy. Queued, approved and indexed-ready are different stages; a failed or
+uncertain explicit policy pauses instead of publishing another copy or
+continuing on error. A valid JSON download, including an empty array, does not
+prove that its destination has searchable content. See
+[Inspect a saved-output publication]({{ '/guides/trigger-a-workflow/#inspect-a-saved-output-publication' | relative_url }})
+for publication evidence and recovery, and
+[Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }})
+for destination holds.
+
+## Find documents a workflow saved
+
+Starting in **0.261.194**, a document that a workflow publishes to a workspace
+records which workflow and run created it. In the V2 workspace, its document
+details show **Created by *workflow name* · run *date and time*** under
+**Origin**. Select it to open this Workflows section with that run expanded in
+the history. If the run isn't among the 10 most recent runs, the history says
+so.
+
+These documents also get a removable `workflow` tag, so you can filter a
+workspace for workflow output. In a group or public workspace the tag is added
+only when the person publishing can manage tags there; the origin is recorded
+either way. Workspace members who can't open your workflow see only **Created
+by a workflow**. See
+[Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
+
+## Read results in a conversation the workflow creates
+
+An agent workflow can create a conversation as part of its work through the
+Simple Chat action, for example a group conversation for a response team.
+Starting in **0.261.253**, that conversation is where people read the result:
+
+- When the run finishes, its full reply is posted there with everything it found,
+  including maps and the sources its tools returned.
+- If the agent also posted its own message there during the run, such as an
+  opening briefing, that message is hidden once the reply arrives. The
+  conversation doesn't show the same findings twice, once as if the person the
+  workflow runs as had written them. The message is still stored.
+- The run's audit conversation is hidden from the chat list when its result is
+  delivered this way. From **0.261.343**, each new run has a separate audit with
+  a dated title and a **Workflow** tag. Open it from the workflow alert's
+  **Show more** links, or with the eye icon
+  that shows hidden conversations in the classic chat list. If you show it again,
+  later runs leave it visible.
+
+A workflow configured for **Run history only** keeps its result in its audit.
+The Results section can create a separate conversation without an agent; use
+**Delivered by a task/agent** when an agent intentionally controls delivery.
 
 ## Troubleshooting
 
@@ -78,9 +1339,16 @@ The workflow appears in the Workflows table with **Name**, **Runner**, **Trigger
 | --- | --- | --- |
 | The Workflows section is missing | Workflows are disabled for the scope | Ask an admin to enable personal or group workflows. |
 | No agents are available as runners | No authorized agents exist for this workspace | Create an agent first or use a direct model runner. |
+| Flow shows Unvalidated draft without execution arrows | The current draft has not passed its compiler preview | Keep editing the visible blocks and repair the reported fields or selectors; do not interpret old topology as the current draft. |
+| Save is blocked after moving or removing a block | A retained reference is now missing or out of scope | Use the affected-selector diagnostics to repair each consumer explicitly. |
+| Save is refused with "This schedule runs more often than the administrator allows." | The new or changed interval is shorter than the administrator's minimum | Choose the interval the message names or longer, or use a calendar schedule. |
+| A calendar schedule's time zone isn't accepted | The name isn't an exact IANA time zone that the server offers; names are case-sensitive | Choose a zone from the **Time zone** list, such as `America/New_York`. |
+| The classic editor won't open a workflow | It uses a calendar schedule, advanced data flow, or a **Merge files** task, which the classic editor can't represent | Edit it in V2. Run and Cancel still work in the classic workspace. |
+| The V2 editor has no **Ask AI** tab | The assistant is turned off, the workflow scope is unavailable, or the editor can't change the workflow, for example because it's running or you can only view it | Ask an admin to check **Enable AI Workflow Assistant** and scope access, or open a workflow you can edit. |
+| Ask AI says the saved workflow changed | Someone saved the workflow after you opened it | Choose **Reload workflow**. Reloading discards your unsaved changes, so copy anything you need first. |
 
 ## Related
 
 - [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }})
 - [Create an agent]({{ '/guides/create-an-agent/' | relative_url }})
-- [Workspaces settings]({{ '/admin/workspaces/' | relative_url }})
+- [Workflow settings]({{ '/admin/workflow/' | relative_url }})

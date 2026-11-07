@@ -1,5 +1,191 @@
 # Deploying SimpleChat with AZD
 
+## Optional web search and Content Understanding
+
+Implemented in application version **0.261.405** (parent change in `application/single_app/config.py`),
+deployer version **1.0.37** (`deployers/version.txt`). Refs [#1887](https://github.com/microsoft/simplechat/issues/1887).
+
+Web search adds public-web evidence; Content Understanding adds model-backed document/image
+extraction. Neither is needed for the standard Document Intelligence deployment. They are
+**public Azure only**: Government and custom clouds do not offer these deployer choices.
+Incompatible explicit/noninteractive selections fail during preprovision, before service creation.
+
+### Choices and upgrades
+
+Set values in the selected AZD environment with `azd env set NAME VALUE`. The web choice is
+`WEB_SEARCH_PROVIDER=none|foundry|web_iq`; Content Understanding is
+`CONTENT_UNDERSTANDING_MODE=none|create|reuse`. Missing values default to `preserve`, so older
+environments and inactive credentials survive upgrades. `none` does not delete resources;
+web `none` explicitly disables search but retains saved provider connections. CU `none` skips
+provisioning/configuration and retains existing extraction connections.
+
+For a guided selection before the initialization script creates ACR/OpenAI:
+
+```powershell
+.\deployers\Initialize-AzureEnvironment.ps1 -ResourceGroupName <group> -AzureRegion <region> `
+    -ACRName <registry> -OpenAiName <openai> -AzdEnvironment <azd-environment> -ConfigureOptionalServices
+```
+
+The script reads and saves only the explicitly named AZD environment. Noninteractive callers
+omit `-ConfigureOptionalServices` and set the same inputs beforehand. Preprovision also validates
+the actual Azure CLI cloud, provider registration/API/location availability and resource reuse.
+CU creation checks model availability, SKU quota and resource/role-assignment permissions.
+These checks are read-only; register providers through your organization's normal approval process.
+Install the existing `deployers\bicep\requirements.txt` dependencies before using the guided
+initializer's explicit AZD-environment loading; the ordinary preprovision policy checks use
+only the Python standard library.
+
+### Web IQ billing account and pending onboarding
+
+```powershell
+azd env set WEB_SEARCH_PROVIDER web_iq
+azd env set WEB_IQ_RESOURCE_MODE create
+azd env set WEB_SEARCH_TERMS_ACKNOWLEDGED true
+azd env set WEB_IQ_SUBSCRIPTION_ELIGIBLE true
+azd env set WEB_IQ_NEWS_ENABLED false
+azd env set WEB_IQ_IMAGE_MODE off
+azd env set WEB_IQ_VIDEO_MODE off
+```
+
+Review [Web IQ terms](https://www.microsoft.com/en-us/webiq/webiq-legal) before acknowledging.
+The subscription eligibility input is your confirmation of a **paid subscription with Microsoft
+Web IQ access**, not a discovery API or a guarantee of service activation. Azure credits are not
+eligible. Microsoft documents no entitlement-discovery or portal/AppID onboarding API; subscription
+enablement may still require your Microsoft account representative.
+
+News supports `false|true` (Off/On). Images and videos each support
+`off|text_only|with_media`. Text-only allows descriptions and titled source links, not previews.
+The account is shared across result types; no separate News/Image/Video accounts are created.
+Unspecified media inputs preserve existing settings, defaulting new configurations to Off.
+
+Creation uses exactly `Microsoft.WebIQ/accounts@2026-06-01-preview`, global location,
+`WebIQ.Grounding` kind, `G3` SKU, and `statisticsEnabled=false`, as documented in the
+[official CLI deployment guide](https://learn.microsoft.com/en-us/web-iq/get-started/deploy-azure-cli).
+The stable account name is `<appName>-<environment>-webiq`; repeated runs reuse the ARM identity.
+To adopt an external account, set `WEB_IQ_RESOURCE_MODE=reuse`,
+`EXISTING_WEB_IQ_NAME`, `EXISTING_WEB_IQ_RESOURCE_GROUP`, and optionally
+`EXISTING_WEB_IQ_SUBSCRIPTION_ID`. Its kind, global location and G3 SKU are validated.
+
+Outputs contain only the account resource ID, onboarding URL and pending-state instruction.
+**Account creation does not generate runtime credentials or enable search.** Bind the resource ID
+at [Web IQ profiles](https://webiq.microsoft.ai/profiles), create credentials, and check the profile's
+Allowed Services includes the result types you want. No portal steps, AppID binding, permission
+expansion or consent are automated. Missing endpoint permissions are not empty search results.
+
+Supply credentials using existing deployment Key Vault secrets, never ARM outputs:
+`WEB_IQ_KEY_SECRET_NAME` names an API-key secret in `var_keyVaultUri`. For documented app-only Entra
+authentication, set `WEB_IQ_AUTHENTICATION_TYPE=service_principal`, `WEB_IQ_TENANT_ID`,
+`WEB_IQ_CLIENT_ID`, `WEB_IQ_APP_ID`, and `WEB_IQ_CLIENT_SECRET_SECRET_NAME`.
+The endpoint must be exactly `https://api.microsoft.ai/v3`; managed identity is not offered here.
+Optional request defaults use `WEB_IQ_LANGUAGE`, `WEB_IQ_REGION`, `WEB_IQ_MAX_RESULTS` (1–50),
+and `WEB_IQ_MAX_LENGTH` (1–3000); omitted values preserve configured values.
+The runner needs secret **get/set** permission on the actual deployment vault. Postconfig validates
+the supplied secret with `get_secret`; arbitrary names are copied into a new
+`web-iq--model-endpoint--global--<key-or-client-secret>-<UUID>` reference. Only that scoped reference,
+never the resolved credential, is published to Cosmos DB or its shared cache. Source secrets are
+never overwritten or deleted. Already-scoped supplied references are validated and retained;
+reruns reuse a staged reference when its value is unchanged. Changed values get a new immutable
+staged name, leaving earlier references intact.
+
+Postconfig enables `enable_key_vault_secret_storage` and sets `key_vault_name` from the actual
+`var_keyVaultUri`, checking `var_keyVaultName` when present. An existing different vault, an enabled
+vault without a name, or a nonpublic/mismatched vault URI fails explicitly rather than migrating
+unrelated secrets. Existing `key_vault_identity` and unrelated settings are preserved. The runtime
+identity must already have the documented vault access; supplying a custom identity does not
+grant it access automatically. Vault context is guarded against concurrent administrator edits,
+even when its values would otherwise be unchanged. A failed publication can leave an unreferenced
+staged secret; no destructive secret cleanup is attempted.
+
+Postconfig leaves new/changed Web IQ connections disabled with `web_iq_consent_accepted=false`.
+An administrator must test the connection and accept **Web IQ-specific runtime data sharing** in V2
+before enabling search. Deployment terms acknowledgement and existing Foundry consent do not
+authorize that sharing. An unchanged, already configured and consented connection is preserved
+on reruns. The emitted onboarding instruction is not a live credential/entitlement validation.
+
+### Foundry compatibility and creation limitation
+
+`WEB_SEARCH_PROVIDER=foundry` reuses a compatible classic Foundry project and existing search
+agent using `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_AGENT_ID`, and
+`WEB_SEARCH_TERMS_ACKNOWLEDGED=true`. Verify the project already has a supported agent model,
+Grounding with Bing Search connection and access for the SimpleChat app identity. New/changed
+connections remain disabled until administrator validation/consent; unchanged saved connections
+are not erased. Provisioning does not invoke the agent or claim its Bing tool was smoke-tested.
+
+**New Foundry classic project/Bing connection/agent creation is deliberately blocked.**
+[Microsoft's classic Bing grounding documentation](https://learn.microsoft.com/en-us/azure/foundry-classic/agents/how-to/tools-classic/bing-grounding)
+deprecates classic Agents for retirement on March 31, 2027 and directs new deployments to a
+different Agents API. SimpleChat's compatible classic runtime is preserved; this deployer does
+not silently migrate it or invent compatible creation APIs. Create/validate a compatible resource
+separately and use `FOUNDRY_RESOURCE_MODE=reuse`. Classic Bing grounding does not support private
+agent network endpoints, and paid/PAYG subscription and provider terms still apply.
+
+### Content Understanding models and analyzer readiness
+
+Set `CONTENT_UNDERSTANDING_MODE=create`, select an independently supported
+`CONTENT_UNDERSTANDING_LOCATION`, and set `OPTIONAL_SERVICES_DEPLOYMENT_PRINCIPAL_ID` to the
+deployment runner's object ID. Creation deploys a distinct `AIServices` S0 Foundry resource
+`<appName>-<environment>-cu`; it does not replace Document Intelligence or change its credentials.
+The deployment grants **Cognitive Services User** at the CU resource to the main app, optional
+native app, and supplied runner; resource administration roles are not granted to the app.
+
+Supply `CONTENT_UNDERSTANDING_MODELS` as a JSON array with `modelName`, `modelVersion`,
+`skuName`, and positive integer `skuCapacity`. Model deployment names match model names.
+Select versions/SKUs from the region's current catalog and quota, not the chat model defaults.
+For example, documented GA-compatible completion options include `gpt-4.1` and `gpt-4.1-mini`
+version `2025-04-14`, together with `text-embedding-3-large`; availability/capacity is subscription-
+and region-dependent. No model capacity is purchased by validation tests.
+
+`CONTENT_UNDERSTANDING_MODEL_DEFAULTS` is a JSON alias-to-deployment object containing
+`prebuilt-analyzer-completion`, `prebuilt-analyzer-completion-mini` and
+`prebuilt-analyzer-embedding`. For those model names:
+
+```json
+{
+  "prebuilt-analyzer-completion": "gpt-4.1",
+  "prebuilt-analyzer-completion-mini": "gpt-4.1-mini",
+  "prebuilt-analyzer-embedding": "text-embedding-3-large"
+}
+```
+
+Postconfig uses documented `GET/PATCH /contentunderstanding/defaults?api-version=2025-11-01`
+and `GET /contentunderstanding/analyzers/{id}`. It patches defaults only for newly owned
+resources with no conflicting mapping, rereads them, and verifies both `prebuilt-documentSearch`
+and `prebuilt-imageSearch` are `ready`, have all referenced defaults, and support the mapped
+models with successful ARM deployments. Only then does it publish CU's managed-identity
+connection settings. It never uploads a sample document or runs a paid analysis.
+
+For reuse set `CONTENT_UNDERSTANDING_MODE=reuse`,
+`EXISTING_CONTENT_UNDERSTANDING_NAME`, `EXISTING_CONTENT_UNDERSTANDING_RESOURCE_GROUP`,
+optionally `EXISTING_CONTENT_UNDERSTANDING_SUBSCRIPTION_ID`, and the resource's actual region.
+The resource must be `AIServices`; existing defaults/models are inspected, **not overwritten**.
+Cross-resource model connections are not automatically onboarded or attested: use supported
+local model deployments for automatic readiness, or configure and verify cross-resource capacity
+separately. Missing quota, default mappings, unsupported models, unready analyzers, runner RBAC,
+or network access stop settings publication rather than pretending Enhanced extraction is ready.
+
+Optional service settings use the existing revision-safe Cosmos/Redis publication. Only changed
+owned values are written. Concurrent changes to those values cause a conflict instead of
+overwriting an administrator edit; unrelated values are merged from the latest document.
+Active Redis migrations still require administrator-managed handling.
+
+References: [CU model defaults](https://learn.microsoft.com/en-us/azure/ai-services/content-understanding/concepts/models-deployments),
+[CU regions](https://learn.microsoft.com/en-us/azure/ai-services/content-understanding/language-region-support),
+[analyzer metadata API](https://learn.microsoft.com/en-us/rest/api/contentunderstanding/content-analyzers/get?view=rest-contentunderstanding-2025-11-01).
+
+### Offline validation
+
+```powershell
+az bicep build --file .\deployers\bicep\main.bicep --outfile .\deployers\bicep\main.json
+python -m pytest functional_tests\test_deployer_optional_services.py functional_tests\test_deployment_configuration.py functional_tests\test_deployer_version_tracking.py -q
+```
+
+These tests use fake services and validate policy combinations, old-environment preservation,
+pending onboarding, secret-preserving reruns, analyzer/default readiness, compiled resource shape
+and concurrent settings edits. Compilation needs a recent Bicep supporting the existing spread
+syntax; standalone Bicep 0.22 is too old, while Azure CLI Bicep 0.44.1 compiles this template.
+Live subscription entitlement, portal profile permissions and agent/analysis smoke tests remain
+administrator checks requiring an authorized Azure environment.
+
 >Strongly encourage administrators to use Visual Studio Code and Dev Containers for this deployment type.
 
 ## Table of Contents</br>
@@ -12,6 +198,8 @@
         - [Configure AZD Environment](#Configure-AZD-Environment)
         - [Deployment Prompts](#Deployment-Prompts)
     - [Post Deployment Tasks](#Post-Deployment-Tasks)
+- [Key Vault secret permissions](#key-vault-secret-permissions)
+- [Video Indexer region and permissions](#video-indexer-region-and-permissions)
 - [Cleanup / Deprovision](#Cleanup-/-Deprovisioning)
 - [Helpful Info](#Helpful-Info)
     - [Private Networking](#Private-Networking)
@@ -38,7 +226,7 @@ The following variables will be used within this document:
 
 Before deploying, ensure you have:
 
-1. **Azure Subscription** with Owner or Contributor permissions. Managed identity deployments also require permission to create role assignments and custom role definitions at the target scopes.
+1. **Azure Subscription** with Owner or Contributor permissions for resource creation. When `configureApplicationPermissions=true`, both key-based and managed-identity deployments also require permission to create role assignments and custom role definitions at the target scopes; Contributor alone is insufficient.
 2. **Azure CLI** (version 2.50.0 or later)
   Install: https://learn.microsoft.com/cli/azure/install-azure-cli
 3. **Azure Developer CLI (azd)** (version 1.5.0 or later)
@@ -68,11 +256,22 @@ Ensure the following resource providers are registered in your subscription:
 - `Microsoft.ContainerRegistry`
 - `Microsoft.Insights`
 - `Microsoft.OperationalInsights`
+- `Microsoft.VideoIndexer` (only when `deployVideoIndexerService` is `true`)
 
 
 ## Deployment Process
 
 ## Runtime Startup Behavior
+
+Since application **0.261.396** / deployer **1.0.36**, infrastructure provisioning
+includes all five private application storage containers: `user-documents`,
+`group-documents`, `public-documents`, `personal-chat`, and `group-chat`.
+Reprovisioning also prepares missing containers in an existing account.
+Code-only deployments do not provision infrastructure; an administrator can use
+**Create missing containers** beside the Enhanced Citations storage connection
+test after saving the configured storage settings. Result writes also attempt
+bounded recovery of a missing target container when the app has permission.
+Startup itself still performs no live Blob container checks.
 
 - This deployer publishes a **container image** to Azure App Service.
 - Gunicorn is started by the container entrypoint in `application/single_app/Dockerfile`.
@@ -304,7 +503,7 @@ During `azd up`, the predeploy hook now builds the application image in Azure Co
 
 `imageName` defaults to `simplechat:latest`. Most deployments can accept that default without entering a custom value.
 
-When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. You can rerun with an identity that has the required permissions, ask an Azure administrator to complete the RBAC setup, or switch the AZD environment to key-based authentication with `azd env set AUTHENTICATION_TYPE key` if that security model is acceptable.
+When `authenticationType` is `managed_identity`, the AZD preprovision hook validates that the current Azure identity can create the role assignments and custom role definitions needed by the deployment. If the identity does not have Owner, Role Based Access Control Administrator, or an equivalent custom role at the target scopes, deployment stops before provisioning continues. Rerun with an identity that has the required permissions or ask an Azure administrator to complete the RBAC setup. Switching to key-based authentication does not remove the Key Vault or other shared application-permission requirements when `configureApplicationPermissions=true`.
 
 `redisAuthenticationType` can be managed independently from `authenticationType`. For example, MAG/Azure Government environments can keep `AUTHENTICATION_TYPE managed_identity` for Cosmos DB, Storage, Search, OpenAI, and Cognitive Services while setting `REDIS_AUTHENTICATION_TYPE key` so Redis uses access keys.
 
@@ -324,15 +523,13 @@ On the completion of the deployment, a URL will be presented, the user may use t
 
 ## Key Vault secret permissions
 
-Implemented in deployer version **1.0.32** (`deployers/version.txt`). This is the deployer portion of the application 0.261.125 fix (#1511), backported to Development.
+Implemented in application version **0.261.125** (`application/single_app/config.py`) and deployer version **1.0.32** (`deployers/version.txt`).
 
-Whenever `configureApplicationPermissions=true`, the container app and optional native Python app each receive **Key Vault Secrets Officer** at the **vault scope**, regardless of `authenticationType`. Its built-in role ID is `b86a8fe4-44ce-4948-aee5-eccb2c155cd7`. The application writes and deletes secrets when Key Vault secret storage is enabled for agents, actions and model endpoints. **Key Vault Secrets User** only supplies read access, so those saves fail with `ForbiddenByRbac`. Officer permits secret management, including get/list/set/delete, without granting permission to manage vault RBAC. See the [Microsoft Key Vault role reference](https://learn.microsoft.com/azure/key-vault/general/rbac-guide#azure-built-in-roles-for-key-vault-data-plane-operations).
+Whenever `configureApplicationPermissions=true`, the container app and optional native Python app each receive **Key Vault Secrets Officer** at the **vault scope**, regardless of `authenticationType`. Its built-in role ID is `b86a8fe4-44ce-4948-aee5-eccb2c155cd7`. **Key Vault Secrets User** only supplies read access; it cannot save credentials or complete the connection test's write/read/delete sequence. Officer permits secret management, including get/list/set/delete, without granting permission to manage vault RBAC. See the [Microsoft Key Vault role reference](https://learn.microsoft.com/azure/key-vault/general/rbac-guide#azure-built-in-roles-for-key-vault-data-plane-operations).
 
-Both Bicep app variants use their own **system-assigned** managed identity. Leave the application's Key Vault client ID blank for that default. Use the identity's **principal/object ID** when reviewing IAM assignments, not the sign-in app registration's client ID or the deploying administrator's identity.
+Both Bicep app variants use their own **system-assigned** managed identity. Leave the application's Key Vault client ID blank for that default. Use the identity's **principal/object ID** when reviewing IAM assignments, not the sign-in app registration's client ID or the deploying administrator's identity. These templates do not attach a user-assigned runtime identity; if you customize that setup, attach the selected identity and separately authorize it at the same vault scope.
 
-`configureApplicationPermissions=false` still skips both application permission modules. It is not a read-only mode: an administrator must supply all required application grants separately. A code-only upgrade also does not change existing permissions. For manual setup, open the vault's **Access control (IAM)**, assign **Key Vault Secrets Officer** to the correct App Service identity, and keep the scope on that vault, not its resource group or subscription.
-
-**Test Key Vault connection** in **Admin Settings > Secrets** only lists secret properties in this release. It passes for an identity that has only Secrets User, so it does not prove that credential saves can write secrets.
+`configureApplicationPermissions=false` still skips both application permission modules. It is not a read-only mode: an administrator must supply all required application grants separately. A code-only upgrade also does not change existing permissions. For manual setup, open the vault's **Access control (IAM)**, assign **Key Vault Secrets Officer** to the correct App Service identity, and keep the scope on that vault, not its resource group or subscription. Allow RBAC propagation before testing from **Admin Settings > Secrets**. The test uses a synthetic temporary secret; deletion can leave soft-deleted probe metadata under the vault's retention policy.
 
 ### Upgrading and adopting existing ARM assignments
 
@@ -361,9 +558,49 @@ If a matching, unconditional Officer assignment already exists at the exact vaul
 
 4. Use the customized Bicep/ARM in your normal reviewed deployment process and retain the same environment-specific names for subsequent runs. The public one-click template does not contain this customization; using it unchanged can return `RoleAssignmentExists`. Do not hand-edit generated `main.json`.
 
-If your platform team owns IAM instead, `configureApplicationPermissions=false` avoids template ownership conflicts, but that team must maintain **all** application permissions, not just Key Vault.
+If your platform team owns IAM instead, `configureApplicationPermissions=false` avoids template ownership conflicts, but that team must maintain **all** application permissions, not just Key Vault. No application role is silently downgraded to Secrets User.
 
 Offline contract coverage is in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py); it checks both Bicep modules, generated ARM, permission-disable conditions, and runtime principals without deploying resources.
+
+## Video Indexer region and permissions
+
+Implemented in application version **0.261.264** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
+
+### Choosing a Video Indexer region
+
+Azure Video Indexer is not offered in every region. North Central US, for example, has no Video Indexer, so `deployVideoIndexerService=true` in that region used to fail Azure Resource Manager validation before anything was deployed. Set `VIDEO_INDEXER_LOCATION` to a region that offers Video Indexer and keep the rest of SimpleChat in `AZURE_LOCATION`:
+
+```powershell
+azd env set DEPLOY_VIDEO_INDEXER_SERVICE true
+azd env set VIDEO_INDEXER_LOCATION centralus
+azd provision --preview
+```
+
+- Leave `VIDEO_INDEXER_LOCATION` unset to deploy Video Indexer in `AZURE_LOCATION`, as earlier versions did.
+- When the two regions differ, the deployment also creates `<appName><environment>vi`, a Standard general-purpose v2 storage account in the Video Indexer region, because Video Indexer keeps its media in a storage account in its own region. Only Video Indexer uses this account; SimpleChat uploads video to the Video Indexer API and never reads it. With `enablePrivateNetworking=true`, its firewall denies public traffic and admits trusted Azure services, which is how Video Indexer reaches firewalled storage. It needs no private endpoint.
+- Choose the region before the first deployment that enables Video Indexer. An existing account cannot move regions; Azure rejects a later deployment that asks for the same account name in another region.
+- The preprovision hook compares the selected region with the regions the `Microsoft.VideoIndexer` provider reports. If Video Indexer is unavailable there, the hook lists the supported regions and stops before provisioning. If the list cannot be read, it warns and continues, because Azure Resource Manager still validates the region.
+
+### Application access
+
+SimpleChat calls the Video Indexer `generateAccessToken` Azure Resource Manager API with the App Service **system-assigned** managed identity, whatever `authenticationType` is. Whenever `configureApplicationPermissions=true`, the container app and the optional native Python app each receive a role on the Video Indexer account:
+
+| Cloud | Role | Role definition ID |
+|---|---|---|
+| Azure Commercial | Video Indexer Account Contributor | `3f99eaab-6f59-4877-adf5-1cacd22e20b0` |
+| Azure Government and custom clouds | Contributor | `b24988ac-6180-42a0-ab88-20f7382dd24c` |
+
+Video Indexer Account Contributor is limited to Video Indexer accounts and their access tokens. Contributor is used where that newer built-in role has not been confirmed. The assignment name is `guid(videoIndexerService.id, webApp.id, 'video-indexer-app-access', <role definition ID>)`, and these grants live in `modules/setVideoIndexerPermissions.bicep`.
+
+Earlier deployer versions created the account without this grant, so video processing failed authorization until an administrator added **Contributor** by hand. In Azure Commercial, that manual grant does not conflict with the new assignment; it can stay, or you can remove it afterward to keep only the narrower role. In Azure Government and custom clouds, an identical manual Contributor assignment on the account makes the next deployment return `RoleAssignmentExists`. Keep the manual grant and adopt its GUID in an environment-specific copy of `modules/setVideoIndexerPermissions.bicep`, as described for Key Vault in [Upgrading and adopting existing ARM assignments](#upgrading-and-adopting-existing-arm-assignments).
+
+Video Indexer's own identity keeps **Storage Blob Data Contributor** on the storage account that holds its media. That assignment moved into the same module with an unchanged name, so upgrades do not recreate it.
+
+### Application settings
+
+Post-provision configuration writes the Video Indexer settings only when the deployment created the account, and records the account's own region rather than the deployment region. A provisioning run with `deployVideoIndexerService=false` leaves an existing Video Indexer configuration in **Admin Settings > AI Video Intelligence** untouched; earlier versions blanked the account name and ID and reset the location on every such run.
+
+Offline coverage is in [test_video_indexer_deployment_region_permissions.py](../../functional_tests/test_video_indexer_deployment_region_permissions.py) and [test_deployment_configuration.py](../../functional_tests/test_deployment_configuration.py).
 
 ---
 
@@ -457,7 +694,15 @@ Example `privateDnsZoneConfigs` value:
 }
 ```
 
-Supported `privateDnsZoneConfigs` keys: `keyVault`, `cosmosDb`, `containerRegistry`, `aiSearch`, `blobStorage`, `cognitiveServices`, `openAi`, and `webSites`.
+Supported `privateDnsZoneConfigs` keys: `keyVault`, `cosmosDb`, `containerRegistry`, `aiSearch`, `blobStorage`, `cognitiveServices`, `openAi`, `webSites`, `redis`, `videoIndexer`, `monitor`, `monitorOms`, `monitorOds`, `monitorAgent`, and `monitorAdx` (Government).
+
+#### Optional AMPLS and Subnet References
+
+Implemented in version **0.261.333**, deployer **1.0.34** ([#1765](https://github.com/microsoft/simplechat/issues/1765)). `enableAzureMonitorPrivateLink` defaults to false. Opt in with `azd env set ENABLE_AZURE_MONITOR_PRIVATE_LINK true` and `ENABLE_PRIVATE_NETWORKING=true`. This creates one AMPLS endpoint, associates Application Insights and Log Analytics, and disables public ingestion and queries. Use a `/27` or larger endpoint subnet; `/26` or larger is recommended when sharing with platform endpoints. All monitoring clients need private routing and DNS; coordinate one AMPLS per shared DNS boundary.
+
+A **fresh private-network deployment without existing network IDs** creates `10.0.0.0/21`, `AppServiceIntegration` at `10.0.0.0/24`, and `PrivateEndpoints` at `10.0.2.0/24`, in either cloud. See the [Commercial tables](../../docs/guides/enterprise-networking.md#networking-in-azure-commercial) and [Government tables](../../docs/guides/enterprise-networking.md#networking-in-azure-government) for counts and the compact `10.42.0.0/24` existing-network reference. Existing-VNet reuse still accepts one shared endpoint subnet; the segmented reference requires endpoint placement customization.
+
+Optional Redis now gets an offering-aware endpoint (`redisEnterprise` for Managed Redis, `redisCache` for classic). `azd up` disables public access during `postup`, after bootstrap; `azd provision` or `azd deploy` alone does not run this final lockdown. Later provisioning resets Managed Redis bootstrap access and needs another lockdown. Commercial Video Indexer uses `privatelink.api.videoindexer.ai`; Government's API profile still has no Video Indexer PE. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`.
 
 If you use AZD, set `PRIVATE_DNS_ZONE_CONFIGS` to the JSON object above instead of editing the parameter file directly.
 
@@ -519,7 +764,7 @@ The deployment automatically handles the following endpoint differences:
 A: Initial deployment typically takes 15-40 minutes depending on options selected. Subsequent deployments are faster.
 
 **Q: What Azure permissions do I need?**
-A: Key-based deployments generally need Owner or Contributor on the target subscription, plus ability to create Entra ID app registrations (or work with your Entra admin). Managed identity deployments also need permission to create role assignments and custom role definitions at the target scopes, such as Owner, Role Based Access Control Administrator, or an equivalent custom role.
+A: Resource creation needs Owner or Contributor on the target subscription, plus ability to create Entra ID app registrations (or work with your Entra admin). When application permissions are configured, both authentication modes also need permission to create role assignments and custom role definitions at the target scopes, such as Owner, Role Based Access Control Administrator, or an equivalent custom role.
 
 **Q: Can I deploy to an existing resource group?**
 A: No, the deployment creates a new resource group named `<appName>-<environment>-rg`.
@@ -528,7 +773,7 @@ A: No, the deployment creates a new resource group named `<appName>-<environment
 A: You can choose between `key` (API keys stored in Key Vault) or `managed_identity` (recommended for production).
 
 **Q: Why does managed identity deployment stop before provisioning?**
-A: Managed identity deployment must create RBAC role assignments for the App Service identity and related resources. If the signed-in Azure identity cannot perform `Microsoft.Authorization/roleAssignments/write` and `Microsoft.Authorization/roleDefinitions/write` at the target scopes, the preprovision hook fails fast instead of letting deployment appear successful while runtime access is broken. Use Owner, Role Based Access Control Administrator, or an equivalent custom role, then rerun `azd up`. To continue with key-based authentication instead, run `azd env set AUTHENTICATION_TYPE key` and rerun the deployment.
+A: Managed identity deployment must create RBAC role assignments for the App Service identity and related resources. If the signed-in Azure identity cannot perform `Microsoft.Authorization/roleAssignments/write` and `Microsoft.Authorization/roleDefinitions/write` at the target scopes, the preprovision hook fails fast instead of letting deployment appear successful while runtime access is broken. Use Owner, Role Based Access Control Administrator, or an equivalent custom role, then rerun `azd up`. Changing to key-based authentication does not eliminate the vault-scoped Officer grant or other shared application-permission requirements.
 
 **Q: What capacity defaults does the deployer use?**
 A: The Bicep and AZD path defaults to Azure AI Search Standard S1 with standard Semantic Ranker and Cosmos DB provisioned autoscale throughput on each SimpleChat container. These defaults avoid the limited free semantic query quota, avoid the 25-container limit for shared-throughput databases, and make document search and ingestion more reliable after first deployment.
@@ -617,6 +862,10 @@ If you do not want this deployment to create new Azure OpenAI model deployments,
 - **Cause:** Video Indexer API capabilities differ by cloud and region
 - **Solution:** Use the cloud-appropriate API profile. Azure Government deployments use the `2024-01-01` profile; commercial deployments use `2025-04-01`; custom clouds can override the API version and endpoint.
 
+**Error: "The provided location '\<region\>' is not available for resource type 'Microsoft.VideoIndexer/accounts'"**
+- **Cause:** Azure Video Indexer is not offered in the region Video Indexer is being deployed to.
+- **Solution:** Run `azd env set VIDEO_INDEXER_LOCATION <supported-region>` and rerun `azd up`. The rest of SimpleChat stays in `AZURE_LOCATION`. See [Video Indexer region and permissions](#video-indexer-region-and-permissions).
+
 ### Post-Deployment Issues
 
 **Issue: Cannot access the web application**
@@ -643,4 +892,3 @@ View application logs:
 ```bash
 az webapp log tail --name <appName>-<environment>-app --resource-group <appName>-<environment>-rg
 ```
-

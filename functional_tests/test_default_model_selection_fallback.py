@@ -59,7 +59,7 @@ def test_default_model_selection_wiring():
         "Expected admin default reasoning effort selector in admin settings template."
     )
     assert "default_model_selection" in admin_route, (
-        "Expected default model selection to be handled in admin settings save." 
+        "Expected default model selection to be handled in admin settings save."
     )
     assert "enable_default_model_for_new_conversations" in admin_route, (
         "Expected admin settings save to persist the new-conversation default toggle."

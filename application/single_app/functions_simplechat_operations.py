@@ -2,21 +2,26 @@
 """Shared SimpleChat-native operations for routes and Semantic Kernel plugins."""
 
 import copy
+import hashlib
 import logging
 import mimetypes
 import os
 import re
 import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 from urllib.parse import quote
 
 import requests
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core import MatchConditions
+from azure.core.exceptions import AzureError, ResourceExistsError, ResourceNotFoundError
+from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from flask import current_app, has_app_context, session
 
-from collaboration_models import normalize_collaboration_user
+from blob_container_readiness import write_blob_with_container_recovery
+from collaboration_models import is_shared_conversation_backing, normalize_collaboration_user
 from conversation_memory_lifecycle import clone_owned_memory, delete_referenced_conversation_memory, remap_memory_references
 from functions_conversation_memory import ConversationMemoryStore, MemoryContext, is_conversation_memory_blob_path
 from config import (
@@ -39,6 +44,8 @@ from functions_activity_logging import (
     log_workflow_creation,
 )
 from functions_appinsights import log_event
+from content_screening.contracts import generated_screening_exemption
+from content_screening.service import prepare_document_upload
 from functions_citation_tracking import rebuild_conversation_used_documents
 from functions_authentication import (
     get_current_user_info,
@@ -76,7 +83,15 @@ from functions_generated_file_approvals import (
     requires_generated_file_approval,
     user_can_approve_generated_file,
 )
+from functions_generated_artifact_sources import (
+    authorize_generated_artifact_preparation,
+    authorize_generated_artifact_source,
+    generated_artifact_source_metadata,
+    generated_chat_artifact_address,
+    has_generated_artifact_source,
+)
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+import functions_group
 from functions_group import (
     assert_group_role,
     check_group_status_allows_operation,
@@ -87,18 +102,36 @@ from functions_group import (
     require_active_group,
 )
 from functions_notifications import create_notification, delete_notifications_by_metadata
+from functions_orchestration_execution_policy import (
+    MANAGED_FILE_FUNCTIONS,
+    generated_file_publication_allowed,
+    require_generated_file_publication_allowed,
+)
+from functions_orchestration_artifacts import (
+    assert_artifact_matches,
+    authorize_orchestration_artifact_cleanup,
+    invalidate_orchestration_artifact,
+    orchestration_artifact_file_extensions,
+)
+from functions_orchestration_output_store import OutputStorageError, OutputUnavailableError
 from functions_m365_action_cards import strip_pending_action_references
+from functions_message_deletion import exclude_soft_deleted_messages
 from functions_personal_workflows import save_personal_workflow
 from functions_public_workspaces import (
     check_public_workspace_status_allows_operation,
     find_public_workspace_by_id,
 )
 from functions_settings import get_settings, is_user_workflows_enabled_for_user
+from functions_saved_analysis import analysis_artifact_metadata, authorize_analysis_artifact
+from functions_temp_files import scratch_file_dir
 from utils_cache import invalidate_group_search_cache, invalidate_personal_search_cache
 
 
 SIMPLECHAT_PLUGIN_TYPE = "simplechat"
 SIMPLECHAT_DEFAULT_ENDPOINT = "simplechat://internal"
+# Marks a message an agent posted through add_conversation_message. Clients render it as
+# markdown, the same way they render the agent's replies (see isAgentPostedMessage in the V2 UI).
+AGENT_POSTED_MESSAGE_METADATA = {"posted_via": "agent_action", "content_format": "markdown"}
 GENERATED_CHAT_ARTIFACT_LIFECYCLE_STAGED = "staged"
 GENERATED_CHAT_ARTIFACT_LIFECYCLE_PUBLISHED = "published"
 GENERATED_CHAT_ARTIFACT_LIFECYCLE_ROLLED_BACK = "rolled_back"
@@ -276,6 +309,10 @@ def get_simplechat_enabled_function_names(raw_capabilities: Any = None) -> List[
         definition["function_name"]
         for definition in SIMPLECHAT_CAPABILITY_DEFINITIONS
         if normalized.get(definition["key"], False)
+        and (
+            generated_file_publication_allowed()
+            or definition["function_name"] not in MANAGED_FILE_FUNCTIONS
+        )
     ]
 
 
@@ -426,7 +463,9 @@ def _collect_fork_documents(
     all_documents: List[Dict[str, Any]],
     selected_message_id: str,
 ) -> List[Dict[str, Any]]:
-    ordered_documents = sorted(all_documents, key=_message_fork_sort_key)
+    # Messages deleted while archiving was enabled are not part of the conversation and are
+    # not copied. The caller still compares the full set to detect concurrent changes.
+    ordered_documents = sorted(exclude_soft_deleted_messages(all_documents), key=_message_fork_sort_key)
     timeline_documents = [
         document
         for document in ordered_documents
@@ -943,10 +982,24 @@ def fork_personal_conversation_for_user(
 def create_personal_conversation_for_current_user(
     title: str = "New Conversation",
     notify_creation: bool = False,
+    *,
+    conversation_id: Optional[str] = None,
+    group_id: str = "",
+    workflow_provenance: Optional[Dict[str, str]] = None,
 ) -> Dict[str, Any]:
     current_user = _require_current_user_info()
     normalized_title = str(title or "").strip() or "New Conversation"
-    conversation_id = str(uuid.uuid4())
+    retry_id = conversation_id
+    conversation_id = conversation_id or str(uuid.uuid4())
+    group_doc = None
+    if group_id:
+        group_doc = _resolve_group_doc_for_current_user(
+            current_user["userId"], group_id=group_id,
+            allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+        allowed, reason = check_group_status_allows_operation(group_doc, "chat")
+        if not allowed:
+            raise PermissionError(reason)
     conversation_item = {
         "id": conversation_id,
         "user_id": current_user["userId"],
@@ -962,13 +1015,41 @@ def create_personal_conversation_for_current_user(
         "last_unread_assistant_message_id": None,
         "last_unread_assistant_at": None,
     }
-    cosmos_conversations_container.upsert_item(conversation_item)
+    if workflow_provenance:
+        conversation_item.update(
+            workflow_id=workflow_provenance["workflow_id"],
+            workflow_provenance=dict(workflow_provenance),
+            tags=["workflow"],
+            chat_type="personal_single_user",
+        )
+    if group_id:
+        conversation_item.update(
+            group_id=group_id,
+            workspace_type="group",
+            chat_type="group-single-user",
+            context=[{"type": "primary", "scope": "group", "id": group_id, "name": group_doc.get("name", "")}],
+        )
+    if retry_id:
+        try:
+            cosmos_conversations_container.create_item(conversation_item)
+        except CosmosResourceExistsError:
+            existing = cosmos_conversations_container.read_item(item=retry_id, partition_key=retry_id)
+            if (
+                existing.get("user_id") != current_user["userId"]
+                or str(existing.get("group_id") or "") != group_id
+                or existing.get("workflow_provenance") != workflow_provenance
+            ):
+                raise PermissionError("The result conversation does not belong to this workflow run.")
+            return existing
+    else:
+        cosmos_conversations_container.upsert_item(conversation_item)
 
     log_conversation_creation(
         user_id=current_user["userId"],
         conversation_id=conversation_id,
         title=normalized_title,
-        workspace_type="personal",
+        workspace_type="group" if group_id else "personal",
+        group_id=group_id or None,
     )
 
     conversation_item["added_to_activity_log"] = True
@@ -1097,6 +1178,12 @@ def add_conversation_message_for_current_user(
     content: str,
     reply_to_message_id: str = "",
 ) -> Dict[str, Any]:
+    """Post a message an agent wrote, through the SimpleChat action, as the current user.
+
+    The message is stored as the user's own, because it is sent with their permissions, and is
+    marked with AGENT_POSTED_MESSAGE_METADATA so clients render it as markdown, the way the
+    agent's replies are rendered, while messages people type stay plain text.
+    """
     current_user_info = _require_current_user_info()
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_content = str(content or "").strip()
@@ -1114,6 +1201,9 @@ def add_conversation_message_for_current_user(
         )
     except CosmosResourceNotFoundError:
         conversation_item = None
+    # Orchestrate's backing record shares its shared conversation's id; posts go to the thread.
+    if is_shared_conversation_backing(conversation_item):
+        conversation_item = None
 
     if conversation_item is not None:
         if str(conversation_item.get("user_id") or "").strip() != current_user_info["userId"]:
@@ -1124,6 +1214,7 @@ def add_conversation_message_for_current_user(
             current_user_info=current_user_info,
             content=normalized_content,
             reply_to_message_id=normalized_reply_to_message_id,
+            extra_metadata=AGENT_POSTED_MESSAGE_METADATA,
         )
         return {
             "conversation": updated_conversation,
@@ -1152,6 +1243,7 @@ def add_conversation_message_for_current_user(
         current_user,
         normalized_content,
         reply_to_message_id=normalized_reply_to_message_id,
+        extra_metadata=AGENT_POSTED_MESSAGE_METADATA,
     )
     create_collaboration_message_notifications(updated_conversation, message_doc)
     return {
@@ -1168,6 +1260,7 @@ def upload_markdown_document_for_current_user(
     group_id: str = "",
     default_group_id: str = "",
 ) -> Dict[str, Any]:
+    require_generated_file_publication_allowed()
     current_user_info = _require_current_user_info()
     current_user_id = current_user_info["userId"]
     normalized_workspace_scope = _normalize_document_workspace_scope(workspace_scope)
@@ -1199,6 +1292,7 @@ def upload_generated_document_for_current_user(
     process_inline: bool = False,
 ) -> Dict[str, Any]:
     """Upload generated JSON/CSV-style content into the current user's workspace."""
+    require_generated_file_publication_allowed()
     current_user_info = _require_current_user_info()
     current_user_id = current_user_info["userId"]
     normalized_workspace_scope = _normalize_document_workspace_scope(workspace_scope)
@@ -1234,6 +1328,7 @@ def upload_word_document_for_current_user(
     default_group_id: str = "",
 ) -> Dict[str, Any]:
     """Create a simple DOCX document from markdown-like text and upload it."""
+    require_generated_file_publication_allowed()
     # Optional Office rendering dependency; keep lazy so non-export SimpleChat actions still import locally.
     from docx import Document as DocxDocument
 
@@ -1272,6 +1367,7 @@ def upload_powerpoint_document_for_current_user(
     default_group_id: str = "",
 ) -> Dict[str, Any]:
     """Create a simple PPTX presentation from markdown-like text and upload it."""
+    require_generated_file_publication_allowed()
     # Optional Office rendering dependency; keep lazy so non-export SimpleChat actions still import locally.
     from pptx import Presentation
 
@@ -1320,8 +1416,10 @@ def upload_generated_analysis_artifact_for_current_user(
     capability: str = "analysis",
     output_format: str = "",
     summary: str = "",
+    analysis_producer: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Upload generated analysis content into the current user's current chat."""
+    require_generated_file_publication_allowed()
     current_user_info = _require_current_user_info()
     current_user_id = current_user_info["userId"]
     normalized_conversation_id = str(conversation_id or "").strip()
@@ -1364,6 +1462,7 @@ def upload_generated_analysis_artifact_for_current_user(
             "capability": normalized_capability,
             "output_format": normalized_output_format,
             "summary": normalized_summary,
+            **analysis_artifact_metadata(analysis_producer),
         },
     )
 
@@ -1417,6 +1516,10 @@ def delete_generated_chat_artifact_for_user(
     ):
         raise PermissionError("Forbidden")
 
+    source_binding = message_metadata.get("generated_artifact_source")
+    if isinstance(source_binding, dict) and source_binding.get("kind") == "orchestration_retained_output":
+        invalidate_orchestration_artifact(current_user_id, message_item)
+
     delete_blob_backed_chat_message_files([message_item])
     cosmos_messages_container.delete_item(
         item=normalized_message_id,
@@ -1433,6 +1536,51 @@ def delete_generated_chat_artifact_for_user(
     return True
 
 
+def delete_staged_orchestration_chat_artifact_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    artifact_message_id: str,
+    *,
+    generated_artifact_source: Dict[str, Any],
+) -> bool:
+    """Clean only a tombstoned/abandoned intent, including a blob-only upload."""
+    context = authorize_orchestration_artifact_cleanup(current_user_id, generated_artifact_source)
+    descriptor = context["descriptor"]
+    address = descriptor["artifact"]
+    if address["conversation_id"] != conversation_id or address["artifact_message_id"] != artifact_message_id:
+        raise PermissionError("Forbidden")
+    conversation = cosmos_conversations_container.read_item(item=conversation_id, partition_key=conversation_id)
+    build_conversation_participation_context(current_user_id, conversation)
+    if conversation.get("user_id") != current_user_id:
+        raise PermissionError("Forbidden")
+    try:
+        message = cosmos_messages_container.read_item(item=artifact_message_id, partition_key=conversation_id)
+    except CosmosResourceNotFoundError:
+        message = None
+    if message is not None:
+        assert_artifact_matches(message, context["binding"], descriptor)
+    blob_service = CLIENTS.get("storage_account_office_docs_client")
+    if blob_service is None:
+        raise RuntimeError("Blob storage client not available")
+    authorize_orchestration_artifact_cleanup(current_user_id, generated_artifact_source)
+    try:
+        blob_service.get_blob_client(
+            container=address["blob_container"], blob=address["blob_path"],
+        ).delete_blob(delete_snapshots="include")
+    except ResourceNotFoundError:
+        pass
+    if message is not None:
+        authorize_orchestration_artifact_cleanup(current_user_id, generated_artifact_source)
+        try:
+            cosmos_messages_container.delete_item(
+                item=artifact_message_id, partition_key=conversation_id,
+                etag=message["_etag"], match_condition=MatchConditions.IfNotModified,
+            )
+        except CosmosResourceNotFoundError:
+            pass
+    return True
+
+
 def upload_generated_analysis_artifact_for_user(
     current_user_id: str,
     conversation_id: str,
@@ -1442,8 +1590,10 @@ def upload_generated_analysis_artifact_for_user(
     output_format: str = "",
     summary: str = "",
     artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
+    analysis_producer: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Upload generated analysis content for a known authorized user outside request context."""
+    require_generated_file_publication_allowed()
     normalized_user_id = str(current_user_id or "").strip()
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_file_name = _normalize_generated_document_file_name(file_name)
@@ -1488,6 +1638,7 @@ def upload_generated_analysis_artifact_for_user(
             "output_format": normalized_output_format,
             "summary": normalized_summary,
             **(artifact_lifecycle_metadata if isinstance(artifact_lifecycle_metadata, dict) else {}),
+            **analysis_artifact_metadata(analysis_producer),
         },
     )
 
@@ -1503,8 +1654,34 @@ def upload_generated_analysis_artifact_stream_for_user(
     summary: str = "",
     artifact_idempotency_key: str = "",
     artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
+    analysis_producer: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Compatibility entry point for real native Analyze producers."""
+    return upload_generated_file_artifact_stream_for_user(
+        current_user_id, conversation_id, file_name, file_stream, file_size,
+        capability=capability, output_format=output_format, summary=summary,
+        artifact_idempotency_key=artifact_idempotency_key,
+        artifact_lifecycle_metadata=artifact_lifecycle_metadata, analysis_producer=analysis_producer,
+    )
+
+
+def upload_generated_file_artifact_stream_for_user(
+    current_user_id: str,
+    conversation_id: str,
+    file_name: str,
+    file_stream: Any,
+    file_size: int,
+    capability: str = "analysis",
+    output_format: str = "",
+    summary: str = "",
+    artifact_idempotency_key: str = "",
+    artifact_lifecycle_metadata: Optional[Dict[str, Any]] = None,
+    analysis_producer: Optional[Dict[str, Any]] = None,
+    generated_artifact_source: Optional[Dict[str, Any]] = None,
+    execution_check=None,
 ) -> Dict[str, Any]:
     """Upload a bounded-memory generated artifact stream for an authorized user."""
+    require_generated_file_publication_allowed()
     normalized_user_id = str(current_user_id or "").strip()
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_file_name = _normalize_generated_document_file_name(file_name)
@@ -1518,11 +1695,33 @@ def upload_generated_analysis_artifact_stream_for_user(
         raise ValueError("conversation_id is required")
     if not hasattr(file_stream, "read") or not hasattr(file_stream, "seek"):
         raise ValueError("file_stream must be seekable and readable")
-    if not allowed_file(normalized_file_name):
-        raise ValueError("Generated file type is not supported")
+    if generated_artifact_source is not None and analysis_producer is not None:
+        raise ValueError("A generated artifact must have exactly one producer binding.")
 
+    source_metadata = (
+        generated_artifact_source_metadata(generated_artifact_source)
+        if generated_artifact_source is not None else {}
+    )
+    is_orchestration_source = (
+        (source_metadata.get("generated_artifact_source") or {}).get("kind") == "orchestration_retained_output"
+    )
+    supported_file_name = (
+        allowed_file(
+            normalized_file_name,
+            allowed_extensions=orchestration_artifact_file_extensions(normalized_output_format),
+        ) if is_orchestration_source else allowed_file(normalized_file_name)
+    )
+    if not supported_file_name:
+        raise ValueError("Generated file type is not supported")
+    if is_orchestration_source and (
+        type(file_size) is not int or file_size < 0
+        or artifact_lifecycle_metadata or not callable(execution_check)
+    ):
+        raise ValueError("The orchestration artifact admission is invalid.")
     normalized_file_size = max(0, int(file_size or 0))
-    if normalized_file_size <= 0:
+    if normalized_file_size <= 0 and not (
+        is_orchestration_source and normalized_output_format in {"txt", "md"}
+    ):
         raise ValueError("Generated artifact is empty")
 
     settings = get_settings()
@@ -1549,8 +1748,11 @@ def upload_generated_analysis_artifact_stream_for_user(
             "output_format": normalized_output_format,
             "summary": normalized_summary,
             **(artifact_lifecycle_metadata if isinstance(artifact_lifecycle_metadata, dict) else {}),
+            **analysis_artifact_metadata(analysis_producer),
+            **source_metadata,
         },
         artifact_idempotency_key=artifact_idempotency_key,
+        execution_check=execution_check,
     )
 
 
@@ -1686,6 +1888,7 @@ def upload_chat_image_bytes_for_user(
     image_source: str = "generated",
 ) -> Dict[str, Any]:
     """Upload chat image bytes to the conversation blob folder and return message fields."""
+    require_generated_file_publication_allowed()
     normalized_user_id = str(user_id or "").strip()
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_message_id = str(message_id or "").strip()
@@ -1711,16 +1914,17 @@ def upload_chat_image_bytes_for_user(
         container=storage_account_personal_chat_container_name,
         blob=blob_path,
     )
-    blob_client.upload_blob(
-        file_content_bytes,
-        overwrite=True,
-        metadata={
-            "conversation_id": normalized_conversation_id,
-            "user_id": normalized_user_id,
-            "message_id": normalized_message_id,
-            "chat_image": "true",
-            "image_source": normalized_image_source,
-        },
+    write_blob_with_container_recovery(
+        blob_service_client, storage_account_personal_chat_container_name,
+        lambda: blob_client.upload_blob(
+            file_content_bytes, overwrite=True,
+            metadata={
+                "conversation_id": normalized_conversation_id, "user_id": normalized_user_id,
+                "message_id": normalized_message_id, "chat_image": "true",
+                "image_source": normalized_image_source,
+            },
+        ),
+        before_retry=require_generated_file_publication_allowed, log=log_event,
     )
 
     log_event(
@@ -1761,6 +1965,14 @@ def create_group_for_current_user(name: str, description: str = "") -> Dict[str,
     return group_doc
 
 
+class _GroupAlreadyInactive(Exception):
+    """The group's current copy is already inactive; carries it, so nothing is written."""
+
+    def __init__(self, group_doc):
+        super().__init__("The group is already inactive.")
+        self.group_doc = group_doc
+
+
 def make_group_inactive_for_current_user(
     group_id: str = "",
     reason: str = "",
@@ -1773,20 +1985,6 @@ def make_group_inactive_for_current_user(
     if not resolved_group_id:
         resolved_group_id = require_active_group(current_user_info["userId"])
 
-    group_doc = find_group_by_id(resolved_group_id)
-    if not group_doc:
-        raise LookupError("Group not found")
-
-    old_status = str(group_doc.get("status") or "active").strip() or "active"
-    if old_status == "inactive":
-        return {
-            "group": group_doc,
-            "old_status": old_status,
-            "new_status": old_status,
-            "message": f"Group '{group_doc.get('name', 'Unknown')}' is already inactive.",
-        }
-
-    changed_at = datetime.utcnow().isoformat()
     changed_by_user_id = str(admin_session_user.get("oid") or current_user_info.get("userId") or "").strip() or "unknown"
     changed_by_email = str(
         admin_session_user.get("preferred_username")
@@ -1795,25 +1993,51 @@ def make_group_inactive_for_current_user(
         or ""
     ).strip() or "unknown"
     normalized_reason = str(reason or "").strip()
+    transition = {}
 
-    group_doc["status"] = "inactive"
-    group_doc["modifiedDate"] = changed_at
-    group_doc.setdefault("statusHistory", []).append(
-        {
-            "old_status": old_status,
+    def apply_inactive(fresh_group_doc):
+        # Decided on the copy being written: a status or membership change made
+        # meanwhile is kept, and the previous status logged is the one replaced.
+        old_status = str(fresh_group_doc.get("status") or "active").strip() or "active"
+        if old_status == "inactive":
+            raise _GroupAlreadyInactive(fresh_group_doc)
+        changed_at = datetime.utcnow().isoformat()
+        fresh_group_doc["status"] = "inactive"
+        fresh_group_doc["modifiedDate"] = changed_at
+        fresh_group_doc.setdefault("statusHistory", []).append(
+            {
+                "old_status": old_status,
+                "new_status": "inactive",
+                "changed_by_user_id": changed_by_user_id,
+                "changed_by_email": changed_by_email,
+                "changed_at": changed_at,
+                "reason": normalized_reason,
+            }
+        )
+        transition["old_status"] = old_status
+        return fresh_group_doc
+
+    # Reached through the module, as the direct add is, so callers that stub
+    # functions_group with only the names imported above can still import this module.
+    try:
+        updated_group_doc = functions_group.update_group_document_with_etag_guard(
+            resolved_group_id, apply_inactive, cache_reason="group_marked_inactive",
+        )
+    except _GroupAlreadyInactive as already:
+        group_doc = already.group_doc
+        return {
+            "group": group_doc,
+            "old_status": "inactive",
             "new_status": "inactive",
-            "changed_by_user_id": changed_by_user_id,
-            "changed_by_email": changed_by_email,
-            "changed_at": changed_at,
-            "reason": normalized_reason,
+            "message": f"Group '{group_doc.get('name', 'Unknown')}' is already inactive.",
         }
-    )
-    updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_marked_inactive")
+    if updated_group_doc is None:
+        raise LookupError("Group not found")
+    old_status = transition["old_status"]
 
     log_group_status_change(
         group_id=resolved_group_id,
-        group_name=str(group_doc.get("name") or "Unknown").strip() or "Unknown",
+        group_name=str(updated_group_doc.get("name") or "Unknown").strip() or "Unknown",
         old_status=old_status,
         new_status="inactive",
         changed_by_user_id=changed_by_user_id,
@@ -1824,7 +2048,7 @@ def make_group_inactive_for_current_user(
         "[SIMPLE_CHAT] Group marked inactive",
         {
             "group_id": resolved_group_id,
-            "group_name": group_doc.get("name"),
+            "group_name": updated_group_doc.get("name"),
             "old_status": old_status,
             "new_status": "inactive",
             "changed_by_user_id": changed_by_user_id,
@@ -1837,7 +2061,7 @@ def make_group_inactive_for_current_user(
         "group": updated_group_doc,
         "old_status": old_status,
         "new_status": "inactive",
-        "message": f"Marked group '{group_doc.get('name', 'Unknown')}' as inactive.",
+        "message": f"Marked group '{updated_group_doc.get('name', 'Unknown')}' as inactive.",
     }
 
 
@@ -1898,10 +2122,12 @@ def invite_group_conversation_members_for_current_user(
     if not is_group_collaboration_conversation(conversation_doc):
         raise LookupError(CONVERSATION_ACCESS_ERROR)
 
+    group_id = str(((conversation_doc.get("scope") or {}).get("group_id")) or "").strip()
     participants_to_add = _build_invited_participants(
         creator_user=current_user,
         participants=participants,
         participant_identifiers=participant_identifiers,
+        group_members=_group_member_summaries(find_group_by_id(group_id) if group_id else None),
     )
     if not participants_to_add:
         raise ValueError("At least one participant identifier is required")
@@ -2020,28 +2246,53 @@ def add_group_member_for_current_user(
         "email": resolved_user.get("email", ""),
         "displayName": resolved_user.get("displayName") or resolved_user.get("email") or target_user_id,
     }
-    group_doc.setdefault("users", []).append(new_member_doc)
+    added = {}
 
-    if member_role == "admin":
-        if target_user_id not in group_doc.get("admins", []):
-            group_doc.setdefault("admins", []).append(target_user_id)
-    elif member_role == "document_manager":
-        if target_user_id not in group_doc.get("documentManagers", []):
-            group_doc.setdefault("documentManagers", []).append(target_user_id)
+    def apply(fresh_group_doc):
+        # Re-checked on every fresh copy: a concurrent change is kept, and a
+        # demotion or an approval that lands first refuses the add.
+        fresh_actor_role = get_user_role_in_group(fresh_group_doc, current_user["userId"])
+        if fresh_actor_role not in ["Owner", "Admin"]:
+            raise PermissionError("Only the owner or admin can add members")
+        if get_user_role_in_group(fresh_group_doc, target_user_id):
+            raise ValueError("User is already a member")
 
-    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-    updated_group_doc = cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_member_added")
+        fresh_group_doc.setdefault("users", []).append(dict(new_member_doc))
+        if member_role == "admin":
+            if target_user_id not in fresh_group_doc.get("admins", []):
+                fresh_group_doc.setdefault("admins", []).append(target_user_id)
+        elif member_role == "document_manager":
+            if target_user_id not in fresh_group_doc.get("documentManagers", []):
+                fresh_group_doc.setdefault("documentManagers", []).append(target_user_id)
+        # A member added directly has no request left to decide.
+        pending_users = fresh_group_doc.get("pendingUsers")
+        if isinstance(pending_users, list):
+            fresh_group_doc["pendingUsers"] = [
+                entry for entry in pending_users
+                if not (isinstance(entry, dict) and entry.get("userId") == target_user_id)
+            ]
+
+        fresh_group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        added["actor_role"] = fresh_actor_role
+        return fresh_group_doc
+
+    # Reached through the module so callers that stub functions_group with only the
+    # names imported above can still import this module.
+    updated_group_doc = functions_group.update_group_document_with_etag_guard(
+        group_doc.get("id"), apply, cache_reason="group_member_added",
+    )
+    if updated_group_doc is None:
+        raise LookupError("Group not found")
 
     _log_group_member_addition(
         actor_user=current_user,
-        actor_role=actor_role,
-        group_doc=group_doc,
+        actor_role=added["actor_role"],
+        group_doc=updated_group_doc,
         member_doc=new_member_doc,
         member_role=member_role,
     )
     _notify_group_member_addition(
-        group_doc=group_doc,
+        group_doc=updated_group_doc,
         member_doc=new_member_doc,
         member_role=member_role,
         added_by_email=current_user.get("email", "unknown"),
@@ -2051,8 +2302,8 @@ def add_group_member_for_current_user(
     return {
         "success": True,
         "message": "Member added",
-        "group_id": group_doc.get("id"),
-        "group_name": group_doc.get("name", "Unknown"),
+        "group_id": updated_group_doc.get("id"),
+        "group_name": updated_group_doc.get("name", "Unknown"),
         "member": new_member_doc,
         "member_role": member_role,
         "group": updated_group_doc,
@@ -2153,6 +2404,7 @@ def _build_invited_participants(
     creator_user: Dict[str, str],
     participants: Optional[Iterable[Dict[str, Any]]] = None,
     participant_identifiers: Any = None,
+    group_members: Optional[List[Dict[str, str]]] = None,
 ) -> List[Dict[str, str]]:
     invited_participants: List[Dict[str, str]] = []
     seen_user_ids = {creator_user.get("user_id")}
@@ -2168,7 +2420,9 @@ def _build_invited_participants(
         invited_participants.append(normalized_participant)
 
     for raw_identifier in _split_participant_identifiers(participant_identifiers):
-        resolved_user = resolve_directory_user(user_identifier=raw_identifier)
+        resolved_user = _match_group_member(group_members, raw_identifier)
+        if resolved_user is None:
+            resolved_user = resolve_directory_user(user_identifier=raw_identifier)
         normalized_participant = normalize_collaboration_user(resolved_user)
         if not normalized_participant:
             continue
@@ -2179,6 +2433,42 @@ def _build_invited_participants(
         invited_participants.append(normalized_participant)
 
     return invited_participants
+
+
+def _group_member_summaries(group_doc: Optional[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """The group's owner and members as collaboration user summaries, once each."""
+    if not isinstance(group_doc, dict):
+        return []
+    owner = group_doc.get("owner") if isinstance(group_doc.get("owner"), dict) else {}
+    raw_members = [
+        {"userId": owner.get("id"), "displayName": owner.get("displayName"), "email": owner.get("email")},
+        *(group_doc.get("users") or []),
+    ]
+    members: Dict[str, Dict[str, str]] = {}
+    for raw_member in raw_members:
+        summary = normalize_collaboration_user(raw_member)
+        if summary:
+            members.setdefault(summary["user_id"], summary)
+    return list(members.values())
+
+
+def _match_group_member(group_members: Optional[List[Dict[str, str]]], identifier: str) -> Optional[Dict[str, str]]:
+    """The one group member an invite identifier names by user ID, email or display name.
+
+    Matching the group's own records needs no directory lookup, which a scheduled
+    workflow run cannot make. An identifier that names no member, or several, is left
+    to the directory.
+    """
+    wanted = str(identifier or "").strip().lower()
+    matches = [
+        member for member in group_members or []
+        if wanted in {
+            str(member.get("user_id") or "").lower(),
+            str(member.get("email") or "").lower(),
+            str(member.get("display_name") or "").lower(),
+        }
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def _split_participant_identifiers(raw_identifiers: Any) -> List[str]:
@@ -2202,6 +2492,7 @@ def _persist_personal_conversation_message(
     current_user_info: Dict[str, str],
     content: str,
     reply_to_message_id: Optional[str] = None,
+    extra_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     conversation_id = str(conversation_item.get("id") or "").strip()
     if not conversation_id:
@@ -2248,6 +2539,8 @@ def _persist_personal_conversation_message(
             },
         },
     }
+    if extra_metadata:
+        message_doc["metadata"].update(extra_metadata)
 
     cosmos_messages_container.upsert_item(message_doc)
 
@@ -2455,12 +2748,30 @@ def _write_temp_markdown_file(markdown_content: str) -> str:
         return temp_file.name
 
 
-def _write_temp_generated_file(file_content_bytes: bytes, suffix: str) -> str:
+def _write_temp_generated_file(file_content_bytes: Any, suffix: str) -> str:
+    require_generated_file_publication_allowed()
     sc_temp_files_dir = "/sc-temp-files" if os.path.exists("/sc-temp-files") else None
     normalized_suffix = suffix if suffix.startswith('.') else f'.{suffix}' if suffix else '.json'
     with tempfile.NamedTemporaryFile(delete=False, suffix=normalized_suffix, dir=sc_temp_files_dir) as temp_file:
-        temp_file.write(file_content_bytes)
-        return temp_file.name
+        path = temp_file.name
+        complete = False
+        try:
+            if hasattr(file_content_bytes, "read") and hasattr(file_content_bytes, "seek"):
+                file_content_bytes.seek(0)
+                for chunk in iter(lambda: file_content_bytes.read(1024 * 1024), b""):
+                    if not isinstance(chunk, bytes):
+                        raise ValueError("A generated file stream must contain bytes.")
+                    temp_file.write(chunk)
+            else:
+                temp_file.write(file_content_bytes)
+            if temp_file.tell() == 0:
+                raise ValueError("Generated file content is empty.")
+            complete = True
+            return path
+        finally:
+            if not complete:
+                temp_file.close()
+                os.remove(path)
 
 
 def _queue_document_upload_background_task(
@@ -2471,6 +2782,7 @@ def _queue_document_upload_background_task(
     group_id: Optional[str] = None,
     public_workspace_id: Optional[str] = None,
 ) -> None:
+    require_generated_file_publication_allowed()
     task_kwargs = {
         "document_id": document_id,
         "user_id": user_id,
@@ -2484,6 +2796,9 @@ def _queue_document_upload_background_task(
 
     if not has_app_context():
         raise RuntimeError("SimpleChat document uploads require an active app context")
+
+    if get_settings().get("enable_content_screening") is True:
+        prepare_document_upload(**task_kwargs)
 
     executor = current_app.extensions.get("executor")
     if executor and hasattr(executor, "submit_stored"):
@@ -2511,6 +2826,7 @@ def queue_generated_document_processing(
     process_inline: bool = False,
 ) -> None:
     """Queue processing for an existing generated document shell."""
+    require_generated_file_publication_allowed()
     normalized_document_id = str(document_id or "").strip()
     normalized_owner_user_id = str(owner_user_id or "").strip()
     normalized_name = str(normalized_file_name or "").strip()
@@ -2522,12 +2838,14 @@ def queue_generated_document_processing(
     if not normalized_name:
         raise ValueError("normalized_file_name is required")
 
-    if isinstance(file_content_bytes, bytes):
+    if hasattr(file_content_bytes, "read") and hasattr(file_content_bytes, "seek"):
+        normalized_file_content_bytes = file_content_bytes
+    elif isinstance(file_content_bytes, bytes):
         normalized_file_content_bytes = file_content_bytes
     else:
         normalized_file_content_bytes = str(file_content_bytes or "").encode("utf-8")
 
-    if not normalized_file_content_bytes.strip():
+    if isinstance(normalized_file_content_bytes, bytes) and not normalized_file_content_bytes.strip():
         raise ValueError("file_content_bytes is required")
 
     file_extension = os.path.splitext(normalized_name)[1].lower() or ".json"
@@ -2578,6 +2896,7 @@ def _upload_generated_document_for_current_user(
     default_group_id: str = "",
     process_inline: bool = False,
 ) -> Dict[str, Any]:
+    require_generated_file_publication_allowed()
     document_id = str(uuid.uuid4())
     file_extension = os.path.splitext(normalized_file_name)[1].lower() or '.json'
     temp_file_path = _write_temp_generated_file(file_content_bytes, file_extension)
@@ -2599,6 +2918,7 @@ def _upload_generated_document_for_current_user(
                 num_file_chunks=0,
                 status=initial_status,
                 source_file_path=temp_file_path,
+                screening_exemption=generated_screening_exemption(),
             )
             update_document(
                 document_id=document_id,
@@ -2614,6 +2934,7 @@ def _upload_generated_document_for_current_user(
                 num_file_chunks=0,
                 status=initial_status,
                 source_file_path=temp_file_path,
+                screening_exemption=generated_screening_exemption(),
             )
             update_document(
                 document_id=document_id,
@@ -2858,6 +3179,7 @@ def resolve_generated_file_approval_for_user(
     Denial keeps the artifact message so the conversation still shows who declined it, but the
     stored blob is removed immediately so unapproved content does not linger in storage.
     """
+    require_generated_file_publication_allowed()
     normalized_user_id = str(user_id or "").strip()
     normalized_conversation_id = str(source_conversation_id or "").strip()
     normalized_message_id = str(artifact_message_id or "").strip()
@@ -3055,6 +3377,7 @@ def attach_generated_file_approval_state(
 
 def auto_deny_expired_generated_file_approvals() -> int:
     """Auto-deny staged artifacts whose approval window elapsed and drop their blobs."""
+    require_generated_file_publication_allowed()
     expired_artifacts = list_expired_pending_generated_file_artifacts()
     denied_count = 0
 
@@ -3099,6 +3422,66 @@ def auto_deny_expired_generated_file_approvals() -> int:
     return denied_count
 
 
+def _verify_generated_artifact_blob(blob_client, expected_digest, expected_size, *, check=None):
+    digest, size = hashlib.sha256(), 0
+    for chunk in blob_client.download_blob().chunks():
+        digest.update(chunk)
+        size += len(chunk)
+        if size > expected_size:
+            raise ValueError("The existing generated artifact contains different bytes.")
+        if check is not None:
+            check()
+    if size != expected_size or digest.hexdigest() != expected_digest:
+        raise ValueError("The existing generated artifact contains different bytes.")
+
+
+@contextmanager
+def open_generated_chat_artifact_stream(artifact, *, check=None):
+    """Verify an entire bound file before a caller hands off or returns its bytes."""
+    metadata = artifact.get("metadata") or {}
+    expected_size = metadata.get("generated_artifact_size_bytes")
+    expected_digest = metadata.get("generated_artifact_content_sha256")
+    binding = metadata.get("generated_artifact_source")
+    permits_empty_text = (
+        isinstance(binding, dict) and binding.get("kind") == "orchestration_retained_output"
+        and metadata.get("generated_artifact_output_format") in {"txt", "md"}
+    )
+    if type(expected_size) is not int or expected_size < (0 if permits_empty_text else 1) or not expected_digest:
+        raise ValueError("The generated artifact byte binding is unavailable.")
+    blob_service_client = CLIENTS.get("storage_account_office_docs_client")
+    if not blob_service_client:
+        if isinstance(binding, dict) and binding.get("kind") == "orchestration_retained_output":
+            raise OutputStorageError()
+        raise RuntimeError("Blob storage client not available")
+    blob_client = blob_service_client.get_blob_client(container=artifact["blob_container"], blob=artifact["blob_path"])
+    try:
+        with tempfile.TemporaryFile(mode="w+b", dir=scratch_file_dir()) as content:
+            digest, size = hashlib.sha256(), 0
+            if check is not None:
+                check()
+            for chunk in blob_client.download_blob().chunks():
+                size += len(chunk)
+                if size > expected_size:
+                    raise ValueError("The generated artifact bytes changed.")
+                content.write(chunk)
+                digest.update(chunk)
+                if check is not None:
+                    check()
+            if size != expected_size or digest.hexdigest() != expected_digest:
+                raise ValueError("The generated artifact bytes changed.")
+            if check is not None:
+                check()
+            content.seek(0)
+            yield content
+    except Exception as exc:
+        if isinstance(binding, dict) and binding.get("kind") == "orchestration_retained_output":
+            if isinstance(exc, ResourceNotFoundError):
+                raise OutputUnavailableError("output_artifact_missing") from exc
+            if isinstance(exc, (AzureError, TimeoutError, ConnectionError)):
+                raise OutputStorageError() from exc
+        raise
+
+
 def _upload_generated_chat_artifact_for_current_user(
     current_user_id: str,
     conversation_id: str,
@@ -3106,7 +3489,9 @@ def _upload_generated_chat_artifact_for_current_user(
     file_content_bytes: bytes,
     artifact_metadata: Optional[Dict[str, Any]] = None,
     artifact_idempotency_key: str = "",
+    execution_check=None,
 ) -> Dict[str, Any]:
+    require_generated_file_publication_allowed()
     try:
         conversation_item = cosmos_conversations_container.read_item(
             item=conversation_id,
@@ -3122,6 +3507,42 @@ def _upload_generated_chat_artifact_for_current_user(
     access_context = build_conversation_participation_context(current_user_id, conversation_item)
 
     artifact_metadata = artifact_metadata if isinstance(artifact_metadata, dict) else {}
+    analysis_metadata = analysis_artifact_metadata(artifact_metadata.get("analysis_producer"))
+    if artifact_metadata.get("analysis_result_required") and not analysis_metadata:
+        raise ValueError("The analysis artifact has no producer binding.")
+    source_context = (
+        authorize_generated_artifact_preparation(current_user_id, artifact_metadata)
+        if has_generated_artifact_source(artifact_metadata) else None
+    )
+    source_metadata = (
+        generated_artifact_source_metadata(source_context["binding"]) if source_context else {}
+    )
+    is_orchestration_source = bool(
+        source_context and source_context["binding"].get("kind") == "orchestration_retained_output"
+    )
+    if is_orchestration_source and (
+        conversation_item.get("user_id") != current_user_id or not callable(execution_check)
+    ):
+        raise PermissionError("Forbidden")
+    content_digest = hashlib.sha256()
+    content_size = 0
+    if hasattr(file_content_bytes, "read") and hasattr(file_content_bytes, "seek"):
+        file_content_bytes.seek(0)
+        for block in iter(lambda: file_content_bytes.read(1024 * 1024), b""):
+            content_digest.update(block)
+            content_size += len(block)
+            if execution_check is not None:
+                execution_check()
+        file_content_bytes.seek(0)
+    else:
+        content_digest.update(file_content_bytes)
+        content_size = len(file_content_bytes)
+    content_sha256 = content_digest.hexdigest()
+    if source_context and (
+        content_sha256 != source_context["descriptor"]["content_sha256"]
+        or content_size != source_context["descriptor"]["size_bytes"]
+    ):
+        raise ValueError("The prepared generated artifact contains different bytes.")
     approval_metadata = {}
     if requires_generated_file_approval(
         access_context,
@@ -3138,22 +3559,55 @@ def _upload_generated_chat_artifact_for_current_user(
         raise RuntimeError("Blob storage client not available")
 
     normalized_idempotency_key = str(artifact_idempotency_key or "").strip()
-    if normalized_idempotency_key:
-        artifact_suffix = uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"simplechat-generated-artifact:{conversation_id}:{normalized_idempotency_key}",
-        ).hex
-    else:
-        artifact_suffix = uuid.uuid4().hex
-    artifact_message_id = f"{conversation_id}_generated_file_{artifact_suffix}"
-    blob_path = (
-        f"{current_user_id}/{conversation_id}/generated/"
-        f"{artifact_message_id}/{normalized_file_name}"
+    address = source_context["descriptor"]["artifact"] if source_context else generated_chat_artifact_address(
+        current_user_id, conversation_id, normalized_file_name, normalized_idempotency_key,
+        storage_account_personal_chat_container_name,
     )
+    expected_idempotency_key = (
+        source_context["idempotency_key"] if is_orchestration_source else
+        f"generated-export:v1:{source_context['binding']['export_key']}" if source_context else None
+    )
+    expected_output_format = source_context["output_format"] if is_orchestration_source else "json"
+    if source_context and (
+        address["conversation_id"] != conversation_id or address["file_name"] != normalized_file_name
+        or normalized_idempotency_key != expected_idempotency_key
+        or artifact_metadata.get("output_format") != expected_output_format
+    ):
+        raise ValueError("The generated artifact does not match its prepared address.")
+    artifact_message_id, blob_path = address["artifact_message_id"], address["blob_path"]
+    blob_container = address["blob_container"]
     blob_client = blob_service_client.get_blob_client(
-        container=storage_account_personal_chat_container_name,
+        container=blob_container,
         blob=blob_path,
     )
+
+    def reauthorize_write():
+        require_generated_file_publication_allowed()
+        if execution_check is not None:
+            execution_check()
+        if source_context:
+            current_conversation = cosmos_conversations_container.read_item(
+                item=conversation_id, partition_key=conversation_id,
+            )
+            build_conversation_participation_context(current_user_id, current_conversation)
+            authorize_generated_artifact_preparation(current_user_id, artifact_metadata)
+
+    def check_existing(existing):
+        metadata = existing.get("metadata") or {}
+        if (
+            existing.get("role") != "file" or existing.get("conversation_id") != conversation_id
+            or existing.get("filename") != normalized_file_name or existing.get("blob_path") != blob_path
+            or existing.get("blob_container") != blob_container or existing.get("file_content_source") != "blob"
+            or any(metadata.get(key) != value for key, value in source_metadata.items())
+            or metadata.get("generated_artifact_content_sha256") != content_sha256
+            or metadata.get("generated_artifact_size_bytes") != content_size
+            or metadata.get("generated_artifact_idempotency_key") != normalized_idempotency_key
+            or metadata.get("generated_artifact_output_format") != expected_output_format
+        ):
+            raise ValueError("The existing generated artifact has a different immutable binding.")
+        _verify_generated_artifact_blob(blob_client, content_sha256, content_size, check=execution_check)
+        reauthorize_write()
+
     if normalized_idempotency_key:
         try:
             existing_message = cosmos_messages_container.read_item(
@@ -3162,6 +3616,8 @@ def _upload_generated_chat_artifact_for_current_user(
             )
         except CosmosResourceNotFoundError:
             existing_message = None
+        if source_context and existing_message is not None:
+            check_existing(existing_message)
         if (
             isinstance(existing_message, dict)
             and existing_message.get("role") == "file"
@@ -3170,27 +3626,44 @@ def _upload_generated_chat_artifact_for_current_user(
             and blob_client.exists()
         ):
             existing_metadata = existing_message.get("metadata") or {}
+            if existing_metadata.get("analysis_producer") != analysis_metadata.get("analysis_producer"):
+                raise ValueError("The existing artifact belongs to a different analysis.")
+            if existing_metadata.get("generated_artifact_content_sha256") not in (None, content_sha256):
+                raise ValueError("The existing artifact contains different bytes.")
             return {
                 "message": {
                     "id": artifact_message_id,
                     "file_name": normalized_file_name,
-                    "blob_container": storage_account_personal_chat_container_name,
+                    "blob_container": blob_container,
                     "blob_path": blob_path,
                     "capability": existing_metadata.get("generated_artifact_capability") or "analysis",
                     "output_format": existing_metadata.get("generated_artifact_output_format") or "",
                 },
                 "conversation_id": conversation_id,
             }
-    blob_client.upload_blob(
-        file_content_bytes,
-        overwrite=True,
-        metadata={
-            "conversation_id": conversation_id,
-            "user_id": current_user_id,
-            "generated_artifact": "true",
-            "idempotent_artifact": str(bool(normalized_idempotency_key)).lower(),
-        },
-    )
+    reauthorize_write()
+
+    def upload_bytes():
+        if hasattr(file_content_bytes, "read"):
+            file_content_bytes.seek(0)
+        return blob_client.upload_blob(
+            file_content_bytes, overwrite=not bool(source_context),
+            metadata={
+                "conversation_id": conversation_id, "user_id": current_user_id,
+                "generated_artifact": "true",
+                "idempotent_artifact": str(bool(normalized_idempotency_key)).lower(),
+            },
+        )
+
+    try:
+        write_blob_with_container_recovery(
+            blob_service_client, blob_container, upload_bytes,
+            before_retry=reauthorize_write, log=log_event,
+        )
+    except ResourceExistsError:
+        if not source_context:
+            raise
+        _verify_generated_artifact_blob(blob_client, content_sha256, content_size, check=execution_check)
 
     timestamp = datetime.now(timezone.utc).isoformat()
     current_thread_id = str(uuid.uuid4())
@@ -3212,7 +3685,7 @@ def _upload_generated_chat_artifact_for_current_user(
         "filename": normalized_file_name,
         "is_table": file_extension in TABULAR_EXTENSIONS,
         "file_content_source": "blob",
-        "blob_container": storage_account_personal_chat_container_name,
+        "blob_container": blob_container,
         "blob_path": blob_path,
         "timestamp": timestamp,
         "model_deployment_name": None,
@@ -3223,6 +3696,10 @@ def _upload_generated_chat_artifact_for_current_user(
             "generated_artifact_output_format": artifact_output_format,
             "generated_artifact_summary": artifact_summary,
             "generated_artifact_idempotency_key": normalized_idempotency_key or None,
+            "generated_artifact_content_sha256": content_sha256,
+            **analysis_metadata,
+            **source_metadata,
+            **({"generated_artifact_size_bytes": content_size} if source_context else {}),
             **lifecycle_metadata,
             **approval_metadata,
             "thread_info": {
@@ -3233,9 +3710,19 @@ def _upload_generated_chat_artifact_for_current_user(
             },
         },
     }
-    cosmos_messages_container.upsert_item(message_doc)
+    reauthorize_write()
+    created = True
+    if source_context:
+        try:
+            cosmos_messages_container.create_item(message_doc)
+        except CosmosResourceExistsError:
+            message_doc = cosmos_messages_container.read_item(item=artifact_message_id, partition_key=conversation_id)
+            check_existing(message_doc)
+            created = False
+    else:
+        cosmos_messages_container.upsert_item(message_doc)
 
-    if approval_metadata:
+    if approval_metadata and created:
         _notify_generated_file_approval_requested(message_doc, access_context)
 
     log_event(
@@ -3257,7 +3744,7 @@ def _upload_generated_chat_artifact_for_current_user(
         "message": {
             "id": artifact_message_id,
             "file_name": normalized_file_name,
-            "blob_container": storage_account_personal_chat_container_name,
+            "blob_container": blob_container,
             "blob_path": blob_path,
             "capability": artifact_capability,
             "output_format": artifact_output_format,
@@ -3343,8 +3830,13 @@ def _generated_artifact_has_lifecycle_contract(metadata: Dict[str, Any]) -> bool
 
 
 def assert_generated_chat_artifact_is_published_for_user(current_user_id: str, message_item: Dict[str, Any]) -> None:
-    """Reauthorize a generated artifact against its committed artifact-set manifest."""
+    """Reauthorize the source's distinct output or artifact-set commit authority."""
     metadata = message_item.get("metadata") if isinstance(message_item.get("metadata"), dict) else {}
+    if has_generated_artifact_source(metadata) or metadata.get("analysis_result_required") or metadata.get("analysis_result_contexts"):
+        authorize_generated_artifact_source(current_user_id, message_item, native_authorizer=authorize_analysis_artifact)
+        binding = metadata.get("generated_artifact_source")
+        if isinstance(binding, dict) and binding.get("kind") == "orchestration_retained_output":
+            return
     if not _generated_artifact_has_lifecycle_contract(metadata):
         return
 
@@ -3410,6 +3902,7 @@ def commit_generated_chat_artifact_publication_for_user(
     publication_generation: int,
 ) -> Dict[str, Any]:
     """Mark one staged generated artifact message as published after manifest validation."""
+    require_generated_file_publication_allowed()
     current_user_id = str(current_user_id or "").strip()
     normalized_conversation_id = str(conversation_id or "").strip()
     normalized_message_id = str(artifact_message_id or "").strip()
@@ -3725,7 +4218,7 @@ def _notify_group_member_addition(
                 f"You have been added to the group '{group_doc.get('name', 'Unknown')}' "
                 f"as {role_display} by {added_by_email}."
             ),
-            link_url=f"/manage_group/{group_doc.get('id', '')}",
+            link_url=_build_group_manage_url(group_doc.get("id")),
             link_context={
                 "workspace_type": "group",
                 "group_id": group_doc.get("id", ""),
@@ -3758,7 +4251,7 @@ def _notify_group_member_addition(
                 f"Added {member_doc.get('displayName', 'a new member')} to '{group_doc.get('name', 'Unknown')}' "
                 f"as {role_display}."
             ),
-            link_url=f"/manage_group/{group_doc.get('id', '')}",
+            link_url=_build_group_manage_url(group_doc.get("id")),
             link_context={
                 "workspace_type": "group",
                 "group_id": group_doc.get("id", ""),
@@ -3820,6 +4313,11 @@ def _build_group_link_context(group_doc: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_group_manage_url(group_id: Any) -> str:
+    """Link to the group management page, served by ``route_frontend_groups.manage_group``."""
+    return f"/groups/{quote(str(group_id or '').strip(), safe='')}"
+
+
 def _build_conversation_link_context(conversation_doc: Dict[str, Any]) -> Dict[str, Any]:
     conversation_doc = conversation_doc if isinstance(conversation_doc, dict) else {}
     scope = conversation_doc.get("scope") if isinstance(conversation_doc.get("scope"), dict) else {}
@@ -3870,7 +4368,7 @@ def _notify_group_created(group_doc: Dict[str, Any], actor_user: Dict[str, str])
         notification_type="group_created",
         title=f"Group created: {group_name}",
         message=f"You created the group '{group_name}'.",
-        link_url=f"/manage_group/{group_id}",
+        link_url=_build_group_manage_url(group_id),
         link_context=_build_group_link_context(group_doc),
         metadata={
             "group_id": group_id,

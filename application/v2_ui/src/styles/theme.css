@@ -1,0 +1,917 @@
+/* theme.css - SimpleChat V2 glassmorphism design system */
+@import 'tailwindcss';
+
+/*
+ * Dark mode is driven by a `.dark` class on <html> rather than the media query, so the
+ * user's explicit choice can override their OS preference. index.html sets the class
+ * before first paint to avoid a flash.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+.app-shell {
+    height: 100%;
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+}
+
+@media (max-width: 767px) {
+    .page-header,
+    .chat-header {
+        min-height: 56px;
+        gap: 8px;
+        padding-left: 8px;
+        padding-right: 8px;
+    }
+
+    .page-header {
+        padding-top: 8px;
+        padding-bottom: 8px;
+    }
+
+    .page-header-actions {
+        gap: 8px;
+    }
+
+    .mobile-navigation-controls {
+        gap: 4px;
+    }
+
+    .mobile-navigation-controls button {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .mobile-navigation-controls button,
+    .page-header .header-action,
+    .chat-header > button,
+    .chat-header .header-action {
+        height: 44px;
+        width: 44px;
+        min-height: 44px;
+        min-width: 44px;
+        padding: 8px;
+    }
+
+    #primary-navigation li[class~='group/row'] > div {
+        padding-top: 0;
+        padding-bottom: 0;
+    }
+
+    .mobile-navigation-controls button,
+    #primary-navigation button,
+    .conversation-actions-popover button,
+    #primary-navigation a,
+    #workspace-section-navigation a,
+    .chat-header-actions button,
+    .composer-primary-actions button,
+    .composer-secondary-tools button,
+    .composer-picker-panel button,
+    .explorer-command-bar button,
+    .explorer-command-bar select,
+    .explorer-command-bar input,
+    .explorer-status-bar button,
+    .explorer-status-bar select {
+        min-height: 44px;
+    }
+
+    .composer-picker-panel {
+        overscroll-behavior: contain;
+        overflow-wrap: anywhere;
+    }
+
+    .mobile-navigation-controls button,
+    #primary-navigation button,
+    .chat-header-actions button,
+    .composer-primary-actions button,
+    .explorer-command-bar button,
+    .explorer-status-bar button {
+        min-width: 44px;
+    }
+
+    .header-action {
+        min-width: 44px;
+        min-height: 44px;
+        justify-content: center;
+        padding: 8px;
+    }
+
+    .header-action-label {
+        display: none;
+    }
+
+    .chat-header-actions button {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    [data-tour='composer-tools'] {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+    }
+
+    .composer-secondary-tools {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        min-width: 0;
+        max-height: 30dvh;
+        overflow-y: auto;
+        padding-top: 8px;
+        border-top: 1px solid var(--edge);
+    }
+
+    .composer-secondary-tools[data-open='false'] {
+        display: none;
+    }
+
+    .composer-primary-actions {
+        grid-column: 2;
+        grid-row: 1;
+    }
+
+    .document-table {
+        table-layout: fixed;
+    }
+
+    .document-table th:first-child {
+        width: 44px;
+    }
+
+    .explorer-command-bar input,
+    .explorer-command-bar select,
+    #group-workspace-search input,
+    #public-workspace-search input,
+    select[aria-label='Group workspace'] {
+        font-size: max(16px, 1rem);
+    }
+}
+
+.header-action-icon-only .header-action-label {
+    display: none;
+}
+
+@media (min-width: 768px) {
+    .header-action-icon-only {
+        height: auto;
+        padding: 0.5rem;
+        border-radius: 0.5rem;
+        color: var(--text-3);
+    }
+}
+
+.header-action-popover .header-action {
+    min-height: 44px;
+    justify-content: flex-start;
+}
+
+.conversation-actions-popover svg {
+    flex-shrink: 0;
+}
+
+@media (max-height: 600px) {
+    #primary-navigation [data-rail-scroll-region] {
+        min-height: 0;
+        overflow-y: auto;
+    }
+}
+
+/*
+ * Text scale, driven by a `data-font-size` attribute on <html>.
+ *
+ * The attribute name and the percentages are taken verbatim from the classic interface
+ * (static/css/styles.css) so the two agree: a user who sets Large in one place sees the
+ * same size in the other. Everything in this design system is expressed in rem, so scaling
+ * the root scales the whole interface rather than only body copy.
+ */
+html[data-font-size='xs'] {
+    font-size: 75%;
+}
+
+html[data-font-size='s'] {
+    font-size: 87.5%;
+}
+
+html[data-font-size='m'] {
+    font-size: 100%;
+}
+
+html[data-font-size='l'] {
+    font-size: 150%;
+}
+
+html[data-font-size='xl'] {
+    font-size: 200%;
+}
+
+/*
+ * Semantic tokens live as plain CSS variables so they can swap at runtime between light
+ * and dark. `@theme inline` below maps them into Tailwind utilities by reference rather
+ * than by value, which is what keeps `bg-surface-1` responsive to the theme class.
+ */
+:root {
+    color-scheme: light;
+
+    /* Page backdrop: the tinted mesh the glass surfaces float above. */
+    --backdrop-base: #eef2fb;
+    --backdrop-tint-a: rgb(99 132 255 / 0.28);
+    --backdrop-tint-b: rgb(160 120 255 / 0.22);
+    --backdrop-tint-c: rgb(86 196 255 / 0.20);
+
+    /* Glass surfaces, ordered by elevation. Alpha stays high enough in light mode that
+       long-form text over them keeps a comfortable contrast ratio. */
+    --surface-1: rgb(255 255 255 / 0.62);
+    --surface-2: rgb(255 255 255 / 0.74);
+    --surface-3: rgb(255 255 255 / 0.86);
+    /* Dialogs sit over arbitrary content, so they need far more opacity than chrome
+       panels do. Anything translucent enough to read page text through is unusable. */
+    --surface-modal: rgb(252 253 255 / 0.97);
+    --surface-solid: #ffffff;
+    --surface-sunken: rgb(15 23 42 / 0.04);
+
+    /* Hairlines and the top highlight that sells the "pane of glass" read. */
+    --edge: rgb(255 255 255 / 0.70);
+    --edge-strong: rgb(15 23 42 / 0.10);
+    --highlight: rgb(255 255 255 / 0.85);
+
+    /* Text ramp. */
+    --text-1: #0f172a;
+    --text-2: #475569;
+    --text-3: #64748b;
+    --text-inverse: #f8fafc;
+
+    /* Brand accent, derived from the existing SimpleChat primary but desaturated
+       slightly so it does not vibrate against translucent surfaces. */
+    --accent: #3b6ef0;
+    --accent-hover: #2f5ed8;
+    --accent-soft: rgb(59 110 240 / 0.12);
+    --accent-ring: rgb(59 110 240 / 0.45);
+    --on-accent: #ffffff;
+
+    /* Status. */
+    --danger: #dc2626;
+    --danger-soft: rgb(220 38 38 / 0.12);
+    --warn: #d97706;
+    --warn-soft: rgb(217 119 6 / 0.12);
+    --ok: #059669;
+    --ok-soft: rgb(5 150 105 / 0.12);
+    /* A solid green that keeps text on it at 4.5:1 or better. */
+    --ok-strong: #047857;
+    --ok-strong-hover: #065f46;
+    --on-ok: #ffffff;
+    /* Informational, used for the group workspace badge. Distinct from --accent so a
+       group badge is not mistaken for a selected control. */
+    --info: #0e7490;
+    --info-soft: rgb(14 116 144 / 0.12);
+    /* Workflow editor change tracking. AI assist changes read blue and the user's own
+       edits read violet. A badge sits on its own soft fill inside a framed field that has
+       one too, so the text shades keep AA contrast over both fills together. */
+    --change-ai: #1e40af;
+    --change-ai-soft: rgb(29 78 216 / 0.10);
+    --change-user: #5b21b6;
+    --change-user-soft: rgb(109 40 217 / 0.10);
+
+    --shadow-glass: 0 8px 32px rgb(15 23 42 / 0.10), 0 2px 8px rgb(15 23 42 / 0.06);
+    --shadow-lift: 0 16px 48px rgb(15 23 42 / 0.16), 0 4px 12px rgb(15 23 42 / 0.08);
+    --blur-glass: 16px;
+}
+
+.dark {
+    color-scheme: dark;
+
+    --backdrop-base: #070b18;
+    --backdrop-tint-a: rgb(76 110 245 / 0.26);
+    --backdrop-tint-b: rgb(139 92 246 / 0.20);
+    --backdrop-tint-c: rgb(34 158 217 / 0.18);
+
+    --surface-1: rgb(255 255 255 / 0.055);
+    --surface-2: rgb(255 255 255 / 0.085);
+    --surface-3: rgb(255 255 255 / 0.12);
+    /* Built from the solid dark base rather than a white overlay: a translucent white
+       film over a dark backdrop stays see-through no matter how much blur is applied. */
+    --surface-modal: rgb(22 29 46 / 0.97);
+    --surface-solid: #101728;
+    --surface-sunken: rgb(0 0 0 / 0.25);
+
+    --edge: rgb(255 255 255 / 0.12);
+    --edge-strong: rgb(255 255 255 / 0.20);
+    --highlight: rgb(255 255 255 / 0.16);
+
+    --text-1: #f1f5f9;
+    --text-2: #b3c0d4;
+    --text-3: #8496ae;
+    --text-inverse: #0f172a;
+
+    --accent: #7ea0ff;
+    --accent-hover: #97b3ff;
+    --accent-soft: rgb(126 160 255 / 0.16);
+    --accent-ring: rgb(126 160 255 / 0.55);
+    --on-accent: #0b1020;
+
+    --danger: #f87171;
+    --danger-soft: rgb(248 113 113 / 0.16);
+    --warn: #fbbf24;
+    --warn-soft: rgb(251 191 36 / 0.16);
+    --ok: #34d399;
+    --ok-soft: rgb(52 211 153 / 0.16);
+    --ok-strong: #34d399;
+    --ok-strong-hover: #6ee7b7;
+    --on-ok: #022c22;
+    --info: #22d3ee;
+    --info-soft: rgb(34 211 238 / 0.16);
+    --change-ai: #bfdbfe;
+    --change-ai-soft: rgb(147 197 253 / 0.16);
+    --change-user: #ddd6fe;
+    --change-user-soft: rgb(196 181 253 / 0.16);
+
+    --shadow-glass: 0 8px 32px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.30);
+    --shadow-lift: 0 16px 48px rgb(0 0 0 / 0.55), 0 4px 12px rgb(0 0 0 / 0.35);
+}
+
+@theme inline {
+    --color-backdrop-base: var(--backdrop-base);
+    --color-surface-1: var(--surface-1);
+    --color-surface-2: var(--surface-2);
+    --color-surface-3: var(--surface-3);
+    --color-surface-modal: var(--surface-modal);
+    --color-surface-solid: var(--surface-solid);
+    --color-surface-sunken: var(--surface-sunken);
+
+    --color-edge: var(--edge);
+    --color-edge-strong: var(--edge-strong);
+    --color-highlight: var(--highlight);
+
+    --color-text-1: var(--text-1);
+    --color-text-2: var(--text-2);
+    --color-text-3: var(--text-3);
+    --color-text-inverse: var(--text-inverse);
+
+    --color-accent: var(--accent);
+    --color-accent-hover: var(--accent-hover);
+    --color-accent-soft: var(--accent-soft);
+    --color-on-accent: var(--on-accent);
+
+    --color-danger: var(--danger);
+    --color-danger-soft: var(--danger-soft);
+    --color-warn: var(--warn);
+    --color-warn-soft: var(--warn-soft);
+    --color-ok: var(--ok);
+    --color-ok-soft: var(--ok-soft);
+    --color-ok-strong: var(--ok-strong);
+    --color-ok-strong-hover: var(--ok-strong-hover);
+    --color-on-ok: var(--on-ok);
+    --color-info: var(--info);
+    --color-info-soft: var(--info-soft);
+    --color-change-ai: var(--change-ai);
+    --color-change-ai-soft: var(--change-ai-soft);
+    --color-change-user: var(--change-user);
+    --color-change-user-soft: var(--change-user-soft);
+
+    --shadow-glass: var(--shadow-glass);
+    --shadow-lift: var(--shadow-lift);
+
+    --font-sans:
+        system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+        'Noto Sans', sans-serif;
+    --font-mono:
+        ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas,
+        'Liberation Mono', monospace;
+}
+
+@layer base {
+    html,
+    body {
+        height: 100%;
+    }
+
+    body {
+        background-color: var(--backdrop-base);
+        color: var(--text-1);
+        font-family: var(--font-sans);
+        -webkit-font-smoothing: antialiased;
+        overflow: hidden;
+    }
+
+    /* The ambient mesh. Fixed and non-interactive so it never affects layout or hit
+       testing, and painted once rather than per-surface. */
+    body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        z-index: -1;
+        pointer-events: none;
+        background:
+            radial-gradient(60rem 60rem at 12% -10%, var(--backdrop-tint-a), transparent 60%),
+            radial-gradient(50rem 50rem at 100% 0%, var(--backdrop-tint-b), transparent 55%),
+            radial-gradient(45rem 45rem at 50% 110%, var(--backdrop-tint-c), transparent 60%);
+    }
+
+    /* Tailwind v4's Preflight dropped the v3 rule that gave buttons a pointer cursor,
+       leaving every control in this interface with the arrow that browsers use for inert
+       text. Restored here rather than as a utility on each button, because the affordance
+       is not something any individual button should have to opt into. `:not(:disabled)`
+       leaves the `disabled:cursor-not-allowed` utilities used throughout the app intact. */
+    button:not(:disabled),
+    [role='button']:not(:disabled) {
+        cursor: pointer;
+    }
+
+    :focus-visible {
+        outline: 2px solid var(--accent);
+        outline-offset: 2px;
+        border-radius: 0.375rem;
+    }
+
+    ::-webkit-scrollbar {
+        width: 10px;
+        height: 10px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: var(--edge-strong);
+        border-radius: 9999px;
+        border: 2px solid transparent;
+        background-clip: content-box;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--text-3);
+        background-clip: content-box;
+    }
+}
+
+@layer components {
+    /*
+     * The single glass primitive. backdrop-filter is genuinely expensive, so this is
+     * applied to a bounded set of persistent chrome surfaces (rail, header, composer,
+     * drawers) and never to repeated list items such as message bubbles.
+     */
+    .glass {
+        background-color: var(--surface-1);
+        border: 1px solid var(--edge);
+        backdrop-filter: blur(var(--blur-glass)) saturate(180%);
+        -webkit-backdrop-filter: blur(var(--blur-glass)) saturate(180%);
+        box-shadow: var(--shadow-glass);
+    }
+
+    /* Non-blurred sibling for repeated content, so long lists stay cheap to scroll. */
+    .glass-flat {
+        background-color: var(--surface-1);
+        border: 1px solid var(--edge);
+    }
+
+    .glass-raised {
+        background-color: var(--surface-2);
+        border: 1px solid var(--edge);
+        backdrop-filter: blur(calc(var(--blur-glass) * 1.25)) saturate(180%);
+        -webkit-backdrop-filter: blur(calc(var(--blur-glass) * 1.25)) saturate(180%);
+        box-shadow: var(--shadow-lift);
+    }
+
+    /*
+     * Dialog surface. Deliberately near-opaque: a modal sits over arbitrary page content,
+     * and the glass treatment used for chrome leaves body text legible straight through
+     * it, which makes the dialog itself hard to read.
+     */
+    .glass-modal {
+        background-color: var(--surface-modal);
+        border: 1px solid var(--edge);
+        backdrop-filter: blur(calc(var(--blur-glass) * 1.5)) saturate(180%);
+        -webkit-backdrop-filter: blur(calc(var(--blur-glass) * 1.5)) saturate(180%);
+        box-shadow: var(--shadow-lift);
+    }
+
+    /* Specular top edge. Purely decorative, hidden from assistive tech by virtue of
+       being a pseudo-element. */
+    .glass-edge {
+        position: relative;
+    }
+
+    .glass-edge::before {
+        content: '';
+        position: absolute;
+        inset-inline: 0;
+        top: 0;
+        height: 1px;
+        background: linear-gradient(
+            to right,
+            transparent,
+            var(--highlight),
+            transparent
+        );
+        pointer-events: none;
+    }
+}
+
+@layer utilities {
+    /*
+     * The Admin Settings card and field rules below are shared with the V2 workflow editor
+     * (SectionCard.tsx and WorkflowField.tsx), so a workflow card reads as the same object as an
+     * Admin section. Change them here once rather than forking a copy for workflows.
+     */
+    .admin-settings-distinct {
+        container-type: inline-size;
+        overflow-wrap: anywhere;
+    }
+
+    /* Same layer as field borders; focus utilities retain their higher specificity. */
+    .admin-settings-distinct :where(input:not([type='checkbox']), select, textarea) {
+        border-color: color-mix(in srgb, var(--text-3) 85%, transparent);
+    }
+
+    /*
+     * One setting: label, help, and control.
+     *
+     * Stacked on a narrow card -- label, control, help, which is the order the page has
+     * always used. Once the card is wide enough, the label and its help take a left column
+     * and the control a right one, so a section reads as a list of settings rather than a
+     * column of inputs stretched across the screen. Container queries resolve against the
+     * card, so a larger text size moves a card back to stacked on its own.
+     */
+    .admin-field {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+            'heading'
+            'control'
+            'help';
+        row-gap: 0.375rem;
+    }
+
+    .admin-field > .admin-field-heading {
+        grid-area: heading;
+    }
+
+    .admin-field > .admin-field-help {
+        grid-area: help;
+        max-width: 72ch;
+    }
+
+    .admin-field > .admin-field-control {
+        grid-area: control;
+    }
+
+    /* A short readout, such as an On/Off chip, stays beside its label when stacked. */
+    .admin-field.admin-field-inline {
+        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-areas:
+            'heading control'
+            'help help';
+        column-gap: 0.75rem;
+    }
+
+    /* Independent switches, one per row until the card can hold two side by side. */
+    .admin-switch-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .admin-switch-grid > * + * {
+        border-top: 1px solid var(--edge-strong);
+    }
+
+    @container (min-width: 50rem) {
+        .admin-field,
+        .admin-field.admin-field-inline {
+            grid-template-columns: minmax(13rem, 26rem) minmax(18rem, 1fr);
+            grid-template-rows: auto 1fr;
+            grid-template-areas:
+                'heading control'
+                'help control';
+            column-gap: 2rem;
+            row-gap: 0.25rem;
+            align-items: start;
+        }
+
+        /* Lines the label up with the text inside a 40px control. */
+        .admin-field > .admin-field-heading {
+            padding-top: 0.625rem;
+        }
+
+        .admin-field.admin-field-inline > .admin-field-heading {
+            padding-top: 0;
+        }
+
+        /* A nested row starts further in, so its label column gives up the indent and
+           its control lines up with the rows that are not nested. */
+        [data-setting-emphasis='dependent'] .admin-field {
+            grid-template-columns: minmax(11rem, calc(26rem - 1.5rem - 2px)) minmax(18rem, 1fr);
+        }
+
+        /* An anchored panel lines up with the text of the switch it belongs to, the
+           same 3.5rem a switch row indents its notices by. A narrow card keeps the full
+           width instead, where the indent would cost more room than it explains. */
+        .admin-anchored-groups {
+            margin-inline-start: 3.5rem;
+        }
+
+        .admin-field[data-field-width='compact'] > .admin-field-control {
+            max-width: 12rem;
+        }
+
+        .admin-field[data-field-width='standard'] > .admin-field-control {
+            max-width: 26rem;
+        }
+
+        .admin-field[data-field-width='wide'] > .admin-field-control {
+            max-width: 42rem;
+        }
+    }
+
+    @container (min-width: 64rem) {
+        .admin-switch-grid {
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            column-gap: 2.5rem;
+        }
+
+        .admin-switch-grid > * + * {
+            border-top: 0;
+        }
+
+        .admin-switch-grid > :nth-child(n + 3) {
+            border-top: 1px solid var(--edge-strong);
+        }
+    }
+
+    /*
+     * Agent and action editor rows (components/workspace/EditorLayout.tsx).
+     *
+     * The editors reuse the setting row above, but they nest fields in panels, groups and
+     * fieldsets, so a row cannot go by the card's width. Each row measures its own width
+     * and is marked `data-wide` from 50rem, the width at which an Admin Settings row puts
+     * its label beside the control. Neither rows nor editor cards are size containers: in
+     * Chromium a size container can be left with a stale, collapsed layout when React adds
+     * an editor section after it. The stacked rules win over any container query above.
+     */
+    .editor-field {
+        inline-size: 100%;
+        min-inline-size: 0;
+    }
+
+    .editor-field > .admin-field {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: none;
+        grid-template-areas:
+            'heading'
+            'control'
+            'help';
+        column-gap: 0;
+        row-gap: 0.375rem;
+    }
+
+    .editor-field > .admin-field > .admin-field-heading {
+        padding-top: 0;
+    }
+
+    .editor-field > .admin-field > .admin-field-control {
+        max-width: none;
+    }
+
+    .editor-field[data-wide] > .admin-field {
+        grid-template-columns: minmax(13rem, 26rem) minmax(18rem, 1fr);
+        grid-template-rows: auto 1fr;
+        grid-template-areas:
+            'heading control'
+            'help control';
+        column-gap: 2rem;
+        row-gap: 0.25rem;
+        align-items: start;
+    }
+
+    /* Lines the label up with the text inside a 40px control. */
+    .editor-field[data-wide] > .admin-field > .admin-field-heading {
+        padding-top: 0.625rem;
+    }
+
+    /* A nested row gives its label column the indent, so its control lines up. */
+    [data-setting-emphasis='dependent'] .editor-field[data-wide] > .admin-field {
+        grid-template-columns: minmax(11rem, calc(26rem - 1.5rem - 2px)) minmax(18rem, 1fr);
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='compact'] > .admin-field-control {
+        max-width: 12rem;
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='standard'] > .admin-field-control {
+        max-width: 26rem;
+    }
+
+    .editor-field[data-wide] > .admin-field[data-field-width='wide'] > .admin-field-control {
+        max-width: 42rem;
+    }
+
+    /* Consecutive rows read as one list, separated by a hairline as settings rows are. */
+    .editor-field + .editor-field {
+        border-top: 1px solid var(--edge-strong);
+    }
+
+    .editor-field:has(+ .editor-field) {
+        margin-block-end: 0;
+    }
+
+    .admin-settings-distinct.editor-section {
+        container-type: normal;
+    }
+
+    /* Panels and groups have the solid surface of an Admin Settings group, where the
+       translucent light-theme edge disappears. Rows and outlined buttons inside one use the
+       strong edge so they stay visible; inputs keep the admin field border above. */
+    .editor-panel :is(.border-edge, .glass-flat):not(input, select, textarea),
+    .editor-group :is(.border-edge, .glass-flat):not(input, select, textarea) {
+        border-color: var(--edge-strong);
+    }
+
+    /* Relative to the card, not the viewport, so text scaling also triggers wrapping. */
+    @container (max-width: 16rem) {
+        .admin-settings-distinct .admin-section-body {
+            padding: 0.75rem;
+        }
+
+        .admin-settings-distinct :where(
+            label:has(input[type='checkbox']),
+            .admin-field-heading,
+            .admin-color-controls,
+            .admin-promoted-agents-picker,
+            .admin-promoted-agent-row
+        ) {
+            flex-wrap: wrap;
+        }
+
+        .admin-settings-distinct label:has(input[type='checkbox']) > span:last-child,
+        .admin-settings-distinct .admin-promoted-agents-picker > select,
+        .admin-settings-distinct .admin-promoted-agent-row > div {
+            flex-basis: 100%;
+        }
+
+        .admin-settings-distinct .admin-promoted-agent-row > select {
+            min-width: 0;
+            max-width: 100%;
+            flex-shrink: 1;
+        }
+
+        .admin-settings-distinct .admin-promoted-agents-picker > button {
+            height: auto;
+            min-height: 2rem;
+            max-width: 100%;
+            flex-wrap: wrap;
+            padding: 0.25rem 0.5rem;
+        }
+
+        .admin-settings-distinct button[aria-expanded] {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr);
+        }
+
+        .admin-settings-distinct button[aria-expanded] > span:last-child:not(:first-of-type) {
+            grid-column: 2;
+            margin-inline-start: 0;
+        }
+    }
+
+    /*
+     * A native <details> drawn like an Admin field group: a bordered block with a chevron row
+     * that turns when it opens. It stays a real disclosure, so the browser keeps its keyboard
+     * behaviour and an invalid control inside still opens it. The chevron is scoped to its own
+     * summary, so a disclosure nested inside another turns only when it opens itself.
+     */
+    .workflow-disclosure {
+        border: 1px solid var(--edge-strong);
+        border-radius: 0.75rem;
+        background-color: var(--surface-solid);
+    }
+
+    .workflow-disclosure > summary {
+        display: flex;
+        min-height: 2.75rem;
+        cursor: pointer;
+        align-items: center;
+        gap: 0.5rem;
+        border-radius: 0.75rem;
+        padding: 0.5rem 0.75rem;
+        font-size: 0.875rem;
+        font-weight: 600;
+        color: var(--text-1);
+        list-style: none;
+    }
+
+    .workflow-disclosure > summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .workflow-disclosure > summary:hover {
+        background-color: var(--surface-sunken);
+    }
+
+    .workflow-disclosure[open] > summary {
+        border-bottom: 1px solid var(--edge-strong);
+        border-end-start-radius: 0;
+        border-end-end-radius: 0;
+        background-color: var(--surface-sunken);
+    }
+
+    .workflow-disclosure > summary > .workflow-disclosure-chevron {
+        flex-shrink: 0;
+        color: var(--text-2);
+        transition: transform 150ms ease-out;
+    }
+
+    .workflow-disclosure[open] > summary > .workflow-disclosure-chevron {
+        transform: rotate(90deg);
+    }
+
+    .workflow-disclosure > .workflow-disclosure-body {
+        padding: 0.75rem;
+    }
+
+    /*
+     * Respect users who have asked for less motion or less transparency. The second is
+     * important for readability: transparency is dropped for solid surfaces rather than
+     * merely reduced.
+     */
+    @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+            animation-duration: 0.01ms !important;
+            animation-iteration-count: 1 !important;
+            transition-duration: 0.01ms !important;
+            scroll-behavior: auto !important;
+        }
+    }
+
+    @media (prefers-reduced-transparency: reduce) {
+        .glass,
+        .glass-flat,
+        .glass-raised,
+        .glass-modal {
+            background-color: var(--surface-solid);
+            backdrop-filter: none;
+            -webkit-backdrop-filter: none;
+        }
+
+        body::before {
+            display: none;
+        }
+    }
+}
+
+/*
+ * Minimal highlight.js token theme. Written here rather than pulled from the
+ * highlight.js CSS distribution so the palette tracks our own tokens and so no extra
+ * browser asset has to be vendored.
+ */
+.hljs-comment,
+.hljs-quote {
+    color: var(--text-3);
+    font-style: italic;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal,
+.hljs-type {
+    color: #c084fc;
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+    color: #6ee7b7;
+}
+
+.hljs-number,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attr {
+    color: #fbbf24;
+}
+
+.hljs-title,
+.hljs-section,
+.hljs-name {
+    color: #7dd3fc;
+}
+
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-attribute {
+    color: #f9a8d4;
+}
+
+.hljs-deletion {
+    color: var(--danger);
+}
+
+.hljs-emphasis {
+    font-style: italic;
+}
+
+.hljs-strong {
+    font-weight: 600;
+}

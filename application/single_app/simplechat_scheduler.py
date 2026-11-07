@@ -8,7 +8,9 @@ import sys
 
 from background_tasks import run_scheduler_forever
 import functions_redis_client
-from config import get_redis_cache_infrastructure_endpoint, initialize_clients
+from config import cosmos_action_credential_state_container, get_redis_cache_infrastructure_endpoint, initialize_clients
+from functions_action_credential_state import configure_action_credential_state
+from functions_action_credential_runtime import configure_action_credential_runtime
 from functions_appinsights import setup_appinsights_logging
 from functions_settings import configure_application_cache, get_settings
 
@@ -24,6 +26,8 @@ def initialize_scheduler_runtime():
         redis_client_factory=functions_redis_client.create_redis_client,
     )
     initialize_clients(settings)
+    configure_action_credential_state(cosmos_action_credential_state_container)
+    configure_action_credential_runtime()
     setup_appinsights_logging(settings)
     logging.basicConfig(level=logging.DEBUG)
     print('SimpleChat scheduler runtime initialized.')

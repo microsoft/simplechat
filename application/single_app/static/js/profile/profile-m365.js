@@ -85,10 +85,12 @@
         function showChatConnectionReturn() {
             const currentUrl = new URL(window.location.href);
             const result = currentUrl.searchParams.get('m365_chat_connection');
-            if (result === null) {
+            const workflowResult = currentUrl.searchParams.get('m365_connection');
+            if (result === null && workflowResult === null) {
                 return;
             }
             currentUrl.searchParams.delete('m365_chat_connection');
+            currentUrl.searchParams.delete('m365_connection');
             window.history.replaceState(window.history.state, '', `${currentUrl.pathname}${currentUrl.search}${currentUrl.hash}`);
             if (result === 'connected') {
                 window.opener?.postMessage({ type: 'm365-profile-reconnected' }, window.location.origin);
@@ -96,6 +98,26 @@
                     'Microsoft 365 sign-in completed. Return to your conversation and retry your original question. No past requests were retried.',
                     'success');
             }
+            if (workflowResult === 'connected') {
+                showStatus('m365-connection-notice',
+                    'Microsoft 365 is connected for workflows. Each Run as workflow revision still needs your authorization.',
+                    'success');
+            }
+        }
+
+        function describeChatConnection(status, labels, persistence) {
+            if (status === 'available') {
+                const connected = persistence === 'saved'
+                    ? 'Microsoft 365 is connected for chat'
+                    : 'Signed in to Microsoft 365 for this session';
+                return labels
+                    ? `${connected}. Chat can use: ${labels}.`
+                    : `${connected}. No chat sources are connected yet. Connect the sources chat should use.`;
+            }
+            if (status === 'reconnect_required') {
+                return `Microsoft 365 needs you to sign in again before chat can use ${labels || 'your sources'}.`;
+            }
+            return 'Not signed in to Microsoft 365 in this session. Chat asks you to connect the first time it needs a source, or connect here.';
         }
 
         async function loadChatConnection() {
@@ -103,30 +125,32 @@
                 return;
             }
             const fields = document.getElementById('m365-chat-connection-fields');
+            const disconnectButton = document.getElementById('m365-chat-disconnect-btn');
+            disconnectButton.disabled = true;
             fields.disabled = true;
             try {
                 const response = await api.requestJson('/api/m365/chat/connection');
                 const chatConnection = response.connection;
-                const descriptions = {
-                    available: 'Sign-in saved for this session',
-                    not_connected: 'No Microsoft 365 sign-in is saved for this session',
-                    reconnect_required: 'Reconnect Microsoft 365 before using these sources in chat'
-                };
-                if (!Object.prototype.hasOwnProperty.call(descriptions, chatConnection?.status)
+                const statuses = ['available', 'not_connected', 'reconnect_required'];
+                if (!statuses.includes(chatConnection?.status)
                     || !Array.isArray(chatConnection.sources)
                     || !chatConnection.sources.every(source => typeof source === 'string'
                         && Object.prototype.hasOwnProperty.call(api.sourceLabels, source))) {
                     throw new Error('The chat sign-in status could not be verified. Refresh before trying again.');
                 }
+                const selected = chatConnection.sources;
                 root.querySelectorAll('[data-m365-chat-connect-source]').forEach(checkbox => {
-                    checkbox.checked = chatConnection.sources.includes(checkbox.dataset.m365ChatConnectSource);
+                    checkbox.checked = selected.includes(checkbox.dataset.m365ChatConnectSource);
                 });
-                document.getElementById('m365-chat-connection-details').textContent =
-                    `Sources saved for this session: ${chatConnection.sources.map(source => api.sourceLabels[source]).join(', ') || 'None'}.`;
+                const labels = chatConnection.sources.map(source => api.sourceLabels[source]).join(', ');
+                document.getElementById('m365-chat-connection-details').textContent = chatConnection.persistence_message
+                    || 'Reconnect once to save this chat connection across sign-ins when Key Vault is configured.';
                 fields.disabled = false;
-                showStatus('m365-chat-connection-status',
-                    `${descriptions[chatConnection.status]}. Access is checked when a source runs.`,
-                    chatConnection.status === 'reconnect_required' ? 'warning' : 'info');
+                disconnectButton.disabled = chatConnection.status === 'not_connected';
+                showStatus('m365-chat-connection-status', describeChatConnection(
+                    chatConnection.status, labels, chatConnection.persistence),
+                    chatConnection.status === 'reconnect_required' ? 'warning'
+                        : chatConnection.status === 'available' ? 'success' : 'info');
             } catch (error) {
                 showStatus('m365-chat-connection-status', error.message, 'danger');
             }
@@ -202,8 +226,22 @@
                 root.querySelectorAll('[data-m365-connect-source]').forEach(checkbox => {
                     checkbox.checked = (connection?.sources || []).includes(checkbox.dataset.m365ConnectSource);
                 });
+                const readiness = response.workflow_connections;
+                const blocked = readiness?.available === false;
+                const readinessElement = document.getElementById('m365-connection-readiness');
+                if (blocked) {
+                    showStatus('m365-connection-readiness',
+                        typeof readiness.message === 'string' && readiness.message
+                            ? readiness.message
+                            : 'Workflow connections are not set up on this deployment yet. Ask an administrator.',
+                        'warning');
+                } else {
+                    readinessElement.classList.add('d-none');
+                }
                 fields.disabled = false;
-                document.getElementById('m365-connect-btn').textContent = connection?.id ? 'Reconnect Microsoft 365 for workflows' : 'Connect Microsoft 365 for workflows';
+                const connectButton = document.getElementById('m365-connect-btn');
+                connectButton.disabled = blocked;
+                connectButton.textContent = connection?.id && status !== 'disconnected' ? 'Reconnect Microsoft 365 for workflows' : 'Connect Microsoft 365 for workflows';
                 document.getElementById('m365-disconnect-btn').disabled = !connection?.id || status === 'disconnected';
                 showStatus('m365-connection-status', `Workflow connection: ${status.replaceAll('_', ' ')}. Connecting is separate from approving a workflow.`, status === 'connected' ? 'success' : 'info');
             } catch (error) {
@@ -272,7 +310,16 @@
                     query.set('continuation_token', bindingContinuation);
                 }
                 const response = await api.requestJson(`/api/m365/bindings?${query}`);
-                if (!Array.isArray(response.items)) {
+                if (!Array.isArray(response.items) || response.items.some(binding => {
+                    const workflow = binding?.workflow;
+                    return typeof binding?.id !== 'string'
+                        || typeof workflow?.id !== 'string' || !workflow.id.trim()
+                        || typeof workflow?.name !== 'string' || !workflow.name.trim()
+                        || !(
+                            (workflow.scope_type === 'personal' && workflow.group_id === null)
+                            || (workflow.scope_type === 'group' && typeof workflow.group_id === 'string' && workflow.group_id.trim())
+                        );
+                })) {
                     throw new Error('Workflow authorizations could not be read.');
                 }
                 const list = document.getElementById('m365-workflow-bindings');
@@ -283,9 +330,30 @@
                     const row = document.createElement('div');
                     row.className = 'border rounded p-3';
                     const title = document.createElement('p');
-                    title.className = 'small text-break mb-1';
-                    title.textContent = `Workflow ${binding.context?.workflow_id || 'authorization'}: ${api.describeStatus(binding)}`;
+                    title.className = 'small fw-semibold text-break mb-1';
+                    title.textContent = binding.workflow.name;
                     row.appendChild(title);
+                    const description = document.createElement('p');
+                    description.className = 'small text-break text-muted mb-2';
+                    description.textContent = api.describeStatus(binding);
+                    row.appendChild(description);
+                    const actions = document.createElement('div');
+                    actions.className = 'd-flex flex-wrap gap-2';
+                    const open = document.createElement('a');
+                    const workflow = binding.workflow;
+                    const base = workflow.scope_type === 'group'
+                        ? `/v2/groups/${encodeURIComponent(workflow.group_id)}/workflows`
+                        : '/v2/workspace/workflows';
+                    open.href = `${base}?${new URLSearchParams({ workflow_id: workflow.id })}`;
+                    open.target = '_blank';
+                    open.rel = 'noopener noreferrer';
+                    open.className = 'btn btn-outline-secondary btn-sm';
+                    open.setAttribute('aria-label', `Open ${workflow.name} (opens in a new tab)`);
+                    const icon = document.createElement('i');
+                    icon.className = 'bi bi-box-arrow-up-right me-1';
+                    icon.setAttribute('aria-hidden', 'true');
+                    open.append(icon, document.createTextNode('Open'));
+                    actions.appendChild(open);
                     if (['pending', 'approved'].includes(binding.status)) {
                         const button = document.createElement('button');
                         button.type = 'button';
@@ -295,13 +363,18 @@
                             'Revoke this workflow revision\'s permission to use your Microsoft 365 account?',
                             () => api.requestJson(`/api/m365/bindings/${encodeURIComponent(binding.id)}/revoke`, { method: 'POST', body: {} })
                         ));
-                        row.appendChild(button);
+                        actions.appendChild(button);
                     }
+                    row.appendChild(actions);
                     list.appendChild(row);
                 });
                 bindingContinuation = response.continuation_token || null;
                 more.classList.toggle('d-none', !bindingContinuation);
-                document.getElementById('m365-bindings-status').textContent = list.childElementCount ? 'Only your own authorizations are shown. Pending requests can be decided from Approvals.' : 'No workflow authorizations.';
+                document.getElementById('m365-bindings-status').textContent = list.childElementCount
+                    ? 'Only your own authorizations are shown. Pending requests can be decided from Approvals.'
+                    : bindingContinuation
+                        ? 'No accessible workflows on this page. Load more authorizations to continue.'
+                        : 'No workflow authorizations.';
             } catch (error) {
                 showStatus('m365-bindings-status', error.message, 'danger');
                 more.classList.add('d-none');
@@ -345,6 +418,10 @@
         });
         document.getElementById('m365-preferences-form').addEventListener('submit', savePreferences);
         document.getElementById('m365-chat-connect-btn').addEventListener('click', connectChat);
+        document.getElementById('m365-chat-disconnect-btn').addEventListener('click', () => confirmRevocation(
+            'Remove your saved chat sign-in and stop future chat access in all browsers? Your workflow connection and authorizations stay unchanged. Already published answers and evidence are not removed.',
+            () => api.requestJson('/api/m365/chat/connection/disconnect', { method: 'POST', body: {} })
+        ));
         document.getElementById('m365-connect-btn').addEventListener('click', connect);
         document.getElementById('m365-revoke-confirm').addEventListener('click', revoke);
         document.getElementById('m365-profile-refresh').addEventListener('click', refresh);

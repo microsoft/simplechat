@@ -8,6 +8,19 @@ import os
 import time
 import uuid
 
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_document_available,
+    assert_evidence_available,
+    document_provenance,
+    get_available_blob_reference,
+    raise_source_authority_error,
+    strict_source_authority_enabled,
+)
+from content_screening.contracts import SCREENING_FIELD, ScreeningError, SourceAuthorityUnverifiedError
+from functions_document_citations import build_inline_citation_marker, resolve_citation_location
+from functions_m365_citations import M365_ANSWER_STYLE_INSTRUCTIONS
+from functions_evidence_status import build_mixed_source_evidence_status
 
 def log_event(*args, **kwargs):
     """Lazily resolve telemetry logging to avoid module-level import cycles."""
@@ -60,9 +73,9 @@ SELECTION_MODES = frozenset({
 TABULAR_SOURCE_EXTENSIONS = frozenset({".csv", ".xls", ".xlsx", ".xlsm"})
 XML_SCHEMA_SOURCE_EXTENSIONS = frozenset({".xsd"})
 NARRATIVE_SOURCE_EXTENSIONS = frozenset({
-    ".txt", ".doc", ".docm", ".docx", ".html", ".htm", ".md", ".markdown",
-    ".json", ".xml", ".yaml", ".yml", ".log", ".pdf", ".ppt", ".pptx",
-    ".msg", ".vsdx", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif",
+    ".txt", ".doc", ".docm", ".docx", ".dotx", ".html", ".htm", ".md", ".markdown",
+    ".json", ".xml", ".yaml", ".yml", ".log", ".pdf", ".ppt", ".pptx", ".potx",
+    ".msg", ".vsdx", ".one", ".onepkg", ".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif",
     ".heif", ".heic", ".3ga", ".aac", ".ac3", ".aif", ".aifc", ".aiff",
     ".amr", ".ape", ".au", ".caf", ".dts", ".f4a", ".flac", ".m4a",
     ".m4b", ".m4r", ".mka", ".mp2", ".mp3", ".mpa", ".oga", ".ogg",
@@ -130,6 +143,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "canceled_source_count",
     "citation_count",
     "completed_source_count",
+    "completion_tokens",
     "duplicate_evidence_count",
     "engine_call_count",
     "evidence_omitted_count",
@@ -155,6 +169,7 @@ MIXED_SOURCE_TELEMETRY_METRICS = frozenset({
     "unexpected_evidence_count",
     "unsupported_source_count",
     "unresolved_source_count",
+    "xml_schema_source_count",
 })
 MIXED_SOURCE_TELEMETRY_DIMENSIONS = frozenset({
     "cancellation_phase",
@@ -593,6 +608,15 @@ def _unresolved_manifest_entry(document_id):
 
 
 def _build_authorized_manifest_entry(document_id, user_id, document_context):
+    if strict_source_authority_enabled():
+        if document_context is None:
+            raise PermissionError("Source not found or access denied.")
+        if (
+            not isinstance(document_context, dict) or not isinstance(document_context.get("document"), dict)
+            or document_context["document"].get("id") != document_id
+            or document_context.get("scope") not in SOURCE_SCOPES
+        ):
+            raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_context_invalid")
     if not isinstance(document_context, dict):
         return _unresolved_manifest_entry(document_id)
 
@@ -641,7 +665,15 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         scope_id = conversation_id
 
     if not scope_id:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_scope_missing")
         return _unresolved_manifest_entry(document_id)
+
+    if scope != SOURCE_SCOPE_CHAT:
+        document_item = assert_document_available(
+            document_item, user_id=user_id, group_id=group_id,
+            public_workspace_id=public_workspace_id, purpose="source_manifest",
+        )
 
     file_name = _safe_file_name(
         document_item.get("file_name")
@@ -653,6 +685,15 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
     source_version = document_item.get("version")
     if source_version is None:
         source_version = document_item.get("source_version")
+    source_revision = document_item.get("_etag") or document_item.get("updated_at") or document_item.get("last_updated")
+    if strict_source_authority_enabled() and any(
+        value is not None and (
+            isinstance(value, bool) or not isinstance(value, (str, int, float))
+            or (isinstance(value, float) and not math.isfinite(value))
+        )
+        for value in (source_version, source_revision)
+    ):
+        raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_revision_invalid")
     if source_version is not None and not isinstance(source_version, (str, int, float)):
         source_version = str(source_version)
 
@@ -681,20 +722,32 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
                     else None
                 ),
             )
+            if SCREENING_FIELD in document_item:
+                _, blob_container, blob_path = get_available_blob_reference(
+                    document_item, user_id=user_id, group_id=group_id,
+                    public_workspace_id=public_workspace_id, purpose="source_manifest",
+                )
             if blob_container and blob_path:
                 storage_locator = {
                     "container": str(blob_container),
                     "blob_path": str(blob_path),
                 }
-        except Exception:
+        except ScreeningError:
+            raise
+        except Exception as error:
+            if strict_source_authority_enabled():
+                raise_source_authority_error(error)
             storage_locator = None
-        if storage_locator is None and explicit_blob_container and explicit_blob_path:
+        if (
+            SCREENING_FIELD not in document_item
+            and storage_locator is None and explicit_blob_container and explicit_blob_path
+        ):
             storage_locator = {
                 "container": str(explicit_blob_container),
                 "blob_path": str(explicit_blob_path),
             }
 
-    return {
+    entry = {
         "document_id": document_id,
         "display_name": display_name,
         "file_name": file_name or None,
@@ -706,6 +759,7 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         "public_workspace_id": public_workspace_id,
         "conversation_id": conversation_id,
         "source_version": source_version,
+        "source_revision": source_revision,
         "storage_locator": storage_locator,
         "xsd_logical_path": document_item.get("xsd_logical_path"),
         "xsd_schema_status": document_item.get("xsd_schema_status"),
@@ -721,6 +775,9 @@ def _build_authorized_manifest_entry(document_id, user_id, document_context):
         "xsd_dependency_count": document_item.get("xsd_dependency_count"),
         "authorization_status": AUTHORIZATION_STATUS_AUTHORIZED,
     }
+    if scope != SOURCE_SCOPE_CHAT:
+        entry[PROVENANCE_FIELD] = document_provenance(document_item)
+    return entry
 
 
 def _default_document_context_batch_resolver(**resolver_arguments):
@@ -826,13 +883,17 @@ def resolve_authorized_source_manifest(
             )
         except MixedSourceCancellationError:
             raise
-        except Exception:
+        except Exception as error:
+            if strict_source_authority_enabled():
+                raise_source_authority_error(error)
             resolved_contexts = [None] * len(unique_document_ids)
             resolution_error_count = len(unique_document_ids)
         if (
             not isinstance(resolved_contexts, list)
             or len(resolved_contexts) != len(unique_document_ids)
         ):
+            if strict_source_authority_enabled():
+                raise_source_authority_error(SourceAuthorityUnverifiedError(), reason="manifest_batch_invalid")
             resolved_contexts = [None] * len(unique_document_ids)
             resolution_error_count = len(unique_document_ids)
 
@@ -862,7 +923,9 @@ def resolve_authorized_source_manifest(
                 )
             except MixedSourceCancellationError:
                 raise
-            except Exception:
+            except Exception as error:
+                if strict_source_authority_enabled():
+                    raise_source_authority_error(error)
                 resolution_error_count += 1
         if (
             isinstance(document_context, dict)
@@ -1298,6 +1361,56 @@ def serialize_evidence_envelope(envelope):
     return serialized_envelope
 
 
+def _extract_result_document_id(result):
+    if not isinstance(result, dict):
+        return ""
+    document_id = str(result.get("document_id") or "").strip()
+    if document_id:
+        return document_id
+    raw_id = str(result.get("id") or result.get("citation_id") or "").strip()
+    if "_" in raw_id:
+        return "_".join(raw_id.split("_")[:-1])
+    return raw_id
+
+
+def _build_envelope_search_citation_entry(result, source):
+    result = result if isinstance(result, dict) else {}
+    source = source if isinstance(source, dict) else {}
+    citation_id = result.get("id") or result.get("chunk_id")
+    page_number = result.get("page_number")
+    chunk_sequence = result.get("chunk_sequence")
+    file_name = str(
+        result.get("file_name")
+        or source.get("file_name")
+        or source.get("display_name")
+        or ""
+    ).strip()
+    entry = {
+        "citation_id": citation_id,
+        "page_number": page_number,
+        "chunk_sequence": chunk_sequence,
+    }
+    if file_name:
+        entry["file_name"] = file_name
+    if citation_id:
+        location_page = page_number if page_number not in (None, "") else chunk_sequence or 1
+        location_label, location_value = resolve_citation_location(
+            page_number=location_page,
+            chunk_text=result.get("chunk_text"),
+            sheet_name=result.get("sheet_name"),
+            is_tabular=False,
+        )
+        inline_marker = build_inline_citation_marker(
+            file_name or "Document",
+            location_label,
+            location_value,
+            citation_id,
+        )
+        if inline_marker:
+            entry["citation"] = inline_marker
+    return entry
+
+
 def build_narrative_evidence_envelopes(
     narrative_sources,
     search_results,
@@ -1311,7 +1424,7 @@ def build_narrative_evidence_envelopes(
     results_by_document_id = {}
     for raw_result in list(search_results or []):
         result = raw_result if isinstance(raw_result, dict) else {}
-        document_id = str(result.get("document_id") or "").strip()
+        document_id = _extract_result_document_id(result)
         if not document_id:
             continue
         results_by_document_id.setdefault(document_id, []).append(result)
@@ -1332,11 +1445,7 @@ def build_narrative_evidence_envelopes(
                 "chunk_sequence": result.get("chunk_sequence"),
                 "score": result.get("score"),
             })
-            citations.append({
-                "citation_id": result.get("id") or result.get("chunk_id"),
-                "page_number": result.get("page_number"),
-                "chunk_sequence": result.get("chunk_sequence"),
-            })
+            citations.append(_build_envelope_search_citation_entry(result, source))
 
         result_count = len(source_results)
         envelopes.append(build_evidence_envelope(
@@ -1359,6 +1468,7 @@ def build_narrative_evidence_envelopes(
                 "selection_mode": normalized_selection_mode,
                 "terminal": True,
                 "result_count": result_count,
+                PROVENANCE_FIELD: source.get(PROVENANCE_FIELD),
             },
             error=(
                 None
@@ -1382,7 +1492,7 @@ def build_schema_summary_evidence_envelopes(
     results_by_document_id = {}
     for raw_result in list(search_results or []):
         result = raw_result if isinstance(raw_result, dict) else {}
-        document_id = str(result.get("document_id") or "").strip()
+        document_id = _extract_result_document_id(result)
         if document_id:
             results_by_document_id.setdefault(document_id, []).append(result)
 
@@ -1403,11 +1513,7 @@ def build_schema_summary_evidence_envelopes(
             for result in source_results
         ]
         citations = [
-            {
-                "citation_id": result.get("id") or result.get("chunk_id"),
-                "page_number": result.get("page_number"),
-                "chunk_sequence": result.get("chunk_sequence"),
-            }
+            _build_envelope_search_citation_entry(result, source)
             for result in source_results
         ]
         result_count = len(source_results)
@@ -1484,6 +1590,7 @@ def execute_tabular_evidence_sources(
     execute=True,
     cancel_requested=None,
     request_correlation_id=None,
+    user_id=None,
 ):
     """Execute the existing tabular runner once per source and require terminal coverage."""
     normalized_selection_mode = normalize_selection_mode(
@@ -1535,7 +1642,9 @@ def execute_tabular_evidence_sources(
             continue
 
         try:
+            assert_evidence_available(source, user_id=user_id)
             raw_result = execute_source(source)
+            assert_evidence_available(source, user_id=user_id)
             raise_if_mixed_source_cancelled(
                 cancel_requested,
                 "tabular",
@@ -1559,9 +1668,10 @@ def execute_tabular_evidence_sources(
                     "selection_mode": normalized_selection_mode,
                     "terminal": True,
                     **dict(result.get("coverage") or {}),
+                    PROVENANCE_FIELD: source.get(PROVENANCE_FIELD),
                 },
             ))
-        except MixedSourceCancellationError:
+        except (MixedSourceCancellationError, ScreeningError):
             raise
         except Exception:
             failed_count += 1
@@ -1901,7 +2011,7 @@ def compare_reauthorized_source_manifests(execution_manifest, fresh_manifest):
             continue
         prior_version = source.get("source_version")
         fresh_version = fresh_source.get("source_version")
-        if prior_version != fresh_version:
+        if prior_version != fresh_version or source.get(PROVENANCE_FIELD) != fresh_source.get(PROVENANCE_FIELD):
             source_version_changed_count += 1
     return {
         "authorization_failure_count": authorization_failure_count,
@@ -1916,6 +2026,8 @@ def build_mixed_source_evidence_handoff(
     mode=None,
     telemetry_settings=None,
     request_correlation_id=None,
+    user_id=None,
+    coverage_presentation="prose",
 ):
     """Build one bounded synthesis handoff from Phase 1 evidence envelopes."""
     normalized_selection_mode = normalize_selection_mode(
@@ -1923,6 +2035,10 @@ def build_mixed_source_evidence_handoff(
         default=SELECTION_MODE_RELEVANCE,
     )
     manifest_entries = [entry for entry in list(manifest or []) if isinstance(entry, dict)]
+    assert_evidence_available([
+        entry for entry in manifest_entries
+        if entry.get("authorization_status") == AUTHORIZATION_STATUS_AUTHORIZED
+    ], user_id=user_id)
     ledger = build_terminal_coverage_ledger(manifest_entries, evidence_envelopes)
     envelopes = list(ledger["evidence_envelopes"])
     source_coverage = []
@@ -2018,6 +2134,15 @@ def build_mixed_source_evidence_handoff(
         )
     else:
         partial_coverage_instruction = "Do not claim that selected sources were omitted."
+    if coverage_presentation == "status":
+        partial_coverage_instruction = (
+            "The application shows source coverage separately from your answer. "
+            "Do not append a generic Coverage note paragraph. Answer the supported parts concisely. "
+            "If a requested fact is not supported, say so plainly without inventing it. "
+            "When helpful, suggest the specific kind of document, clarification, time range, "
+            "or other authorized source that would address the unanswered part. "
+            "Do not claim an unsearched or inaccessible source was checked."
+        )
     if mode:
         emit_mixed_source_coverage_telemetry(
             telemetry_settings,
@@ -2031,6 +2156,8 @@ def build_mixed_source_evidence_handoff(
             "Use the mixed-source evidence handoff below with the other bounded narrative excerpts "
             "and computed tabular results. Synthesize one answer. Preserve narrative source citations "
             "and tabular tool citations; do not convert computed table facts into unsupported narrative claims. "
+            "Copy each citation value written as (Source: <name>, Page|Sheet|Location: <where>) [#<id>] "
+            "verbatim right after the claim it supports, and never invent, renumber or alter one. "
             "When selection_mode is selected, current selected-source evidence supersedes prior document "
             "grounding; do not use prior source claims to fill missing current coverage. "
             "This handoff is your starting evidence, not your only means of gathering evidence: if you have "
@@ -2038,8 +2165,13 @@ def build_mixed_source_evidence_handoff(
             "action to obtain it and reason over the handoff and the action results together before answering. "
             "Never derive numeric conclusions from an indexed preview of a tabular source whose evidence status "
             "is not completed; obtain those values from a computed tabular result instead. "
+            f"{M365_ANSWER_STYLE_INSTRUCTIONS} "
             f"{partial_coverage_instruction}\n\n{serialized_payload}"
         ),
         "mixed_source_coverage": coverage,
+        "evidence_status": build_mixed_source_evidence_status(
+            manifest_entries, ledger["entries"], envelopes,
+            partial=bool(coverage.get("partial_coverage")),
+        ),
         "evidence_envelopes": list(payload["evidence_envelopes"]),
     }

@@ -14,6 +14,13 @@ audience: user
 
 Tabular Processing analyzes CSV, XLSX, XLS, and XLSM files stored in workspace or chat-upload blob containers. It can list files, describe schemas and previews, look up values, return distinct values, count rows, aggregate columns, filter/search rows, run pandas query expressions, relate values across sheets, and group by columns or datetime components.
 
+{% include media.html id="slide-tabular-analysis" %}
+
+The slide's rows and chart are illustrative. Inspect the intended sheet and
+columns, then compute over the authorized underlying records; a schema
+preview or planning sample is not a complete dataset. Check reported coverage
+and limits before treating a total or export as complete.
+
 ## Why and when to use it
 
 Use Tabular Processing when users ask exact questions about spreadsheets or CSV files: counts, filters, group-bys, lookups, joins between sheets, or chart-ready aggregates. Do not use it for relational databases; use SQL Query, Databricks, or Snowflake. Do not use normal document search for questions that require row-exact computation; search is better for narrative text.
@@ -39,6 +46,42 @@ Use Tabular Processing when users ask exact questions about spreadsheets or CSV 
 - "Find rows where RenewalDate is in the next 30 days and Status is not Closed."
 - "Compare the Account sheet to the Tickets sheet and count open tickets by account owner."
 
+## Tables, ranges, and saved formulas
+
+Implemented in version: **0.261.408** (`application/single_app/config.py`).
+Describe a workbook before choosing a table when a worksheet contains several
+regions. Named tables retain their saved definitions; ordinary blocks expose
+their detected ranges and labelled inferred headers. A title row is not a
+header for every table below it.
+
+Use the analytical operation's table/range/header selectors for the intended
+dataset: `table_id` selects a discovered ID or named table; `cell_range`
+selects an explicit Excel range and requires `header_row`. Specify the actual
+worksheet header row when it is ambiguous; zero means no header. Related-source
+operations expose the equivalent `source_` and `target_` selectors. An explicit
+`table_id="all"` combines compatible same-schema tables, not unrelated schemas.
+Do not silently combine different schemas. Explicit all-table
+native jobs retain each selected table's identity through batching and replay.
+
+Physical worksheet/table/row provenance accompanies Excel row results.
+Version-pinned exports preserve the selected ranges and headers instead of
+reinterpreting the entire sheet on continuation. Large outputs still use the
+existing bounded paging and durable export path.
+
+Queued workbook computations with legacy v1 worksheet-header descriptors must
+be started again so the intended tables/headers can be pinned explicitly.
+Previously completed export files are not rewritten. CSV descriptor compatibility
+is retained.
+
+Formula text is inspectable, but analytical values require saved formula
+caches. Missing results must not become zero. Recalculate/save the workbook in
+Excel if those values are required; SimpleChat does not execute workbook
+formulas, macros, or external refreshes.
+
+For reviewer feedback and workbook properties, use
+[Document Search](../document-search/) rather than interpreting comments as data.
+See [Inspect Excel workbooks]({{ '/guides/inspect-excel-workbooks/' | relative_url }}).
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -52,4 +95,3 @@ Use Tabular Processing when users ask exact questions about spreadsheets or CSV 
 - [SQL Query](../sql-query/)
 - [Chart](../chart/)
 - [Citation settings]({{ '/admin/chat/' | relative_url }})
-

@@ -7,7 +7,10 @@ import requests
 from flask import Response, jsonify, redirect, render_template, request
 
 from config import *
+from collaboration_models import is_shared_conversation_backing
 from functions_appinsights import log_event
+from functions_chat_content_checks import strip_private_chat_checks
+from functions_chat_content_review import refresh_checked_message
 from functions_azure_maps import (
     AZURE_MAPS_DEFAULT_ENDPOINT,
     AZURE_MAPS_DEFAULT_LANGUAGE,
@@ -30,6 +33,7 @@ from functions_collaboration import (
     list_collaboration_messages,
 )
 from functions_image_messages import hydrate_image_messages
+from functions_message_image_revisions import publicize_message_image_revisions
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
@@ -231,6 +235,13 @@ def register_route_frontend_conversations(bp):
                 partition_key=conversation_id,
             )
         except CosmosResourceNotFoundError:
+            conversation = None
+        # Orchestrate's backing record shares its shared conversation's id and is part of it: the
+        # shared conversation authorizes the reader, and the backing holds orchestrated answers'
+        # artifacts.
+        orchestration_backing = is_shared_conversation_backing(conversation)
+
+        if conversation is None or orchestration_backing:
             try:
                 conversation = get_collaboration_conversation(conversation_id)
             except CosmosResourceNotFoundError:
@@ -266,6 +277,13 @@ def register_route_frontend_conversations(bp):
             collaboration_messages = list_collaboration_messages(conversation_id)
             artifact_payload_map = build_message_artifact_payload_map(collaboration_messages)
             artifact_payload = artifact_payload_map.get(str(artifact_id or ''))
+        if artifact_payload is None and orchestration_backing:
+            backing_messages = list(cosmos_messages_container.query_items(
+                query="SELECT * FROM c WHERE c.conversation_id = @conversation_id",
+                parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+                partition_key=conversation_id,
+            ))
+            artifact_payload = build_message_artifact_payload_map(backing_messages).get(str(artifact_id or ''))
         if not isinstance(artifact_payload, dict):
             return jsonify({'error': 'Agent citation artifact not found'}), 404
 
@@ -377,7 +395,10 @@ def register_route_frontend_conversations(bp):
                     conversation,
                     allow_pending=True,
                 )
-                return jsonify(build_collaboration_message_metadata_payload(message, conversation))
+                message = refresh_checked_message(message, source="shared")
+                return jsonify(strip_private_chat_checks(
+                    build_collaboration_message_metadata_payload(message, conversation),
+                ))
                 
             message = messages[0]
             
@@ -394,6 +415,7 @@ def register_route_frontend_conversations(bp):
                 except CosmosResourceNotFoundError:
                     return jsonify({'error': 'Conversation not found'}), 404
             
+            message = refresh_checked_message(message)
             # Return appropriate data based on message role
             # User messages: return metadata object only (has user_info, button_states, etc.)
             # Other messages: return full document (has id, role, augmented, etc. at top level)
@@ -402,10 +424,16 @@ def register_route_frontend_conversations(bp):
             if message_role == 'user':
                 # User messages - return nested metadata object
                 metadata = message.get('metadata', {})
-                return jsonify(metadata)
+                return jsonify(strip_private_chat_checks(metadata, metadata=True))
             else:
-                # Assistant, image, file messages - return full document
-                return jsonify(message)
+                # Assistant, image, file messages - return full document.
+                #
+                # An image message's revision history records where each stored version's bytes
+                # live. That is storage detail rather than something an inspector needs, and
+                # this route returns the document verbatim, so it is reduced to its public
+                # shape here as it is everywhere else a message reaches a browser.
+                message = publicize_message_image_revisions(message)
+                return jsonify(strip_private_chat_checks(message))
 
         except CosmosResourceNotFoundError:
             return jsonify({'error': 'Message not found'}), 404

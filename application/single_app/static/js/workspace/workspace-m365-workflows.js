@@ -18,8 +18,9 @@ export function createMicrosoft365RunAsControl(anchor, getScope) {
     help.id = 'workflow-m365-run-as-help';
     help.className = 'form-text';
     help.textContent = 'Microsoft 365 actions use this account for manual and scheduled runs. '
-        + 'The selected person must connect Microsoft 365 and approve this workflow. '
-        + 'Changes to instructions, capabilities, or destinations require approval again.';
+        + 'The selected person must connect Microsoft 365. When someone else saves the workflow or '
+        + 'changes an agent or action it uses, the selected person approves that revision before it runs as them. '
+        + 'A revision they saved themselves needs no separate approval.';
     const status = document.createElement('div');
     status.className = 'alert alert-warning mt-2 d-none';
     status.setAttribute('role', 'status');

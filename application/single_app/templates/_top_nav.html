@@ -223,6 +223,9 @@
                             <a class="dropdown-item" href="{{ url_for('frontend_control_center.approvals') }}">
                                 <i class="bi bi-check-circle me-2"></i>Approval Requests
                             </a>
+                            <a class="dropdown-item" href="/content-review">
+                                <i class="bi bi-shield-check me-2" aria-hidden="true"></i>Content Review
+                            </a>
                             <hr class="dropdown-divider" />
                             {% if app_settings.enable_group_workspaces %}
                                 <a class="dropdown-item" href="{{ url_for('frontend_profile.profile', tab='groups') }}">My Groups</a>

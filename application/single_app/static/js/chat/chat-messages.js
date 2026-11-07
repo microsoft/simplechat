@@ -17,6 +17,7 @@ import { updateSidebarConversationTitle } from "./chat-sidebar-conversations.js"
 import { getActiveConversationContext, getActiveConversationScope } from "./chat-conversation-scope.js";
 import { escapeHtml, isColorLight, addTargetBlankToExternalLinks, sanitizeHttpUrl } from "./chat-utils.js";
 import { showToast } from "./chat-toast.js";
+import { getDownloadFilename, triggerBlobDownload } from "./chat-enhanced-citations.js";
 import {
   buildGeneratedFileApprovalBlock,
   generatedFileApprovalBlocksDownload,
@@ -24,14 +25,31 @@ import {
 import { autoplayTTSIfEnabled, isTTSAutoplayEnabled, playTTS } from "./chat-tts.js";
 import { saveUserSetting } from "./chat-layout.js";
 import { sendMessageWithStreaming } from "./chat-streaming.js";
-import { getCurrentReasoningEffort, isReasoningEffortEnabled } from './chat-reasoning.js';
+import {
+    applySavedAnalysisContext,
+    disposeSavedAnalysisViews,
+    getAnalysisContextRevision,
+    getSavedAnalysisContext,
+    hydrateSavedAnalysisContext,
+    hydrateSavedAnalysisResult,
+    initializeSavedAnalysis,
+    readSavedAnalyses,
+    setSavedAnalysisMasked,
+    syncSavedAnalysisConversation,
+} from './chat-analysis-results.js';
+import {
+    getCurrentReasoningEffort,
+    getMessageReasoningAdjustments,
+    renderMessageReasoningAdjustments,
+} from './chat-reasoning.js';
 import {
   restoreAdminDefaultModelSelection,
   restoreModelSelectionFromConversationMetadata,
 } from './chat-model-selector.js';
 import { areAgentsEnabled } from './chat-agents.js';
 import { createThoughtsToggleHtml, attachThoughtsToggleListener } from './chat-thoughts.js';
-import { destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { applyStoredChartRevisions, destroyInlineCharts, extractInlineChartBlocks, hydrateInlineCharts, injectInlineChartHtml, restoreInlineChartTokens } from './chat-inline-charts.js';
+import { applyStoredDiagramRevisions, destroyInlineDiagrams, extractInlineDiagramBlocks, hydrateInlineDiagrams, injectInlineDiagramHtml, restoreInlineDiagramTokens } from './chat-inline-diagrams.js';
 import { attachGeneratedImageProposalResults, extractInlineImageProposalBlocks, hydrateInlineImageProposals, injectInlineImageProposalHtml, restoreInlineImageProposalTokens } from './chat-inline-image-proposals.js';
 import { renderInlineVideoGalleries } from './chat-inline-videos.js';
 import { renderInlineImageGalleries } from './chat-inline-images.js';
@@ -75,6 +93,7 @@ const conversationForkButtonSpinner = document.getElementById('fork-conversation
 let pendingConversationFork = null;
 let conversationForkRequestPending = false;
 let largeTabularRunConfirmationPending = false;
+let messagesLoadRevision = 0;
 let comparisonVersionLoadToken = 0;
 let comparisonVersionCatalog = [];
 let comparisonChatUploadCatalog = [];
@@ -149,15 +168,13 @@ function getChatWorkspaceProgressValue(value) {
 function isChatWorkspaceDocumentComplete(doc) {
   const statusText = String(doc?.status || '').toLowerCase();
   return getChatWorkspaceProgressValue(doc?.percentage_complete) >= 100
-    || statusText.includes('processing complete')
-    || statusText.includes('complete')
-    || statusText.includes('error')
-    || statusText.includes('failed');
+    || window.DocumentStatus.isComplete(statusText)
+    || window.DocumentStatus.isFailure(statusText);
 }
 
 function isChatWorkspaceDocumentFailure(doc) {
   const statusText = String(doc?.status || '').toLowerCase();
-  return statusText.includes('error') || statusText.includes('failed');
+  return window.DocumentStatus.isFailure(statusText);
 }
 
 function isChatWorkspaceDocumentSuccessComplete(doc) {
@@ -165,8 +182,7 @@ function isChatWorkspaceDocumentSuccessComplete(doc) {
   return !isChatWorkspaceDocumentFailure(doc)
     && (
       getChatWorkspaceProgressValue(doc?.percentage_complete) >= 100
-      || statusText.includes('processing complete')
-      || statusText.includes('complete')
+      || window.DocumentStatus.isComplete(statusText)
     );
 }
 
@@ -248,9 +264,9 @@ function buildChatWorkspaceAttachmentHtml(attachment) {
   const statusText = String(attachment?.status || 'Queued for workspace processing').trim() || 'Queued for workspace processing';
   const detailsId = getChatWorkspaceProgressDetailsId(workspaceDocumentId);
   const statusLower = statusText.toLowerCase();
-  const progressClass = statusLower.includes('error') || statusLower.includes('failed')
+  const progressClass = window.DocumentStatus.isFailure(statusLower)
     ? 'bg-danger'
-    : (pct >= 100 || statusLower.includes('complete') ? 'bg-success' : 'progress-bar-striped progress-bar-animated bg-info');
+    : (pct >= 100 || window.DocumentStatus.isComplete(statusLower) ? 'bg-success' : 'progress-bar-striped progress-bar-animated bg-info');
 
   return `
     <div class="chat-workspace-upload-progress mt-2 p-2 border rounded bg-body-tertiary"
@@ -319,8 +335,8 @@ function updateChatWorkspaceProgressContainer(container, doc) {
   const pct = getChatWorkspaceProgressValue(doc?.percentage_complete);
   const statusText = String(doc?.status || 'Processing workspace document...').trim() || 'Processing workspace document...';
   const statusLower = statusText.toLowerCase();
-  const hasFailure = statusLower.includes('error') || statusLower.includes('failed');
-  const hasCompleted = !hasFailure && (pct >= 100 || statusLower.includes('complete'));
+  const hasFailure = window.DocumentStatus.isFailure(statusLower);
+  const hasCompleted = !hasFailure && (pct >= 100 || window.DocumentStatus.isComplete(statusLower));
   const progressBar = container.querySelector('.progress-bar');
   const statusElement = container.querySelector('.chat-workspace-upload-status-text');
   const progressElement = container.querySelector('.progress');
@@ -2146,20 +2162,44 @@ export function getGeneratedImageProposalSourceMessageId(message) {
 
 export function groupGeneratedImageProposalMessages(messages = []) {
   const groupedMessages = new Map();
-  (Array.isArray(messages) ? messages : []).forEach((message) => {
+  const list = Array.isArray(messages) ? messages : [];
+  const imagesById = new Map();
+  const addToGroup = (assistantMessageId, message) => {
+    if (!groupedMessages.has(assistantMessageId)) {
+      groupedMessages.set(assistantMessageId, []);
+    }
+    const group = groupedMessages.get(assistantMessageId);
+    if (!group.includes(message)) {
+      group.push(message);
+    }
+  };
+  list.forEach((message) => {
     if (message?.role !== 'image') {
       return;
+    }
+    if (message.id) {
+      imagesById.set(String(message.id), message);
     }
 
     const sourceAssistantMessageId = getGeneratedImageProposalSourceMessageId(message);
     if (!sourceAssistantMessageId) {
       return;
     }
-
-    if (!groupedMessages.has(sourceAssistantMessageId)) {
-      groupedMessages.set(sourceAssistantMessageId, []);
+    addToGroup(sourceAssistantMessageId, message);
+  });
+  // An orchestrated answer lists the images it shows, including images an earlier attempt
+  // of the same request generated, which stay linked to that attempt's answer.
+  list.forEach((message) => {
+    const generatedImages = message?.metadata?.orchestration?.generated_images;
+    if (message?.role !== 'assistant' || !message.id || !Array.isArray(generatedImages)) {
+      return;
     }
-    groupedMessages.get(sourceAssistantMessageId).push(message);
+    generatedImages.forEach((entry) => {
+      const image = imagesById.get(String(entry?.message_id || ''));
+      if (image) {
+        addToGroup(String(message.id), image);
+      }
+    });
   });
   return groupedMessages;
 }
@@ -2180,7 +2220,14 @@ function getLastConversationModelSelection(messages = []) {
 }
 
 export function loadMessages(conversationId) {
-    window.SimpleChatM365PendingActions?.setConversation(conversationId);
+  window.SimpleChatM365PendingActions?.setConversation(conversationId);
+  syncSavedAnalysisConversation();
+  const analysisRevision = getAnalysisContextRevision();
+  const loadRevision = ++messagesLoadRevision;
+  const activeAtRequest = window.currentConversationId;
+  const ownsConversation = () => loadRevision === messagesLoadRevision &&
+    (String(window.currentConversationId || '') === String(conversationId) ||
+      (!activeAtRequest && !window.currentConversationId));
   // Clear search highlights when loading a different conversation
   clearSearchHighlight();
 
@@ -2202,10 +2249,12 @@ export function loadMessages(conversationId) {
       return data;
     })
     .then((data) => {
+      if (!ownsConversation()) return;
       const chatbox = document.getElementById("chatbox");
       if (!chatbox) return;
 
-        window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
+      window.SimpleChatM365PendingActions?.prepareHistory(conversationId);
+      disposeSavedAnalysisViews();
       chatbox.innerHTML = "";
       console.log(`--- Loading messages for ${conversationId} ---`);
       updateConversationTaskDocumentsFromMessages(Array.isArray(data.messages) ? data.messages : [], conversationId);
@@ -2233,6 +2282,10 @@ export function loadMessages(conversationId) {
         // Skip deleted messages (when conversation archiving is enabled)
         if (msg.metadata && msg.metadata.is_deleted === true) {
           console.log(`Skipping deleted message: ${msg.id}`);
+          return;
+        }
+        // A workflow run's own post is replaced by its mirrored reply, which says the same.
+        if (msg.metadata && msg.metadata.superseded_by_workflow_reply) {
           return;
         }
         console.log(`[loadMessages Loop] -------- START Message ID: ${msg.id} --------`);
@@ -2294,8 +2347,10 @@ export function loadMessages(conversationId) {
           appendMessage("safety", msg.content, null, msg.id, false, [], [], [], null, null);
         }
       });
+      hydrateSavedAnalysisContext(data.messages, conversationId, analysisRevision);
     })
     .catch((error) => {
+      if (!ownsConversation()) return;
       console.error("Error loading messages:", error);
       updateComparisonChatUploadCatalog([]);
       const chatbox = document.getElementById("chatbox");
@@ -2315,7 +2370,9 @@ export function loadMessages(conversationId) {
       }
     })
     .finally(() => {
-        void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
+      if (!ownsConversation()) return;
+      void window.SimpleChatM365PendingActions?.refreshConversation(conversationId);
+      void window.SimpleChatActionCredentials?.refreshConversation(conversationId);
       // Check if there's a search highlight to apply
       if (window.searchHighlight && window.searchHighlight.term) {
         const elapsed = Date.now() - window.searchHighlight.timestamp;
@@ -2815,32 +2872,67 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       </div>`;
   }
 
-  export function renderAiMessageContent(messageContent) {
+  export function renderAiMessageContent(messageContent, options = {}) {
     const followUpRenderModel = buildFollowUpRenderModel(messageContent);
     let cleaned = stripInlineAzureMapsBlocks(followUpRenderModel.visibleMarkdown).trim().replace(/\n{3,}/g, "\n\n");
     cleaned = cleaned.replace(/(\bhttps?:\/\/\S+)(%5D|\])+/gi, (_, url) => url);
 
     const chartExtraction = extractInlineChartBlocks(cleaned);
-    const imageProposalExtraction = extractInlineImageProposalBlocks(chartExtraction.markdown);
-    const withInlineCitations = parseCitations(imageProposalExtraction.markdown);
+    // Show the current version of any chart edited in the V2 client. `originalBlock` is
+    // deliberately untouched, so copying the message still yields the markdown as stored.
+    chartExtraction.blocks = applyStoredChartRevisions(
+      chartExtraction.blocks,
+      options.blockRevisions,
+    );
+    const diagramExtraction = extractInlineDiagramBlocks(chartExtraction.markdown);
+    // Show the current version of any diagram edited in the V2 client. `originalBlock` is
+    // deliberately untouched, so copying the message still yields the markdown as stored.
+    diagramExtraction.blocks = applyStoredDiagramRevisions(
+      diagramExtraction.blocks,
+      options.blockRevisions,
+    );
+    const imageProposalExtraction = extractInlineImageProposalBlocks(diagramExtraction.markdown);
+    const withInlineCitations = parseCitations(imageProposalExtraction.markdown, {
+      m365Citations: options.m365Citations,
+      documentCitations: options.documentCitations,
+    });
     const withUnwrappedTables = unwrapTablesFromCodeBlocks(withInlineCitations);
     const withMarkdownTables = convertUnicodeTableToMarkdown(withUnwrappedTables);
     const withPSVTables = convertPSVCodeBlockToMarkdown(withMarkdownTables);
     const withASCIITables = convertASCIIDashTableToMarkdown(withPSVTables);
     const sanitizedHtml = renderMarkdownSafely(withASCIITables);
     const htmlWithCharts = injectInlineChartHtml(sanitizedHtml, chartExtraction.blocks);
-    const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithCharts, imageProposalExtraction.blocks);
+    const htmlWithDiagrams = injectInlineDiagramHtml(htmlWithCharts, diagramExtraction.blocks);
+    const htmlWithImageProposals = injectInlineImageProposalHtml(htmlWithDiagrams, imageProposalExtraction.blocks);
     const copyMarkdown = restoreInlineChartTokens(
-      restoreInlineImageProposalTokens(withInlineCitations, imageProposalExtraction.blocks),
+      restoreInlineDiagramTokens(
+        restoreInlineImageProposalTokens(withInlineCitations, imageProposalExtraction.blocks),
+        diagramExtraction.blocks,
+      ),
       chartExtraction.blocks,
     );
 
     return {
       htmlContent: addTargetBlankToExternalLinks(htmlWithImageProposals),
       copyMarkdown,
-      previewMarkdown: imageProposalExtraction.markdown,
+      previewMarkdown: stripInlineRenderTokens(imageProposalExtraction.markdown),
       followUpSuggestions: followUpRenderModel.suggestions,
     };
+  }
+
+  /**
+   * Drop the placeholder tokens inline visuals leave behind.
+   *
+   * Preview text and text-to-speech read this string, and a raw token is neither readable
+   * nor speakable. Both token shapes in use are matched: the SIMPLECHAT_INLINE_*_TOKEN_n__
+   * form from charts and diagrams, and the @@SC_INLINE_IMAGE_PROPOSAL_n@@ form from image
+   * proposal cards.
+   */
+  function stripInlineRenderTokens(markdownText) {
+    return String(markdownText ?? '')
+      .replace(/SIMPLECHAT_INLINE_[A-Z_]*TOKEN_\d+__|@@SC_INLINE_IMAGE_PROPOSAL_\d+@@/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
   }
 
   function buildFollowUpRenderModel(markdownText) {
@@ -4446,7 +4538,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     return '';
   }
 
-  function triggerGeneratedTabularOutputDownload(outputMetadata) {
+  async function triggerGeneratedTabularOutputDownload(outputMetadata, downloadButton) {
     const downloadHref = buildGeneratedArtifactDownloadUrl(outputMetadata);
 
     if (!downloadHref) {
@@ -4454,13 +4546,26 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       return;
     }
 
-    const downloadLink = document.createElement('a');
-    downloadLink.href = downloadHref;
-    downloadLink.rel = 'noopener';
-    downloadLink.className = 'd-none';
-    document.body.appendChild(downloadLink);
-    downloadLink.click();
-    downloadLink.remove();
+    if (downloadButton.disabled) {
+        return;
+    }
+    const originalText = downloadButton.textContent;
+    downloadButton.disabled = true;
+    downloadButton.textContent = 'Downloading...';
+    try {
+        const response = await fetch(downloadHref, { credentials: 'same-origin', cache: 'no-store' });
+        const disposition = response.headers.get('Content-Disposition') || '';
+        if (!response.ok || response.redirected || !/^\s*attachment(?:;|$)/i.test(disposition)) {
+            throw new Error('The artifact could not be downloaded.');
+        }
+        const blob = await response.blob();
+        triggerBlobDownload(blob, getDownloadFilename(response, outputMetadata.file_name || 'generated-artifact'));
+    } catch {
+        showToast('The artifact could not be downloaded. Refresh the conversation and try again.', 'danger');
+    } finally {
+        downloadButton.disabled = false;
+        downloadButton.textContent = originalText;
+    }
   }
 
   async function viewGeneratedMarkdownArtifact(outputMetadata, viewButton) {
@@ -5147,6 +5252,9 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     const message = container?.matches?.('.message')
       ? container
       : container?.closest?.('.message');
+    if (message?.dataset.savedAnalysis === 'true') {
+      return;
+    }
     message?.querySelector('.message-text')?.classList.add('d-none');
     message?.querySelector('.message-footer')?.classList.add('d-none');
   }
@@ -5581,7 +5689,7 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
         memberCount: 1,
         formats: [outputFormat],
       });
-      triggerGeneratedTabularOutputDownload(outputMetadata);
+      void triggerGeneratedTabularOutputDownload(outputMetadata, downloadButton);
     });
     actions.appendChild(downloadButton);
 
@@ -5679,6 +5787,10 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     }
 
     generatedOutputsContainer.replaceChildren();
+    if (messageDiv.dataset.savedAnalysisUnavailable === 'true') {
+      generatedOutputsContainer.classList.add('d-none');
+      return;
+    }
     const generatedOutputs = getGeneratedAnalysisArtifacts(fullMessageObject);
     if (!generatedOutputs.length) {
       generatedOutputsContainer.classList.add('d-none');
@@ -5690,6 +5802,15 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
       hideCompletedGeneratedArtifactHandoff(messageDiv, outputMetadata);
     });
     generatedOutputsContainer.classList.remove('d-none');
+    if (messageDiv.dataset.savedAnalysis === 'true' && !generatedOutputsContainer.closest('.saved-analysis-downloads')) {
+      const downloads = document.createElement('details');
+      downloads.className = 'saved-analysis-downloads mt-2';
+      const summary = document.createElement('summary');
+      summary.className = 'small text-muted fw-semibold';
+      summary.textContent = 'Downloads';
+      generatedOutputsContainer.before(downloads);
+      downloads.append(summary, generatedOutputsContainer);
+    }
   }
 
   function hydrateGeneratedTabularOutputs(messageDiv, fullMessageObject = null) {
@@ -5891,9 +6012,13 @@ export function appendMessage(
       fullMessageObject
     );
 
-    const renderedAiContent = renderAiMessageContent(messageContent);
+    const renderedAiContent = renderAiMessageContent(messageContent, {
+      blockRevisions: fullMessageObject?.metadata?.block_revisions,
+      m365Citations: fullMessageObject?.m365_citations,
+      documentCitations: fullMessageObject?.hybrid_citations || hybridCitations,
+    });
     const htmlContent = renderedAiContent.htmlContent;
-    const inlineAssistantExportActionsHtml = renderCompletedAssistantActions
+    const inlineAssistantExportActionsHtml = renderCompletedAssistantActions && !readSavedAnalyses(fullMessageObject?.metadata).length
       ? buildInlineAssistantExportActionsHtml(messageId)
       : '';
 
@@ -5931,11 +6056,11 @@ export function appendMessage(
     const exportMenuItemsHtml = renderCompletedAssistantActions ? `
             <li><hr class="dropdown-divider"></li>
             <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
-            <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
-            <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+            <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}" data-default-label="Export to Word" data-pending-label="Building Word Document..." data-icon-class="bi bi-file-earmark-word" data-default-title="Export to Word"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+            <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}" data-default-label="Export to PowerPoint" data-pending-label="Building PowerPoint..." data-icon-class="bi bi-file-earmark-slides" data-default-title="Export to PowerPoint"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
             ${audioExportMenuItemHtml}
             <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
-            <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
+            <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}" data-default-label="Open in Email" data-pending-label="Preparing Email Draft..." data-icon-class="bi bi-envelope" data-default-title="Open in Email"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>` : '';
     const forkConversationMenuItemHtml = shouldRenderConversationForkAction(messageId, fullMessageObject)
       ? '<li><button class="dropdown-item dropdown-fork-conversation-btn" type="button"><i class="bi bi-signpost-split me-2"></i>Fork conversation</button></li>'
       : '';
@@ -6069,7 +6194,9 @@ export function appendMessage(
     }
     chatbox.appendChild(messageDiv); // Append AI message
     window.SimpleChatM365PendingActions?.trackMessage(messageDiv, fullMessageObject, { history: !isNewMessage });
+    renderMessageReasoningAdjustments(messageDiv, getMessageReasoningAdjustments(fullMessageObject));
     renderSuggestedFollowUpButtons(messageDiv, renderedAiContent.followUpSuggestions);
+    hydrateSavedAnalysisResult(messageDiv, fullMessageObject);
     hydrateGeneratedAnalysisArtifacts(messageDiv, fullMessageObject);
     attachGeneratedImageProposalResults(messageDiv, fullMessageObject?.generated_image_proposals || []);
 
@@ -6124,6 +6251,7 @@ export function appendMessage(
       applyMaskedState(messageDiv, fullMessageObject.metadata);
     } else {
       hydrateInlineCharts(messageDiv);
+      hydrateInlineDiagrams(messageDiv);
       hydrateInlineImageProposals(messageDiv);
     }
 
@@ -6453,11 +6581,11 @@ export function appendMessage(
                 <li><a class="dropdown-item dropdown-retry-btn" href="#" data-message-id="${messageId}"><i class="bi bi-arrow-clockwise me-2"></i>Retry</a></li>
                 <li><hr class="dropdown-divider"></li>
                 <li><a class="dropdown-item dropdown-export-md-btn" href="#" data-message-id="${messageId}"><i class="bi bi-markdown me-2"></i>Export to Markdown</a></li>
-                <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
-                <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
+                <li><a class="dropdown-item dropdown-export-word-btn" href="#" data-message-id="${messageId}" data-default-label="Export to Word" data-pending-label="Building Word Document..." data-icon-class="bi bi-file-earmark-word" data-default-title="Export to Word"><i class="bi bi-file-earmark-word me-2"></i>Export to Word</a></li>
+                <li><a class="dropdown-item dropdown-export-ppt-btn" href="#" data-message-id="${messageId}" data-default-label="Export to PowerPoint" data-pending-label="Building PowerPoint..." data-icon-class="bi bi-file-earmark-slides" data-default-title="Export to PowerPoint"><i class="bi bi-file-earmark-slides me-2"></i>Export to PowerPoint</a></li>
                 ${audioExportMenuItemHtml}
                 <li><a class="dropdown-item dropdown-copy-prompt-btn" href="#" data-message-id="${messageId}"><i class="bi bi-clipboard-plus me-2"></i>Use as Prompt</a></li>
-                <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
+                <li><a class="dropdown-item dropdown-open-email-btn" href="#" data-message-id="${messageId}" data-default-label="Open in Email" data-pending-label="Preparing Email Draft..." data-icon-class="bi bi-envelope" data-default-title="Open in Email"><i class="bi bi-envelope me-2"></i>Open in Email</a></li>
               </ul>
             </div>
             <button class="btn btn-sm btn-link text-muted copy-user-btn" data-message-id="${messageId}" title="Copy message">
@@ -6767,7 +6895,7 @@ export async function sendMessage(turnOptions = {}) {
 
   const largeTabularRunEstimate = estimateLargeTabularRunForPrompt(combinedMessage);
   let largeTabularRunConfirmed = true;
-  if (largeTabularRunEstimate.shouldConfirm) {
+  if (!getSavedAnalysisContext() && largeTabularRunEstimate.shouldConfirm) {
     largeTabularRunConfirmationPending = true;
     try {
       largeTabularRunConfirmed = await confirmLargeTabularRunForPrompt(combinedMessage);
@@ -7190,6 +7318,16 @@ function buildCollaborativeSendContext(finalMessageToSend, conversationId = curr
   };
 }
 
+// The browser's IANA time zone, so Microsoft 365 email and event times are written in it.
+function getBrowserTimeZone() {
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    return typeof zone === 'string' && zone.length > 0 && zone.length <= 64 ? zone : null;
+  } catch (error) {
+    return null;
+  }
+}
+
 export function buildChatRequestPayload(finalMessageToSend, conversationId = currentConversationId) {
   const {
     modelDeployment,
@@ -7353,6 +7491,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     prompt_info: promptInfo,
     agent_info: agentInfo,
     reasoning_effort: getCurrentReasoningEffort(),
+    time_zone: getBrowserTimeZone(),
   };
 
   if (documentActionType !== DOCUMENT_ACTION_NONE) {
@@ -7369,7 +7508,7 @@ export function buildChatRequestPayload(finalMessageToSend, conversationId = cur
     };
   }
 
-  return requestPayload;
+  return applySavedAnalysisContext(requestPayload);
 }
 
 export function buildCollaborativeInvocationTarget(messageData = {}, explicitInvocationTarget = null) {
@@ -7400,6 +7539,8 @@ export function buildCollaborativeInvocationTarget(messageData = {}, explicitInv
     ? 'image_generation'
     : hasAgentTarget
     ? 'agent'
+    : messageData.analysis_result_context
+    ? 'saved_analysis'
     : messageData.deep_research_enabled || messageData.source_review_enabled
     ? 'deep_research'
     : messageData.url_access_enabled
@@ -9249,6 +9390,7 @@ function captureMessageMaskingOriginalContent(messageDiv) {
 function restoreMessageMaskingOriginalContent(messageDiv, messageText) {
   captureMessageMaskingOriginalContent(messageDiv);
   destroyInlineCharts(messageText);
+  destroyInlineDiagrams(messageText);
   const originalNodes = Array.isArray(messageDiv._maskingOriginalNodes)
     ? messageDiv._maskingOriginalNodes.map(node => node.cloneNode(true))
     : [];
@@ -9411,11 +9553,13 @@ function applyMaskedState(messageDiv, metadata = {}) {
   }
 
   const maskedRanges = Array.isArray(nextMetadata.masked_ranges) ? nextMetadata.masked_ranges : [];
+  setSavedAnalysisMasked(messageDiv, nextMetadata);
   if (maskedRanges.length > 0) {
     applyMaskedRangesToMessageText(messageText, maskedRanges);
   }
 
   hydrateInlineCharts(messageDiv);
+  hydrateInlineDiagrams(messageDiv);
   hydrateInlineImageProposals(messageDiv);
   updateMaskControls(messageDiv, nextMetadata);
 }
@@ -9751,6 +9895,9 @@ function executeMessageDeletion(deleteThread = false) {
 }
 
 // Expose functions globally
+initializeSavedAnalysis();
+window.addEventListener('chat:saved-analysis-selected', () => void updateDocumentActionControls());
+
 window.chatMessages = {
   applyMaskedState,
   applySearchHighlight,

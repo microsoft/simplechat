@@ -7,6 +7,27 @@ from copy import deepcopy
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 from urllib.parse import urlsplit, urlunsplit
 
+from functions_document_citations import resolve_citation_location
+from functions_m365_citations import rebuild_conversation_used_m365_items
+
+
+__all__ = [
+    "CITATION_TRACKING_VERSION",
+    "USED_DOCUMENTS_TRACKING_VERSION",
+    "build_cited_source_subsets",
+    "build_used_documents",
+    "extract_explicit_document_citation_ids",
+    "extract_explicit_web_urls",
+    "get_message_reference_citation_buckets",
+    "get_message_source_citation_buckets",
+    "initialize_conversation_used_document_tracking",
+    "merge_cited_documents_into_conversation",
+    "merge_used_documents",
+    "normalize_http_url",
+    "rebuild_conversation_used_documents",
+    "resolve_citation_location",
+]
+
 
 CITATION_TRACKING_VERSION = 1
 USED_DOCUMENTS_TRACKING_VERSION = 1
@@ -15,9 +36,21 @@ _INLINE_DOCUMENT_CITATION_GROUP_PATTERN = re.compile(
     r"\[\s{0,8}#([^\]\r\n]{1,1024})\]",
     re.IGNORECASE,
 )
+_BRACKETED_DOCUMENT_CITATION_GROUP_PATTERN = re.compile(
+    r"\[\s{0,8}((?:#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128})(?:\s{0,8}[;,]\s{0,8}#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128})*)\s{0,8}\]",
+    re.IGNORECASE,
+)
+_RAW_DOCUMENT_CITATION_PATTERN = re.compile(
+    r"\u3010\s{0,8}#?([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}_[a-z0-9_.-]{1,128})\s{0,8}\u3011",
+    re.IGNORECASE,
+)
+_UUID_PREFIX_CITATION_ID_PATTERN = re.compile(
+    r"^([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_([a-z0-9_.-]{1,128})$",
+    re.IGNORECASE,
+)
 _INLINE_DOCUMENT_SOURCE_PATTERN = re.compile(
     r"\(Source:((?:(?!\(Source:).){1,256}?),"
-    r"\s{0,8}(Page(?:s)?|Sheet(?:s)?|Location):"
+    r"\s{0,8}(Page(?:s)?|Sheet(?:s)?|Location|Worksheet cell):"
     r"((?:(?!\(Source:).){0,256}?)\)"
     r"(?=\s{0,8}(?:\[#|$|[.;,!? \n]))",
     re.IGNORECASE,
@@ -57,16 +90,32 @@ def _normalize_reference_id(value: Any) -> str:
     return str(value or "").strip().lstrip("#").strip()
 
 
+def _short_document_citation_id(citation_id: Any) -> str:
+    normalized_id = _normalize_reference_id(citation_id)
+    match = _UUID_PREFIX_CITATION_ID_PATTERN.match(normalized_id)
+    if not match:
+        return ""
+    return f"{match.group(1).lower()}_{match.group(2)}"
+
+
 def extract_explicit_document_citation_ids(content: Any) -> List[str]:
-    """Return ordered, unique citation IDs from explicit ``[#id]`` groups."""
+    """Return ordered, unique citation IDs from explicit ``[#id]`` and bracketed chunk groups."""
     citation_ids: List[str] = []
-    for citation_group in _INLINE_DOCUMENT_CITATION_GROUP_PATTERN.findall(
-        str(content or "")
-    ):
+    text = str(content or "")
+    for citation_group in _INLINE_DOCUMENT_CITATION_GROUP_PATTERN.findall(text):
         for raw_citation_id in re.split(r"[;,]", citation_group):
             citation_id = _normalize_reference_id(raw_citation_id)
             if citation_id and citation_id not in citation_ids:
                 citation_ids.append(citation_id)
+    for citation_group in _BRACKETED_DOCUMENT_CITATION_GROUP_PATTERN.findall(text):
+        for raw_citation_id in re.split(r"[;,]", citation_group):
+            citation_id = _normalize_reference_id(raw_citation_id)
+            if citation_id and citation_id not in citation_ids:
+                citation_ids.append(citation_id)
+    for raw_citation_id in _RAW_DOCUMENT_CITATION_PATTERN.findall(text):
+        citation_id = _normalize_reference_id(raw_citation_id)
+        if citation_id and citation_id not in citation_ids:
+            citation_ids.append(citation_id)
     return citation_ids
 
 
@@ -141,31 +190,6 @@ def _location_reference_matches(
         if lower_bound <= citation_number <= upper_bound:
             return True
     return False
-
-
-def resolve_citation_location(
-    page_number: Any = None,
-    chunk_text: Any = None,
-    sheet_name: Any = None,
-    is_tabular: bool = False,
-) -> tuple[str, str]:
-    """Return a schema-, sheet-, or page-aware citation location."""
-    if sheet_name not in (None, ""):
-        return "Sheet", str(sheet_name)
-
-    normalized_chunk_text = str(chunk_text or "").strip()
-    if is_tabular and (
-        normalized_chunk_text.startswith("Tabular workbook:")
-        or normalized_chunk_text.startswith("Tabular data file:")
-    ):
-        return "Location", "Workbook Schema"
-
-    # Preserve a valid page or sequence of 0. Video chunks are keyed by second and
-    # legitimately start at zero, so truthiness would relabel them as page 1.
-    if page_number is None or page_number == "":
-        return "Page", "1"
-
-    return "Page", str(page_number)
 
 
 def _source_reference_matches_citation(
@@ -287,10 +311,29 @@ def build_cited_source_subsets(
     explicit_web_urls = set(extract_explicit_web_urls(content))
 
     hybrid_source_records = _as_dict_list(hybrid_citations)
+    short_id_counts: Dict[str, int] = {}
+    for citation in hybrid_source_records:
+        short_id = _short_document_citation_id(_get_document_citation_id(citation))
+        if short_id:
+            short_id_counts[short_id] = short_id_counts.get(short_id, 0) + 1
+
+    def _citation_matches_explicit_ids(citation: Mapping[str, Any]) -> bool:
+        citation_id = _get_document_citation_id(citation)
+        if not citation_id:
+            return False
+        if citation_id in document_citation_ids:
+            return True
+        short_id = _short_document_citation_id(citation_id)
+        return bool(
+            short_id
+            and short_id_counts.get(short_id) == 1
+            and short_id in {item.lower() for item in document_citation_ids}
+        )
+
     exact_document_citations = [
         citation
         for citation in hybrid_source_records
-        if _get_document_citation_id(citation) in document_citation_ids
+        if _citation_matches_explicit_ids(citation)
     ]
     unmatched_source_references = [
         source_reference
@@ -308,14 +351,15 @@ def build_cited_source_subsets(
     seen_document_citations = set()
     for citation in hybrid_source_records:
         citation_id = _get_document_citation_id(citation)
-        matched_by_id = bool(
-            citation_id
-            and citation_id in document_citation_ids
-        )
+        matched_by_id = _citation_matches_explicit_ids(citation)
         matched_by_source = any(
             _source_reference_matches_citation(source_reference, citation)
             for source_reference in unmatched_source_references
         )
+        if citation.get("native_evidence") or ":native-comments:" in citation_id:
+            # A worksheet/cell can contain several roots and replies. Only an exact
+            # retained identity proves which reviewer text the answer cited.
+            matched_by_source = False
         if not matched_by_id and not matched_by_source:
             continue
         if matched_by_id:
@@ -508,6 +552,7 @@ def _merge_document_record(
     for field_name in (
         "title",
         "file_name",
+        "file_type",
         "classification",
         "scope",
     ):
@@ -581,6 +626,7 @@ def build_used_documents(
         incoming_metadata = {
             "title": citation.get("title") or citation.get("file_name"),
             "file_name": citation.get("file_name") or citation.get("title"),
+            "file_type": citation.get("file_type"),
             "classification": (
                 citation.get("classification")
                 or citation.get("document_classification")
@@ -669,9 +715,10 @@ def rebuild_conversation_used_documents(
 ) -> List[Dict[str, Any]]:
     """Rebuild exact usage after a retry, switch, deletion, or fork mutation."""
     initialize_conversation_used_document_tracking(conversation)
+    messages = list(messages or [])
     cited_hybrid_citations: List[Dict[str, Any]] = []
     legacy_hybrid_citations: List[Dict[str, Any]] = []
-    for message in messages or []:
+    for message in messages:
         if not isinstance(message, Mapping) or not _message_is_active_assistant(message):
             continue
         if _message_has_citation_tracking(message):
@@ -692,5 +739,14 @@ def rebuild_conversation_used_documents(
         conversation["legacy_used_documents"] = build_used_documents(
             legacy_hybrid_citations,
             source_document_tags=source_document_tags,
+        )
+    if conversation.get("conversation_kind") != "collaborative":
+        # Microsoft 365 items are listed to their owner only, so a shared thread keeps none.
+        rebuild_conversation_used_m365_items(
+            conversation,
+            [
+                message for message in messages
+                if isinstance(message, Mapping) and _message_is_active_assistant(message)
+            ],
         )
     return deepcopy(conversation["used_documents"])

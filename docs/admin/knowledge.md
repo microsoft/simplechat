@@ -37,13 +37,15 @@ These settings decide what evidence enters the system and how it becomes searcha
 
 ### Web Search {#web-search-section}
 
-Web Search lets chat ground a single message in current public web results. SimpleChat does not call a search API directly. It calls an Azure AI Foundry agent that you create and configure, and that agent uses the Grounding with Bing Search tool to run the query and return results with citations.
+Web Search lets chat ground a single message in current public results. Existing installations use **Foundry Grounding with Bing Search** through a configured Foundry agent. Starting in **0.261.405**, V2 can instead use **Microsoft Web IQ**, a retrieval API whose passages and citations are supplied to the selected chat model. The search provider does not replace that model.
 
-Two things gate the capability, and both are required. `enable_web_search` turns it on, and `web_search_consent_accepted` records that an administrator acknowledged that Grounding with Bing Search moves data outside the Azure compliance boundary and operates under separate terms. Enabling the toggle without accepting the consent leaves the feature off.
+`enable_web_search` and the selected provider's separate consent are required. Foundry uses `web_search_consent_accepted`; Web IQ uses `web_iq_consent_accepted`. Accepting Foundry terms does not authorize Web IQ. Switching providers retains inactive connection values, but never falls back to the other provider on failure. Web IQ is V2-only; Government and custom-cloud deployments cannot use either public web-search provider.
 
 Only the user's current chat message is sent to the agent. Conversation history, workspace documents, attached file contents, and system prompts are never included in the outbound query. Decide your rollout policy on that basis, and use the notice settings below if you want users reminded of it in the composer.
 
-An agent ID is not optional. If it is missing, chat tells the user web search is unavailable rather than silently answering from training data, so a half-finished configuration fails loudly instead of quietly degrading.
+For Foundry, an agent ID is required. For Web IQ, configure an API key or an app-only Entra service principal bound to the Web IQ portal AppID. The AppID is distinct from the Entra client ID and is used only with Entra authentication. The service endpoint is fixed at `https://api.microsoft.ai/v3`. Billing-resource deployment alone does not finish portal onboarding.
+
+Web IQ can additionally discover News, Images, and Videos. These types default off and are not called for every search. News supplies textual passages. Images and Videos can supply descriptions and source-page citations in **Text-only** mode, or selected answer previews in **With media** mode. These controls do not affect uploaded or generated images. Captions and video summaries are provider metadata, not proof that SimpleChat viewed or transcribed the media; discovery also grants no reuse rights.
 
 ### URL Access {#url-access-section}
 
@@ -57,7 +59,23 @@ The Deep Research section belongs to the Web & Research tab. Use it with the adj
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Web Search via Foundry Agent | Adds web search through the configured Azure AI Foundry agent for approved chat flows. Requires accepted consent to take effect. | Off | `enable_web_search`; capability toggle |
+| Enable Web Search | Adds current public evidence through the selected provider, subject to its separate consent. | Off | `enable_web_search`; capability toggle |
+| Web Search Provider | Chooses Foundry Grounding with Bing Search or Microsoft Web IQ; Web IQ requires V2. | foundry | `web_search_provider` |
+| Web IQ consent | Records the administrator's separate authorization for the Microsoft-hosted Web IQ destination and terms. | Off | `web_iq_consent_accepted` |
+| Web IQ News | Makes news passages available to relevant current-announcement searches and Gather plans. | Off | `web_iq_news_enabled` |
+| Web IQ Images | Allows visual discovery as descriptions/source links, or selected answer media. Off prevents image searches. | off | `web_iq_image_mode`; off, text_only, with_media |
+| Web IQ Videos | Allows tutorial/video discovery as descriptions/source links, or selected preview/link cards. Off prevents video searches. | off | `web_iq_video_mode`; off, text_only, with_media |
+| Web IQ Endpoint | Identifies the fixed Microsoft-hosted API; custom destinations and credential-bearing redirects are not accepted. | https://api.microsoft.ai/v3 | `web_iq_endpoint` maps to `web_iq.endpoint` |
+| Web IQ Authentication | Uses an API key or an app-only Entra service principal; managed identity is not advertised as equivalent. | key | `web_iq_authentication_type` |
+| Web IQ API Key | Authenticates key-mode requests. This value is private and is never part of public bootstrap settings. | Empty | `web_iq_key` |
+| Web IQ Tenant ID | Selects the directory for app-only Entra authentication. | Empty | `web_iq_tenant_id` |
+| Web IQ Client ID | Identifies the Entra application bound in the Web IQ portal. | Empty | `web_iq_client_id` |
+| Web IQ Client Secret | Supplies the Entra application's credential; preserve the masked value to retain its existing secret. | Empty | `web_iq_client_secret` |
+| Web IQ AppID | Selects the portal application bound to the Entra client. Omitted from API-key requests. | Empty | `web_iq_app_id` |
+| Web IQ Language | Selects the two-letter retrieval language code. | en | `web_iq_language` |
+| Web IQ Region | Selects the two-letter retrieval region code. | US | `web_iq_region` |
+| Web IQ Result Limit | Bounds results across selected discovery types; must allow at least one result per selected type. | 10 | `web_iq_max_results`; 1-50, with smaller endpoint-specific limits |
+| Web IQ Passage Limit | Bounds each returned Web/News passage rather than requesting full-document access. | 3000 | `web_iq_max_length`; 1-3000 characters |
 | Show data notice to users when web search is used | Shows a dismissible banner above the chat composer while web search is active, so users know the message will leave the tenant. | Off | `enable_web_search_user_notice`; capability toggle |
 | Notice Text | The banner wording. Shown once per browser session, from the first time the user activates web search until they dismiss it. | N/A (runtime control) | `web_search_user_notice_text` |
 | Foundry Project Endpoint | Project endpoint format: https://<foundry-resource>.services.ai.azure.com/api/projects/<project-name> (not the inference endpoint). | N/A (runtime control) | `web_search_foundry_endpoint` |
@@ -101,7 +119,21 @@ The Deep Research section belongs to the Web & Research tab. Use it with the adj
 
 ### Azure AI Search {#azure-ai-search-section}
 
-The Azure AI Search section belongs to the Search Index tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Azure AI Search stores searchable document chunks and vectors for personal, group, and public workspaces. The connection here is also used to inspect and maintain those three index schemas. A missing index can be created; missing compatible fields can be added. A vector-dimension mismatch is different and is not repaired by silently changing the embedding model or rebuilding an index.
+
+In the classic interface, opening Admin Settings checks the three indexes in sequence. Starting in **0.261.125**, unchanged observations do not rewrite settings. A first observation or repair can update embedding metadata, and the page adopts only the revision from its own conditional metadata operation. Saving waits for these checks to settle. Another administrator's edit still requires reviewing the latest settings; copy any unsaved edits before reloading.
+
+Connection and permission failures stay visible rather than being hidden as if the index were healthy. Configure either the direct Search endpoint and authentication method, or the APIM endpoint and subscription key. Public Azure uses the Search audience `https://search.azure.com`; government and custom-cloud audiences remain separate. See [Admin settings troubleshooting]({{ '/troubleshooting/#admin-settings-saves-and-connection-tests' | relative_url }}).
+
+#### Search result cache
+
+Workspace document searches, the retrieval step behind grounded chat answers, agents, and workflows, are cached in the `search_cache` Cosmos DB container. When the same search runs again against the same documents, SimpleChat reuses the earlier results instead of embedding the query and running the semantic-ranked hybrid queries against each workspace index again. Repeated questions come back faster and cite the same sources, and fewer embedding and semantic ranker requests are billed or counted against quota. The cache does not need Redis, and it does not apply to web search.
+
+A cached result is reused only while the query, scope, selected documents, tag filters, embedding model, and the documents in scope, including their versions and content screening state, all still match. Adding, deleting, re-sharing, or re-versioning a document therefore forces a fresh search straight away. Before cached results are returned, each one is re-checked against the requesting user's access and the document's current availability, and if any no longer qualifies the search runs fresh.
+
+Caching is on by default and should stay on. Turn it off only while troubleshooting search relevance, when every search needs to run fresh. The cache lifetime bounds how long other changes can take to appear, such as a document that finishes processing after a search ran, or an edit made directly in Azure AI Search outside SimpleChat.
+
+Both settings are edited in the V2 admin settings, in the **Search result cache** group of this section. The classic admin page has no control for them.
 
 #### Settings
 
@@ -113,12 +145,78 @@ The Azure AI Search section belongs to the Search Index tab. Use it with the adj
 | Search Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_ai_search_key` |
 | Azure APIM AI Search Endpoint | Provides the endpoint or route SimpleChat uses for this service. | Empty | `azure_apim_ai_search_endpoint` |
 | Azure APIM AI Search Subscription Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_apim_ai_search_subscription_key` |
+| Cache workspace search results | Reuses a recent identical workspace search instead of embedding the query and querying the indexes again. Cached results are re-checked against the user's access before they are returned. | On | `enable_search_result_caching`; V2 admin only |
+| Cache lifetime (seconds) | How long cached results can be reused, from 60 to 3,600 seconds. Shown while caching is on. | 300 | `search_cache_ttl_seconds`; V2 admin only |
 
 ## Document Extraction {#extraction}
 
+### Content screening before publication
+
+When [Content Screening]({{ '/admin/security/#content-screening-section' | relative_url }}) is enabled, extracted pages, text, and native table data are staged privately before they become usable knowledge. The required policy applies to the complete document, not just the first batch of chunks.
+
+Screening requires Enhanced Citations and is configured in Security so the policy framework is not tied to one extraction engine. Text that was hard to see in the original can still be inspected after extraction; detecting font color or hidden layers themselves is separate functionality. See [Screen and review workspace documents]({{ '/guides/review-screened-documents/' | relative_url }}).
+
 ### Document Intelligence {#document-intelligence-section}
 
-The Document Intelligence section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Document Intelligence reads PDFs and images, and nothing else in this tab produces
+searchable text without it: Standard extraction is its Read model, and Enhanced extraction
+falls back to its Layout model. The section is the connection alone -- endpoint,
+authentication and a connection test, either directly or through API Management. Only the
+path in use is shown.
+
+### Enhanced Extraction {#enhanced-extraction-section}
+
+Enhanced extraction is for documents where structure matters: tables, page layout, forms,
+checkbox states and, with Content Understanding, figures and charts. The section is led by
+its switch, and every setting that only takes effect while Enhanced is on sits beneath it
+and is hidden while it is off -- the Content Understanding connection included, since
+Content Understanding is never called while Enhanced is off. With the switch off, every
+PDF and image uses Standard extraction.
+
+The extraction mode decides what new uploads use. Standard uses Document Intelligence Read
+and is the fastest and cheapest path for plain text. Enhanced captures tables, page
+structure, forms and checkbox states, at roughly six times the cost per thousand pages.
+Auto inspects the opening pages of a PDF and picks: if it finds tables, selection marks or
+figures the whole document uses Enhanced, otherwise it finishes with Standard. Images
+always use Enhanced under Auto. Turning Enhanced on moves the mode from Standard to Auto,
+because Enhanced with the mode left on Standard would change nothing for new uploads. With
+Standard selected deliberately, people can still extract a document again as Enhanced from
+its workspace.
+
+Formula extraction is a separately billed add-on to the Document Intelligence Layout model
+that captures equations as LaTeX instead of approximate OCR text. It applies wherever
+Layout runs -- Auto's page sampling, and Enhanced extraction without Content
+Understanding -- so it has no effect on Standard extraction or on documents Content
+Understanding extracts.
+
+The section also names the engine Enhanced extraction will use with the settings on
+screen: Azure AI Content Understanding, or Document Intelligence Layout together with the
+reason Content Understanding is not in use. It judges configuration rather than
+connectivity; the connection test is what confirms the service answers.
+
+#### Content Understanding connection {#content-understanding-section}
+
+Azure AI Content Understanding is what backs Enhanced extraction where it is available. It
+returns tables, page structure, checkbox states and generated descriptions of figures and
+charts. It is optional: leave the endpoint blank and Enhanced uses Document Intelligence
+Layout, which still captures tables, structure, forms and checkbox states but not figure
+descriptions.
+
+Content Understanding is not offered in every Azure cloud. Where it is unavailable its
+connection is not shown, the section says Enhanced uses Document Intelligence Layout, and
+there is nothing further to configure.
+
+### Images Inside Office Files {#office-embedded-image-section}
+
+Native extraction does not describe the pixels of images embedded in Word, PowerPoint,
+or Excel files. With this on, embedded images are
+extracted from the file, analysed with whichever engine backs the selected extraction mode,
+and indexed as their own citable chunks. It works with Standard extraction as well as
+Enhanced.
+
+The two limits control cost. The minimum size skips icons, bullets and spacers, and the
+per-document maximum caps how many images one file can charge for. Duplicate images within
+a document are analysed once.
 
 ### Chunk Sizes {#chunk-size-section}
 
@@ -141,9 +239,39 @@ vector is trimmed, and the event is logged.
 Custom sizes apply to new uploads only. Existing documents keep the chunks they were indexed with
 until they are uploaded again.
 
+OneNote `.one` and `.onepkg` ingestion (from **0.261.142** on the React v2
+branch) reuses the TXT word target. Each chunk stays within a OneNote page and
+includes section/page context; that context counts toward both the word target
+and the embedding character budget. No separate OneNote chunk-size setting is
+required.
+
+### Maximum File Size {#file-size-limit-section}
+
+The ceiling applies to every upload, whether a document going into a workspace or a file
+attached to a chat message, and it is checked before any extraction runs. That makes it the
+cheapest control available for protecting the extraction pipeline: an oversized file is
+refused outright rather than consuming Document Intelligence capacity and then failing.
+
+It sits with extraction rather than with Workspaces because both upload paths feed the same
+pipeline, and because the practical ceiling is whatever your extraction and storage tiers can
+absorb rather than a workspace policy decision.
+
 ### Metadata Extraction {#metadata-extraction-section}
 
-The Metadata Extraction section belongs to the Document Extraction tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+After a document is chunked, a further model pass can read it and record structured metadata
+about it -- title, authors, subject, keywords -- which is what makes a citation readable as a
+source rather than as a filename. It runs on upload, so enabling it later does not backfill
+documents that are already indexed.
+
+When AI Connections are enabled, choosing an **Extraction Model** and saving records both the
+request model (`metadata_extraction_model`) and the selected connection and model reference
+(`metadata_extraction_model_selection`), so metadata extraction routes through the chosen
+AI Connection even when multiple connections share a deployment name. When AI Connections are
+off, the picker uses the classic GPT or APIM deployments and clears any stored connection
+reference.
+
+It costs an extra model call per document, and it needs a deployment selected for it, so it
+is off by default.
 
 ### Multi-Modal Vision Analysis {#multimodal-vision-section}
 
@@ -158,34 +286,52 @@ model receives.
 Workspace images are analyzed only when Enhanced Citations is enabled. Images attached directly to
 a chat are analyzed whenever this setting is on.
 
-The Vision Model setting stores a model name. When multi-endpoint models are enabled, SimpleChat
-sends the analysis through the enabled AI connection that hosts an enabled model with that
-deployment name, model name, or id, so a model deployed on a different connection than the primary
-GPT resource works. A deployment name match wins over a model name match, and the first matching
-connection in the list wins over later ones. When no connection matches, or multi-endpoint models
-are off, the GPT connection is used, directly or through APIM. **Test Vision Analysis** uses the
-same connection as ingestion.
+The Vision Model setting stores the selected request model (`multimodal_vision_model`) and, when
+saved in V2 Admin Settings with AI Connections enabled, the selected connection and model
+reference (`multimodal_vision_model_selection`). When a structured connection reference is saved,
+SimpleChat routes vision analysis and **Test Vision Analysis** through that exact connection and
+fails closed if the selected connection or model is later disabled or removed. For legacy
+name-only configurations, SimpleChat resolves the model name across enabled AI connections (with
+deployment name matches winning over model name matches), or falls back to the classic GPT/APIM
+connection when multi-endpoint models are off.
+
+Which deployments count as vision-capable is resolved in three steps, most authoritative
+first: an explicit choice recorded on the model under [AI Models]({{ '/admin/ai-models/' | relative_url }}), then the
+application's built-in model capability data, then the model's name. A model resolved by
+name alone is marked as inferred, because a name is a guess -- a self-hosted deployment may
+read images without saying so, and some text-only chat variants are named like models that
+do. If a model you expect is missing from the list, set its image support explicitly on the
+endpoint that hosts it.
+
+This is the most expensive extraction path in the group. Reach for it when the material is
+genuinely visual; for text documents that happen to contain a chart, Document Intelligence
+already captures the surrounding structure.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Maximum File Size (MB) | Rejects an upload larger than this before extraction runs. Applies to workspace documents and chat attachments alike. | 150 | `max_file_size_mb` |
+| Enable Extract Meta Data | Runs a model pass on upload to record title, authors, subject and keywords for each document. | Off | `enable_extract_meta_data`; capability toggle |
+| Extraction Model | The deployment the metadata pass sends its requests to. | Empty | `metadata_extraction_model` |
+| Enable Multi-Modal Vision Analysis | Asks a vision model to describe each uploaded image, so an image can be found and cited by what it shows even when it contains no text. | Off | `enable_multimodal_vision`; capability toggle |
+| Vision Model | A vision-capable deployment, such as gpt-4o or a supported GPT 5 or later model. Only vision-capable models are offered. With multi-endpoint models enabled, it is called through the AI connection that hosts it; otherwise through the GPT connection. | Empty | `multimodal_vision_model` |
 | Require DeepResearchUser App Role | Required app role value: DeepResearchUser. Assign this role to users or groups in the Enterprise App before enabling the requirement. When enabled, only assigned users can use Deep Research. | Off | `require_member_of_deep_research_user` |
 | Max User URLs per Turn | Direct URLs beyond this cap are recorded as omitted in the ledger. | 100 | `deep_research_max_user_urls_per_turn` |
 | Max Search Queries per Turn | Includes the original current-message query. | 8 | `deep_research_max_search_queries_per_turn` |
 | Plan multiple web search queries | Narrows the admin list shown for plan multiple web search queries. | On | `deep_research_enable_query_planning` |
 | Save research ledger artifacts | Narrows the admin list shown for save research ledger artifacts. | On | `deep_research_enable_ledger_artifact` |
-| Enable Enhanced extraction | Enables the enhanced extraction path for richer PDF and image structure when the required services are configured. | Off | `enable_enhanced_extraction`; capability toggle |
+| Enable Enhanced extraction | Leads the Enhanced Extraction section. While it is off every PDF and image uses Standard extraction, and the extraction mode, formula extraction and Content Understanding connection are hidden because none of them can take effect. Turning it on moves a Standard mode to Auto. | Off | `enable_enhanced_extraction`; capability toggle |
 | PDF and Image Extraction Mode | Enhanced captures more document detail for PDFs and images, including tables, page structure, and checked or unchecked marks. It adds latency and has a 6X increase for every 1000 pages when selected. | read | `document_intelligence_pdf_image_extraction_mode` |
 | Auto Sample Pages | Auto samples this many first PDF pages with Document Intelligence Layout. If it detects tables, selection marks, or figures, the full PDF uses Enhanced; otherwise it finishes with Standard. Images use Enhanced in Auto mo | Not specified in defaults | `document_intelligence_auto_sample_pages` |
-| Extract mathematical formulas | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
+| Extract mathematical formulas | Captures equations as LaTeX through a billed add-on to the Document Intelligence Layout model, so it adds per-page cost wherever Layout runs: Auto's page sampling, and Enhanced extraction without Content Understanding. | Off | `enable_document_intelligence_formula_extraction`; capability toggle |
 | Foundry Endpoint | Your Microsoft Foundry resource endpoint, without a trailing path. | Empty | `azure_content_understanding_endpoint` |
 | Authentication Type | Managed identity requires the Cognitive Services User role on the Foundry resource. | key | `azure_content_understanding_authentication_type` |
 | Content Understanding Key | Provides the secret credential used when the selected authentication mode requires one. | Empty | `azure_content_understanding_key` |
 | API Version | Default: | Not specified in defaults | `azure_content_understanding_api_version` |
 | Document Analyzer | Default: | Not specified in defaults | `azure_content_understanding_analyzer_id` |
-| Image Analyzer | Content Understanding analyzer that describes images embedded in DOCX and PPTX files, and standalone images when the document analyzer finds no text in them. Its `Summary` field is indexed as the image description. | prebuilt-imageSearch | `azure_content_understanding_image_analyzer_id` |
-| Analyze images embedded in DOCX and PPTX files | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_office_embedded_image_analysis`; capability toggle |
+| Image Analyzer | Content Understanding analyzer that describes images embedded in DOCX, PPTX, and OOXML Excel workbooks, and standalone images when the document analyzer finds no text in them. Its `Summary` field is indexed as the image description. Excel descriptions retain their worksheet/cell placements separately from saved alternative text. | prebuilt-imageSearch | `azure_content_understanding_image_analyzer_id` |
+| Analyze images embedded in DOCX, PPTX, and Excel files | Adds configured image descriptions/OCR during ingestion or reprocessing, retaining available worksheet/object anchors separately from saved alternative text. Excel support was added in 0.261.405. | On | `enable_office_embedded_image_analysis`; capability toggle |
 | Minimum Image Size (pixels) | Images narrower or shorter than this are skipped as icons or spacers. | Not specified in defaults | `office_embedded_image_min_pixels` |
 | Maximum Images Per Document | Caps per-document cost. Duplicate images are analyzed once. | Not specified in defaults | `office_embedded_image_max_per_document` |
 | Use APIM instead of direct Document Intelligence endpoint | Routes Document Intelligence calls through APIM instead of calling the service endpoint directly. | Off | `enable_document_intelligence_apim`; capability toggle |
@@ -216,11 +362,39 @@ same connection as ingestion.
 
 ### AI Video Intelligence {#video-intelligence-section}
 
-The AI Video Intelligence section belongs to the Audio & Video tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Uploaded video is processed by Azure Video Indexer, which extracts spoken content, speakers,
+faces and brands into metadata that is then searchable and citable like any other document.
+
+The endpoint comes first because the account details are read against it: use
+`https://api.videoindexer.ai` for Azure Public and `https://api.videoindexer.ai.azure.us`
+for Azure Government, and another value only for a non-standard deployment. The account id,
+name, location, resource group and subscription follow, and the indexing timeout bounds how
+long one file may take. All five account fields are required: the name, resource group and
+subscription identify the account when SimpleChat requests an access token, and the location
+and account id address its API. Video Indexer is not offered in every region, so the account
+can sit in a different region from SimpleChat; enter the account's own region as the location.
 
 ### AI Voice Conversations {#ai-voice-chat-section}
 
-The AI Voice Conversations section belongs to the Audio & Video tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Three capabilities share one Azure Speech resource, which is why the resource is configured
+first and the capabilities follow:
+
+- **Audio file upload and transcription** transcribes and indexes uploaded recordings, so
+  meetings, interviews and lectures become searchable.
+- **Voice input** lets users record up to 90 seconds in the chat box instead of typing.
+- **Voice responses** adds a speaker button to each message that reads the response aloud.
+
+Configure the Speech resource once and turn on whichever of the three you need. Key
+authentication needs only the key; managed identity needs the resource id, which can be
+built from the subscription, resource group and resource name rather than typed by hand.
+
+How many audio formats can be accepted depends on whether FFmpeg is present in the
+deployment. The tab reports what the current runtime supports; without FFmpeg, only formats
+that transcribe directly are accepted.
+
+The completion chime is not here. It plays a local browser sound and needs no Speech
+resource, so it lives with the other notification settings under
+[Chat › Feedback & Alerts]({{ '/admin/chat/#desktop-notifications-section' | relative_url }}).
 
 #### Settings
 
@@ -237,7 +411,6 @@ The AI Voice Conversations section belongs to the Audio & Video tab. Use it with
 | Account ID * | Found in the Video Indexer account Overview page in Azure Portal | Empty | `video_indexer_account_id` |
 | ARM API Version | Default for : | Not specified in defaults | `video_indexer_arm_api_version` |
 | Timeout (seconds) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 600 | `video_index_timeout` |
-| Enable AI Response Completion Audio Cues | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_chat_completion_audio_cues`; capability toggle |
 | Enable Audio File Upload & Processing | Allows users to upload audio files for transcription through the configured Speech service. | Off | `enable_audio_file_support`; capability toggle |
 | Enable Voice Input (Speech-to-Text) | Shows voice input controls in chat and sends captured speech to the configured Speech service. | Off | `enable_speech_to_text_input`; capability toggle |
 | Enable Voice Responses (Text-to-Speech) | Allows voice responses from chat output through the configured Speech service. | Off | `enable_text_to_speech`; capability toggle |
@@ -255,55 +428,89 @@ The AI Voice Conversations section belongs to the Audio & Video tab. Use it with
 
 ### File Sync {#file-sync-section}
 
-The File Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+File Sync lets a workspace pull documents from an external source on a schedule instead
+of relying on manual upload. In V2 Admin Settings everything that governs it is one
+card, read from the top down: whether File Sync is on, which workspace types may use it
+and who manages their sources, how much a single run may do, and which kinds of source
+can be added.
 
-### Visible Source Types {#file-sync-source-types-section}
+Sync runs need [Redis Cache]({{ '/admin/scale/#redis-cache-section' | relative_url }}) switched on with its URL set,
+and its key when Redis uses key authentication. You can turn File Sync on and save its
+settings first, but runs stay inactive until Redis is ready. The V2 card warns while
+Redis Cache is switched off but does not check the URL or key, so confirm those under
+Redis Cache.
 
-The Visible Source Types section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+#### Workspace types
 
-### Personal Workspace Sync {#file-sync-personal-section}
+Turning File Sync on shows **Personal workspaces**, **Group workspaces**, and **Public
+workspaces** nested beneath it. A workspace type can sync only while both File Sync and
+its own switch are on, which is why the type switches are hidden while File Sync is
+off. Personal and group workspaces are on by default; public workspaces are off.
 
-The Personal Workspace Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Each workspace type that is on has an **Access** panel directly under its switch. Its
+rules decide who can open and manage that type's sources. Apart from the assignment
+lists, they do not stop sources that already exist: those keep syncing on their
+schedule.
 
-### Group Workspace Sync {#file-sync-group-section}
+- **Only administrators manage sources** stops anyone without the Admin role from
+  opening or changing that workspace type's sources. Documents that have already synced
+  stay.
+- **Require the PersonalFileSyncUser app role** (personal workspaces only) limits
+  opening and managing personal sources to holders of the `PersonalFileSyncUser` app
+  role. Create and assign the role in the Enterprise App first, or no user will be able
+  to manage their own personal sources. The requirement is also listed under
+  [App Role Requirements]({{ '/admin/security/#app-role-requirements-section' | relative_url }}).
+- **Restrict to assigned groups** and **Restrict to assigned public workspaces** limit
+  File Sync to the workspaces chosen in the list that appears beneath the switch.
+  Workspaces left off the list can no longer manage their sources, and their scheduled
+  runs are skipped, so an empty list with the restriction on leaves no workspace of
+  that type able to manage or schedule a sync.
 
-The Group Workspace Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+None of these rules apply to administrators managing sources on a workspace's behalf.
+The classic admin page has a tool for that on its File Sync card: search for a user,
+group, or public workspace and manage its sources directly. V2 does not offer that tool
+yet.
 
-### Public Workspace Sync {#file-sync-public-section}
+#### Run limits
 
-The Public Workspace Sync section belongs to the File Sync tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Run limits bound what a single workspace and a single run can do, and they apply to
+every workspace type. A run skips the files that would take it past its file or size
+limit rather than failing, and no new run starts while the concurrent run limit is
+reached. Start with low limits and a conservative schedule: a broad share can create
+many document versions in one run.
+
+#### Source types
+
+Source types decides which kinds of source the Add Source workflow offers. SMB Share,
+Azure Files, and Azure Blob Storage are available; OneDrive, on-premises SharePoint,
+and Google Workspace are listed as coming soon and cannot be selected yet. At least one
+source type must stay selected while File Sync is on. While the panel is closed, its
+header shows how many are selected.
+
+With Key Vault secret storage enabled and a Key Vault name set, a source's credentials
+are stored in Key Vault; otherwise they are stored with the source itself.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable File Sync | Enables the File Sync feature so configured external sources can import files into workspaces. | Off | `enable_file_sync`; capability toggle |
-| Max Sources | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `file_sync_max_sources_per_scope` |
-| Min Schedule Minutes | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 15 | `file_sync_min_schedule_interval_minutes` |
-| Max Files Per Run | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 1000 | `file_sync_max_files_per_run` |
-| Max GB Per Run | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 5 GB | `file_sync_max_gb_per_run` |
-| Max Concurrent Runs | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 2 | `file_sync_max_concurrent_runs` |
-| Allow Recursive Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `file_sync_allow_recursive_sources` |
-| SMB Share | Available now. | On | `file_sync_visible_source_types` |
-| OneDrive | Coming Soon. | Off | `file_sync_visible_source_type_onedrive` |
-| On-prem SharePoint | Coming Soon. | Off | `file_sync_visible_source_type_sharepoint_on_prem` |
-| Google Workspace | Coming Soon. | Off | `file_sync_visible_source_type_google_workspace` |
-| Enable personal sync | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_file_sync_personal`; capability toggle |
-| Admins manage sources only | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_personal_admin_only` |
-| Require PersonalFileSyncUser App Role | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_personal_require_app_role` |
-| Manage User Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Enable group sync | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_file_sync_group`; capability toggle |
-| Admins manage sources only | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_group_admin_only` |
-| Require Group Assignment to Use File Sync | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `require_group_assignment_for_file_sync` |
-| File Sync Allowed Group Ids | Lists the approved IDs, domains, groups, workspaces, or sources that may use this feature. | Empty list | `file_sync_allowed_group_ids` |
-| Manage Group Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Enable public sync | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_file_sync_public`; capability toggle |
-| Admins manage sources only | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `file_sync_public_admin_only` |
-| Require Public Workspace Assignment to Use File Sync | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `require_public_workspace_assignment_for_file_sync` |
-| File Sync Allowed Public Workspace Ids | Lists the approved IDs, domains, groups, workspaces, or sources that may use this feature. | Empty list | `file_sync_allowed_public_workspace_ids` |
-| Manage Public Workspace Sources | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Search Groups | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
-| Search Public Workspaces | Defines behavior for the related admin workflow; verify the affected feature after saving. | N/A (runtime control) | Runtime UI control |
+| Enable File Sync | Lets workspaces pull documents from a configured source on a schedule instead of relying on manual upload. | Off | `enable_file_sync`; capability toggle; runs need a configured Redis Cache |
+| Personal workspaces | Allows File Sync in personal workspaces while File Sync is on. | On | `enable_file_sync_personal` |
+| Group workspaces | Allows File Sync in group workspaces while File Sync is on. | On | `enable_file_sync_group` |
+| Public workspaces | Allows File Sync in public workspaces while File Sync is on. | Off | `enable_file_sync_public` |
+| Only administrators manage sources | Stops anyone without the Admin role from opening or changing that workspace type's sources. Existing sources keep syncing on their schedule. | Off | `file_sync_personal_admin_only`, `file_sync_group_admin_only`, `file_sync_public_admin_only`; one in each Access panel |
+| Require the PersonalFileSyncUser app role | Limits opening and managing personal sources to holders of the `PersonalFileSyncUser` app role. Existing sources keep syncing on their schedule. | Off | `file_sync_personal_require_app_role` |
+| Restrict to assigned groups | Limits group File Sync to the groups in Assigned groups; scheduled runs for other groups are skipped. | Off | `require_group_assignment_for_file_sync` |
+| Assigned groups | The groups that may use File Sync while the restriction is on. An empty list allows none. | Empty list | `file_sync_allowed_group_ids` |
+| Restrict to assigned public workspaces | Limits public File Sync to the workspaces in Assigned public workspaces; scheduled runs for other public workspaces are skipped. | Off | `require_public_workspace_assignment_for_file_sync` |
+| Assigned public workspaces | The public workspaces that may use File Sync while the restriction is on. An empty list allows none. | Empty list | `file_sync_allowed_public_workspace_ids` |
+| Max Sources per Workspace | The most sync sources one workspace can hold; adding another is refused. | 10 | `file_sync_max_sources_per_scope`; 1–100 |
+| Minimum Schedule Interval | The shortest gap a workspace may schedule between runs. | 15 minutes | `file_sync_min_schedule_interval_minutes`; 5–1440 |
+| Max Files per Run | The most files one run imports; files past the limit are skipped in that run. | 1000 | `file_sync_max_files_per_run`; 1–100000 |
+| Max Size per Run | The most data one run imports; a file that would exceed it is skipped in that run. Entered in gigabytes, stored in bytes. | 5 GB | `file_sync_max_bytes_per_run`; 1–1024 GB |
+| Max Concurrent Runs | How many sync runs may be queued or running at once across the whole deployment; no new run starts while the limit is reached. | 2 | `file_sync_max_concurrent_runs`; 1–25 |
+| Allow recursive sources | Lets a source include subfolders rather than only its top level. | On | `file_sync_allow_recursive_sources` |
+| Source types offered when adding a source | Which source types the Add Source workflow offers. | SMB Share, Azure Files | `file_sync_visible_source_types`; at least one while File Sync is on |
 
 ## Common tasks
 
@@ -316,6 +523,7 @@ The Public Workspace Sync section belongs to the File Sync tab. Use it with the 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | A synced file is not searchable | The source ran but extraction or indexing failed later. | Check sync state, extraction settings, and Azure AI Search before rerunning. |
+| A repeated question still returns the old sources after a change made directly in Azure AI Search | The search result cache is reusing results from before the change, which it cannot detect. | Wait for the cache lifetime to pass. To check the change sooner, rephrase the question, because different wording is a separate cache entry. |
 
 ## Related
 

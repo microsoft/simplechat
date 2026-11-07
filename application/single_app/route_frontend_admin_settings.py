@@ -1,25 +1,49 @@
 # route_frontend_admin_settings.py
 
+import copy
 import os
 import re
+
+from azure.core.exceptions import AzureError
 
 from config import *
 from functions_documents import *
 from functions_authentication import *
 from flask import current_app, jsonify, request
+from admin_settings_fields import get_field_definition
 
 from functions_keyvault import keyvault_model_endpoint_cleanup_helper, keyvault_model_endpoint_delete_helper, keyvault_model_endpoint_save_helper, redact_model_endpoint_secret_values
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
     validate_custom_model_endpoints,
 )
 from functions_settings import *
+from functions_appinsights import log_event
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_ai_connections import (
+    AIConnectionError,
+    EMBEDDINGS_CAPABILITY,
+    EMBEDDING_SELECTION_KEY,
+    IMAGE_SELECTION_KEY,
+    embedding_settings_use_connections,
+    filter_model_endpoints_by_capability,
+    image_settings_use_connections,
+    resolve_capability_model_selection,
+)
+from functions_ai_connection_migration import (
+    preserve_legacy_embedding_form_settings,
+    preserve_legacy_image_form_settings,
+)
+from functions_embedding_compatibility import preflight_embedding_settings, read_embedding_settings
 from functions_content_safety import (
     normalize_content_safety_category_threshold,
     normalize_content_safety_violation_message,
 )
+from functions_chat_content_checks import chat_content_form_updates
 from functions_rate_limit import normalize_rate_limit_message
+from functions_review_assist import normalize_admin_review_guidance
 from functions_mcp_server_config import (
     check_inbound_mcp_easy_auth_exclusions,
     INBOUND_MCP_SETTINGS_DEFAULTS,
@@ -34,10 +58,12 @@ from functions_mcp_server_config import (
 from functions_mcp_server_registry import get_inbound_mcp_tool_registry
 from functions_file_sync import FILE_SYNC_DEFAULTS, get_file_sync_config
 from functions_source_review import SOURCE_REVIEW_DEFAULTS, get_source_review_config, get_source_review_runtime_capabilities, normalize_source_review_js_rendering_enabled, parse_source_review_list
-from functions_control_center import (
+from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
+    resolve_control_center_auto_refresh_settings,
 )
+from functions_logging_timers import resolve_logging_timer_settings
 from functions_cosmos_throughput import (
     get_cached_cosmos_throughput_status,
     get_cosmos_resource_config,
@@ -45,12 +71,22 @@ from functions_cosmos_throughput import (
     normalize_cosmos_throughput_settings,
     validate_cosmos_throughput_policy_settings,
 )
+from functions_branding_images import (
+    prepare_favicon_image_for_storage,
+    prepare_logo_image_for_storage,
+)
 from functions_activity_logging import log_web_search_consent_acceptance, log_general_admin_action, log_governance_change
 from functions_notifications import broadcast_system_notification
 from functions_logging import *
 from functions_document_actions import normalize_document_action_capabilities
 from functions_model_capabilities import ModelTokenBudgetError, is_vision_capable_model
 from functions_m365_transport import M365ProviderError, normalize_m365_transport_settings
+from functions_m365_connections import ensure_m365_workflow_encryption_key
+from functions_orchestration_registry import (
+    build_capability_client_projection,
+    capabilities_for_contract,
+    effective_capability_ids,
+)
 from functions_ai_notice import (
     normalize_ai_notice_frequency,
     normalize_ai_notice_message,
@@ -72,6 +108,15 @@ from functions_personal_workflows import (
     WORKFLOW_TASK_LIMIT_MAX,
     WORKFLOW_TASK_LIMIT_MIN,
 )
+from functions_workflow_limits import (
+    WorkflowLoopLimitError,
+    get_workflow_max_loop_items,
+    get_workflow_max_repeat_iterations,
+    get_workflow_min_schedule_interval_seconds,
+    validate_workflow_max_loop_items,
+    validate_workflow_max_repeat_iterations,
+    validate_workflow_min_schedule_interval_seconds,
+)
 from support_menu_config import (
     get_admin_latest_feature_release_groups_for_settings,
     get_support_latest_feature_catalog,
@@ -81,8 +126,6 @@ from support_menu_config import (
     normalize_support_latest_features_visibility,
 )
 
-ALLOWED_PIL_IMAGE_UPLOAD_FORMATS = ('PNG', 'JPEG')
-MAX_CUSTOM_LOGO_STORAGE_HEIGHT = 500
 AGENTS_PAGE_DEFAULTS = {
     'agents_page_title': 'Find your next AI partner',
     'agents_page_subtitle': 'Explore specialized agents built to accelerate how you work.',
@@ -106,52 +149,9 @@ AZURE_CLI_CLOUD_NAMES_BY_ENVIRONMENT = {
 }
 
 
-def _is_update_version_newer(latest_version, current_version):
-    """Return True only when the discovered release version is newer than the running version."""
-    return compare_versions(latest_version, current_version) == 1
-
-
 def allowed_file(filename, allowed_extensions):
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in allowed_extensions
-
-def open_allowed_uploaded_image(file_bytes, filename):
-    img = Image.open(BytesIO(file_bytes), formats=list(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS))
-    img.load()
-
-    detected_format = (img.format or '').upper()
-    if detected_format not in ALLOWED_PIL_IMAGE_UPLOAD_FORMATS:
-        raise ValueError(
-            f"Unsupported image format for {filename}. Allowed formats: {', '.join(ALLOWED_PIL_IMAGE_UPLOAD_FORMATS)}"
-        )
-
-    return img, detected_format
-
-def prepare_logo_image_for_storage(file_bytes, filename, max_height=MAX_CUSTOM_LOGO_STORAGE_HEIGHT):
-    img, detected_format = open_allowed_uploaded_image(file_bytes, filename)
-    original_size = img.size
-
-    if img.mode == 'P':
-        img = img.convert('RGBA')
-    elif img.mode != 'RGB' and img.mode != 'RGBA':
-        img = img.convert('RGB')
-
-    if max_height and img.height > max_height:
-        aspect_ratio = img.width / img.height
-        resized_width = max(1, int(round(aspect_ratio * max_height)))
-        img = img.resize((resized_width, max_height), Image.Resampling.LANCZOS)
-
-    img_bytes_io = BytesIO()
-    img.save(img_bytes_io, format='PNG', optimize=True)
-    png_data = img_bytes_io.getvalue()
-
-    return {
-        'detected_format': detected_format,
-        'original_size': original_size,
-        'stored_size': img.size,
-        'png_data': png_data,
-        'base64_str': base64.b64encode(png_data).decode('utf-8'),
-    }
 
 def normalize_agents_page_color(value, fallback):
     candidate = str(value or '').strip()
@@ -457,6 +457,126 @@ def get_inbound_mcp_easy_auth_check_base_url():
     return request.host_url
 
 
+def orchestration_admin_capabilities():
+    """Describe every orchestration capability, whether or not it is currently enabled."""
+    return build_capability_client_projection(capabilities_for_contract())
+
+
+def normalize_chat_orchestration_settings(form_data, settings=None):
+    """Read the Chat Orchestration pane off the admin form.
+
+    Kept out of the main POST handler because these values are interdependent in ways a
+    flat dict literal cannot express: every bound is clamped rather than trusted, since the
+    form is only one of the ways a settings document can be written.
+
+    An empty capability selection is stored as an empty list, which the registry reads as
+    "everything the other gates allow". That is the difference between an administrator
+    who has expressed no opinion and one who has disabled the feature.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+
+    approval_mode = str(
+        form_data.get('chat_orchestration_default_approval_mode') or 'manual'
+    ).strip().lower()
+    if approval_mode not in ('manual', 'timed', 'auto'):
+        approval_mode = 'manual'
+
+    def _clamped(field, default, low, high):
+        value, _source = safe_int_with_source(
+            form_data.get(field), settings.get(field, default), default
+        )
+        return min(high, max(low, value))
+
+    selected = [
+        str(value).strip()
+        for value in (form_data.getlist('chat_orchestration_enabled_capabilities')
+                      if hasattr(form_data, 'getlist') else
+                      form_data.get('chat_orchestration_enabled_capabilities') or [])
+        if str(value).strip()
+    ]
+    known = {
+        option['value'] for option in
+        get_field_definition('chat_orchestration_enabled_capabilities')['options']
+    }
+    selected = [value for value in selected if value in known]
+    # A full selection means the same thing as no opinion, and storing it as an empty list
+    # keeps a later capability addition enabled by default instead of silently excluded.
+    if set(selected) == known:
+        selected = []
+
+    return {
+        'enable_chat_orchestration': form_data.get('enable_chat_orchestration') == 'on',
+        'enable_chat_orchestration_completeness_check': form_data.get('enable_chat_orchestration_completeness_check') == 'on',
+        'chat_orchestration_completeness_max_corrections': _clamped(
+            'chat_orchestration_completeness_max_corrections', 2, 0, 5,
+        ),
+        'enable_chat_orchestration_actions': (
+            form_data.get('enable_chat_orchestration_actions') == 'on'
+        ),
+        'enable_chat_orchestration_workflows': (
+            form_data.get('enable_chat_orchestration_workflows') == 'on'
+        ),
+        'enable_chat_orchestration_workflow_runs': (
+            form_data.get('enable_chat_orchestration_workflow_runs') == 'on'
+        ),
+        'enable_chat_orchestration_workflow_run_wait': (
+            form_data.get('enable_chat_orchestration_workflow_run_wait') == 'on'
+        ),
+        'enable_chat_orchestration_workflow_handoff': (
+            form_data.get('enable_chat_orchestration_workflow_handoff') == 'on'
+        ),
+        'enable_workflow_plan_replay': (
+            form_data.get('enable_workflow_plan_replay') == 'on'
+        ),
+        'chat_orchestration_default_approval_mode': approval_mode,
+        'chat_orchestration_timed_approval_seconds': _clamped(
+            'chat_orchestration_timed_approval_seconds', 10, 3, 120
+        ),
+        'chat_orchestration_allow_user_approval_override': (
+            form_data.get('chat_orchestration_allow_user_approval_override') == 'on'
+        ),
+        'chat_orchestration_show_manual_controls': (
+            form_data.get('chat_orchestration_show_manual_controls') == 'on'
+        ),
+        'chat_orchestration_enabled_capabilities': selected,
+        'chat_orchestration_max_steps': _clamped('chat_orchestration_max_steps', 8, 1, 30),
+        'chat_orchestration_max_replans': _clamped('chat_orchestration_max_replans', 2, 0, 5),
+        'chat_orchestration_step_timeout_seconds': _clamped(
+            'chat_orchestration_step_timeout_seconds', 180, 30, 1800
+        ),
+        'chat_orchestration_total_timeout_seconds': _clamped(
+            'chat_orchestration_total_timeout_seconds', 900, 60, 7200
+        ),
+        'chat_orchestration_ledger_max_runs': _clamped(
+            'chat_orchestration_ledger_max_runs', 10, 0, 50
+        ),
+        'chat_orchestration_ledger_max_bytes': _clamped(
+            'chat_orchestration_ledger_max_bytes', 16384, 1024, 131072
+        ),
+        'chat_orchestration_max_workflows_per_user': _clamped(
+            'chat_orchestration_max_workflows_per_user', 20, 1, 100
+        ),
+        'chat_orchestration_max_workflow_handoffs_per_day': _clamped(
+            'chat_orchestration_max_workflow_handoffs_per_day', 5, 1, 100
+        ),
+        'chat_orchestration_workflow_run_wait_max_seconds': _clamped(
+            'chat_orchestration_workflow_run_wait_max_seconds', 300, 60, 1800
+        ),
+        'chat_orchestration_planner_deployment': str(
+            form_data.get('chat_orchestration_planner_deployment') or ''
+        ).strip(),
+        'chat_orchestration_planner_model_id': str(
+            form_data.get('chat_orchestration_planner_model_id') or ''
+        ).strip(),
+        'chat_orchestration_planner_model_endpoint_id': str(
+            form_data.get('chat_orchestration_planner_model_endpoint_id') or ''
+        ).strip(),
+        'chat_orchestration_planner_model_provider': str(
+            form_data.get('chat_orchestration_planner_model_provider') or ''
+        ).strip(),
+    }
+
+
 def register_route_frontend_admin_settings(bp):
     @bp.route('/api/admin/settings/inbound-mcp/easy-auth-check', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -540,7 +660,18 @@ def register_route_frontend_admin_settings(bp):
     @login_required
     @admin_required
     def admin_settings():
-        settings = get_settings()
+        try:
+            settings = get_settings()
+            if not isinstance(settings, dict):
+                return "Admin settings are temporarily unavailable. Try again later.", 503
+            settings = copy.deepcopy(settings)
+        except Exception as exc:
+            log_event(
+                "[AI_CONNECTIONS] Admin settings could not be read",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return "Admin settings are temporarily unavailable. Try again later.", 503
         settings['document_action_capabilities'] = normalize_document_action_capabilities(settings)
         admin_user = session.get('user', {})
         admin_email = admin_user.get('preferred_username', admin_user.get('email', 'unknown'))
@@ -582,12 +713,12 @@ def register_route_frontend_admin_settings(bp):
                 'created_at': None
             }
 
-        normalized_endpoints, endpoints_changed = normalize_model_endpoints(settings.get('model_endpoints', []))
-        if endpoints_changed:
-            if update_settings({'model_endpoints': normalized_endpoints}, expected_etag=settings.get('_etag')):
-                settings = get_settings()
+        try:
+            normalized_endpoints, _ = normalize_model_endpoints(settings.get('model_endpoints', []))
+        except (AIConnectionError, ModelTokenBudgetError) as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 400
         settings['model_endpoints'] = normalized_endpoints
-        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints)
+        frontend_model_endpoints = sanitize_model_endpoints_for_frontend(normalized_endpoints, catalog_settings=settings)
 
         # (get_settings should handle this, but explicit check is safe)
         if 'require_member_of_create_group' not in settings:
@@ -608,6 +739,10 @@ def register_route_frontend_admin_settings(bp):
             settings['require_member_of_control_center_admin'] = False
         if 'require_member_of_feedback_admin' not in settings:
             settings['require_member_of_feedback_admin'] = False
+        if 'enable_admin_review_ai_assistant' not in settings:
+            settings['enable_admin_review_ai_assistant'] = False
+        if 'admin_review_ai_guidance' not in settings:
+            settings['admin_review_ai_guidance'] = ''
         if 'control_center_auto_refresh_enabled' not in settings:
             settings['control_center_auto_refresh_enabled'] = True
         control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
@@ -802,6 +937,19 @@ def register_route_frontend_admin_settings(bp):
             settings['allow_user_workflows'] = False
         if 'require_member_of_workflow_user' not in settings:
             settings['require_member_of_workflow_user'] = False
+        if 'enable_workflow_ai_assistant' not in settings:
+            settings['enable_workflow_ai_assistant'] = True
+        for scope in ('workflow', 'chat_orchestration'):
+            settings.setdefault(f'enable_{scope}_completeness_check', True)
+            settings.setdefault(f'{scope}_completeness_max_corrections', 2)
+        if 'enable_agent_ai_assistant' not in settings:
+            settings['enable_agent_ai_assistant'] = True
+        if 'enable_action_ai_assistant' not in settings:
+            settings['enable_action_ai_assistant'] = True
+        if 'enable_chat_workflow_results' not in settings:
+            settings['enable_chat_workflow_results'] = False
+        if 'enable_workflow_alert_sounds' not in settings:
+            settings['enable_workflow_alert_sounds'] = True
         if 'allow_group_workflows' not in settings:
             settings['allow_group_workflows'] = False
         if 'require_group_assignment_for_group_workflows' not in settings:
@@ -947,56 +1095,10 @@ def register_route_frontend_admin_settings(bp):
 
             # Check for application updates
             current_version = current_app.config['VERSION']
-            update_available = False
-            latest_version = None
             download_url = "https://github.com/microsoft/simplechat/releases"
-            
-            # Only check for updates every 24 hours at most
-            last_check_time = settings.get('last_update_check_time')
-            check_needed = last_check_time is None or (
-                datetime.now(timezone.utc) - 
-                datetime.fromisoformat(last_check_time)
-            ).total_seconds() > 86400  # 24 hours in seconds
-            
-            if check_needed:
-                try:
-                    # Fetch latest release from GitHub
-                    response = requests.get(
-                        "https://github.com/microsoft/simplechat/releases", 
-                        timeout=3
-                    )
-                    if response.status_code == 200:
-                        # Extract the latest version
-                        latest_version = extract_latest_version_from_html(response.text)
-                        
-                        # Store the results in settings for persistence
-                        new_settings = {
-                            'last_update_check_time': datetime.now(timezone.utc).isoformat(),
-                            'latest_version_available': latest_version
-                        }
-                        
-                        # Compare with current version
-                        if _is_update_version_newer(latest_version, current_version):
-                            new_settings['update_available'] = True
-                        else:
-                            new_settings['update_available'] = False
-                        
-                        # Update settings to persist these values
-                        if update_settings(new_settings):
-                            settings = get_settings()
-                except Exception as e:
-                    print(f"Error checking for updates: {e}")
-                    log_event(f"Error checking for updates: {e}", level=logging.ERROR)
-            
-            # Get the persisted values for template rendering
-            latest_version = settings.get('latest_version_available')
-            update_available = _is_update_version_newer(latest_version, current_version)
-            if settings.get('update_available') != update_available:
-                try:
-                    if update_settings({'update_available': update_available}):
-                        settings = get_settings()
-                except Exception as e:
-                    log_event(f"Error normalizing cached update availability: {e}", level=logging.WARNING)
+            update_status = get_application_update_status(settings, current_version)
+            latest_version = update_status['latest_version']
+            update_available = update_status['update_available']
             
             # Get user settings for profile and navigation
             user_id = get_current_user_id()
@@ -1013,11 +1115,13 @@ def register_route_frontend_admin_settings(bp):
             settings_for_template = redact_admin_settings_secrets_for_form(settings_for_template)
             settings_for_template['enhanced_citations_storage_status'] = get_enhanced_citations_storage_status()
             inbound_mcp_easy_auth_script_context = get_inbound_mcp_easy_auth_script_context(settings_for_template)
+            orchestration_capabilities = orchestration_admin_capabilities()
 
             return render_template(
                 'admin_settings.html',
                 app_settings=settings_for_template,
                 settings=settings_for_template,
+                custom_model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
                 azure_environment=AZURE_ENVIRONMENT,
                 content_understanding_supported=is_content_understanding_supported_environment(),
                 content_understanding_api_version_default=CONTENT_UNDERSTANDING_API_VERSION_DEFAULT,
@@ -1027,6 +1131,7 @@ def register_route_frontend_admin_settings(bp):
                 default_video_indexer_arm_api_version=DEFAULT_VIDEO_INDEXER_ARM_API_VERSION,
                 user_settings=user_settings,
                 update_available=update_available,
+                update_status=update_status,
                 latest_version=latest_version,
                 download_url=download_url,
                 support_latest_feature_catalog=get_support_latest_feature_catalog(),
@@ -1048,6 +1153,13 @@ def register_route_frontend_admin_settings(bp):
                 inbound_mcp_easy_auth_script_context=inbound_mcp_easy_auth_script_context,
                 inbound_mcp_easy_auth_script=build_inbound_mcp_easy_auth_script(inbound_mcp_easy_auth_script_context),
                 is_vision_capable_model=is_vision_capable_model,
+                orchestration_capabilities=orchestration_capabilities,
+                # A saved list may still name a retired capability; show its replacement
+                # selected so saving the form keeps it.
+                orchestration_selected_capabilities=(
+                    effective_capability_ids(settings.get('chat_orchestration_enabled_capabilities'))
+                    or [capability['id'] for capability in orchestration_capabilities]
+                ),
                 inbound_mcp_tools=get_inbound_mcp_tool_registry(),
                 # You don't need to pass deployments separately if they are added to settings['..._model']['all']
                 # gpt_deployments=gpt_deployments,
@@ -1061,6 +1173,37 @@ def register_route_frontend_admin_settings(bp):
             settings_etag = form_data.get('admin_settings_etag', '')
             if not settings_etag or settings_etag != settings.get('_etag'):
                 flash("Settings changed since this page was loaded. Review the latest settings and try again.", "warning")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+            try:
+                workflow_max_loop_items = (
+                    validate_workflow_max_loop_items(form_data['workflow_max_loop_items'])
+                    if 'workflow_max_loop_items' in form_data
+                    else get_workflow_max_loop_items(settings)
+                )
+            except WorkflowLoopLimitError as error:
+                flash(error.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
+            try:
+                workflow_max_repeat_iterations = (
+                    validate_workflow_max_repeat_iterations(form_data['workflow_max_repeat_iterations'])
+                    if 'workflow_max_repeat_iterations' in form_data
+                    else get_workflow_max_repeat_iterations(settings)
+                )
+            except WorkflowLoopLimitError as error:
+                flash(error.public_message, 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+
+            try:
+                workflow_min_schedule_interval_seconds = (
+                    validate_workflow_min_schedule_interval_seconds(
+                        form_data['workflow_min_schedule_interval_seconds']
+                    )
+                    if 'workflow_min_schedule_interval_seconds' in form_data
+                    else get_workflow_min_schedule_interval_seconds(settings)
+                )
+            except WorkflowLoopLimitError as error:
+                flash(error.public_message, 'danger')
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             def admin_secret(field_name, form_field_name=None):
@@ -1125,7 +1268,12 @@ def register_route_frontend_admin_settings(bp):
                 )
             )
             max_file_size_mb = int(form_data.get('max_file_size_mb', 16))
-            conversation_history_limit = int(form_data.get('conversation_history_limit', 10))
+            conversation_history_limit = max(1, parse_admin_int(
+                form_data.get('conversation_history_limit'),
+                settings.get('conversation_history_limit', 10),
+                'conversation_history_limit',
+                10,
+            ))
             enable_idle_timeout = form_data.get('enable_idle_timeout') == 'on'
             idle_timeout_minutes = max(10, parse_admin_int(form_data.get('idle_timeout_minutes'), settings.get('idle_timeout_minutes', 30), 'idle_timeout_minutes', 30))
             idle_warning_minutes = max(0, parse_admin_int(form_data.get('idle_warning_minutes'), settings.get('idle_warning_minutes', 28), 'idle_warning_minutes', 28))
@@ -1162,6 +1310,7 @@ def register_route_frontend_admin_settings(bp):
             require_member_of_create_public_workspace = form_data.get('require_member_of_create_public_workspace') == 'on'
             require_member_of_chat_file_upload_user = form_data.get('require_member_of_chat_file_upload_user') == 'on'
             require_member_of_workflow_user = form_data.get('require_member_of_workflow_user') == 'on'
+            chat_orchestration_settings = normalize_chat_orchestration_settings(form_data, settings)
             group_workflow_allowed_group_ids = normalize_group_workflow_allowed_group_ids(
                 form_data.get('group_workflow_allowed_group_ids', '')
             )
@@ -1241,35 +1390,22 @@ def register_route_frontend_admin_settings(bp):
                 'control_center_auto_refresh_timezone',
                 settings.get('control_center_auto_refresh_timezone', 'America/New_York'),
             )
-            control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule({
-                'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
-                'control_center_auto_refresh_hour': settings.get('control_center_auto_refresh_hour', 2),
-                'control_center_auto_refresh_minute': settings.get('control_center_auto_refresh_minute', 0),
-                'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
-            })
-            existing_control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(settings)
-            existing_control_center_auto_refresh_enabled = settings.get('control_center_auto_refresh_enabled', True)
-            existing_control_center_auto_refresh_next_run = settings.get('control_center_auto_refresh_next_run')
-            control_center_auto_refresh_schedule_changed = (
-                control_center_auto_refresh_enabled != existing_control_center_auto_refresh_enabled or
-                control_center_auto_refresh_schedule['time'] != existing_control_center_auto_refresh_schedule['time'] or
-                control_center_auto_refresh_schedule['timezone'] != existing_control_center_auto_refresh_schedule['timezone']
+            # Shared with the V2 settings PATCH, so both surfaces decide the same way
+            # whether a save moves the next scheduled refresh.
+            control_center_auto_refresh_settings = resolve_control_center_auto_refresh_settings(
+                {
+                    'control_center_auto_refresh_enabled': control_center_auto_refresh_enabled,
+                    'control_center_auto_refresh_time': incoming_control_center_auto_refresh_time,
+                    'control_center_auto_refresh_timezone': incoming_control_center_auto_refresh_timezone,
+                },
+                settings,
             )
-            if control_center_auto_refresh_enabled:
-                if control_center_auto_refresh_schedule_changed or not existing_control_center_auto_refresh_next_run:
-                    control_center_auto_refresh_next_run = calculate_next_control_center_auto_refresh_run(
-                        {
-                            'control_center_auto_refresh_time': control_center_auto_refresh_schedule['time'],
-                            'control_center_auto_refresh_hour': control_center_auto_refresh_schedule['hour'],
-                            'control_center_auto_refresh_minute': control_center_auto_refresh_schedule['minute'],
-                            'control_center_auto_refresh_timezone': control_center_auto_refresh_schedule['timezone'],
-                        },
-                        current_time=datetime.now(timezone.utc),
-                    ).isoformat()
-                else:
-                    control_center_auto_refresh_next_run = existing_control_center_auto_refresh_next_run
-            else:
-                control_center_auto_refresh_next_run = None
+            control_center_auto_refresh_schedule = get_control_center_auto_refresh_schedule(
+                control_center_auto_refresh_settings
+            )
+            control_center_auto_refresh_next_run = control_center_auto_refresh_settings[
+                'control_center_auto_refresh_next_run'
+            ]
 
             web_search_consent_message = (
                 "When you use Grounding with Bing Search, your customer data is transferred "
@@ -1608,6 +1744,33 @@ def register_route_frontend_admin_settings(bp):
                             10,
                         ),
                     },
+                    'merge': {
+                        'enabled': form_data.get('document_action_merge_enabled') == 'on',
+                        'chat_max_documents': parse_admin_int(
+                            form_data.get('document_action_merge_chat_max_documents'),
+                            current_document_action_capabilities.get('merge', {}).get('chat_max_documents', 10),
+                            'document_action_merge_chat_max_documents',
+                            10,
+                        ),
+                        'workflow_max_documents': parse_admin_int(
+                            form_data.get('document_action_merge_workflow_max_documents'),
+                            current_document_action_capabilities.get('merge', {}).get('workflow_max_documents', 100),
+                            'document_action_merge_workflow_max_documents',
+                            100,
+                        ),
+                        'chat_max_rows': parse_admin_int(
+                            form_data.get('document_action_merge_chat_max_rows'),
+                            current_document_action_capabilities.get('merge', {}).get('chat_max_rows', 250000),
+                            'document_action_merge_chat_max_rows',
+                            250000,
+                        ),
+                        'workflow_max_rows': parse_admin_int(
+                            form_data.get('document_action_merge_workflow_max_rows'),
+                            current_document_action_capabilities.get('merge', {}).get('workflow_max_rows', 1000000),
+                            'document_action_merge_workflow_max_rows',
+                            1000000,
+                        ),
+                    },
                 }
             })
 
@@ -1650,8 +1813,8 @@ def register_route_frontend_admin_settings(bp):
                 image_gen_model_obj = settings.get('image_gen_model', {'selected': [], 'all': []}) # Fallback
 
             requested_enable_multi_model_endpoints = form_data.get('enable_multi_model_endpoints') == 'on'
-            model_endpoints_json = form_data.get('model_endpoints_json', '[]')
             existing_model_endpoints = settings.get('model_endpoints', []) or []
+            model_endpoints_json = form_data.get('model_endpoints_json', json.dumps(existing_model_endpoints))
             parsed_model_endpoints = []
             try:
                 parsed_model_endpoints_raw = json.loads(model_endpoints_json) if model_endpoints_json else []
@@ -1660,9 +1823,9 @@ def register_route_frontend_admin_settings(bp):
                 else:
                     raise ValueError("Invalid format: model_endpoints must be a list.")
             except (json.JSONDecodeError, ValueError) as e:
-                print(f"Error processing model_endpoints_json: {e}")
-                flash(f"Error processing model endpoints: {e}. Changes for endpoints not saved.", 'danger')
-                parsed_model_endpoints = settings.get('model_endpoints', [])
+                log_event("[MODEL_ENDPOINT] Invalid model endpoint settings payload.", level=logging.WARNING)
+                flash('Model endpoint data is invalid. No settings were saved.', 'danger')
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_multi_endpoints_enabled = settings.get('enable_multi_model_endpoints', False)
             enable_multi_model_endpoints = coerce_multi_model_endpoint_enablement(
@@ -1689,51 +1852,10 @@ def register_route_frontend_admin_settings(bp):
             migration_notice['message'] = ''
             migrated_at = settings.get('multi_endpoint_migrated_at')
 
-            if should_migrate_endpoints and not parsed_model_endpoints:
-                default_endpoint_id = str(uuid.uuid4())
-                migrated_models = []
-                for model in gpt_model_obj.get('selected', []):
-                    deployment_name = model.get('deploymentName') or model.get('deployment') or ''
-                    model_name = model.get('modelName') or model.get('name') or ''
-                    if not deployment_name:
-                        continue
-                    migrated_models.append({
-                        'id': str(uuid.uuid4()),
-                        'deploymentName': deployment_name,
-                        'modelName': model_name,
-                        'displayName': deployment_name,
-                        'description': '',
-                        'enabled': True
-                    })
-
-                legacy_auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
-                migrated_auth_type = 'api_key' if legacy_auth_type == 'key' else legacy_auth_type
-
-                parsed_model_endpoints = [{
-                    'id': default_endpoint_id,
-                    'name': 'Migrated Azure OpenAI Endpoint',
-                    'provider': 'aoai',
-                    'enabled': True,
-                    'auth': {
-                        'type': migrated_auth_type,
-                        'managed_identity_type': 'system_assigned',
-                        'managed_identity_client_id': '',
-                        'tenant_id': '',
-                        'client_id': '',
-                        'client_secret': '',
-                        'api_key': settings.get('azure_openai_gpt_key', '')
-                    },
-                    'connection': {
-                        'endpoint': settings.get('azure_openai_gpt_endpoint', ''),
-                        'api_version': settings.get('azure_openai_gpt_api_version', '')
-                    },
-                    'management': {
-                        'subscription_id': settings.get('azure_openai_gpt_subscription_id', ''),
-                        'resource_group': settings.get('azure_openai_gpt_resource_group', ''),
-                        'location': ''
-                    },
-                    'models': migrated_models
-                }]
+            if should_migrate_endpoints and not filter_model_endpoints_by_capability(parsed_model_endpoints, "chat"):
+                migrated_endpoints = build_migrated_model_endpoints_from_legacy(settings)
+                parsed_model_endpoints = list(parsed_model_endpoints) + migrated_endpoints
+                migrated_models = migrated_endpoints[0]['models'] if migrated_endpoints else []
                 debug_print(f"Migrated {len(migrated_models)} models to new multi-endpoint configuration.")
                 debug_print(
                     f"Migrated Model Endpoints: {json.dumps([redact_model_endpoint_secret_values(endpoint) for endpoint in parsed_model_endpoints], indent=2)}"
@@ -1757,7 +1879,7 @@ def register_route_frontend_admin_settings(bp):
             try:
                 parsed_model_endpoints = merge_model_endpoints_with_existing(parsed_model_endpoints, existing_model_endpoints)
                 parsed_model_endpoints, _ = normalize_model_endpoints(parsed_model_endpoints)
-            except ModelTokenBudgetError as exc:
+            except (ModelTokenBudgetError, AIConnectionError) as exc:
                 log_event(
                     "[MODEL_ENDPOINT] Model token-budget validation failed",
                     extra={"exception_type": type(exc).__name__, "code": exc.code},
@@ -1772,6 +1894,9 @@ def register_route_frontend_admin_settings(bp):
             custom_endpoint_validation_settings['allow_insecure_custom_model_endpoints'] = (
                 form_data.get('allow_insecure_custom_model_endpoints') == 'on'
             )
+            custom_endpoint_validation_settings['custom_model_endpoint_ca_bundle_path'] = (
+                form_data.get('custom_model_endpoint_ca_bundle_path', '').strip()
+            )
             try:
                 validate_custom_model_endpoints(
                     parsed_model_endpoints,
@@ -1783,7 +1908,7 @@ def register_route_frontend_admin_settings(bp):
                     extra={"exception_type": type(exc).__name__},
                     level=logging.WARNING,
                 )
-                flash(str(exc), 'danger')
+                flash(exc.public_message, 'danger')
                 return redirect(url_for('frontend_admin_settings.admin_settings'))
 
             existing_endpoints_by_id = {
@@ -1791,41 +1916,11 @@ def register_route_frontend_admin_settings(bp):
                 for endpoint in existing_model_endpoints
                 if isinstance(endpoint, dict) and endpoint.get('id')
             }
-            parsed_model_endpoints = [
-                keyvault_model_endpoint_save_helper(
-                    endpoint,
-                    endpoint.get('id'),
-                    scope='global',
-                    existing_endpoint=existing_endpoints_by_id.get(endpoint.get('id')),
-                )
-                for endpoint in parsed_model_endpoints
-            ]
-
-            for endpoint in parsed_model_endpoints:
-                if not isinstance(endpoint, dict):
-                    continue
-                endpoint_id = endpoint.get('id')
-                if not endpoint_id:
-                    continue
-                keyvault_model_endpoint_cleanup_helper(
-                    existing_endpoints_by_id.get(endpoint_id),
-                    endpoint,
-                    endpoint_id,
-                    scope='global',
-                )
-
             saved_endpoint_ids = {
                 endpoint.get('id')
                 for endpoint in parsed_model_endpoints
                 if isinstance(endpoint, dict) and endpoint.get('id')
             }
-            for endpoint in existing_model_endpoints:
-                if not isinstance(endpoint, dict):
-                    continue
-                endpoint_id = endpoint.get('id')
-                if endpoint_id and endpoint_id not in saved_endpoint_ids:
-                    keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope='global')
-
             default_model_selection_json = form_data.get('default_model_selection_json', '{}')
             parsed_default_model_selection = {}
             try:
@@ -1841,53 +1936,15 @@ def register_route_frontend_admin_settings(bp):
                 flash(f"Error processing default model selection: {e}. Changes not saved.", 'danger')
                 parsed_default_model_selection = settings.get('default_model_selection', {})
 
-            normalized_default_model_selection = {
-                'endpoint_id': str(parsed_default_model_selection.get('endpoint_id') or '').strip(),
-                'model_id': str(parsed_default_model_selection.get('model_id') or '').strip(),
-                'provider': str(parsed_default_model_selection.get('provider') or '').strip().lower()
-            }
-
-            if not enable_multi_model_endpoints:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
-            elif normalized_default_model_selection['endpoint_id'] and normalized_default_model_selection['model_id']:
-                endpoint_cfg = next(
-                    (e for e in parsed_model_endpoints if e.get('id') == normalized_default_model_selection['endpoint_id']),
-                    None
+            normalized_default_model_selection, default_selection_warning = (
+                resolve_default_model_selection(
+                    parsed_default_model_selection,
+                    parsed_model_endpoints,
+                    multi_endpoint_enabled=enable_multi_model_endpoints,
                 )
-                if not endpoint_cfg or not endpoint_cfg.get('enabled', True):
-                    flash('Default model endpoint is not available. Please select a valid endpoint.', 'warning')
-                    normalized_default_model_selection = {
-                        'endpoint_id': '',
-                        'model_id': '',
-                        'provider': ''
-                    }
-                else:
-                    models = endpoint_cfg.get('models', []) or []
-                    model_cfg = next(
-                        (m for m in models if m.get('id') == normalized_default_model_selection['model_id']),
-                        None
-                    )
-                    if not model_cfg or not model_cfg.get('enabled', True):
-                        flash('Default model is not available. Please select a valid model.', 'warning')
-                        normalized_default_model_selection = {
-                            'endpoint_id': '',
-                            'model_id': '',
-                            'provider': ''
-                        }
-                    else:
-                        endpoint_provider = (endpoint_cfg.get('provider') or '').strip().lower()
-                        if endpoint_provider:
-                            normalized_default_model_selection['provider'] = endpoint_provider
-            else:
-                normalized_default_model_selection = {
-                    'endpoint_id': '',
-                    'model_id': '',
-                    'provider': ''
-                }
+            )
+            if default_selection_warning:
+                flash(default_selection_warning, 'warning')
 
             enable_default_model_for_new_conversations = (
                 enable_multi_model_endpoints
@@ -2027,124 +2084,39 @@ def register_route_frontend_admin_settings(bp):
             enable_debug_logging = form_data.get('enable_debug_logging') == 'on'
             
             # --- Debug Logging Timer Settings ---
-            debug_logging_timer_enabled = form_data.get('enable_debug_logging_timer') == 'on'
-            debug_timer_value = int(form_data.get('debug_timer_value', 1))
-            debug_timer_unit = form_data.get('debug_timer_unit', 'hours')
-            debug_logging_turnoff_time = None
-            
-            # Validate debug timer values
-            timer_limits = {
-                'minutes': (1, 120),
-                'hours': (1, 24),
-                'days': (1, 7),
-                'weeks': (1, 52)
-            }
-            
-            if debug_timer_unit in timer_limits:
-                min_val, max_val = timer_limits[debug_timer_unit]
-                if debug_timer_value < min_val or debug_timer_value > max_val:
-                    debug_timer_value = min(max(debug_timer_value, min_val), max_val)
-            
-            # Get existing timer settings to check if they've changed
-            existing_debug_timer_enabled = settings.get('debug_logging_timer_enabled', False)
-            existing_debug_timer_value = settings.get('debug_timer_value', 1)
-            existing_debug_timer_unit = settings.get('debug_timer_unit', 'hours')
-            existing_debug_logging_enabled = settings.get('enable_debug_logging', False)
-            existing_debug_turnoff_time = settings.get('debug_logging_turnoff_time')
-            
-            # Determine if timer settings have changed
-            timer_settings_changed = (
-                debug_logging_timer_enabled != existing_debug_timer_enabled or
-                debug_timer_value != existing_debug_timer_value or
-                debug_timer_unit != existing_debug_timer_unit
+            # The turnoff rules are shared with the V2 settings PATCH and the background
+            # checker, so a timer behaves the same whichever surface saved it.
+            debug_logging_timer = resolve_logging_timer_settings(
+                'debug',
+                {
+                    'enable_debug_logging': enable_debug_logging,
+                    'debug_logging_timer_enabled': form_data.get('enable_debug_logging_timer') == 'on',
+                    'debug_timer_value': form_data.get('debug_timer_value', 1),
+                    'debug_timer_unit': form_data.get('debug_timer_unit', 'hours'),
+                },
+                settings,
             )
-            debug_logging_newly_enabled = enable_debug_logging and not existing_debug_logging_enabled
-            
-            # Calculate debug logging turnoff time if timer is enabled and debug logging is on
-            if enable_debug_logging and debug_logging_timer_enabled:
-                # Only recalculate turnoff time if:
-                # 1. Timer settings have changed (value, unit, or enabled state), OR
-                # 2. Debug logging was just enabled, OR
-                # 3. No existing turnoff time exists
-                if timer_settings_changed or debug_logging_newly_enabled or not existing_debug_turnoff_time:
-                    now = datetime.now()
-                    
-                    if debug_timer_unit == 'minutes':
-                        delta = timedelta(minutes=debug_timer_value)
-                    elif debug_timer_unit == 'hours':
-                        delta = timedelta(hours=debug_timer_value)
-                    elif debug_timer_unit == 'days':
-                        delta = timedelta(days=debug_timer_value)
-                    elif debug_timer_unit == 'weeks':
-                        delta = timedelta(weeks=debug_timer_value)
-                    else:
-                        delta = timedelta(hours=1)  # default fallback
-                    
-                    debug_logging_turnoff_time = now + delta
-                    # Convert to ISO string for JSON serialization
-                    debug_logging_turnoff_time_str = debug_logging_turnoff_time.isoformat()
-                else:
-                    # Preserve existing turnoff time
-                    debug_logging_turnoff_time_str = existing_debug_turnoff_time
-            else:
-                debug_logging_turnoff_time_str = None
+            debug_logging_timer_enabled = debug_logging_timer['debug_logging_timer_enabled']
+            debug_timer_value = debug_logging_timer['debug_timer_value']
+            debug_timer_unit = debug_logging_timer['debug_timer_unit']
+            debug_logging_turnoff_time_str = debug_logging_timer['debug_logging_turnoff_time']
 
             # --- File Processing Logs Timer Settings ---
-            file_processing_logs_timer_enabled = form_data.get('enable_file_processing_logs_timer') == 'on'
-            file_timer_value = int(form_data.get('file_timer_value', 1))
-            file_timer_unit = form_data.get('file_timer_unit', 'hours')
-            file_processing_logs_turnoff_time = None
             enable_file_processing_logs = form_data.get('enable_file_processing_logs') == 'on'
-            
-            # Validate file timer values
-            if file_timer_unit in timer_limits:
-                min_val, max_val = timer_limits[file_timer_unit]
-                if file_timer_value < min_val or file_timer_value > max_val:
-                    file_timer_value = min(max(file_timer_value, min_val), max_val)
-            
-            # Get existing file timer settings to check if they've changed
-            existing_file_timer_enabled = settings.get('file_processing_logs_timer_enabled', False)
-            existing_file_timer_value = settings.get('file_timer_value', 1)
-            existing_file_timer_unit = settings.get('file_timer_unit', 'hours')
-            existing_file_processing_logs_enabled = settings.get('enable_file_processing_logs', False)
-            existing_file_turnoff_time = settings.get('file_processing_logs_turnoff_time')
-            
-            # Determine if timer settings have changed
-            file_timer_settings_changed = (
-                file_processing_logs_timer_enabled != existing_file_timer_enabled or
-                file_timer_value != existing_file_timer_value or
-                file_timer_unit != existing_file_timer_unit
+            file_processing_logs_timer = resolve_logging_timer_settings(
+                'file',
+                {
+                    'enable_file_processing_logs': enable_file_processing_logs,
+                    'file_processing_logs_timer_enabled': form_data.get('enable_file_processing_logs_timer') == 'on',
+                    'file_timer_value': form_data.get('file_timer_value', 1),
+                    'file_timer_unit': form_data.get('file_timer_unit', 'hours'),
+                },
+                settings,
             )
-            file_processing_logs_newly_enabled = enable_file_processing_logs and not existing_file_processing_logs_enabled
-            
-            # Calculate file processing logs turnoff time if timer is enabled and file processing logs are on
-            if enable_file_processing_logs and file_processing_logs_timer_enabled:
-                # Only recalculate turnoff time if:
-                # 1. Timer settings have changed (value, unit, or enabled state), OR
-                # 2. File processing logs was just enabled, OR
-                # 3. No existing turnoff time exists
-                if file_timer_settings_changed or file_processing_logs_newly_enabled or not existing_file_turnoff_time:
-                    now = datetime.now()
-                    
-                    if file_timer_unit == 'minutes':
-                        delta = timedelta(minutes=file_timer_value)
-                    elif file_timer_unit == 'hours':
-                        delta = timedelta(hours=file_timer_value)
-                    elif file_timer_unit == 'days':
-                        delta = timedelta(days=file_timer_value)
-                    elif file_timer_unit == 'weeks':
-                        delta = timedelta(weeks=file_timer_value)
-                    else:
-                        delta = timedelta(hours=1)  # default fallback
-                    
-                    file_processing_logs_turnoff_time = now + delta
-                    # Convert to ISO string for JSON serialization
-                    file_processing_logs_turnoff_time_str = file_processing_logs_turnoff_time.isoformat()
-                else:
-                    # Preserve existing turnoff time
-                    file_processing_logs_turnoff_time_str = existing_file_turnoff_time
-            else:
-                file_processing_logs_turnoff_time_str = None
+            file_processing_logs_timer_enabled = file_processing_logs_timer['file_processing_logs_timer_enabled']
+            file_timer_value = file_processing_logs_timer['file_timer_value']
+            file_timer_unit = file_processing_logs_timer['file_timer_unit']
+            file_processing_logs_turnoff_time_str = file_processing_logs_timer['file_processing_logs_turnoff_time']
 
             # --- Retention Policy Settings ---
             enable_retention_policy_personal = form_data.get('enable_retention_policy_personal') == 'on'
@@ -2363,6 +2335,54 @@ def register_route_frontend_admin_settings(bp):
                     120,
                 ),
             )
+            model_stream_read_timeout_seconds = max(
+                30,
+                min(
+                    600,
+                    parse_admin_int(
+                        form_data.get('model_stream_read_timeout_seconds'),
+                        settings.get('model_stream_read_timeout_seconds', 120),
+                        'model_stream_read_timeout_seconds',
+                        120,
+                    ),
+                ),
+            )
+            document_action_timeout_seconds = max(
+                60,
+                min(
+                    900,
+                    parse_admin_int(
+                        form_data.get('document_action_timeout_seconds'),
+                        settings.get('document_action_timeout_seconds', 300),
+                        'document_action_timeout_seconds',
+                        300,
+                    ),
+                ),
+            )
+            stream_disconnect_grace_seconds = max(
+                0,
+                min(
+                    300,
+                    parse_admin_int(
+                        form_data.get('stream_disconnect_grace_seconds'),
+                        settings.get('stream_disconnect_grace_seconds', 60),
+                        'stream_disconnect_grace_seconds',
+                        60,
+                    ),
+                ),
+            )
+            model_call_max_retries = max(
+                0,
+                min(
+                    3,
+                    parse_admin_int(
+                        form_data.get('model_call_max_retries'),
+                        settings.get('model_call_max_retries', 1),
+                        'model_call_max_retries',
+                        1,
+                    ),
+                ),
+            )
             dai_debug_enabled = bool(settings.get('enable_dai_debug', False))
             document_access_index_shadow_validation_enabled = (
                 form_data.get('enable_document_access_index_shadow_validation') == 'on'
@@ -2471,8 +2491,10 @@ def register_route_frontend_admin_settings(bp):
                 return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
                 **m365_settings,
+                **chat_content_form_updates(form_data, settings),
                 # Logging
                 'enable_appinsights_global_logging': enable_appinsights_global_logging,
+                'enable_mixed_source_development_telemetry': form_data.get('enable_mixed_source_development_telemetry') == 'on',
                 'enable_debug_logging': enable_debug_logging,
                 'debug_logging_timer_enabled': debug_logging_timer_enabled,
                 'debug_timer_value': debug_timer_value,
@@ -2504,6 +2526,8 @@ def register_route_frontend_admin_settings(bp):
                 'enable_swagger': form_data.get('enable_swagger') == 'on',
                 'enable_semantic_kernel': form_data.get('enable_semantic_kernel') == 'on',
                 'per_user_semantic_kernel': form_data.get('per_user_semantic_kernel') == 'on',
+                'enable_agent_ai_assistant': form_data.get('enable_agent_ai_assistant') == 'on',
+                'enable_action_ai_assistant': form_data.get('enable_action_ai_assistant') == 'on',
                 'enable_agent_template_gallery': form_data.get('enable_agent_template_gallery') == 'on',
                 'agent_templates_allow_user_submission': form_data.get('agent_templates_allow_user_submission') == 'on',
                 'agent_templates_require_approval': form_data.get('agent_templates_require_approval') == 'on',
@@ -2602,6 +2626,10 @@ def register_route_frontend_admin_settings(bp):
                 'redis_port': form_data.get('redis_port', '').strip(),
                 'enable_conversation_cache': form_data.get('enable_conversation_cache') == 'on',
                 'conversation_cache_ttl_seconds': conversation_cache_ttl_seconds,
+                'model_stream_read_timeout_seconds': model_stream_read_timeout_seconds,
+                'document_action_timeout_seconds': document_action_timeout_seconds,
+                'stream_disconnect_grace_seconds': stream_disconnect_grace_seconds,
+                'model_call_max_retries': model_call_max_retries,
 
                 # Document Access Index
                 'enable_document_access_index_container': True,
@@ -2632,11 +2660,23 @@ def register_route_frontend_admin_settings(bp):
                 'require_member_of_chat_file_upload_user': require_member_of_chat_file_upload_user,
                 'allow_user_workflows': form_data.get('allow_user_workflows') == 'on',
                 'require_member_of_workflow_user': require_member_of_workflow_user,
+                'enable_workflow_ai_assistant': form_data.get('enable_workflow_ai_assistant') == 'on',
+                'enable_workflow_completeness_check': form_data.get('enable_workflow_completeness_check') == 'on',
+                'workflow_completeness_max_corrections': min(5, max(0, safe_int_with_source(
+                    form_data.get('workflow_completeness_max_corrections'),
+                    settings.get('workflow_completeness_max_corrections', 2), 2,
+                )[0])),
+                'enable_chat_workflow_results': form_data.get('enable_chat_workflow_results') == 'on',
+                'enable_workflow_alert_sounds': form_data.get('enable_workflow_alert_sounds') == 'on',
                 'allow_group_workflows': form_data.get('allow_group_workflows') == 'on',
                 'require_group_assignment_for_group_workflows': form_data.get('require_group_assignment_for_group_workflows') == 'on',
                 'group_workflow_allowed_group_ids': group_workflow_allowed_group_ids,
                 'workflow_max_auto_invoke_attempts': workflow_max_auto_invoke_attempts,
                 'workflow_max_tasks': workflow_max_tasks,
+                'workflow_max_loop_items': workflow_max_loop_items,
+                'workflow_max_repeat_iterations': workflow_max_repeat_iterations,
+                'workflow_min_schedule_interval_seconds': workflow_min_schedule_interval_seconds,
+                **chat_orchestration_settings,
                 'allow_personal_workspace_file_downloads': form_data.get('allow_personal_workspace_file_downloads') == 'on',
                 'allow_group_workspace_file_downloads': form_data.get('allow_group_workspace_file_downloads') == 'on',
                 'require_group_assignment_for_file_downloads': form_data.get('require_group_assignment_for_file_downloads') == 'on',
@@ -2713,7 +2753,12 @@ def register_route_frontend_admin_settings(bp):
                 'enable_extract_meta_data': enable_extract_meta_data,
                 'enable_summarize_content_history_for_search': form_data.get('enable_summarize_content_history_for_search') == 'on',
                 'enable_summarize_content_history_beyond_conversation_history_limit': form_data.get('enable_summarize_content_history_beyond_conversation_history_limit') == 'on',
-                'number_of_historical_messages_to_summarize': int(form_data.get('number_of_historical_messages_to_summarize', 10)),
+                'number_of_historical_messages_to_summarize': min(100, max(1, parse_admin_int(
+                    form_data.get('number_of_historical_messages_to_summarize'),
+                    settings.get('number_of_historical_messages_to_summarize', 10),
+                    'number_of_historical_messages_to_summarize',
+                    10,
+                ))),
                 
                 # *** Document Classification ***
                 'enable_document_classification': enable_document_classification,
@@ -2748,6 +2793,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_enhanced_citations_mount': form_data.get('enable_enhanced_citations_mount') == 'on' and enable_enhanced_citations,
                 'enhanced_citations_mount': form_data.get('enhanced_citations_mount', '/view_documents').strip(),
                 'tabular_preview_max_blob_size_mb': int(form_data.get('tabular_preview_max_blob_size_mb', 200)),
+                'enable_mixed_source_relevance_candidates': form_data.get('enable_mixed_source_relevance_candidates') == 'on',
                 'enable_tabular_durable_run_confirmation': form_data.get('enable_tabular_durable_run_confirmation') == 'on',
                 'tabular_durable_run_confirmation_threshold_rows': max(1, parse_admin_int(
                     form_data.get('tabular_durable_run_confirmation_threshold_rows'),
@@ -2772,13 +2818,17 @@ def register_route_frontend_admin_settings(bp):
                 'office_docs_storage_account_blob_endpoint': admin_secret('office_docs_storage_account_blob_endpoint'),
                 'office_docs_storage_account_url': admin_secret('office_docs_storage_account_url'),
                 'office_docs_authentication_type': form_data.get('office_docs_authentication_type', 'key'),
-                'office_docs_key': form_data.get('office_docs_key', '').strip(),
+                # Storage account keys have no input anywhere in the form, so a bare
+                # '' default would overwrite the stored key on every save and break
+                # SAS signing for citation file access. Fall back to the stored value
+                # when the field is absent; an explicit empty submission still clears.
+                'office_docs_key': form_data.get('office_docs_key', settings.get('office_docs_key', '')).strip(),
                 'video_files_storage_account_url': admin_secret('video_files_storage_account_url'),
                 'video_files_authentication_type': form_data.get('video_files_authentication_type', 'key'),
-                'video_files_key': form_data.get('video_files_key', '').strip(),
+                'video_files_key': form_data.get('video_files_key', settings.get('video_files_key', '')).strip(),
                 'audio_files_storage_account_url': admin_secret('audio_files_storage_account_url'),
                 'audio_files_authentication_type': form_data.get('audio_files_authentication_type', 'key'),
-                'audio_files_key': form_data.get('audio_files_key', '').strip(),
+                'audio_files_key': form_data.get('audio_files_key', settings.get('audio_files_key', '')).strip(),
 
                 # Safety (Content Safety Direct & APIM)
                 'enable_content_safety': form_data.get('enable_content_safety') == 'on',
@@ -2793,6 +2843,10 @@ def register_route_frontend_admin_settings(bp):
                 'azure_apim_content_safety_subscription_key': admin_secret('azure_apim_content_safety_subscription_key'),
                 'require_member_of_safety_violation_admin': require_member_of_safety_violation_admin, # ADDED
                 'require_member_of_feedback_admin': require_member_of_feedback_admin, # ADDED
+                'enable_admin_review_ai_assistant': form_data.get('enable_admin_review_ai_assistant') == 'on',
+                'admin_review_ai_guidance': normalize_admin_review_guidance(
+                    form_data.get('admin_review_ai_guidance', settings.get('admin_review_ai_guidance', ''))
+                ),
 
                 # Feedback, Archiving & Thoughts
                 'enable_user_feedback': form_data.get('enable_user_feedback') == 'on',
@@ -2806,7 +2860,7 @@ def register_route_frontend_admin_settings(bp):
                 'enable_web_search': enable_web_search,
                 'web_search_consent_accepted': web_search_consent_accepted,
                 'enable_web_search_user_notice': form_data.get('enable_web_search_user_notice') == 'on',
-                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.').strip(),
+                'web_search_user_notice_text': form_data.get('web_search_user_notice_text', WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT).strip(),
                 'web_search_agent': {
                     'agent_type': 'aifoundry',
                     'azure_openai_gpt_endpoint': form_data.get('web_search_foundry_endpoint', '').strip(),
@@ -3182,7 +3236,6 @@ def register_route_frontend_admin_settings(bp):
             favicon_file = request.files.get('favicon_file')
             if favicon_file and allowed_file(favicon_file.filename, ALLOWED_EXTENSIONS_IMG):
                 try:
-                    # 1) Read file fully into memory:
                     file_bytes = favicon_file.read()
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
@@ -3190,58 +3243,22 @@ def register_route_frontend_admin_settings(bp):
                         content=f"Favicon file uploaded: {favicon_file.filename}"
                     )
 
-                    # 2) Load into Pillow from the original bytes for processing
-                    img, detected_format = open_allowed_uploaded_image(file_bytes, favicon_file.filename)
-                    
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Loaded favicon image for processing: {favicon_file.filename} (format: {detected_format})"
-                    )
-
-                    # 3) Ensure image mode is compatible (e.g., convert palette modes)
-                    if img.mode == 'P':
-                        img = img.convert('RGBA')
-                    elif img.mode != 'RGB' and img.mode != 'RGBA':
-                         img = img.convert('RGB')
+                    processed_favicon = prepare_favicon_image_for_storage(file_bytes, favicon_file.filename)
 
                     add_file_task_to_file_processing_log(
                         document_id='Image_Upload', # Placeholder if needed
                         user_id='New_image',
-                        content=f"Converted favicon image mode for processing: {favicon_file.filename} (mode: {img.mode})"
-                    )
-
-                    # 4) Resize to appropriate favicon size (16x16 or 32x32)
-                    img = img.resize((32, 32), Image.Resampling.LANCZOS)
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Resized favicon image for processing: {favicon_file.filename} (new size: {img.size})"
-                    )
-
-                    # 5) Convert to ICO in-memory
-                    img_bytes_io = BytesIO()
-                    img.save(img_bytes_io, format='ICO')
-                    ico_data = img_bytes_io.getvalue()
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted favicon image to ICO for processing: {favicon_file.filename}"
-                    )
-
-                    # 6) Turn to base64
-                    base64_str = base64.b64encode(ico_data).decode('utf-8')
-
-                    add_file_task_to_file_processing_log(
-                        document_id='Image_Upload', # Placeholder if needed
-                        user_id='New_image',
-                        content=f"Converted favicon image to base64 for processing: {base64_str}"
+                        content=(
+                            f"Prepared favicon asset: {favicon_file.filename} "
+                            f"(format: {processed_favicon['detected_format']}, "
+                            f"original size: {processed_favicon['original_size']}, "
+                            f"stored size: {processed_favicon['stored_size']}, "
+                            f"ico bytes: {len(processed_favicon['ico_data'])})"
+                        )
                     )
 
                     # Update only on success
-                    new_settings['custom_favicon_base64'] = base64_str
+                    new_settings['custom_favicon_base64'] = processed_favicon['base64_str']
 
                     current_version = settings.get('favicon_version', 1) # Get version from settings loaded at start
                     new_settings['favicon_version'] = current_version + 1 # Increment
@@ -3276,7 +3293,88 @@ def register_route_frontend_admin_settings(bp):
 
             # --- Update settings in DB ---
             # new_settings now contains either the new logo/favicon base64 or the original ones
-            if update_settings(new_settings, expected_etag=settings_etag):
+            new_settings = preserve_legacy_image_form_settings(new_settings, form_data, settings)
+            if image_settings_use_connections(settings):
+                image_selection, image_warning = resolve_capability_model_selection(
+                    settings.get(IMAGE_SELECTION_KEY), parsed_model_endpoints, "image_generation"
+                )
+                if image_selection != settings.get(IMAGE_SELECTION_KEY):
+                    new_settings[IMAGE_SELECTION_KEY] = image_selection
+                    notices = dict(settings.get("ai_connection_default_notices") or {})
+                    notices["image_generation"] = image_warning or "The image default was cleared."
+                    new_settings["ai_connection_default_notices"] = notices
+                    flash(notices["image_generation"], "warning")
+            try:
+                embedding_settings = read_embedding_settings()
+                if not isinstance(embedding_settings, dict):
+                    raise AIConnectionError(
+                        "AI connection settings are unavailable. Reload before saving.",
+                        "settings_unavailable",
+                    )
+                new_settings = preserve_legacy_embedding_form_settings(
+                    new_settings, form_data, embedding_settings,
+                )
+                if embedding_settings_use_connections(embedding_settings):
+                    embedding_selection, embedding_warning = resolve_capability_model_selection(
+                        embedding_settings.get(EMBEDDING_SELECTION_KEY),
+                        parsed_model_endpoints,
+                        EMBEDDINGS_CAPABILITY,
+                    )
+                    if embedding_selection != embedding_settings.get(EMBEDDING_SELECTION_KEY):
+                        new_settings[EMBEDDING_SELECTION_KEY] = embedding_selection
+                        notices = dict(
+                            new_settings.get("ai_connection_default_notices")
+                            or embedding_settings.get("ai_connection_default_notices") or {}
+                        )
+                        notices[EMBEDDINGS_CAPABILITY] = (
+                            embedding_warning
+                            or "The embedding default was cleared. Select a compatible embedding model in AI Connections."
+                        )
+                        new_settings["ai_connection_default_notices"] = notices
+                        flash(notices[EMBEDDINGS_CAPABILITY], "warning")
+                preflight_embedding_settings(
+                    embedding_settings, {**embedding_settings, **new_settings},
+                )
+                parsed_model_endpoints = [
+                    keyvault_model_endpoint_save_helper(
+                        endpoint,
+                        endpoint.get("id"),
+                        scope="global",
+                        existing_endpoint=existing_endpoints_by_id.get(endpoint.get("id")),
+                        stage_new_secrets=True,
+                    )
+                    for endpoint in parsed_model_endpoints
+                ]
+                new_settings["model_endpoints"] = parsed_model_endpoints
+                settings_saved = update_settings(new_settings, expected_etag=settings_etag)
+            except KeyVaultSecretStorageError as exc:
+                flash(f"Admin settings were not saved. {exc.public_message}", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+            except AIConnectionError as exc:
+                flash(f"Admin settings were not saved. {exc.public_message}", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+            except (AzureError, OSError, RuntimeError, ValueError) as exc:
+                log_event(
+                    "[AI_CONNECTIONS] Admin connection settings could not be stored",
+                    extra={"error_type": type(exc).__name__},
+                    level=logging.ERROR,
+                )
+                flash(
+                    "Admin settings were not saved. Review the connection and Key Vault configuration, then try again.",
+                    "danger",
+                )
+                return redirect(url_for('frontend_admin_settings.admin_settings'))
+            if settings_saved:
+                for endpoint in parsed_model_endpoints:
+                    endpoint_id = endpoint.get("id")
+                    if endpoint_id:
+                        keyvault_model_endpoint_cleanup_helper(
+                            existing_endpoints_by_id.get(endpoint_id), endpoint, endpoint_id, scope="global"
+                        )
+                for endpoint in existing_model_endpoints:
+                    endpoint_id = endpoint.get("id")
+                    if endpoint_id and endpoint_id not in saved_endpoint_ids:
+                        keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="global")
                 flash("Admin settings updated successfully.", "success")
                 if enable_custom_pages and not custom_pages_was_enabled and custom_pages_restart_acknowledged:
                     log_general_admin_action(
@@ -3305,6 +3403,22 @@ def register_route_frontend_admin_settings(bp):
                     initialize_clients(updated_settings_for_file) # Important - reinitialize clients with new settings
                 else:
                     print("ERROR: Could not fetch settings after update to ensure logo/favicon files.")
+
+                # Saved Microsoft 365 workflow connections need the deployment's encryption key.
+                # Create it now rather than when someone first connects; failures are reported
+                # only when this save changed the Key Vault configuration.
+                m365_workflow_key = ensure_m365_workflow_encryption_key(updated_settings_for_file or new_settings)
+                key_vault_changed = any(
+                    settings.get(key) != new_settings.get(key)
+                    for key in ('enable_key_vault_secret_storage', 'key_vault_name', 'key_vault_identity')
+                )
+                if m365_workflow_key['status'] == 'created':
+                    flash(m365_workflow_key['message'], 'info')
+                elif m365_workflow_key['status'] == 'unavailable' and key_vault_changed:
+                    flash(
+                        f"Microsoft 365 workflow connections are not ready. {m365_workflow_key['message']}",
+                        'warning',
+                    )
 
                 if governance_toggle_changes:
                     try:

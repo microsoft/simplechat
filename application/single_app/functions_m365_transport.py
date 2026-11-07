@@ -87,7 +87,11 @@ def log_m365_failure(code: str, *, source: str = "", operation: str = "") -> Non
     log_event(
         "[MS_GRAPH_PLUGIN] Microsoft 365 operation could not complete.",
         level=logging.WARNING,
-        extra={"source": source, "operation": operation, "error_code": code},
+        # failure_code and resource are retained as text; error_code and source as lengths only.
+        extra={
+            "source": source, "operation": operation, "error_code": code,
+            "failure_code": code, "resource": source,
+        },
     )
 
 

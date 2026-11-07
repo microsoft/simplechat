@@ -16,7 +16,11 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT_DIR / 'application' / 'single_app'
-EXPECTED_VERSION = '0.242.050'
+IMPLEMENTED_VERSION = '0.242.050'
+
+sys.path.insert(0, str(ROOT_DIR / 'functional_tests'))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
 def _read_text(relative_path):
@@ -175,8 +179,10 @@ def test_active_scope_reads_use_authorization_helpers():
 
 
 def test_config_version_bumped_for_fix():
-    config_source = (APP_DIR / 'config.py').read_text(encoding='utf-8')
-    assert f'VERSION = "{EXPECTED_VERSION}"' in config_source
+    # Compared as "at least", not for equality. An exact match pins the whole repository to
+    # the version that happened to introduce this fix, so every later bump fails a test that
+    # has nothing to do with the change being made.
+    assert_app_version_at_least(IMPLEMENTED_VERSION)
 
 
 def main():

@@ -21,6 +21,7 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 AGENTS_ROUTE = REPO_ROOT / "application" / "single_app" / "route_backend_agents.py"
+AUTHORING_MODULE = REPO_ROOT / "application" / "single_app" / "functions_workspace_authoring.py"
 
 
 def _load_build_combined_model_endpoints():
@@ -56,7 +57,10 @@ def test_agent_settings_model_endpoints_respect_governance():
         calls.append((user_id, feature_key, [endpoint.get("id") for endpoint in endpoints]))
         return [endpoint for endpoint in endpoints if "denied" not in endpoint.get("id", "")]
 
-    def sanitize_model_endpoints_for_frontend(endpoints):
+    def sanitize_model_endpoints_for_frontend(endpoints, include_connection_details=False):
+        return endpoints
+
+    def filter_model_endpoints_by_capability(endpoints, preserve_empty=False):
         return endpoints
 
     def ensure_governance_access(feature_key, user_id):
@@ -81,6 +85,7 @@ def test_agent_settings_model_endpoints_respect_governance():
     build_combined_model_endpoints.__globals__.update({
         "filter_governed_model_endpoints": filter_governed_model_endpoints,
         "sanitize_model_endpoints_for_frontend": sanitize_model_endpoints_for_frontend,
+        "filter_model_endpoints_by_capability": filter_model_endpoints_by_capability,
         "ensure_governance_access": ensure_governance_access,
         "get_user_settings": get_user_settings,
         "get_group_model_endpoints": get_group_model_endpoints,
@@ -118,6 +123,11 @@ def test_agent_settings_model_endpoints_respect_governance():
     assert ("user-b", "governance_global_endpoints") in asserted_filters
     assert ("user-b", "governance_user_endpoints") in asserted_filters
     assert ("user-b", "governance_group_endpoints") in asserted_filters
+
+    authoring_source = AUTHORING_MODULE.read_text(encoding="utf-8")
+    assert '"governance_user_endpoints"' in authoring_source
+    assert '"governance_group_endpoints"' in authoring_source
+    assert '"governance_global_endpoints"' in authoring_source
     print("PASS: agent settings model endpoint governance filtering verified")
 
 

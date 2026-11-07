@@ -4,11 +4,19 @@ title: "Create an agent"
 description: "Build a reusable assistant with a clear role, model, knowledge, and instructions."
 section: "Guides"
 audience: user
+version: "0.261.411"
 ---
 
 ## What this does
 
 An agent is a specialized assistant that keeps the same role, instructions, knowledge choices, and optional tools every time someone uses it. This guide creates a local workspace agent that can be selected from chat.
+
+{% include media.html id="slide-agents" %}
+
+Since **0.261.368**, a long saved local-agent name does not need to be shortened
+to meet a model's 64-character message-author limit. SimpleChat uses a stable
+request-only alias where needed; saved names, visible labels, and agent
+permissions stay unchanged.
 
 {% include media.html type="video"
                       title="Create an agent walkthrough"
@@ -25,7 +33,60 @@ Create an agent when a task benefits from consistent behavior, such as policy re
 - At least one GPT model endpoint must be configured; see [AI Models]({{ '/admin/ai-models/' | relative_url }}).
 - Upload and process workspace documents first if the agent should use assigned knowledge.
 
-## Steps
+## Personal agents in V2
+
+Since **0.261.411**, interactive local agents can collect necessary facts through
+a reviewed [follow-up question flow]({{ '/guides/answer-agent-questions/' | relative_url }}).
+They can pause during work and continue retained tool history after the answer.
+This does not add the tool to Foundry-backed agents or unattended workflows.
+
+In V2, **My Workspace > Agents > New agent** opens a full-page editor. Use its
+sections to configure the model, approved actions, knowledge, and instructions
+without following a modal wizard. See [Build agents and actions in My Workspace]({{ '/guides/workspace-agents-and-actions/' | relative_url }})
+for the native workflow, implemented in **0.261.096** in
+`application/single_app/config.py`.
+
+### Build the agent with Ask AI
+
+{% include media.html id="slide-agent-builder" %}
+
+Select **Ask AI** in the editor's header to open the assistant beside the form,
+then describe the agent in your own words, for example "a helpdesk agent that
+answers from our IT policy documents and can look up tickets". The assistant
+fills in the draft for you, such as the name, description, instructions, model,
+assigned actions and knowledge, and highlights every field it changed. Each turn
+lists its changes, with **Undo this change** to take the whole turn back.
+
+Nothing is saved until you choose **Save agent**, and the usual checks still
+run. The assistant only offers models, actions and knowledge you could pick
+yourself, and it never sees or enters keys or other credentials.
+
+When no existing action fits, the assistant can draft up to three new actions
+for the agent. Each appears as a setup card inside the assistant's answer and
+under **New actions from Ask AI** in the Actions section. They are created in
+the same workspace only when you explicitly save the action or save the agent. If
+a drafted action still needs something, such as an endpoint or credentials, it
+shows what is missing and blocks the save. Choose **Finish setup in Actions**
+in the answer, or **Finish in action editor** in the Actions section, to
+complete it in the action workbench. Enter credentials there, not in Ask AI.
+
+Choose **Save action and return to agent** to save the action and select it for
+the agent. Ask AI reopens with the same conversation and unsent message, so you
+can continue without explaining your task again. The card confirms that the
+action is saved and selected; the agent still needs **Save agent**.
+**Back to agent** at the top returns without saving the action, with a warning
+before discarding unsaved action edits. **Remove** drops a drafted action you
+don't want.
+
+This guided return was implemented in **0.261.333**
+(`application/single_app/config.py`). Conversation continuity is kept in this
+tab's memory for the action-setup detour only. Refreshing, closing the tab, or
+starting a separate editor visit does not restore the conversation.
+
+Administrators can turn the panel off with **Enable Ask AI in the Agent Editor**
+in [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
+
+## Classic interface steps
 
 1. Open **Personal Workspace** or the target **Group Workspace**.
 2. Choose **Your Agents** or the **Agents** tab.

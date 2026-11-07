@@ -8,15 +8,17 @@ import socket
 import threading
 import time
 import uuid
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
 
-from config import cosmos_m365_execution_runs_container, cosmos_settings_container
+from config import cosmos_m365_execution_runs_container, cosmos_settings_container, exceptions
+from content_screening.jobs import check_due_scan_jobs_once
 from functions_appinsights import log_event
-from functions_control_center import (
+from functions_control_center import execute_control_center_refresh
+from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
-    execute_control_center_refresh,
     get_control_center_auto_refresh_schedule,
     is_control_center_auto_refresh_due,
     parse_control_center_auto_refresh_datetime,
@@ -36,6 +38,7 @@ from functions_debug import debug_print
 from functions_data_management import check_due_data_management_jobs_once
 from functions_documents import process_due_document_search_metadata_syncs
 from functions_file_sync import check_due_file_sync_sources_once
+from functions_logging_timers import LOGGING_TIMERS, is_logging_turnoff_due
 from functions_keyvault_reminders import (
     KEY_VAULT_SECRET_REMINDER_LOCK_NAME,
     check_due_key_vault_secret_reminders_once,
@@ -58,9 +61,9 @@ from functions_m365_workflow_binding import (
     workflow_result_is_waiting,
     workflow_result_runtime_status,
 )
-from functions_m365_approvals import get_m365_approval_service
+from functions_m365_approvals import M365PolicyError, get_m365_approval_service
 from functions_m365_connections import configure_m365_connection_authorization, get_m365_connection_service
-from functions_m365_continuations import resume_pending_workflows
+from functions_m365_continuations import M365ContinuationNotStarted, resume_pending_workflows
 from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
 from functions_m365_file_runtime import configure_m365_file_runtime
 from functions_m365_runtime import (
@@ -74,6 +77,9 @@ from functions_m365_runtime import (
 )
 from functions_workflow_runner import _get_workflow_runner_app, create_workflow_run_id, run_group_workflow, run_personal_workflow
 from functions_m365_pending_delivery import dispatch_due_m365_deliveries
+from functions_workflow_runtime import (
+    check_durable_workflows_once, queue_durable_workflow_run, resume_m365_durable_workflow_run,
+)
 
 
 def _get_lock_holder_id():
@@ -215,46 +221,30 @@ def _should_run_retention_policy(settings, current_time):
 
 
 def check_logging_timers_once():
-    """Disable temporary logging settings after their timer expires."""
+    """Disable temporary logging settings after their timer expires.
+
+    Turnoff times are compared in UTC. Ones stored before timers were kept in UTC
+    carry no offset and are read as server-local time, which is how they were
+    written, so a timer set before an upgrade still ends when it was meant to.
+    """
     settings = get_settings()
-    current_time = datetime.now()
     settings_updates = {}
 
-    if (
-        settings.get('enable_debug_logging', False)
-        and settings.get('debug_logging_timer_enabled', False)
-        and settings.get('debug_logging_turnoff_time')
-    ):
-        turnoff_time = settings.get('debug_logging_turnoff_time')
-        if isinstance(turnoff_time, str):
-            try:
-                turnoff_time = datetime.fromisoformat(turnoff_time)
-            except Exception:
-                turnoff_time = None
+    for timer_keys in LOGGING_TIMERS.values():
+        enabled_key = timer_keys['enabled_key']
+        timer_key = timer_keys['timer_key']
+        turnoff_key = timer_keys['turnoff_key']
+        if not (settings.get(enabled_key, False) and settings.get(timer_key, False)):
+            continue
 
-        if turnoff_time and current_time >= turnoff_time:
-            debug_print(f"logging timer expired at {turnoff_time}. Disabling debug logging.")
-            settings_updates['enable_debug_logging'] = False
-            settings_updates['debug_logging_timer_enabled'] = False
-            settings_updates['debug_logging_turnoff_time'] = None
+        turnoff_time = settings.get(turnoff_key)
+        if not is_logging_turnoff_due(turnoff_time):
+            continue
 
-    if (
-        settings.get('enable_file_processing_logs', False)
-        and settings.get('file_processing_logs_timer_enabled', False)
-        and settings.get('file_processing_logs_turnoff_time')
-    ):
-        turnoff_time = settings.get('file_processing_logs_turnoff_time')
-        if isinstance(turnoff_time, str):
-            try:
-                turnoff_time = datetime.fromisoformat(turnoff_time)
-            except Exception:
-                turnoff_time = None
-
-        if turnoff_time and current_time >= turnoff_time:
-            print(f"File processing logs timer expired at {turnoff_time}. Disabling file processing logs.")
-            settings_updates['enable_file_processing_logs'] = False
-            settings_updates['file_processing_logs_timer_enabled'] = False
-            settings_updates['file_processing_logs_turnoff_time'] = None
+        debug_print(f"[LOGGING_TIMERS] Timer for {enabled_key} expired at {turnoff_time}. Turning it off.")
+        settings_updates[enabled_key] = False
+        settings_updates[timer_key] = False
+        settings_updates[turnoff_key] = None
 
     if settings_updates:
         return update_settings(settings_updates, expected_etag=settings.get('_etag'))
@@ -582,7 +572,13 @@ def check_m365_workflow_continuations_once():
         return all(scope.rsplit("/", 1)[-1].lower() in granted for scope in job.get("required_scopes") or [])
 
     def execute(job):
-        workflow = load_current_workflow(job["workflow_ref"])
+        try:
+            workflow = load_current_workflow(job["workflow_ref"])
+        except M365PolicyError as error:
+            if error.code != "m365_workflow_missing":
+                raise
+            # Only this initial read proves no workflow/Graph effects were entered.
+            raise M365ContinuationNotStarted() from error
         settings = get_settings()
         group_id = workflow.get("group_id")
         if group_id:
@@ -597,6 +593,8 @@ def check_m365_workflow_continuations_once():
         if not lock:
             raise RuntimeError("The workflow is already executing.")
         try:
+            if workflow.get("durable_execution") is True:
+                return resume_m365_durable_workflow_run(workflow, job)
             runner = run_group_workflow if group_id else run_personal_workflow
             result = runner(
                 workflow, trigger_source="m365_approval",
@@ -660,6 +658,17 @@ def check_due_workflows_once():
                     except Exception:
                         pass
 
+                if refreshed_workflow.get('durable_execution') is True:
+                    if not refreshed_workflow.get('active_run_id'):
+                        queued = queue_durable_workflow_run(
+                            refreshed_workflow, actor_user_id=user_id, trigger_source=trigger_source,
+                        )
+                        update_personal_workflow_runtime_fields(user_id, workflow_id, {
+                            'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                        })
+                        results.append({'scope': 'personal', 'workflow_id': workflow_id, 'success': queued['success']})
+                    continue
+
                 started_at = datetime.now(timezone.utc).isoformat()
                 active_run_id = create_workflow_run_id()
                 update_personal_workflow_runtime_fields(
@@ -697,7 +706,7 @@ def check_due_workflows_once():
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                if refreshed_workflow:
+                if refreshed_workflow and refreshed_workflow.get('durable_execution') is not True:
                     update_personal_workflow_runtime_fields(
                         user_id,
                         workflow_id,
@@ -747,6 +756,17 @@ def check_due_workflows_once():
                     except Exception:
                         pass
 
+                if refreshed_workflow.get('durable_execution') is True:
+                    if not refreshed_workflow.get('active_run_id'):
+                        queued = queue_durable_workflow_run(
+                            refreshed_workflow, actor_user_id=refreshed_workflow['user_id'], trigger_source=trigger_source,
+                        )
+                        update_group_workflow_runtime_fields(group_id, workflow_id, {
+                            'next_run_at': compute_next_run_at(refreshed_workflow, from_time=datetime.now(timezone.utc)),
+                        })
+                        results.append({'scope': 'group', 'workflow_id': workflow_id, 'success': queued['success']})
+                    continue
+
                 started_at = datetime.now(timezone.utc).isoformat()
                 active_run_id = create_workflow_run_id()
                 update_group_workflow_runtime_fields(
@@ -784,7 +804,7 @@ def check_due_workflows_once():
                     level=logging.ERROR,
                     exceptionTraceback=True,
                 )
-                if refreshed_workflow:
+                if refreshed_workflow and refreshed_workflow.get('durable_execution') is not True:
                     update_group_workflow_runtime_fields(
                         group_id,
                         workflow_id,
@@ -808,6 +828,7 @@ def run_workflow_scheduler_loop():
     while True:
         try:
             check_due_workflows_once()
+            check_durable_workflows_once()
         except Exception as exc:
             print(f"Error in workflow scheduler check: {exc}")
             log_event(f"[WORKFLOW_SCHEDULER] Error in workflow scheduler check: {exc}", level=logging.ERROR)
@@ -861,6 +882,76 @@ def run_tabular_generated_output_scheduler_loop():
         time.sleep(30)
 
 
+def run_orchestration_scheduler_loop(app=None):
+    """Continue approved harness work independently of browser connections."""
+    # These application owners require the initialized web/scheduler resources.
+    from functions_orchestration_bootstrap import initialize_orchestration_artifact_access
+    from functions_orchestration_scheduler import check_due_orchestration_runs_once
+
+    initialize_orchestration_artifact_access()
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock(
+                'orchestration_harness_scheduler_scan', lease_seconds=120,
+            )
+            if lock_document:
+                with app.app_context() if app is not None else nullcontext():
+                    check_due_orchestration_runs_once(max_runs=4, max_outputs=8)
+                log_event(
+                    '[ORCHESTRATION_RUNS] Scheduler slice completed.',
+                    debug_only=True,
+                )
+        except Exception as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Scheduler slice could not complete.',
+                level=logging.ERROR, extra={'error_type': type(exc).__name__},
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+        time.sleep(30)
+
+
+def run_workflow_chat_delivery_loop(app=None):
+    """Post chat-started workflow outcomes back into the chats that asked for them.
+
+    A hint from the runtime projection wakes the loop at once. The cross-user sweep runs at most
+    once per sweep interval, and the worker runs it only while it holds the distributed lock.
+    """
+    # Deferred like the orchestration loop: the worker binds application storage on first use.
+    import functions_workflow_chat_delivery as delivery_contract
+    import functions_workflow_chat_delivery_worker as delivery_worker
+
+    interval = delivery_contract.SWEEP_INTERVAL_SECONDS
+    services = None
+    next_sweep_at = 0.0
+    while True:
+        started = time.monotonic()
+        sweep_due = started >= next_sweep_at
+        if sweep_due:
+            next_sweep_at = started + interval
+        try:
+            if services is None:
+                services = delivery_worker.default_workflow_chat_delivery_services(
+                    acquire_lock=acquire_distributed_task_lock,
+                    release_lock=release_distributed_task_lock,
+                )
+            with app.app_context() if app is not None else nullcontext():
+                delivery_worker.process_workflow_chat_delivery_hints(services)
+                if sweep_due:
+                    delivery_worker.run_workflow_chat_delivery_sweep(services)
+        except Exception as exc:
+            log_event(
+                '[WORKFLOW_CHAT_DELIVERY] Delivery slice could not complete.',
+                level=logging.ERROR, extra={'error_type': type(exc).__name__},
+            )
+            # A failure can leave hints queued, so wait without them to avoid a busy loop.
+            time.sleep(interval)
+            continue
+        delivery_contract.wait_for_workflow_chat_delivery_hint(max(1.0, next_sweep_at - time.monotonic()))
+
+
 def run_data_management_scheduler_loop(app=None):
     """Queue due backup and recoverable migration jobs across scaled-out workers."""
     while True:
@@ -910,6 +1001,34 @@ def run_document_search_metadata_sync_loop():
                 release_distributed_task_lock(lock_document)
 
         time.sleep(60)
+
+
+def run_content_screening_scheduler_loop(app=None):
+    """Recover completion work even when enrollment of new scans is disabled."""
+    while True:
+        lock_document = None
+        try:
+            lock_document = acquire_distributed_task_lock(
+                'content_screening_scheduler_scan', lease_seconds=300,
+            )
+            if lock_document:
+                with app.app_context() if app is not None else nullcontext():
+                    processed = check_due_scan_jobs_once(max_jobs=2)
+                log_event(
+                    '[CONTENT_SCREENING] Scheduler slice completed.',
+                    extra={'job_count': len(processed)},
+                    debug_only=True,
+                )
+        except Exception as exc:
+            log_event(
+                '[CONTENT_SCREENING] Scheduler slice could not complete.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.ERROR,
+            )
+        finally:
+            if lock_document:
+                release_distributed_task_lock(lock_document)
+        time.sleep(30)
 
 
 def run_app_maintenance_loop():
@@ -986,8 +1105,11 @@ def start_background_task_threads(app=None):
         ('Workflow scheduler background task started.', run_workflow_scheduler_loop),
         ('File Sync scheduler background task started.', run_file_sync_scheduler_loop),
         ('Tabular generated-output scheduler background task started.', run_tabular_generated_output_scheduler_loop),
+        ('Orchestration scheduler background task started.', lambda: run_orchestration_scheduler_loop(app=app)),
+        ('Workflow chat delivery background task started.', lambda: run_workflow_chat_delivery_loop(app=app)),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
         ('Document search metadata sync background task started.', run_document_search_metadata_sync_loop),
+        ('Content screening scheduler background task started.', lambda: run_content_screening_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),
         ('Key Vault secret reminder background task started.', run_key_vault_secret_reminder_loop),
     ]

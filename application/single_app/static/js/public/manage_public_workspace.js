@@ -1295,12 +1295,13 @@ function renderActivityItem(activity) {
   `;
 }
 
-// Format bytes
+// Format bytes: "0 B" for no size, then B to TB to two decimals, capped at TB, as the classic group
+// page and the V2 statistics export write them.
 function formatBytes(bytes) {
-  if (bytes === 0) return '0 B';
+  if (!bytes) return '0 B';
   const k = 1024;
   const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
   return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 

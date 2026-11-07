@@ -1,0 +1,475 @@
+// PreferencesTab.tsx
+// Preferences that change how this interface behaves for the signed-in user.
+//
+// A section appears only when the capability it controls is enabled, and only settings this
+// interface actually honours are offered. A toggle that silently changes nothing here — or
+// worse, only changes the classic interface — is more confusing than its absence, so the
+// remaining classic preferences are deliberately left to that page until V2 implements the
+// behaviour behind them.
+//
+// Cards are arranged in groups (Appearance, Chat, Voice and audio, Notifications and alerts,
+// Help and guidance, Memory and data, Connected accounts, Diagrams and charts) so the page
+// index on the right can list them the way Admin Settings does.
+
+import { useEffect, useSyncExternalStore } from 'react';
+import { clsx } from 'clsx';
+import {
+    BarChart3,
+    Bell,
+    ListTree,
+    Siren,
+    Tags,
+    Type,
+    Workflow,
+} from 'lucide-react';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import {
+    DESKTOP_NOTIFICATIONS_SETTING,
+    desktopNotificationPermission,
+    readDesktopNotificationPreference,
+    requestDesktopNotificationPermission,
+    subscribeDesktopNotificationPermission,
+    type DesktopNotificationPermission,
+} from '../../lib/desktopNotifications';
+import {
+    FONT_SIZE_LABELS,
+    FONT_SIZE_PREFERENCES,
+    type FontSizePreference,
+} from '../../lib/userSettings';
+import { Toggle, Skeleton } from '../ui/primitives';
+import { SettingsCard, SettingsGroup } from './SettingsCard';
+import { CompletionAudioCard, MicrophoneCard, SpokenRepliesCard } from './VoiceAudioCards';
+import { RetentionCard } from './RetentionCard';
+import { FactMemoryBench } from './FactMemoryBench';
+import { M365Cards } from './M365Cards';
+import { LatestFeaturesCard, TutorialsCard } from './GuidanceCards';
+import { VISUAL_STYLE_SETTING_KEYS } from '../../lib/blockVisualStyle';
+import {
+    DEFAULT_VISUAL_STYLE,
+    PALETTE_PRESETS,
+    THEME_BACKGROUND,
+    normalizeHexColor,
+    resolveBackgroundColor,
+    sanitizeVisualStyle,
+    type PaletteId,
+    type VisualStyle,
+    type VisualStyleKind,
+} from '../../lib/visualPalettes';
+import {
+    setWorkflowAlertMonitorEnabled,
+    setWorkflowAlertSoundsDeviceEnabled,
+    useWorkflowAlertDevicePreference,
+} from '../../lib/workflowAlertDevicePreferences';
+
+function FontSizeChoice({
+    value,
+    onChange,
+}: {
+    value: FontSizePreference;
+    onChange: (next: FontSizePreference) => void;
+}) {
+    return (
+        <div role="radiogroup" aria-label="Text size" className="flex flex-wrap gap-1.5">
+            {FONT_SIZE_PREFERENCES.map((size) => (
+                <button
+                    key={size}
+                    type="button"
+                    role="radio"
+                    aria-checked={size === value}
+                    onClick={() => onChange(size)}
+                    className={clsx(
+                        'rounded-lg border px-3 py-1.5 text-sm transition-colors',
+                        size === value
+                            ? 'border-accent bg-accent-soft font-medium text-accent'
+                            : 'border-edge text-text-2 hover:bg-surface-2 hover:text-text-1',
+                    )}
+                >
+                    {FONT_SIZE_LABELS[size]}
+                </button>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * The default palette and background for one kind of rendered block.
+ *
+ * This is a starting point, not a rule: a diagram or chart someone recolours in a conversation
+ * keeps its own colours and stops following this. Changing it here restyles everything nobody
+ * has singled out.
+ */
+function VisualStyleDefault({
+    label,
+    value,
+    onChange,
+}: {
+    label: string;
+    value: VisualStyle;
+    onChange: (next: VisualStyle) => void;
+}) {
+    const followsTheme = value.background === THEME_BACKGROUND;
+    const background = resolveBackgroundColor(value);
+
+    return (
+        <div className="space-y-2">
+            <div
+                role="radiogroup"
+                aria-label={`${label} palette`}
+                className="flex flex-wrap gap-1.5"
+            >
+                {PALETTE_PRESETS.map((preset) => {
+                    const active = preset.id === value.palette;
+                    return (
+                        <button
+                            key={preset.id}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            onClick={() =>
+                                onChange({ ...value, palette: preset.id as PaletteId })
+                            }
+                            className={clsx(
+                                'flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors',
+                                active
+                                    ? 'border-accent bg-accent-soft font-medium text-accent'
+                                    : 'border-edge text-text-2 hover:bg-surface-2 hover:text-text-1',
+                            )}
+                        >
+                            <span className="flex" aria-hidden="true">
+                                {preset.colors.slice(0, 5).map((color) => (
+                                    <span
+                                        key={color}
+                                        className="h-3.5 w-2 first:rounded-l-sm last:rounded-r-sm"
+                                        style={{ backgroundColor: color }}
+                                    />
+                                ))}
+                            </span>
+                            {preset.name}
+                        </button>
+                    );
+                })}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-text-2">Background</span>
+                <button
+                    type="button"
+                    aria-pressed={followsTheme}
+                    onClick={() => onChange({ ...value, background: THEME_BACKGROUND })}
+                    className={clsx(
+                        'rounded-lg border px-3 py-1.5 text-sm transition-colors',
+                        followsTheme
+                            ? 'border-accent bg-accent-soft font-medium text-accent'
+                            : 'border-edge text-text-2 hover:bg-surface-2 hover:text-text-1',
+                    )}
+                >
+                    Match theme
+                </button>
+                <label className="flex items-center gap-1.5 text-sm text-text-2">
+                    <input
+                        type="color"
+                        value={background}
+                        aria-label={`Default background colour for every ${label.toLowerCase()}`}
+                        onChange={(event) =>
+                            onChange({
+                                ...value,
+                                background: normalizeHexColor(event.target.value, background),
+                            })
+                        }
+                        className="h-7 w-7 cursor-pointer rounded border border-edge-strong bg-transparent p-0"
+                    />
+                    Custom
+                </label>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * What this browser will do with the preference: a notification needs the browser's permission
+ * as well as the setting, and the setting alone gives no hint that it is missing.
+ */
+function DesktopNotificationPermissionStatus({
+    permission,
+}: {
+    permission: DesktopNotificationPermission;
+}) {
+    if (permission === 'granted') {
+        return null;
+    }
+    if (permission === 'unsupported') {
+        return (
+            <p data-desktop-notification-permission="unsupported" className="mt-1 text-xs text-text-3">
+                This browser cannot show desktop notifications.
+            </p>
+        );
+    }
+    if (permission === 'denied') {
+        return (
+            <p data-desktop-notification-permission="denied" className="mt-1 text-xs text-warn">
+                This browser is blocking notifications from this site. Allow them in the browser&apos;s
+                site settings, then come back to this tab.
+            </p>
+        );
+    }
+    return (
+        <div
+            data-desktop-notification-permission="default"
+            className="mt-1 flex flex-wrap items-center gap-2 text-xs text-text-3"
+        >
+            <span>This browser has not been given permission yet.</span>
+            <button
+                type="button"
+                onClick={() => void requestDesktopNotificationPermission({ explicit: true })}
+                className="rounded-lg border border-edge px-2.5 py-1 font-medium text-text-1 hover:bg-surface-2"
+            >
+                Allow notifications
+            </button>
+        </div>
+    );
+}
+
+export function PreferencesTab() {
+    const { settings, loading, error, update, saveError } = useUserSettingsStore();
+    const features = useBootstrapStore((state) => state.data?.features ?? {});
+    const enabled = (key: string) => features[key] === true;
+    const notificationPermission = useSyncExternalStore(
+        subscribeDesktopNotificationPermission,
+        desktopNotificationPermission,
+    );
+    const desktopNotificationsOn = readDesktopNotificationPreference(
+        settings[DESKTOP_NOTIFICATIONS_SETTING],
+    );
+    const workflowAlertSoundsOn = useWorkflowAlertDevicePreference('sound');
+    const workflowAlertMonitorOn = useWorkflowAlertDevicePreference('monitor');
+
+    const fontSize = (settings.fontSizePreference as FontSizePreference) || 'm';
+
+    const visualStyle = (kind: VisualStyleKind): VisualStyle =>
+        sanitizeVisualStyle(settings[VISUAL_STYLE_SETTING_KEYS[kind]]) ?? {
+            ...DEFAULT_VISUAL_STYLE,
+            colors: {},
+        };
+
+    // Applied here as well as at startup so the change is visible while it is being chosen,
+    // rather than only after a reload.
+    useEffect(() => {
+        document.documentElement.dataset.fontSize = fontSize;
+    }, [fontSize]);
+
+    if (loading) {
+        return (
+            <div className="space-y-3">
+                <Skeleton className="h-28 w-full" />
+                <Skeleton className="h-28 w-full" />
+                <Skeleton className="h-28 w-full" />
+            </div>
+        );
+    }
+
+    if (error) {
+        return (
+            <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                {error}
+            </p>
+        );
+    }
+
+    return (
+        <div className="space-y-4">
+            {saveError && (
+                <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-2 text-xs text-danger">
+                    {saveError}
+                </p>
+            )}
+
+            <SettingsGroup
+                id="appearance"
+                label="Appearance"
+                description="How this interface looks for you."
+            >
+                <SettingsCard
+                    title="Text size"
+                    Icon={Type}
+                    description="Scales the whole interface, not only body text. Shared with the classic interface, so the two match."
+                >
+                    <FontSizeChoice
+                        value={fontSize}
+                        onChange={(next) => update({ fontSizePreference: next })}
+                    />
+                </SettingsCard>
+
+                <SettingsCard
+                    title="Conversation list"
+                    Icon={Tags}
+                    description="What the list of conversations shows alongside each title."
+                >
+                    <Toggle
+                        checked={settings.showConversationWorkspaceTags !== false}
+                        onChange={(next) => update({ showConversationWorkspaceTags: next })}
+                        label="Show workspace tags"
+                        description="Label conversations that belong to a group or public workspace, or that are shared with other people. Personal conversations stay unlabelled."
+                    />
+                </SettingsCard>
+            </SettingsGroup>
+
+            {enabled('enable_conversation_contents_drawer') && (
+                <SettingsGroup
+                    id="chat"
+                    label="Chat"
+                    description="How conversations behave while you work in them."
+                >
+                    {enabled('enable_conversation_contents_drawer') && (
+                        <SettingsCard
+                            title="Conversation navigation"
+                            Icon={ListTree}
+                            description="A contents drawer for jumping between your own prompts in a long conversation."
+                        >
+                            <Toggle
+                                checked={settings.conversationContentsDrawerEnabled !== false}
+                                onChange={(next) =>
+                                    update({ conversationContentsDrawerEnabled: next })
+                                }
+                                label="Show the conversation contents drawer"
+                            />
+                        </SettingsCard>
+                    )}
+
+                </SettingsGroup>
+            )}
+
+            {(enabled('enable_chat_completion_audio_cues')
+                || enabled('enable_text_to_speech')
+                || enabled('enable_speech_to_text_input')) && (
+                <SettingsGroup
+                    id="voice-audio"
+                    label="Voice and audio"
+                    description="Sounds when replies finish, spoken replies, and the microphone used for voice input."
+                >
+                    {enabled('enable_chat_completion_audio_cues') && (
+                        <CompletionAudioCard settings={settings} update={update} />
+                    )}
+                    {enabled('enable_text_to_speech') && (
+                        <SpokenRepliesCard settings={settings} update={update} />
+                    )}
+                    {enabled('enable_speech_to_text_input') && <MicrophoneCard />}
+                </SettingsGroup>
+            )}
+
+            <SettingsGroup
+                id="notifications"
+                label="Notifications and alerts"
+                description="How this interface gets your attention when something finishes or needs you."
+            >
+                {enabled('enable_desktop_notifications') && (
+                    <SettingsCard
+                        title="Desktop notifications"
+                        Icon={Bell}
+                        description="A notification from your operating system when a reply finishes while this tab is hidden or unfocused. It names the conversation, never the reply. Shared with the classic interface."
+                    >
+                        <Toggle
+                            checked={desktopNotificationsOn}
+                            onChange={(next) => {
+                                update({ [DESKTOP_NOTIFICATIONS_SETTING]: next });
+                                // In the same click: a browser only shows its prompt for one.
+                                if (next) {
+                                    void requestDesktopNotificationPermission({ explicit: true });
+                                }
+                            }}
+                            label="Notify me when a reply is ready"
+                        />
+                        {desktopNotificationsOn && (
+                            <DesktopNotificationPermissionStatus permission={notificationPermission} />
+                        )}
+                    </SettingsCard>
+                )}
+
+                <SettingsCard
+                    title="Workflow alerts on this device"
+                    Icon={Siren}
+                    description="Browser-only controls for urgent workflow alerts on this computer."
+                >
+                    <div className="admin-switch-grid">
+                        <div className="py-2 first:pt-0">
+                            <Toggle
+                                checked={workflowAlertSoundsOn}
+                                onChange={setWorkflowAlertSoundsDeviceEnabled}
+                                label="Play alert sounds"
+                                description="Applies to this browser only. Administrators can still turn workflow alert sounds off for everyone."
+                            />
+                        </div>
+                        <div className="py-2">
+                            <Toggle
+                                checked={workflowAlertMonitorOn}
+                                onChange={setWorkflowAlertMonitorEnabled}
+                                label="Alert monitor"
+                                description="For operations screens: checks for workflow alerts every 30 seconds, even in a background tab."
+                            />
+                        </div>
+                    </div>
+                </SettingsCard>
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="guidance"
+                label="Help and guidance"
+                description="The Latest Features shortcut and the guided tours that point out what each page can do."
+            >
+                <LatestFeaturesCard settings={settings} update={update} />
+                <TutorialsCard settings={settings} update={update} />
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="memory-data"
+                label="Memory and data"
+                description="What the assistant remembers about you, and how long your own conversations and documents are kept."
+            >
+                <FactMemoryBench />
+                {enabled('enable_retention_policy_personal') && <RetentionCard settings={settings} />}
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="connected-accounts"
+                label="Connected accounts"
+                description="Microsoft 365 sign-ins, sharing preferences and workflow authorizations for your own Calendar, Email, OneDrive and SharePoint data."
+            >
+                <M365Cards />
+            </SettingsGroup>
+
+            <SettingsGroup
+                id="visuals"
+                label="Diagrams and charts"
+                description="Default colours for visuals the assistant draws in replies. Anything you recolour in a conversation keeps its own colours."
+            >
+                <SettingsCard
+                    title="Diagrams"
+                    Icon={Workflow}
+                    description="Palette and background for diagrams drawn in replies."
+                >
+                    <VisualStyleDefault
+                        label="Diagram"
+                        value={visualStyle('mermaid')}
+                        onChange={(next) =>
+                            update({ [VISUAL_STYLE_SETTING_KEYS.mermaid]: next })
+                        }
+                    />
+                </SettingsCard>
+
+                <SettingsCard
+                    title="Charts"
+                    Icon={BarChart3}
+                    description="Palette and background for charts drawn in replies. Series you recolour on an individual chart are kept with that chart."
+                >
+                    <VisualStyleDefault
+                        label="Chart"
+                        value={visualStyle('simplechart')}
+                        onChange={(next) =>
+                            update({ [VISUAL_STYLE_SETTING_KEYS.simplechart]: next })
+                        }
+                    />
+                </SettingsCard>
+            </SettingsGroup>
+        </div>
+    );
+}

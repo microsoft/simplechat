@@ -140,6 +140,44 @@
         "additionalProperties": true
       },
       "description": "Cached MCP tool metadata from discovery."
+    },
+    "mcp_prompts": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "arguments": {"type": "array"}
+        },
+        "required": ["name"],
+        "additionalProperties": true
+      },
+      "description": "Cached MCP prompt metadata from discovery."
+    },
+    "mcp_tool_fingerprints": {
+      "type": "object",
+      "properties": {
+        "manifest_hash": {"type": "string"},
+        "tools": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "prompts": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "discovered_at": {"type": "string"}
+      },
+      "required": ["manifest_hash", "tools", "prompts", "discovered_at"],
+      "additionalProperties": true,
+      "description": "Approved MCP tool and prompt fingerprints captured at discovery time."
+    },
+    "mcp_tool_drift": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "description": "Server-recorded MCP tool or prompt drift metadata that requires review."
     }
   },
   "required": ["server_profile", "transport", "auth_method"],

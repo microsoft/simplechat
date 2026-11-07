@@ -1,0 +1,97 @@
+name: XSS Full Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_paths:
+        description: Space-delimited tracked paths to scan for XSS sink patterns (.js, .html, .py, .ts, .tsx, .jsx, .mjs).
+        required: false
+        default: application
+      fail_on_findings:
+        description: Fail the workflow when findings are detected. Keep false for baseline/advisory runs.
+        required: true
+        type: boolean
+        default: false
+      run_self_tests:
+        description: Run the XSS checker regression tests before the audit.
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  xss-full-scan:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Run XSS guardrail self-test
+        if: inputs.run_self_tests
+        run: |
+          python functional_tests/test_xss_guardrails_checker.py
+
+      - name: Collect tracked XSS surface files
+        id: xss-files
+        env:
+          TARGET_PATHS: ${{ inputs.target_paths }}
+        run: |
+          set -euo pipefail
+
+          : > xss-surface-files.txt
+          for target_path in $TARGET_PATHS; do
+            git ls-files -- "$target_path" | grep -E '\.(js|html|py|ts|tsx|jsx|mjs)$' >> xss-surface-files.txt || true
+          done
+
+          sort -u xss-surface-files.txt -o xss-surface-files.txt
+          file_count=$(wc -l < xss-surface-files.txt | tr -d ' ')
+          echo "file_count=$file_count" >> "$GITHUB_OUTPUT"
+
+          if [[ "$file_count" == "0" ]]; then
+            echo "No tracked XSS surface files found for target paths: $TARGET_PATHS"
+            exit 0
+          fi
+
+          echo "Collected $file_count file(s) for the XSS full scan. Vendored browser assets are skipped by the checker."
+
+      - name: Run XSS full scan
+        id: xss-scan
+        if: steps.xss-files.outputs.file_count != '0'
+        env:
+          FAIL_ON_FINDINGS: ${{ inputs.fail_on_findings }}
+        run: |
+          set +e
+
+          mapfile -t xss_files < xss-surface-files.txt
+          python scripts/check_xss_sinks.py --full-file "${xss_files[@]}" 2>&1 | tee xss-full-scan-report.txt
+          checker_status=${PIPESTATUS[0]}
+
+          echo "checker_status=$checker_status" >> "$GITHUB_OUTPUT"
+          if [[ "$checker_status" -ne 0 ]]; then
+            echo "XSS full scan found findings. Review xss-full-scan-report.txt."
+            if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then
+              exit "$checker_status"
+            fi
+          fi
+
+          exit 0
+
+      - name: Upload XSS full scan report
+        if: always() && steps.xss-files.outputs.file_count != '0'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: xss-full-scan-report
+          path: |
+            xss-surface-files.txt
+            xss-full-scan-report.txt
+          if-no-files-found: ignore

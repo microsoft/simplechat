@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for Cosmos cache fallback behavior.
-Version: 0.261.045
-Implemented in: 0.261.045
+Version: 0.261.055
+Implemented in: 0.261.055
 
 This test ensures Redis failures in the app cache layer fall back to
 Cosmos-backed cache/source reads instead of failing callers.
@@ -14,6 +14,7 @@ import importlib
 import os
 import sys
 from azure.core.exceptions import AzureError
+from azure.cosmos._cosmos_responses import CosmosDict
 from redis.exceptions import ConnectionError as RedisConnectionError
 
 
@@ -30,31 +31,38 @@ class FakeCosmosError(AzureError):
 
 
 class FakeCosmosContainer:
-    def __init__(self):
+    """Plain point responses require the explicit compatibility option."""
+
+    def __init__(self, *, sdk_responses=True):
+        self.sdk_responses = sdk_responses
         self.items = {}
         self._etag_counter = 0
 
+    def _response(self, body):
+        value = copy.deepcopy(dict(body))
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
+
     def _copy_with_new_etag(self, body):
         self._etag_counter += 1
-        item = copy.deepcopy(body)
+        item = copy.deepcopy(dict(body))
         item["_etag"] = f"etag-{self._etag_counter}"
         return item
 
     def read_item(self, item, partition_key, **kwargs):
         if item not in self.items:
             raise FakeCosmosError(404, f"Missing item {item}")
-        return copy.deepcopy(self.items[item])
+        return self._response(self.items[item])
 
     def create_item(self, body):
         item_id = body["id"]
         if item_id in self.items:
             raise FakeCosmosError(409, f"Duplicate item {item_id}")
         self.items[item_id] = self._copy_with_new_etag(body)
-        return copy.deepcopy(self.items[item_id])
+        return self._response(self.items[item_id])
 
     def upsert_item(self, body):
         self.items[body["id"]] = self._copy_with_new_etag(body)
-        return copy.deepcopy(self.items[body["id"]])
+        return self._response(self.items[body["id"]])
 
     def replace_item(self, item, body, etag=None, match_condition=None, **kwargs):
         if item not in self.items:
@@ -62,7 +70,7 @@ class FakeCosmosContainer:
         if etag and self.items[item].get("_etag") != etag:
             raise FakeCosmosError(412, f"ETag mismatch for item {item}")
         self.items[item] = self._copy_with_new_etag(body)
-        return copy.deepcopy(self.items[item])
+        return self._response(self.items[item])
 
     def delete_item(self, item, partition_key, **kwargs):
         if item not in self.items:
@@ -71,8 +79,8 @@ class FakeCosmosContainer:
 
 
 class StreamAppendConflictContainer(FakeCosmosContainer):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, *, sdk_responses=True):
+        super().__init__(sdk_responses=sdk_responses)
         self.conflicts_remaining = 1
 
     def replace_item(self, item, body, etag=None, match_condition=None, **kwargs):

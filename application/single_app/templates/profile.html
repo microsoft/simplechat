@@ -936,6 +936,46 @@
     </div>
     {% endif %}
 
+    <div class="section-card" id="workflow-alert-sound-device-preferences">
+        <div class="d-flex flex-column flex-lg-row align-items-lg-start justify-content-between gap-3">
+            <div class="d-flex gap-3 align-items-start">
+                <span class="preference-card-icon" aria-hidden="true">
+                    <i class="bi bi-broadcast-pin"></i>
+                </span>
+                <div>
+                    <h5 class="mb-2"><i class="bi bi-volume-up-fill me-2"></i>Workflow Alert Sounds</h5>
+                    <p class="text-muted mb-2">Control whether workflow alerts can play sounds on this device.</p>
+                    <p class="small text-muted mb-0" id="workflow-alert-sound-device-help">
+                        This preference is stored in this browser. Administrators can still turn workflow alert sounds off for everyone.
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-3 align-items-center mt-1">
+            <div class="col-lg-8">
+                <div class="form-check form-switch mt-3">
+                    <input
+                        class="form-check-input"
+                        type="checkbox"
+                        id="workflow-alert-sound-device-toggle"
+                        aria-describedby="workflow-alert-sound-device-help"
+                    />
+                    <label class="form-check-label fw-semibold" for="workflow-alert-sound-device-toggle">
+                        Play workflow alert sounds on this device
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div
+            id="workflow-alert-sound-device-status"
+            class="preference-status small mt-3 text-muted"
+            role="status"
+            aria-live="polite"
+        ></div>
+    </div>
+
     {% set sidebar_toggle_style = user_settings.get('settings', {}).get('sidebarToggleStyle', 'large') %}
     {% set latest_features_hidden_version = user_settings.get('settings', {}).get('latestFeaturesHiddenVersion') %}
     {% set latest_features_hidden_for_current_version = latest_features_hidden_version == config['VERSION'] %}
@@ -1226,11 +1266,11 @@
         <hr />
         <div id="m365-chat-connection" role="region" aria-labelledby="m365-chat-connection-heading">
             <h6 id="m365-chat-connection-heading">Microsoft 365 chat connection</h6>
-            <p class="small">Renew your interactive Microsoft 365 sign-in here, even without a pending chat request. This uses your current sign-in session and does not require Key Vault or a saved workflow connection.</p>
+            <p class="small">Connect your own Microsoft 365 account for chat, independently of workflows. With Key Vault configured, your chat sign-in is saved across SimpleChat sign-out and browser restarts. Microsoft and your organization's policies still determine when you must sign in again.</p>
             <p class="small">Reconnecting does not change sharing approvals or preferences, saved workflow credentials, or workflow Run as authorizations. It does not enable disabled action capabilities or fix unrelated model or storage configuration errors.</p>
             <div id="m365-chat-connection-notice" class="alert alert-success d-none" role="status" aria-live="polite"></div>
             <div id="m365-chat-connection-status" class="alert alert-info" role="status" aria-live="polite" tabindex="-1">Loading chat sign-in status...</div>
-            <p class="small text-muted">This status reflects local saved sign-in state, not a live test of Microsoft 365 access.</p>
+            <p class="small text-muted">Listed sources retain their verified permissions when short-lived access tokens expire. Microsoft still checks your access each time a source runs.</p>
             <p id="m365-chat-connection-details" class="small"></p>
             <fieldset id="m365-chat-connection-fields" aria-describedby="m365-chat-source-permissions-help" disabled>
                 <legend class="fs-6">Sources to connect for chat</legend>
@@ -1243,13 +1283,18 @@
                     {% endfor %}
                 </div>
                 <p class="form-text" id="m365-chat-source-permissions-help">Each source includes the permissions for all of its supported operations. Calendar includes reading events, creating invitations, mailbox timezone, and recipient lookup. Email includes reading messages, managing drafts and read state, sending mail, and recipient lookup. OneDrive and SPO include file discovery and reading. Microsoft shows the permissions before you consent. Action capabilities, delivery confirmations, and sharing approvals still control what can actually run.</p>
-                <button type="button" class="btn btn-primary" id="m365-chat-connect-btn">Reconnect Microsoft 365 for chat</button>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="button" class="btn btn-primary" id="m365-chat-connect-btn">Reconnect Microsoft 365 for chat</button>
+                    <button type="button" class="btn btn-outline-danger" id="m365-chat-disconnect-btn" disabled>Disconnect chat</button>
+                </div>
             </fieldset>
         </div>
         <hr />
         <h6>Connect Microsoft 365 for workflows</h6>
         <p class="small">This is separate from ordinary sign-in, sharing preferences, and workflow approval. Each selected Run as workflow revision needs your explicit authorization. Disconnect stops future connected-account use and invalidates bindings; it does not sign you out of other applications.</p>
         <p class="small">This status is for saved workflow access. Interactive chat asks you to connect in the conversation when permission is needed; a disconnected workflow account does not disable chat.</p>
+        <div id="m365-connection-notice" class="alert alert-success d-none" role="status" aria-live="polite"></div>
+        <div id="m365-connection-readiness" class="alert alert-warning d-none" role="status" aria-live="polite"></div>
         <div id="m365-connection-status" class="alert alert-info" role="status" aria-live="polite">Loading workflow connection...</div>
         <dl id="m365-connection-details" class="row small"></dl>
         <fieldset id="m365-connection-fields" disabled>
@@ -1268,7 +1313,7 @@
                 <button type="button" class="btn btn-outline-danger" id="m365-disconnect-btn" disabled>Disconnect</button>
             </div>
         </fieldset>
-        <p class="form-text">Durable workflow sign-in requires the deployment's Key Vault-backed credential protection. If it is unavailable, connection fails explicitly; no plaintext or application-identity fallback is used.</p>
+        <p class="form-text">A saved workflow sign-in is encrypted with this deployment's key in Key Vault, which SimpleChat creates the first time anyone connects. There is no plaintext or application-identity fallback.</p>
         <h6 class="mt-4">Your workflow authorizations</h6>
         <div id="m365-bindings-status" class="small text-muted" role="status" aria-live="polite"></div>
         <div id="m365-workflow-bindings" class="d-grid gap-2"></div>
@@ -1845,7 +1890,7 @@
                         <h5 class="mb-2"><i class="bi bi-shield-exclamation me-2"></i>My Safety Violations</h5>
                         <p class="text-muted mb-0">Review flagged messages, update your own notes, and export the current filtered set.</p>
                     </div>
-                    {% if app_settings.enable_content_safety %}
+                    {% if app_settings.enable_content_safety or app_settings.enable_content_screening %}
                     <button type="button" class="btn btn-outline-primary" id="profile-violations-export-btn">
                         <i class="bi bi-download me-1"></i>Export Violations
                     </button>
@@ -1853,7 +1898,7 @@
                 </div>
             </div>
 
-            {% if app_settings.enable_content_safety %}
+            {% if app_settings.enable_content_safety or app_settings.enable_content_screening %}
             <div class="row g-3 mb-4">
                 <div class="col-md-3">
                     <div class="stat-card">
@@ -1900,7 +1945,6 @@
                             <option value="None">None</option>
                             <option value="WarnUser">WarnUser</option>
                             <option value="SuspendUser">SuspendUser</option>
-                            <option value="Escalate">Escalate</option>
                             <option value="BlockUser">BlockUser</option>
                         </select>
                     </div>
@@ -2478,7 +2522,7 @@
 window.profilePageConfig = {
     initialTab: {{ (initial_tab | default('stats')) | tojson }},
     feedbackEnabled: {{ (app_settings.enable_user_feedback | default(false)) | tojson }},
-    contentSafetyEnabled: {{ (app_settings.enable_content_safety | default(false)) | tojson }},
+    contentSafetyEnabled: {{ ((app_settings.enable_content_safety | default(false)) or (app_settings.enable_content_screening | default(false))) | tojson }},
     groupWorkspacesEnabled: {{ (app_settings.enable_group_workspaces | default(false)) | tojson }},
     publicWorkspacesEnabled: {{ (app_settings.enable_public_workspaces | default(false)) | tojson }},
     canCreateGroups: {{ profile_can_create_groups | tojson }},

@@ -45,14 +45,24 @@ class OpenApiPluginFactory:
         openapi_spec_content = config.get('openapi_spec_content')
         
         # Also check in additionalFields for compatibility
+        additional_fields = config.get('additionalFields', {})
         if not openapi_spec_content and 'additionalFields' in config:
-            openapi_spec_content = config['additionalFields'].get('openapi_spec_content')
+            openapi_spec_content = additional_fields.get('openapi_spec_content')
+
+        allowed_operations = config.get('allowed_operations')
+        if allowed_operations is None:
+            allowed_operations = additional_fields.get('allowed_operations')
+        if allowed_operations is None:
+            allowed_operations = []
+        elif not isinstance(allowed_operations, list):
+            raise ValueError("allowed_operations must be a list of operation IDs")
         
         if openapi_spec_content:
             return OpenApiPlugin(
                 base_url=base_url,
                 auth=auth,
-                openapi_spec_content=openapi_spec_content
+                openapi_spec_content=openapi_spec_content,
+                allowed_operations=allowed_operations,
             )
         
         # Fall back to legacy file-based approach for backward compatibility
@@ -71,7 +81,8 @@ class OpenApiPluginFactory:
         return OpenApiPlugin(
             base_url=base_url,
             auth=auth,
-            openapi_spec_path=openapi_spec_path
+            openapi_spec_path=openapi_spec_path,
+            allowed_operations=allowed_operations,
         )
     
     @classmethod

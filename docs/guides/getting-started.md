@@ -77,7 +77,7 @@ Follow the prompts to select your subscription, region, and provide required con
 
 ### Option B: Other Deployment Methods
 
-For more deployment options, see our [deployment reference](../reference/deploy/index.md).
+For more deployment options, see our [deployment reference]({{ '/reference/deploy/' | relative_url }}).
 
 ## Step 2: Initial Configuration
 
@@ -164,6 +164,21 @@ Now that you're up and running, explore more features:
 Or dive into specific tasks with our [how-to guides]({{ '/guides/' | relative_url }}).
 
 ## Troubleshooting
+
+### Renewing your SimpleChat session without losing a draft
+
+Fixed/Implemented in version: **0.261.338** (`application/single_app/config.py`).
+In React V2, a confirmed app-session expiry shows a SimpleChat sign-in notice
+while leaving your current chat and unsaved draft open. Choose **Sign in again
+(opens a new tab)**, finish signing in with the same account, then return and
+choose **Check sign-in** if the notice remains. Retry the action you intended
+only after sign-in is confirmed. Recovery never sends a message, submits an
+outgoing action, or saves a schedule automatically.
+
+If a different account is detected, copy any unsaved text before choosing
+**Reload SimpleChat**. A connectivity error alone does not prove session expiry.
+Microsoft 365 reconnect prompts apply to actual Microsoft 365 work, not to an
+unrelated conversation's background lookup.
 
 **Document not uploading?**
 - Check file size limits in Admin Settings

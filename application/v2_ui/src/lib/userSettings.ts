@@ -1,0 +1,304 @@
+// userSettings.ts
+// The per-user preferences V2 reads and writes through /api/user/settings.
+//
+// The route keeps a whitelist (`allowed_keys` in route_backend_users.py). A key outside it
+// is dropped **silently** -- the POST still returns success and the value simply never
+// arrives. Every key below therefore has to exist in that set, which a functional test
+// asserts rather than leaving to review.
+//
+// Two keys are deliberately absent. `activeGroupOid` and `activePublicWorkspaceOid` look
+// like ordinary settings but are popped from the payload and routed to
+// `update_active_group_for_user()` / `update_active_public_workspace_for_user()`; they never
+// come back from a later GET, so treating them as settings would make the store believe a
+// save had been lost. They get their own call when the workspace tabs are built.
+
+import type { SidebarMenuState } from './sidebarMenuState';
+import type { ApprovalMode } from './orchestration';
+import type { DocumentExplorerPrefs, DocumentSavedView } from './types';
+import type { ActivityLogPrefs, ActivityLogSavedView } from './activityLogs';
+
+/** Text scale, matching the values the route normalises to. */
+export type FontSizePreference = 'xs' | 's' | 'm' | 'l' | 'xl';
+
+/** Sidebar hide-control style, matching the route's accepted values. */
+export type SidebarToggleStyle = 'large' | 'compact';
+
+/**
+ * Preferences V2 owns.
+ *
+ * Deliberately a subset of what the route accepts: these are the ones V2 actually has a
+ * control for. Reading a key V2 never writes is harmless, so the shape stays open.
+ */
+export interface UserSettings {
+    /** Shared with the classic interface, so the two agree on light/dark. */
+    darkModeEnabled?: boolean;
+    fontSizePreference?: FontSizePreference;
+    sidebarToggleStyle?: SidebarToggleStyle;
+    showTutorialButtons?: boolean;
+    /**
+     * Per-tour visibility, `{ tourId: boolean }`. A tour missing from the map is shown,
+     * as long as `showTutorialButtons` is not off. The route accepts only shipped tour ids.
+     */
+    tutorialVisibility?: Record<string, boolean>;
+    desktopNotificationsEnabled?: boolean;
+    conversationContentsDrawerEnabled?: boolean;
+    /**
+     * Whether the conversation list labels group, public and shared conversations.
+     *
+     * Defaults to on when absent: the information is useful and was previously missing
+     * entirely, so a user who has never seen the setting gets the more informative
+     * behaviour.
+     */
+    showConversationWorkspaceTags?: boolean;
+    /**
+     * Shell preferences owned by this interface.
+     *
+     * Namespaced rather than reusing the classic interface's `dockedSidebarHidden` and
+     * `chatLayout`: those describe its own sidebar and chat layout, and writing them from
+     * here would rearrange that interface as a side effect of a choice made in this one.
+     */
+    v2RailCollapsed?: boolean;
+    v2ChatWidth?: string;
+
+    /**
+     * Which of the rail's named menus are expanded.
+     *
+     * Deliberately NOT namespaced, unlike the two above: both interfaces mean the same thing
+     * by "the External Links menu is collapsed", and a group put away in one should stay put
+     * away in the other. See lib/sidebarMenuState.ts for the key names and the whole-object
+     * write this sharing requires.
+     */
+    sidebarMenuState?: SidebarMenuState;
+
+    /**
+     * Whether the personal workspace's section rail shows icons only.
+     *
+     * Deliberately separate from `v2RailCollapsed`, which is the application shell's rail.
+     * They are two different navigation surfaces stacked side by side, and collapsing one to
+     * make room should not also collapse the other.
+     */
+    v2WorkspaceRailCollapsed?: boolean;
+
+    /**
+     * Whether the Admin Settings categories rail shows icons only.
+     *
+     * Its own key rather than `v2WorkspaceRailCollapsed` or `v2RailCollapsed`: making room for
+     * the settings cards should not also change how the workspace pages or the application
+     * shell are laid out.
+     */
+    v2AdminRailCollapsed?: boolean;
+
+    /** Whether the Approvals categories rail shows icons only. Its own key for the same reason. */
+    v2ApprovalsRailCollapsed?: boolean;
+    /** Whether the admin Review center rail shows icons only. Its own key for the same reason. */
+    v2ReviewRailCollapsed?: boolean;
+    /** Whether the V2 Control Center section rail is collapsed to icons. */
+    v2ControlCenterRailCollapsed?: boolean;
+
+    /**
+     * Activity Logs saved views and display preferences. Stored on the account so they follow
+     * the administrator across browsers; see lib/activityLogSavedViews.ts.
+     */
+    v2ActivityLogSavedViews?: ActivityLogSavedView[];
+    v2ActivityLogPrefs?: Partial<ActivityLogPrefs>;
+
+    /**
+     * Whether the User Settings sections rail shows icons only. Its own key for the same
+     * reason the admin and workspace rails have theirs.
+     */
+    v2UserSettingsRailCollapsed?: boolean;
+
+    /**
+     * How the workspace documents explorer is presented, and the views pinned in its rail.
+     *
+     * Namespaced like the shell preferences above. The classic interface stores its own
+     * documents view mode in `localStorage` under `personalWorkspaceViewPreference` and
+     * offers four modes to this interface's two, so the two settings describe genuinely
+     * different things and must not be shared.
+     */
+    v2DocumentsPrefs?: Partial<DocumentExplorerPrefs>;
+    v2DocumentSavedViews?: DocumentSavedView[];
+
+    /**
+     * The chat model last chosen in the picker, as a catalog `selection_key`.
+     *
+     * Deliberately NOT namespaced like `v2RailCollapsed`: both interfaces mean the same
+     * thing by it, and `/api/v2/bootstrap` resolves `initial_model_selection` from this key
+     * (falling back to `preferredModelDeployment`). Without it the composer restores
+     * whatever the other interface last saved, or the first entry in the catalog.
+     */
+    preferredModelId?: string;
+    preferredModelDeployment?: string;
+
+    /**
+     * The reasoning level chosen per model, `{ 'gpt-5-mini': 'medium' }`.
+     *
+     * Shared with the classic interface, which owns the same map, so a level chosen in one
+     * is in effect in the other. Keyed by model id (falling back to deployment name), which
+     * is what `getCurrentModelName()` in chat-reasoning.js uses.
+     */
+    reasoningEffortSettings?: Record<string, string>;
+
+    /** Used when approval overrides are allowed; absent until the user chooses a mode. */
+    orchestrationApprovalMode?: ApprovalMode;
+
+    /**
+     * Whether Orchestrate chooses a model per step (`auto`) or uses the pinned model below.
+     *
+     * Absent until the user chooses, which means the default: Auto wherever a connected model
+     * can be chosen per step. Kept apart from `preferredModelId` so a model pinned for
+     * orchestration never changes what an ordinary chat uses.
+     */
+    orchestrationModelRouting?: 'auto' | 'manual';
+    /** The model pinned for Orchestrate, as a catalog `selection_key`. */
+    orchestrationPreferredModelId?: string;
+
+    chatCompletionAudioEnabled?: boolean;
+    chatCompletionAudioMuted?: boolean;
+    chatCompletionAudioSound?: string;
+    /** The route requires an integer 1-10. */
+    chatCompletionAudioVolume?: number;
+
+    ttsEnabled?: boolean;
+    ttsVoice?: string;
+    ttsSpeed?: number;
+    ttsAutoplay?: boolean;
+
+    /** The version the user hid the Latest Features shortcut for; the route accepts only the current one. */
+    latestFeaturesHiddenVersion?: string | null;
+
+    /**
+     * The user's Microsoft Graph profile photo, as a data URI.
+     *
+     * Read-only here. The server fetches it once and caches it on the settings document
+     * when the user is first seen; nothing in either interface writes it back.
+     */
+    profileImage?: string | null;
+
+    /**
+     * The AI notice dismissal.
+     *
+     * Written through `dismissAiNotice()` rather than this store, and read back in a
+     * different shape: the client posts `{ hash, frequency }` and the route stores a
+     * server-timestamped record. Only the server reads it, at bootstrap.
+     */
+    aiNoticeDismissal?: { hash: string; frequency: string };
+
+    /**
+     * The active public workspace pointer.
+     *
+     * Read-only here, like `activeGroupOid`: the route pops it and routes it to
+     * `update_active_public_workspace_for_user()` rather than storing it as a setting, so it
+     * is deliberately absent from the writable key list below. Setting the active workspace
+     * gets its own call.
+     */
+    activePublicWorkspaceOid?: string;
+
+    [key: string]: unknown;
+}
+
+/**
+ * Every key V2 may write.
+ *
+ * Kept as a literal array rather than derived from the interface because a functional test
+ * parses it out of this file and checks each entry against the route's whitelist. A type
+ * cannot be read at test time; a literal can.
+ */
+export const WRITABLE_USER_SETTING_KEYS = [
+    'darkModeEnabled',
+    'fontSizePreference',
+    'sidebarToggleStyle',
+    'showTutorialButtons',
+    'tutorialVisibility',
+    // Written by the Latest Features hide control: the current version, or null to show it again.
+    'latestFeaturesHiddenVersion',
+    'desktopNotificationsEnabled',
+    'conversationContentsDrawerEnabled',
+    'showConversationWorkspaceTags',
+    'v2RailCollapsed',
+    'v2ChatWidth',
+    'v2MermaidStyle',
+    'v2ChartStyle',
+    // Shared with the classic interface rather than namespaced: a nav group collapsed in
+    // one interface should stay collapsed in the other.
+    'sidebarMenuState',
+    // Whether the section rail inside the personal workspace is showing icons only.
+    // Separate from v2RailCollapsed, which is the rail of the application shell:
+    // collapsing one should not collapse the other.
+    'v2WorkspaceRailCollapsed',
+    // Whether the Admin Settings categories rail is showing icons only. Separate from the
+    // shell and workspace rails for the same reason they are separate from each other.
+    'v2AdminRailCollapsed',
+    // Whether the Approvals categories rail is showing icons only.
+    'v2ApprovalsRailCollapsed',
+    // Whether the admin Review center rail is showing icons only.
+    'v2ReviewRailCollapsed',
+    // Whether the User Settings sections rail is showing icons only.
+    'v2UserSettingsRailCollapsed',
+    // Separate from the shell and Admin Settings rails so each keeps its own layout.
+    'v2ControlCenterRailCollapsed',
+    // Control Center Activity Logs: saved filter combinations and display preferences.
+    'v2ActivityLogSavedViews',
+    'v2ActivityLogPrefs',
+    // Workspace documents explorer: how the list is presented, and the saved filter
+    // combinations pinned in its navigation rail.
+    'v2DocumentsPrefs',
+    'v2DocumentSavedViews',
+    // Shared with the classic interface rather than namespaced: the chosen model and its
+    // reasoning level mean the same thing in both, and the bootstrap resolves the initial
+    // model selection from these keys.
+    'preferredModelId',
+    'preferredModelDeployment',
+    'reasoningEffortSettings',
+    'orchestrationApprovalMode',
+    // The Orchestrate model choice. V2-only: the classic interface has no orchestration.
+    'orchestrationModelRouting',
+    'orchestrationPreferredModelId',
+    'chatCompletionAudioEnabled',
+    'chatCompletionAudioMuted',
+    'chatCompletionAudioSound',
+    'chatCompletionAudioVolume',
+    'ttsEnabled',
+    'ttsVoice',
+    'ttsSpeed',
+    'ttsAutoplay',
+    // Written by dismissAiNotice() rather than the preferences store, but listed here so
+    // the whitelist test still proves the route will accept it.
+    'aiNoticeDismissal',
+] as const;
+
+export type WritableUserSettingKey = (typeof WRITABLE_USER_SETTING_KEYS)[number];
+
+/** Response of GET /api/user/settings. */
+export interface UserSettingsResponse {
+    settings?: UserSettings;
+}
+
+export const FONT_SIZE_PREFERENCES: FontSizePreference[] = ['xs', 's', 'm', 'l', 'xl'];
+
+export const FONT_SIZE_LABELS: Record<FontSizePreference, string> = {
+    xs: 'Extra small',
+    s: 'Small',
+    m: 'Default',
+    l: 'Large',
+    xl: 'Extra large',
+};
+
+/**
+ * Sound ids the route accepts for the completion cue.
+ *
+ * Quoted from CHAT_COMPLETION_AUDIO_SOUND_IDS; an unknown id is rejected outright rather
+ * than falling back, so the picker must not offer anything outside this list.
+ */
+export const COMPLETION_AUDIO_SOUNDS = [
+    'aurora',
+    'bell',
+    'bloom',
+    'chime',
+    'crystal',
+    'glimmer',
+    'marimba',
+    'pulse',
+    'spark',
+    'summit',
+] as const;

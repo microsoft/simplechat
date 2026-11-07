@@ -1,8 +1,8 @@
-#!/usr/bin/env python3
 # test_chat_stream_empty_model_fallback.py
+#!/usr/bin/env python3
 """
 Functional test for empty model stream fallback.
-Version: 0.250.006
+Version: 0.261.104
 Implemented in: 0.250.003; updated in 0.250.006
 
 This test ensures non-agent model streams that complete without assistant text
@@ -12,6 +12,7 @@ assistant content in stream lifecycle counters.
 
 import sys
 from pathlib import Path
+from test_support.versioning import assert_app_version_at_least
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +38,7 @@ def test_chat_stream_empty_model_fallback() -> None:
         "Model stream returned no assistant content; retrying without streaming",
     )
     assert_contains(ROUTE_FILE, "fallback_params = {")
-    assert_contains(ROUTE_FILE, "fallback_params.pop('reasoning_effort', None)")
+    assert_contains(ROUTE_FILE, "previous_resolution=reasoning_resolution")
     assert_contains(ROUTE_FILE, "def _resolve_reasoning_effort_for_model")
     assert_contains(ROUTE_FILE, "ModelEndpointBehavior(provider, model_name).resolve_reasoning_effort")
     assert_contains(ROUTE_FILE, "ModelEndpointBehavior(provider, model_name).context_mode")
@@ -57,7 +58,7 @@ def test_chat_stream_empty_model_fallback() -> None:
         "The selected model returned an empty response. Check the model endpoint API version and provider compatibility",
     )
     assert_contains(ROUTE_FILE, "payload.get('type') != 'thought'")
-    assert_contains(CONFIG_FILE, 'VERSION = "0.250.006"')
+    assert_app_version_at_least("0.250.006")
 
     print("✅ Empty model stream fallback markers verified.")
 

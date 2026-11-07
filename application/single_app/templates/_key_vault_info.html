@@ -53,15 +53,17 @@
                     <div class="card-body">
                         <div class="mb-4">
                             <h6>1. Set Permissions for the Identity</h6>
-                            <p class="small mb-2">In your Key Vault configuration, ensure the identity has the necessary permissions to access the Key Vault:</p>
-                            <p class="small mb-2">The minimum required permissions are:</p>
+                            <p class="small mb-2">Grant permissions to the application's identity, not just the deploying administrator. A blank managed identity client ID selects the App Service system-assigned identity; a supplied client ID selects that user-assigned identity.</p>
+                            <p class="small mb-2">Use the vault itself as the role-assignment scope. Key Vault Secrets User is read-only and cannot save or delete application secrets.</p>
                             <div class="row mb-3">
                                 <div class="col-md-6">Legacy Access Policies:
                                     <ul>
                                         <li>Secrets
                                             <ul>
                                                 <li>Get</li>
+                                                <li>List</li>
                                                 <li>Set</li>
+                                                <li>Delete</li>
                                             </ul>
                                         </li>
                                     </ul>
@@ -70,18 +72,10 @@
                                     <ul>
                                         <li>Built-in Role
                                             <ul>
-                                                <li>Key Vault Secret Officer</li>
+                                                <li>Key Vault Secrets Officer, assigned on this vault</li>
                                             </ul>
                                         </li>
                                         <li>Custom Role
-                                            <ul>
-                                                <li>Actions
-                                                    <ul>
-                                                        <li>Microsoft.KeyVault/vaults/secrets/write</li>
-                                                        <li>Microsoft.KeyVault/vaults/secrets/read</li>
-                                                    </ul>
-                                                </li>
-                                            </ul>
                                             <ul>
                                                 <li>Data Actions
                                                     <ul>
@@ -118,6 +112,8 @@
                                 <li><strong>Key Vault Name:</strong> Provide the name of your Key Vault (e.g., <code>your-key-vault-name</code>) The vault is assumed to be in the same cloud as the application and currently does not support cross-cloud configurations. This is determined by your AZURE_ENVIRONMENT app service configuration setting.</li>
                                 <li><strong>Key Vault Identity:</strong> Specify the identity used to access the Key Vault (System-Assigned or User-Assigned)</li>
                             </ul>
+                            <p class="small mb-2">Run the connection test before saving. It lists secret properties, writes a synthetic <code>simplechat-connection-test-*</code> secret, reads it back, and deletes it. Success requires every stage, including cleanup. Existing secrets are never modified.</p>
+                            <p class="small mb-0">The test secret expires after ten minutes if cleanup cannot complete, but expiration does not delete it. Follow any cleanup warning to remove the named test secret. The test never purges secrets, so soft-deleted metadata remains for the vault's retention period.</p>
                         </div>
                     </div>
                 </div>
@@ -153,7 +149,8 @@
                                 <div id="collapse2" class="accordion-collapse collapse" data-bs-parent="#troubleshootingAccordion">
                                     <div class="accordion-body">
                                         <ul>
-                                            <li>403 typically means there is a networking issue accessing key vault</li>
+                                            <li>A 403 can mean missing secret permissions or a network restriction. If listing succeeds but writing fails, verify Key Vault Secrets Officer is assigned to the selected application identity at vault scope.</li>
+                                            <li>For access-policy vaults, verify Get, List, Set, and Delete. Allow new role assignments to propagate before retrying.</li>
                                             <li>Verify if there are any firewall or virtual network restrictions on the Key Vault</li>
                                             <li>If using private endpoints, ensure the app service has access to the private endpoint, that it is VNet integrated, and that the DNS resolves correctly (use the terminal in SCM)</li>
                                             <li>Check that the correct network rules are applied to the Key Vault</li>

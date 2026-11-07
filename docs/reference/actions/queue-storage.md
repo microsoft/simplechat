@@ -23,9 +23,12 @@ Use it when an agent should enqueue work for another system. Do not use it for l
 - Queue endpoint and identity or key auth; the create-action UI hides `queue_storage`.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-Use legacy/existing queue manifest fields where exposed.
+`queue_storage` is hidden from new-action creation because it is a legacy/internal integration. Existing queue manifests continue to load for review or migration where governance permits.
+
+The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

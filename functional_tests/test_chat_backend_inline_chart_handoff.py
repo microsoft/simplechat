@@ -24,14 +24,10 @@ CONFIG_FILE = APP_ROOT / 'config.py'
 EXPECTED_VERSION = '0.241.134'
 
 TARGET_FUNCTIONS = {
-    '_append_inline_chart_blocks_to_message',
-    '_collect_inline_chart_blocks',
     '_get_appended_inline_chart_content_delta',
-    '_normalize_inline_chart_markdown',
     'build_chart_tool_usage_system_message',
     'insert_system_message_after_existing_system_messages',
     'maybe_append_chart_tool_system_message',
-    'user_requested_chart_visualization',
 }
 
 
@@ -62,18 +58,28 @@ def load_route_chart_helpers():
     if str(APP_ROOT) not in sys.path:
         sys.path.insert(0, str(APP_ROOT))
 
+    # The chart block and intent helpers moved to functions_chart_operations in 0.261.132 so
+    # orchestration can share them; the route imports them under the same names.
     from functions_chart_operations import (  # pylint: disable=import-error,import-outside-toplevel
         INLINE_CHART_BLOCK_LANGUAGE,
+        append_inline_chart_blocks_to_message,
         build_proactive_chart_guidance_message,
+        collect_inline_chart_blocks,
+        normalize_inline_chart_markdown,
         user_request_supports_proactive_charts,
+        user_requested_chart_visualization,
     )
 
     namespace = {
         'INLINE_CHART_BLOCK_LANGUAGE': INLINE_CHART_BLOCK_LANGUAGE,
         'INLINE_CHART_ID_PATTERN_TEMPLATE': '"chartId":"{}"',
+        '_append_inline_chart_blocks_to_message': append_inline_chart_blocks_to_message,
+        '_collect_inline_chart_blocks': collect_inline_chart_blocks,
+        '_normalize_inline_chart_markdown': normalize_inline_chart_markdown,
         'build_proactive_chart_guidance_message': build_proactive_chart_guidance_message,
         're': re,
         'user_request_supports_proactive_charts': user_request_supports_proactive_charts,
+        'user_requested_chart_visualization': user_requested_chart_visualization,
     }
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(ROUTE_FILE), 'exec'), namespace)
     return namespace, route_content

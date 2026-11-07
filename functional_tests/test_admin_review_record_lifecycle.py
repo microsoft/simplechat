@@ -22,6 +22,7 @@ LIFECYCLE_PATH = APP_DIR / 'functions_review_lifecycle.py'
 FEEDBACK_ROUTE_PATH = APP_DIR / 'route_backend_feedback.py'
 SAFETY_ROUTE_PATH = APP_DIR / 'route_backend_safety.py'
 CHAT_ROUTE_PATH = APP_DIR / 'route_backend_chats.py'
+CHAT_REVIEW_PATH = APP_DIR / 'functions_chat_content_review.py'
 
 
 def _load_lifecycle_module(activity_logger):
@@ -93,6 +94,7 @@ def test_feedback_and_safety_route_contracts():
     feedback_source = FEEDBACK_ROUTE_PATH.read_text(encoding='utf-8')
     safety_source = SAFETY_ROUTE_PATH.read_text(encoding='utf-8')
     chat_source = CHAT_ROUTE_PATH.read_text(encoding='utf-8')
+    chat_review_source = CHAT_REVIEW_PATH.read_text(encoding='utf-8')
 
     feedback_markers = [
         '@bp.route("/feedback/review/<feedbackId>/archive", methods=["PATCH"])',
@@ -126,8 +128,10 @@ def test_feedback_and_safety_route_contracts():
     for marker in safety_markers:
         assert marker in safety_source, f'Missing safety lifecycle marker: {marker}'
 
-    assert "'created_at': safety_timestamp" in chat_source
-    assert "'last_updated': safety_timestamp" in chat_source
+    assert (
+        ("'created_at': safety_timestamp" in chat_source and "'last_updated': safety_timestamp" in chat_source)
+        or ('"created_at": summary.get("attempted_at")' in chat_review_source and '"last_updated": summary.get("attempted_at")' in chat_review_source)
+    )
     assert feedback_source.count('@swagger_route(security=get_auth_security())') == feedback_source.count('@bp.route(')
     assert safety_source.count('@swagger_route(security=get_auth_security())') == safety_source.count('@bp.route(')
 

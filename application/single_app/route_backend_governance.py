@@ -2,25 +2,46 @@
 
 """Admin API routes for governance policy management."""
 
+import logging
+
 from flask import jsonify, request, session
 
+from functions_appinsights import log_event
 from functions_authentication import admin_required, get_current_user_id, login_required
 from functions_governance import (
     DEFAULT_FEATURE_POLICIES,
     bootstrap_default_feature_policies,
     delete_item_policy,
     list_item_policies_by_policy_id,
+    list_item_policies_for_entity_types,
     list_feature_policies,
     list_item_policies,
+    normalize_item_policy_entity_type_filter,
     retarget_item_policy,
     upsert_feature_policy,
     upsert_item_policy,
+)
+from functions_group import find_groups_by_ids, list_groups_for_admin_directory
+from functions_mcp_operations import MCP_REMOTE_TRANSPORTS
+from functions_mcp_preconfigurations import build_mcp_preconfiguration_policy_catalog
+from functions_mcp_presets import load_mcp_server_presets
+from functions_public_workspaces import (
+    find_public_workspaces_by_ids,
+    list_public_workspaces_for_admin_directory,
 )
 from swagger_wrapper import get_auth_security, swagger_route
 
 
 DEFAULT_GOVERNANCE_REVIEW_PAGE_SIZE = 25
 MAX_GOVERNANCE_REVIEW_PAGE_SIZE = 100
+
+# Governance group principals are group workspaces and public workspaces, because a
+# user's governance groups are resolved from both memberships. A search returns up to
+# this many of each kind; resolving saved ids is capped so one request stays bounded.
+GOVERNANCE_PRINCIPAL_GROUP_SEARCH_LIMIT = 25
+GOVERNANCE_PRINCIPAL_GROUP_RESOLVE_LIMIT = 100
+GOVERNANCE_PRINCIPAL_GROUP_KIND_GROUP = "group"
+GOVERNANCE_PRINCIPAL_GROUP_KIND_PUBLIC_WORKSPACE = "public_workspace"
 
 
 def _normalize_actor_email() -> str:
@@ -164,6 +185,28 @@ def _item_policy_target_changed(
     )
 
 
+def _principal_group_row(row, kind):
+    row = row if isinstance(row, dict) else {}
+    member_count = row.get("member_count")
+    return {
+        "id": str(row.get("id") or ""),
+        "name": str(row.get("name") or ""),
+        "description": str(row.get("description") or ""),
+        "kind": kind,
+        "member_count": member_count if isinstance(member_count, int) else None,
+    }
+
+
+def _parse_principal_group_ids(raw_ids):
+    """Split a comma-separated id list, keeping order and dropping blanks and repeats."""
+    requested_ids = []
+    for raw_id in str(raw_ids or "").split(","):
+        candidate = raw_id.strip()
+        if candidate and candidate not in requested_ids:
+            requested_ids.append(candidate)
+    return requested_ids
+
+
 def register_route_backend_governance(bp):
     @bp.route('/api/admin/governance/policies', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -248,11 +291,26 @@ def register_route_backend_governance(bp):
     @login_required
     @admin_required
     def review_governance_item_policies_route():
-        entity_type = str(request.args.get('entity_type') or '').strip().lower() or None
+        # One type or a comma-separated list, so a section can embed every MCP
+        # destination scope in one list. A misspelled type is refused rather than
+        # ignored, because ignoring it would answer with every policy instead.
+        entity_types, unknown_entity_types = normalize_item_policy_entity_type_filter(
+            request.args.get('entity_type')
+        )
+        if unknown_entity_types:
+            return jsonify({'error': 'Unknown delegated item entity type.'}), 400
+        item_id = str(request.args.get('item_id') or '').strip()
         search = str(request.args.get('search') or '').strip().lower()
         page, per_page = _normalize_review_pagination(request.args)
 
-        policies = list_item_policies(entity_type=entity_type)
+        policies = list_item_policies_for_entity_types(entity_types)
+        if item_id:
+            # An exact match on the stored item id, for listing the policies that
+            # govern one resource from that resource's own settings.
+            policies = [
+                policy for policy in policies
+                if str(policy.get("item_id") or "").strip() == item_id
+            ]
         if search:
             policies = [
                 policy for policy in policies
@@ -276,7 +334,9 @@ def register_route_backend_governance(bp):
                 'has_next': page < total_pages,
             },
             'search': search,
-            'entity_type': entity_type,
+            'entity_type': ','.join(entity_types) or None,
+            'entity_types': entity_types,
+            'item_id': item_id or None,
         }), 200
 
     @bp.route('/api/admin/governance/item-policies/<entity_type>/<item_id>', methods=['PUT'])
@@ -409,3 +469,109 @@ def register_route_backend_governance(bp):
             return jsonify({'error': 'entity_type and item_id are required.'}), 400
 
         return _delete_governance_item_policy(normalized_entity_type, normalized_item_id, normalized_policy_id)
+
+    @bp.route('/api/admin/governance/principal-groups', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_governance_principal_groups_route():
+        """Search or resolve the groups a governance policy can name.
+
+        A user's governance groups come from both group workspace and public workspace
+        membership, so a policy may hold either kind of id. ``ids`` labels a saved
+        policy: ids that resolve to nothing are absent from the answer, which is how
+        the caller tells a deleted workspace apart from a live one. Otherwise
+        ``search`` matches name, description or id across both kinds.
+        """
+        raw_ids = str(request.args.get('ids') or '').strip()
+        try:
+            if raw_ids:
+                requested_ids = _parse_principal_group_ids(raw_ids)
+                if len(requested_ids) > GOVERNANCE_PRINCIPAL_GROUP_RESOLVE_LIMIT:
+                    return jsonify({
+                        'error': (
+                            'Too many group ids requested. Limit is '
+                            f'{GOVERNANCE_PRINCIPAL_GROUP_RESOLVE_LIMIT}.'
+                        ),
+                    }), 400
+
+                rows = [
+                    _principal_group_row(row, GOVERNANCE_PRINCIPAL_GROUP_KIND_GROUP)
+                    for row in find_groups_by_ids(requested_ids)
+                ]
+                found_ids = {row['id'] for row in rows}
+                remaining_ids = [group_id for group_id in requested_ids if group_id not in found_ids]
+                if remaining_ids:
+                    rows.extend(
+                        _principal_group_row(row, GOVERNANCE_PRINCIPAL_GROUP_KIND_PUBLIC_WORKSPACE)
+                        for row in find_public_workspaces_by_ids(remaining_ids)
+                    )
+                rows_by_id = {row['id']: row for row in rows}
+                return jsonify({
+                    'groups': [rows_by_id[group_id] for group_id in requested_ids if group_id in rows_by_id],
+                    'truncated': False,
+                }), 200
+
+            search = str(request.args.get('search') or '').strip()
+            groups, groups_truncated = list_groups_for_admin_directory(
+                search_query=search,
+                limit=GOVERNANCE_PRINCIPAL_GROUP_SEARCH_LIMIT,
+            )
+            workspaces, workspaces_truncated = list_public_workspaces_for_admin_directory(
+                search_query=search,
+                limit=GOVERNANCE_PRINCIPAL_GROUP_SEARCH_LIMIT,
+            )
+            rows = [
+                _principal_group_row(row, GOVERNANCE_PRINCIPAL_GROUP_KIND_GROUP) for row in groups
+            ] + [
+                _principal_group_row(row, GOVERNANCE_PRINCIPAL_GROUP_KIND_PUBLIC_WORKSPACE) for row in workspaces
+            ]
+            rows.sort(key=lambda row: (row['name'].lower(), row['kind'], row['id']))
+            return jsonify({
+                'groups': rows,
+                'truncated': bool(groups_truncated or workspaces_truncated),
+            }), 200
+        except Exception as exc:
+            log_event(
+                "[GOVERNANCE_ADMIN] Failed to load governance principal groups.",
+                extra={
+                    'error_type': type(exc).__name__,
+                    'mode': 'resolve' if raw_ids else 'search',
+                },
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to load groups.'}), 500
+
+    @bp.route('/api/admin/governance/mcp-destination-catalog', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def get_governance_mcp_destination_catalog_route():
+        """Return the ids an MCP destination policy can name.
+
+        A destination policy names a template as ``preconfiguration:<id>`` or
+        ``preset:<id>``, and a transport as ``transport:<name>``. Offering these as
+        choices means an administrator does not have to know the ids, and a value
+        that could never match is visible before it is saved.
+        """
+        try:
+            presets = [
+                {
+                    'id': str(preset.get('id') or '').strip(),
+                    'label': str(preset.get('displayName') or preset.get('id') or '').strip(),
+                }
+                for preset in load_mcp_server_presets()
+                if str(preset.get('id') or '').strip()
+            ]
+            return jsonify({
+                'preconfigurations': build_mcp_preconfiguration_policy_catalog(),
+                'presets': presets,
+                'transports': sorted(MCP_REMOTE_TRANSPORTS),
+            }), 200
+        except Exception as exc:
+            log_event(
+                "[GOVERNANCE_ADMIN] Failed to load the MCP destination catalog.",
+                extra={'error_type': type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to load the MCP destination catalog.'}), 500

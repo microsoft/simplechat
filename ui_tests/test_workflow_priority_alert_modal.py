@@ -249,6 +249,180 @@ def _build_alert_notification(notification_id, priority, category, delivery, tit
     }
 
 
+def _build_ack_alert_notification(notification_id, *, size="small", audience="owner", sound="off"):
+    """Build a must-acknowledge workflow alert payload for acknowledgment checks."""
+    notification = _build_alert_notification(
+        notification_id,
+        "critical",
+        "alert",
+        "popup",
+        "Critical priority workflow alert: Operations escalation",
+        "Operations escalation needs attention.",
+    )
+    notification.update({
+        "require_acknowledgment": True,
+        "sound": sound,
+        "size": size,
+        "audience": audience,
+        "acknowledged": False,
+        "acknowledged_at": None,
+        "acknowledged_by_name": None,
+        "content_scope": "member" if audience == "group" else "full",
+    })
+    notification["metadata"].update({
+        "require_acknowledgment": True,
+        "sound": sound,
+        "size": size,
+        "audience": audience,
+        "alert_title": "Operations escalation",
+        "alert_summary": "Operations escalation needs attention.",
+        "alert_detail": "Operations escalation detailed context.",
+        "link_targets": [
+            {
+                "label": "Open created conversation",
+                "link_url": "/chats?conversationId=ack-conversation-001",
+                "link_context": {
+                    "workspace_type": "group" if audience == "group" else "personal",
+                    "group_id": "group-ack-001" if audience == "group" else "",
+                    "conversation_id": "ack-conversation-001",
+                },
+            }
+        ],
+    })
+    notification["link_url"] = "/chats?conversationId=ack-conversation-001"
+    notification["link_context"] = {
+        "workspace_type": "group" if audience == "group" else "personal",
+        "group_id": "group-ack-001" if audience == "group" else "",
+        "conversation_id": "ack-conversation-001",
+    }
+    return notification
+
+
+@pytest.mark.ui
+def test_workflow_alert_modal_supports_acknowledgment_banner_sizes_team_and_blocked_sound():
+    """Must-acknowledge alerts can be acknowledged, reopened from the banner, sized, and surface blocked sound."""
+    _require_ui_env()
+    playwright_sync = _require_playwright()
+
+    payload = {
+        "success": True,
+        "notifications": [
+            _build_ack_alert_notification(
+                "workflow-alert-ack-live",
+                size="large",
+                audience="group",
+                sound="repeat",
+            )
+        ],
+        "complete": True,
+        "sounds_enabled": True,
+    }
+    acknowledged_ids = []
+
+    with playwright_sync.sync_playwright() as playwright:
+        browser = playwright.chromium.launch()
+        context = browser.new_context(
+            storage_state=STORAGE_STATE,
+            viewport={"width": 1440, "height": 900},
+        )
+        context.add_init_script(
+            """
+            window.__rejectWorkflowAlertPlay = true;
+            HTMLMediaElement.prototype.play = function() {
+                if (window.__rejectWorkflowAlertPlay) {
+                    return Promise.reject(new DOMException('Autoplay blocked', 'NotAllowedError'));
+                }
+                return Promise.resolve();
+            };
+            """
+        )
+        page = context.new_page()
+
+        page.route("**/api/notifications/count", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True, "count": len(payload["notifications"])}),
+        ))
+        page.route("**/api/notifications/workflow-alerts**", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(payload),
+        ))
+        page.route("**/api/notifications?*", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({
+                "success": True,
+                "notifications": payload["notifications"],
+                "total": len(payload["notifications"]),
+                "page": 1,
+                "per_page": 20,
+                "has_more": False,
+            }),
+        ))
+
+        def handle_acknowledge(route):
+            notification_id = route.request.url.rstrip("/").split("/")[-2]
+            acknowledged_ids.append(notification_id)
+            payload["notifications"] = []
+            route.fulfill(
+                status=200,
+                content_type="application/json",
+                body=json.dumps({
+                    "success": True,
+                    "notification_id": notification_id,
+                    "acknowledged_at": "2026-10-03T16:10:00+00:00",
+                    "acknowledged_by_name": "Casey Operator",
+                    "already_acknowledged": False,
+                }),
+            )
+
+        page.route("**/api/notifications/*/acknowledge", handle_acknowledge)
+        page.route("**/api/notifications/*/read", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True}),
+        ))
+        page.route("**/api/notifications/*/dismiss", lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({"success": True}),
+        ))
+
+        try:
+            response = page.goto(f"{BASE_URL}/notifications", wait_until="networkidle")
+            assert response is not None, "Expected a navigation response when loading /notifications."
+            if response.status in SKIP_RESPONSE_CODES:
+                pytest.skip(f"Notifications page unavailable in this environment (HTTP {response.status}).")
+            assert response.ok, f"Expected /notifications to load successfully, got HTTP {response.status}."
+
+            page.evaluate("window.dispatchEvent(new CustomEvent('workflow-alert-refresh-requested'))")
+
+            modal = page.locator("#workflowAlertModal")
+            expect(modal).to_be_visible()
+            expect(page.locator("#workflowAlertModal .modal-dialog")).to_have_class(re.compile(r"modal-fullscreen"))
+            expect(page.locator("#workflow-alert-meta")).to_contain_text("Sent to everyone in the group")
+            expect(page.locator("#workflow-alert-acknowledge-btn")).to_be_visible()
+            expect(page.locator("#workflow-alert-dismiss-btn")).not_to_be_visible()
+
+            page.locator("#workflowAlertModal .btn-close").click()
+            expect(page.locator("#workflowAlertAckBanner")).to_be_visible()
+            expect(page.locator("#workflow-alert-enable-sound-btn")).to_be_visible()
+            page.locator("#workflow-alert-ack-banner-review-btn").click()
+            expect(modal).to_be_visible()
+
+            page.locator("#workflow-alert-acknowledge-btn").click()
+            expect(modal).not_to_be_visible()
+            assert acknowledged_ids == ["workflow-alert-ack-live"]
+
+            page.reload(wait_until="networkidle")
+            page.evaluate("window.dispatchEvent(new CustomEvent('workflow-alert-refresh-requested'))")
+            expect(modal).not_to_be_visible()
+        finally:
+            context.close()
+            browser.close()
+
+
 @pytest.mark.ui
 def test_workflow_alert_modal_renders_critical_severity():
     """Critical alerts use the loudest badge and accent."""

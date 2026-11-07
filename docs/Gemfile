@@ -9,6 +9,7 @@ gem "json", ">= 2.19.2"
 
 # Security override for transitive GitHub Pages/Jekyll dependency
 gem "addressable", ">= 2.9.0"
+gem "nokogiri", ">= 1.19.3"
 
 # Jekyll plugins for enhanced functionality
 group :jekyll_plugins do

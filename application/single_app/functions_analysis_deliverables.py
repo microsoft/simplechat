@@ -5,10 +5,15 @@ import hashlib
 import json
 import logging
 import re
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import Mapping
 
-from functions_tabular_transformations import normalize_tabular_transformation_spec
+from functions_tabular_transformations import (
+    TabularTransformationSpecError,
+    evaluate_tabular_transformation_row,
+    normalize_tabular_transformation_spec,
+)
 
 
 def log_event(*args, **kwargs):
@@ -693,6 +698,105 @@ def project_structured_deliverable_rows(rows, public_output_schema, require_all_
         )
         for row in list(rows or [])
     ]
+
+
+def apply_analysis_calculations(records, transformation_spec=None):
+    """Apply declared calculations without changing inputs or model-owned fields.
+
+    Return ``accepted_records``, ``rejected_records``, and ``issues``. Accepted
+    records are independent copies. Rejections contain the input index, record
+    identity, source/evidence references, and issue codes, but never values that
+    could be mistaken for calculated output. Correction issues retain both values
+    and a version/digest binding to the normalized rules. JSON representation
+    changes, including boolean/number differences, count as corrections.
+
+    Expressions read the original ``record.values`` snapshot; dependencies on
+    other calculated fields must use the interpreter's explicit ``field`` refs.
+    Acceptance verifies only the declared calculations, not model judgments.
+    """
+    result = {"accepted_records": [], "rejected_records": [], "issues": []}
+    record_copies = deepcopy(list(records or []))
+    if not transformation_spec:
+        result["accepted_records"] = record_copies
+        return result
+
+    spec_invalid = False
+    spec_provenance = {}
+    try:
+        normalized_spec = normalize_tabular_transformation_spec(transformation_spec)
+    except (TabularTransformationSpecError, RecursionError):
+        spec_invalid = True
+    else:
+        if not normalized_spec.get("deterministic_field_order"):
+            result["accepted_records"] = record_copies
+            return result
+        spec_provenance = {
+            "spec_version": normalized_spec["version"],
+            "spec_fingerprint": _fingerprint_payload({
+                "version": normalized_spec["version"],
+                "fields": normalized_spec["fields"],
+            }),
+        }
+
+    if spec_invalid and not record_copies:
+        result["issues"].append({"code": "analysis_calculation_spec_invalid"})
+
+    for record_index, record in enumerate(record_copies):
+        record_payload = record if isinstance(record, Mapping) else {}
+        identity = {
+            "record_index": record_index,
+            "record_id": record_payload.get("record_id"),
+            "document_id": record_payload.get("document_id"),
+        }
+        values = record_payload.get("values")
+        error_code = ""
+        corrections = []
+        if spec_invalid:
+            error_code = "analysis_calculation_spec_invalid"
+        elif not isinstance(record, Mapping) or not isinstance(values, Mapping):
+            error_code = "analysis_calculation_record_invalid"
+        else:
+            try:
+                calculated_values = evaluate_tabular_transformation_row(normalized_spec, dict(values))
+                json.dumps(calculated_values, sort_keys=True, allow_nan=False)
+                for field_name, calculated_value in calculated_values.items():
+                    if field_name not in values:
+                        continue
+                    reported_value = values[field_name]
+                    try:
+                        reported_json = json.dumps(reported_value, sort_keys=True, allow_nan=False)
+                    except (TypeError, ValueError, RecursionError):
+                        error_code = "analysis_calculation_record_invalid"
+                        break
+                    calculated_json = json.dumps(calculated_value, sort_keys=True, allow_nan=False)
+                    if reported_json != calculated_json:
+                        corrections.append({
+                            "code": "analysis_calculation_value_corrected",
+                            **identity,
+                            **spec_provenance,
+                            "field": field_name,
+                            "reported_value": deepcopy(reported_value),
+                            "calculated_value": deepcopy(calculated_value),
+                        })
+            except (TypeError, ValueError, RecursionError):
+                error_code = "analysis_calculation_failed"
+
+        if error_code:
+            result["rejected_records"].append({
+                **identity,
+                "source": record_payload.get("source"),
+                "evidence_refs": record_payload.get("evidence_refs", []),
+                "issue_codes": [error_code],
+            })
+            result["issues"].append({"code": error_code, **identity, **spec_provenance})
+            continue
+
+        accepted_record = dict(record)
+        accepted_record["values"] = {**values, **calculated_values}
+        result["accepted_records"].append(accepted_record)
+        result["issues"].extend(corrections)
+
+    return result
 
 
 def _row_identity(row, identity_field):

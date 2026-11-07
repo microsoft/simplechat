@@ -1,0 +1,1563 @@
+// types.ts
+// Shapes for the SimpleChat JSON APIs the V2 UI consumes.
+//
+// These mirror what the Flask routes actually return, verified against
+// route_backend_conversations.py, route_backend_chats.py and functions_conversation_feed.py.
+// Objects that carry far more server-side detail than the UI needs are typed loosely with
+// an index signature rather than being modelled exhaustively, so a backend addition never
+// breaks the build.
+
+import type { ReasoningResolution } from './reasoning';
+import type { ContentScreeningSummary } from './contentScreening';
+import type { ImageReferenceRequest } from './imageReferences';
+import type { PublicWorkspaceSelection } from './publicChatScope';
+import type { CredentialRequest } from './actionCredentialTypes';
+
+export type Json = Record<string, unknown>;
+
+export interface AnalysisResultContext {
+    conversation_id: string;
+    message_id: string;
+    result_sha256: string;
+}
+
+export type AnalysisValidationStatus = 'valid' | 'partial' | 'invalid' | 'pending' | 'not_validated';
+
+export interface AnalysisSemantics {
+    version: 'analysis-options-v2';
+    mode: 'source_observations' | 'reconciled_records';
+}
+
+export interface SavedAnalysisDescriptor extends AnalysisResultContext {
+    version: 'analyze-final-v1';
+    record_count: number;
+    source_count: number;
+    validation_status: AnalysisValidationStatus;
+    available?: boolean;
+    label?: string;
+    semantics?: AnalysisSemantics;
+}
+
+/** The only selector a browser sends to ask about a finished workflow run's stored result. */
+export interface WorkflowResultContext {
+    workflow_id: string;
+    run_id: string;
+    result_sha256: string;
+}
+
+/** The public description of one run's stored result. Store references never reach the browser. */
+export interface WorkflowResultDescriptor extends WorkflowResultContext {
+    version: 'workflow-result-v1';
+    /** User-authored display text. */
+    workflow_name: string;
+    status: 'completed' | 'completed_partial';
+    completed_at: string | null;
+    available: boolean;
+}
+
+export interface SavedAnalysisRecord {
+    record_id: string;
+    document_id: string;
+    source: { file_name?: string; [key: string]: unknown };
+    values: Json;
+    evidence_refs: string[];
+}
+
+export interface SavedAnalysisEvidence {
+    evidence_id: string;
+    document_id: string;
+    file_name?: string;
+    page_number?: number;
+    start_page?: number;
+    end_page?: number;
+    chunk_id?: string;
+    chunk_sequence?: number;
+    quote?: string;
+    text?: string;
+}
+
+export interface SavedAnalysisPage {
+    records: SavedAnalysisRecord[];
+    total_records: number;
+    offset: number;
+    next_offset: number | null;
+    result_sha256: string;
+    source_count: number;
+    validation: {
+        status: AnalysisValidationStatus;
+        limitations?: unknown;
+        issues?: unknown;
+    };
+}
+
+/** Safe, server-resolved operations for the selected global image model. */
+export interface ImageEditCapability {
+    enabled: boolean;
+    mode: 'masked' | 'edit' | 'regenerate' | 'unavailable';
+    model_name: string;
+    reason: string;
+    provider_label: string;
+    cloud_label: string;
+    availability: 'documented' | 'unknown' | 'unavailable';
+    availability_reason: string;
+    editing: boolean;
+    masking: boolean;
+    sizes: string[];
+    qualities: string[];
+    backgrounds: string[];
+    max_reference_images: number;
+    input_fidelity: boolean;
+}
+
+export interface Conversation {
+    id: string;
+    title: string;
+    last_updated?: string;
+    created_at?: string;
+    /** Server field name. Pin state is toggled server-side, not set by the client. */
+    is_pinned?: boolean;
+    is_hidden?: boolean;
+    /** Set when an assistant reply arrived that the user has not seen yet. */
+    has_unread_assistant_response?: boolean;
+    classification?: string | string[] | null;
+    /** 'collaborative' conversations live in a different container and have their own APIs. */
+    conversation_kind?: string;
+    [key: string]: unknown;
+}
+
+/** Response shape of GET /api/conversations/feed. */
+export interface ConversationFeedPage {
+    success: boolean;
+    conversations: Conversation[];
+    has_more: boolean;
+    next_cursor: string | null;
+    page_size: number;
+    hidden_count: number;
+    priority_count: number;
+    recent_count: number;
+    source_offsets: Record<string, number>;
+    search_term?: string;
+    include_hidden?: boolean;
+}
+
+/**
+ * `file` only ever arrives from a shared conversation.
+ *
+ * `serialize_collaboration_message` (functions_collaboration.py) overrides the stored role
+ * with a *display* role of `file` or `image` when the message carries an upload, so a
+ * shared thread can contain a role the personal endpoints never emit.
+ */
+export type MessageRole = 'user' | 'assistant' | 'system' | 'safety' | 'image' | 'file';
+
+export interface ChatMessage {
+    id: string;
+    conversation_id: string;
+    role: MessageRole;
+    content: string;
+    timestamp?: string;
+    model_deployment_name?: string;
+    agent_display_name?: string;
+    augmented?: boolean;
+    metadata?: Json;
+    /**
+     * Image messages carry their image in `content`, not in a dedicated field.
+     *
+     * `hydrate_image_messages` (functions_image_messages.py) rewrites `content` to either a
+     * `data:image/...` URI for small inline images or the path `/api/image/<message_id>` when
+     * the bytes live in blob storage or exceed the inline limit. An externally hosted image
+     * arrives as a plain http(s) URL. There is no `image_url` key on the payload.
+     *
+     * An image generated by approving a ```simpleimage proposal additionally carries
+     * `metadata.image_proposal`: the normalised proposal plus `approved_at` and
+     * `source_assistant_message_id`. That last field is what lets the image be shown inside
+     * the proposal card in the assistant message that suggested it, rather than as a loose
+     * bubble at the end of the thread. See `lib/imageProposalSpec.ts`.
+     */
+    /** Set locally when the user rates a response, so the control reflects their choice. */
+    feedbackType?: 'positive' | 'negative';
+    /** Reasoning steps captured while this message was streaming. */
+    thoughts?: ThoughtEntry[];
+    /** Microsoft 365 items the answer drew on, which its citation chips resolve against. */
+    m365_citations?: M365Citation[];
+    /** Retrieved document records used to resolve this message's inline citation labels. */
+    hybrid_citations?: HybridCitation[];
+    web_search_citations?: WebCitation[];
+    /** Canonical sources actually cited by the answer, distinct from retrieved results. */
+    cited_web_search_citations?: WebCitation[];
+    agent_citations?: AgentCitation[];
+    [key: string]: unknown;
+}
+
+export interface ModelOption {
+    /** Value posted back as `model_deployment`. */
+    option_value?: string;
+    selection_key?: string;
+    deployment_name?: string;
+    display_name?: string;
+    model_endpoint_id?: string;
+    [key: string]: unknown;
+}
+
+export interface AgentOption {
+    name?: string;
+    display_name?: string;
+    scope_type?: string;
+    description?: string;
+    selection_key?: string;
+    [key: string]: unknown;
+}
+
+export interface PromptOption {
+    id?: string;
+    name?: string;
+    content?: string;
+    description?: string;
+    is_favorite?: boolean;
+    scope_type?: string;
+    scope_id?: string;
+    scope_name?: string;
+    [key: string]: unknown;
+}
+
+export type DocumentOriginKind = 'workflow' | 'chat';
+
+/**
+ * Where a document version came from, as the server resolved it for this reader.
+ *
+ * Sent only on a single-document read that asks for it. `href` is present only when the
+ * reader may open the workflow or chat; otherwise `label` is plain text that names nothing.
+ */
+export interface DocumentOriginSummary {
+    kind: DocumentOriginKind;
+    label: string;
+    href?: string;
+    /** When the originating workflow run started, for a workflow the reader may open. */
+    run_started_at?: string;
+}
+
+export interface WorkspaceDocument {
+    /** Fresh operation policy, never inferred from personal ownership or chat eligibility. */
+    document_actions?: string[];
+    document_collaboration_actions?: string[];
+    generated_artifact_promotion_status?: string;
+    content_screening?: ContentScreeningSummary | null;
+    id?: string;
+    document_id?: string;
+    file_name?: string;
+    title?: string;
+    abstract?: string;
+    /** Stored as an array, but older records and form round-trips can leave a string. */
+    authors?: string[] | string;
+    keywords?: string[] | string;
+    publication_date?: string;
+    percentage_complete?: number;
+    status?: string;
+    metadata_extraction_status?: 'running' | 'succeeded' | 'disabled' | 'empty' | 'failed';
+    document_classification?: string;
+    tags?: string[] | string;
+    version?: number;
+    num_chunks?: number | null;
+    number_of_pages?: number;
+    file_size?: number;
+    file_type?: string;
+    upload_date?: string;
+    last_updated?: string;
+    revision_family_id?: string;
+    is_current_version?: boolean;
+    /** Entries are `"<user id>,<approval status>"`, not bare ids. */
+    shared_user_ids?: string[];
+    shared_approval_status?: 'owner' | 'approved' | 'not_approved' | 'none' | string;
+    /** Group ownership is independent of the authenticated viewer's personal ownership. */
+    group_id?: string;
+    /** Public workspace ownership, the public-scope analogue of group_id. */
+    public_workspace_id?: string;
+    owner_group_id?: string;
+    owner_group_name?: string;
+    shared_group_active_id?: string;
+    owner_id?: string;
+    user_id?: string;
+    created_from_chat_upload?: boolean;
+    conversation_id?: string;
+    conversation_title_at_upload?: string;
+    conversation_url?: string;
+    /** Server-owned: whether a workflow or a chat created this version. Never client-set. */
+    origin_kind?: DocumentOriginKind;
+    /** Server-resolved for this reader; only on a single-document read that asks for it. */
+    origin_summary?: DocumentOriginSummary;
+    /** `read` is the standard extraction, `layout` the enhanced one. */
+    document_intelligence_extraction_mode?: string;
+    enhanced_citations?: boolean;
+    _ts?: number;
+    [key: string]: unknown;
+}
+
+/**
+ * Response of GET /api/documents.
+ *
+ * `total_count` is the size of the whole filtered set, not of the page, so it is what the
+ * pager counts against. The endpoint has used both `documents` and `items` as its collection
+ * key, so both are accepted.
+ */
+export interface DocumentListResponse {
+    documents?: WorkspaceDocument[];
+    items?: WorkspaceDocument[];
+    page?: number;
+    page_size?: number;
+    total_count?: number;
+    file_downloads_enabled?: boolean;
+    needs_legacy_update_check?: boolean;
+}
+
+export interface DocumentVersionsResponse {
+    document_id?: string;
+    group_id?: string;
+    public_workspace_id?: string;
+    revision_family_id?: string;
+    versions?: WorkspaceDocument[];
+}
+
+/**
+ * Response of GET /api/documents/facets.
+ *
+ * Counted server-side over the caller's whole workspace and deliberately ignoring the
+ * current filters: these drive a navigation rail, and a rail that re-counted itself against
+ * the active filter would collapse to zeroes as soon as anything in it was selected.
+ */
+export interface DocumentFacets {
+    total: number;
+    untagged: number;
+    processing: number;
+    errors: number;
+    recent: number;
+    shared_with_me: number;
+    by_tag: Record<string, number>;
+    by_classification: Record<string, number>;
+}
+
+/** The standing views in the explorer rail. Sent to the API as `place`. */
+export type DocumentPlace =
+    | 'all'
+    | 'recent'
+    | 'shared'
+    | 'processing'
+    | 'errors'
+    | 'untagged';
+
+/**
+ * Fields the list endpoint will order by.
+ *
+ * Mirrors ALLOWED_DOCUMENT_SORT_FIELDS in functions_documents.py. Anything outside this set
+ * is silently replaced with `_ts` server-side, so a column offering a sort not listed here
+ * would appear to work and quietly do nothing.
+ */
+export type DocumentSortField =
+    | '_ts'
+    | 'file_name'
+    | 'title'
+    | 'upload_date'
+    | 'file_size'
+    | 'number_of_pages'
+    | 'version'
+    | 'document_classification';
+
+export type SortDirection = 'asc' | 'desc';
+
+/** Everything that decides which documents are shown, and in what order. */
+export interface DocumentQuery {
+    place: DocumentPlace;
+    search: string;
+    /** Applied with AND: a document must carry every selected tag. */
+    tags: string[];
+    classification: string | null;
+    page: number;
+    pageSize: number;
+    sortBy: DocumentSortField;
+    sortOrder: SortDirection;
+}
+
+/** A named query pinned in the rail. The flat-tag answer to folders. */
+export interface DocumentSavedView {
+    id: string;
+    name: string;
+    query: Pick<DocumentQuery, 'place' | 'search' | 'tags' | 'classification'>;
+}
+
+/** How the explorer is presented. Persisted through `v2DocumentsPrefs`. */
+export interface DocumentExplorerPrefs {
+    viewMode: 'details' | 'tiles';
+    pageSize: number;
+    detailsPaneOpen: boolean;
+    columns: string[];
+    sortBy: DocumentSortField;
+    sortOrder: SortDirection;
+}
+
+/**
+ * A workspace tag as returned by /api/documents/tags.
+ *
+ * build_workspace_tags_from_counts returns objects, not strings:
+ * [{'name': 'tag1', 'count': 5, 'color': '#3b82f6'}, ...]
+ */
+export interface WorkspaceTag {
+    name: string;
+    count?: number;
+    color?: string;
+}
+
+/**
+ * Entities behind the personal workspace sections.
+ *
+ * Every one of these routes returns more fields than the list views read, and several add
+ * fields over time, so each type is deliberately open. Only the fields the UI actually
+ * renders or sends are named; anything else stays available through the index signature
+ * rather than being dropped on the way through.
+ */
+export interface WorkspacePrompt {
+    id: string;
+    name?: string;
+    content?: string;
+    /** One line shown beside the name. Capped server-side at 200 characters. */
+    description?: string;
+    /**
+     * Absent on prompts created before the field existed, and on any prompt last saved by the
+     * classic interface, which sends only name and content. Always read through a default.
+     */
+    is_favorite?: boolean;
+    created_at?: string;
+    updated_at?: string;
+    /**
+     * Group scope only. The owning group's id, echoed on every group prompt response so the
+     * client can prove a returned prompt belongs to the workspace it asked for -- the same
+     * identity check the group document reader makes. Absent on personal prompts.
+     */
+    group_id?: string;
+    /**
+     * Public scope only. The owning public workspace's id, echoed on every public prompt response
+     * so the client can prove a returned prompt belongs to the workspace it asked for -- the
+     * public-scope analogue of `group_id`, the same identity check the public document reader makes.
+     * Absent on personal and group prompts.
+     */
+    public_id?: string;
+    /**
+     * Group and public scope. The concurrency marker a conditional write sends back as
+     * `expected_etag`; a mismatch is the 409 that keeps a failed-save draft open.
+     */
+    etag?: string;
+    /**
+     * Group scope only. The per-prompt operation hint (`edit`, `delete`) computed fresh per
+     * request. A server hint, never authority: an empty or absent array gates the action off,
+     * and the client never enables one the server did not offer.
+     */
+    prompt_actions?: string[];
+    [key: string]: unknown;
+}
+
+export interface WorkspaceIdentity {
+    id: string;
+    identity_id?: string;
+    name?: string;
+    description?: string;
+    auth_type?: string;
+    username?: string;
+    scope_type?: string;
+    scope_id?: string;
+    /** Native personal identity owner, checked against the authenticated workspace owner. */
+    user_id?: string;
+    /** Present on native group identities; the owning group, checked against the page group. */
+    group_id?: string;
+    /** Present on native public-workspace identities (M10B); checked against the page workspace. */
+    public_workspace_id?: string;
+    provider?: string;
+    source_type?: string;
+    /** Server-normalized capabilities, e.g. ["file_sync"], ["action"] or both. */
+    usage_contexts?: string[];
+    supported_source_types?: string[];
+    metadata?: Record<string, unknown>;
+    /** Masked credential summary; secrets never leave the server. */
+    credentials?: Record<string, unknown>;
+    /** Conditional-write marker on all native identity scopes. */
+    etag?: string;
+    /** The operations policy permits on this identity, a subset of ["edit", "delete"]. */
+    identity_actions?: string[];
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceSyncSource {
+    id: string;
+    name?: string;
+    source_type?: string;
+    identity_id?: string;
+    /** Present on a bound source: the display name of the group identity it uses. */
+    identity_name?: string;
+    remote_path?: string;
+    enabled?: boolean;
+    recursive?: boolean;
+    sync_interval_minutes?: number;
+    /** The per-type connection object (unc_path, account_url, share_name, blob_prefix, ...). */
+    connection?: Record<string, unknown>;
+    filters?: Record<string, unknown>;
+    schedule?: { enabled?: boolean; interval_minutes?: number; next_run_at?: string | null };
+    /** Masked credential summary; secrets never leave the server. */
+    credentials?: Record<string, unknown>;
+    remote_delete_policy?: string;
+    last_run_status?: string | null;
+    last_run_at?: string | null;
+    /** Conditional-write token on native group sources (config hash, not an etag). */
+    config_revision?: string;
+    /** The operations policy permits on this source, a subset of ["edit", "delete", "sync", "test"]. */
+    source_actions?: string[];
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+/** One selectable source type from GET /api/groups/G/file-source-options. */
+export interface FileSourceTypeOption {
+    value: string;
+    label: string;
+    visible: boolean;
+}
+
+/** Server-decided editor options in any workspace scope. */
+export interface FileSourceOptions {
+    source_types: FileSourceTypeOption[];
+    /** Identity ids eligible per source type; the picker filters against this. */
+    eligible_identity_ids: Record<string, string[]>;
+    schedule: { min_interval_minutes: number; max_interval_minutes: number };
+    limits: { max_sources: number };
+    recursive_allowed: boolean;
+    default_remote_delete_policy?: 'ignore' | 'hard_delete';
+}
+
+/**
+ * One entry returned by a browse of a source's remote location.
+ *
+ * Every real browse implementation (`_browse_smb_path`, `_browse_azure_files_path`,
+ * `_browse_azure_blob_path`, `_browse_onedrive_path`) returns this shape: a folder is
+ * `type === "folder"`. Browse carries no ignore state, so the editor tracks that separately from the
+ * ignore-path response.
+ */
+export interface FileSourceBrowseEntry {
+    name?: string;
+    /** The entry's path relative to the source root, as browse returns and accepts it. */
+    path?: string;
+    type?: string;
+    size?: number;
+    modified_at?: string;
+    /**
+     * A file's canonical remote path, the one the sync engine keys its item by. Ignore and restore
+     * send this, never `path`; a folder has none, since the engine keeps items only for files.
+     */
+    remote_path?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * The File Sync item record the ignore-path route returns under `item`. Its `ignored` flag is the
+ * authoritative per-path ignore state, since a browse cannot report it.
+ */
+export interface FileSourceIgnoreItem {
+    id?: string;
+    source_id?: string;
+    remote_path?: string;
+    status?: string;
+    ignored?: boolean;
+    [key: string]: unknown;
+}
+
+
+export interface WorkspaceSyncRun {
+    id: string;
+    source_id?: string;
+    status?: string;
+    started_at?: string;
+    completed_at?: string;
+    triggered_by?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceAgent {
+    id: string;
+    name?: string;
+    display_name?: string;
+    description?: string;
+    instructions?: string;
+    /** True for agents supplied by an administrator, which a user may not edit or delete. */
+    is_global?: boolean;
+    is_group?: boolean;
+    /**
+     * Group scope only. The owning group's id, echoed on every group agent response so the client
+     * can prove a returned agent belongs to the workspace it asked for -- the same identity check
+     * the group action and prompt readers make. Absent on personal agents.
+     */
+    group_id?: string;
+    /** True when the caller may only read this agent, echoing the editor resource's read_only. */
+    read_only?: boolean;
+    /**
+     * Group scope only. The per-agent operation hint (`edit`, `delete`, `chat`) computed fresh per
+     * request. A server hint, never authority: an empty or absent array gates the agent off, and
+     * the client never enables one the server did not offer. `chat` gates only the use-in-chat link.
+     */
+    agent_actions?: string[];
+    agent_type?: string;
+    tags?: string[];
+    actions_to_load?: string[];
+    [key: string]: unknown;
+}
+
+export interface WorkspaceAction {
+    id: string;
+    name?: string;
+    displayName?: string;
+    description?: string;
+    /** Which connector this action is, for example `mcp`, `openapi` or `sql_query`. */
+    type?: string;
+    endpoint?: string;
+    is_global?: boolean;
+    /** True for actions owned by a group workspace. Set on every group action response. */
+    is_group?: boolean;
+    /**
+     * Group scope only. The owning group's id, echoed on every group action response so the
+     * client can prove a returned action belongs to the workspace it asked for -- the same
+     * identity check the group prompt and document readers make. Absent on personal actions.
+     */
+    group_id?: string;
+    /** True when the caller may only read this action, echoing the editor resource's read_only. */
+    read_only?: boolean;
+    /**
+     * Group scope only. The per-action operation hint (`edit`, `delete`, `test`) computed fresh
+     * per request. A server hint, never authority: an empty or absent array gates the action off,
+     * and the client never enables one the server did not offer.
+     */
+    action_actions?: string[];
+    [key: string]: unknown;
+}
+
+export interface WorkspaceWorkflow {
+    id: string;
+    name?: string;
+    description?: string;
+    status?: string;
+    active_run_id?: string | null;
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceWorkflowRun {
+    id: string;
+    workflow_id?: string;
+    status?: string;
+    started_at?: string;
+    completed_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceModelEndpointModel {
+    id?: string;
+    deploymentName?: string;
+    modelName?: string;
+    displayName?: string;
+    enabled?: boolean;
+    [key: string]: unknown;
+}
+
+export interface WorkspaceModelEndpoint {
+    id: string;
+    name?: string;
+    provider?: string;
+    enabled?: boolean;
+    connection?: Record<string, unknown>;
+    auth?: Record<string, unknown>;
+    models?: WorkspaceModelEndpointModel[];
+    [key: string]: unknown;
+}
+
+/** Where a cited document lives, from functions_citation_tracking._scope_from_citation. */
+export interface UsedDocumentScope {
+    type?: 'personal' | 'group' | 'public' | string;
+    id?: string;
+    name?: string;
+}
+
+/**
+ * A document-level citation aggregate, as built by
+ * functions_citation_tracking.build_used_documents and stored on the conversation.
+ */
+export interface UsedDocument {
+    category?: string;
+    document_id: string;
+    title?: string;
+    file_name?: string;
+    file_type?: string;
+    classification?: string;
+    scope?: UsedDocumentScope;
+    chunk_ids?: string[];
+    citation_ids?: string[];
+    page_numbers?: (number | string)[];
+    sheet_names?: string[];
+    citation_locations?: Array<Record<string, unknown>>;
+    [key: string]: unknown;
+}
+
+/** What a Microsoft 365 citation names. */
+export type M365CitationKind = 'file' | 'email' | 'event';
+
+/** Which Microsoft 365 source an item came from: SharePoint (`spo`), OneDrive, Outlook mail or calendar. */
+export type M365CitationSource = 'spo' | 'onedrive' | 'email' | 'calendar';
+
+/**
+ * A Microsoft 365 email, calendar event or SharePoint/OneDrive file an answer drew on, under
+ * `m365_citations` on an assistant message. Built by functions_m365_citations.py.
+ *
+ * `cited` says whether the answer's text references it with `[#citation_id]`. `web_url` is only
+ * ever an https link taken from Microsoft Graph, never from model text, and is checked again
+ * before it becomes a link.
+ */
+export interface M365Citation {
+    citation_id: string;
+    kind: M365CitationKind;
+    source: M365CitationSource;
+    title: string;
+    location_label?: string;
+    web_url?: string;
+    cited?: boolean;
+    content_read?: boolean;
+    file_name?: string;
+    mime_type?: string;
+    size_bytes?: number;
+    modified_at?: string;
+    modified_display?: string;
+    from_name?: string;
+    from_address?: string;
+    received_at?: string;
+    received_display?: string;
+    is_read?: boolean;
+    importance?: string;
+    preview?: string;
+    start?: string;
+    end?: string;
+    time_zone?: string;
+    is_all_day?: boolean;
+    when_display?: string;
+    location?: string;
+    organizer_name?: string;
+}
+
+/**
+ * A Microsoft 365 item listed in the conversation's Documents pane, under `used_m365_items` on
+ * the metadata response: every cited item and every file whose content was read, newest first.
+ */
+export interface UsedM365Item extends M365Citation {
+    message_ids?: string[];
+    last_used_at?: string;
+}
+
+/**
+ * Generated conversation summary, present once one has been produced.
+ *
+ * The body is under `content`, not `text` (route_backend_conversation_export.py builds
+ * `{'content', 'model_deployment', 'generated_at', 'message_time_start',
+ * 'message_time_end'}`).
+ */
+export interface ConversationSummary {
+    content?: string;
+    generated_at?: string;
+    model_deployment?: string;
+    message_time_start?: string;
+    message_time_end?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * Response of GET /api/conversations/<id>/metadata.
+ *
+ * Field names are taken from the route itself. Note the identifier key is
+ * `conversation_id`, not `id`, and the response carries no `created_at`, `participants`
+ * or permission flags.
+ */
+export interface ConversationMetadata {
+    conversation_id: string;
+    title: string;
+    user_id?: string;
+    last_updated?: string;
+    classification?: string[] | string;
+    context?: unknown[];
+    tags?: Array<Record<string, unknown>>;
+    used_documents_tracking_version?: number | null;
+    legacy_used_documents?: UsedDocument[];
+    used_documents?: UsedDocument[];
+    strict?: boolean;
+    is_pinned?: boolean;
+    is_hidden?: boolean;
+    has_unread_assistant_response?: boolean;
+    last_unread_assistant_message_id?: string | null;
+    last_unread_assistant_at?: string | null;
+    scope_locked?: boolean | null;
+    locked_contexts?: unknown[];
+    chat_type?: string | null;
+    workflow_id?: string | null;
+    summary?: ConversationSummary | null;
+    linked_workspace_documents?: UsedDocument[];
+    /** The owner's own Microsoft 365 items; empty for anyone else. */
+    used_m365_items?: UsedM365Item[];
+    [key: string]: unknown;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shared (collaborative) conversations                                        */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The value `conversation_kind` takes for a shared conversation.
+ *
+ * Shared conversations are stored in their own Cosmos containers and served by
+ * `/api/collaboration/*`. Every personal conversation route either 404s on them or, worse,
+ * answers 200 with nothing: `/api/get_messages` turns its `LookupError` into
+ * `{'messages': []}`, which is why a shared thread used to open as an empty chat rather
+ * than as an error. Routing is therefore decided by this field, never inferred from a
+ * failed request.
+ */
+export const COLLABORATION_KIND = 'collaborative';
+
+/** Chat types a shared conversation can have. Mirrors `collaboration_models.py`. */
+export const PERSONAL_MULTI_USER_CHAT_TYPE = 'personal_multi_user';
+export const GROUP_MULTI_USER_CHAT_TYPE = 'group_multi_user';
+
+/** Membership lifecycle, from `collaboration_models.py`. */
+export type MembershipStatus =
+    | 'accepted'
+    | 'pending'
+    | 'declined'
+    | 'removed'
+    /**
+     * Not a stored status. `serialize_collaboration_conversation` synthesises it for a
+     * group-visibility conversation the caller can see purely by being in the group, so
+     * there is no per-user membership record to read a status from.
+     */
+    | 'group_member';
+
+export type MembershipRole = 'owner' | 'admin' | 'member';
+
+/** One person in a shared conversation, as `normalize_collaboration_user` returns them. */
+export interface CollaborationParticipant {
+    user_id: string;
+    display_name?: string;
+    email?: string;
+    role?: MembershipRole | string;
+    membership_status?: MembershipStatus | string;
+    [key: string]: unknown;
+}
+
+/**
+ * A shared conversation, from `serialize_collaboration_conversation`.
+ *
+ * Extends `Conversation` because the feed returns exactly this shape for its collaboration
+ * rows, so the rail renders shared and personal conversations from one list.
+ *
+ * The `can_*` flags are the authority on what the current user may do. They are not
+ * derivable in the browser: they fold together membership status, role, visibility mode
+ * and whether membership is explicit, and a group-visibility conversation grants posting
+ * without any membership record at all. Deriving them client-side would offer controls the
+ * server then rejects.
+ */
+export interface CollaborationConversation extends Conversation {
+    chat_type?: string;
+    status?: string;
+    created_at?: string;
+    updated_at?: string;
+    last_message_at?: string;
+    last_message_preview?: string;
+    message_count?: number;
+    participant_count?: number;
+    pending_invite_count?: number;
+    participants?: CollaborationParticipant[];
+    accepted_participant_ids?: string[];
+    pending_participant_ids?: string[];
+    owner_user_ids?: string[];
+    admin_user_ids?: string[];
+    current_user_role?: MembershipRole | string | null;
+    membership_status?: MembershipStatus | string | null;
+    can_manage_members?: boolean;
+    can_manage_roles?: boolean;
+    can_accept_invite?: boolean;
+    can_post_messages?: boolean;
+    can_delete_conversation?: boolean;
+    can_leave_conversation?: boolean;
+    visibility_mode?: string;
+    group_id?: string | null;
+    group_name?: string | null;
+    /** The hidden personal conversation the AI actually runs in. */
+    source_conversation_id?: string | null;
+}
+
+/**
+ * Who wrote a message in a shared conversation.
+ *
+ * Personal conversations have exactly one human, so the classic and V2 interfaces both
+ * label user messages "You" without asking. In a shared thread the author matters, and it
+ * arrives on the message as `sender` (also copied into `metadata.sender`).
+ */
+export interface CollaborationMessageSender {
+    user_id?: string;
+    display_name?: string;
+    email?: string;
+    [key: string]: unknown;
+}
+
+/** What a message is replying to, resolved for display by the client. */
+export interface CollaborationReplyContext {
+    message_id?: string;
+    display_name?: string;
+    preview?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * A message in a shared conversation, from `serialize_collaboration_message`.
+ *
+ * `message_kind` distinguishes a message merely posted to the other participants
+ * (`human_message`) from one that asked the AI to answer (`ai_request`) and from the
+ * answer itself (`assistant_response`). The `role` field cannot carry that distinction,
+ * because a human message and an AI request are both `user`.
+ */
+export interface CollaborationMessage extends ChatMessage {
+    message_kind?: 'human_message' | 'ai_request' | 'assistant_response' | string;
+    sender?: CollaborationMessageSender;
+    reply_to_message_id?: string | null;
+    explicit_ai_invocation?: boolean;
+    filename?: string;
+    /** Attached by the client, not the server: the replied-to message resolved for display. */
+    reply_context?: CollaborationReplyContext | null;
+}
+
+/**
+ * One frame from `GET /api/collaboration/conversations/<id>/events`.
+ *
+ * Built by `_build_collaboration_event`. Unlike the chat stream, this one is a real SSE
+ * `message` event carrying a JSON envelope, and the discriminator is `event_type`.
+ */
+export interface CollaborationEvent {
+    conversation_id?: string;
+    event_type?: string;
+    occurred_at?: string;
+    payload?: {
+        conversation?: CollaborationConversation;
+        message?: CollaborationMessage;
+        message_id?: string;
+        participant?: CollaborationParticipant;
+        participants?: CollaborationParticipant[];
+        user?: CollaborationParticipant;
+        is_typing?: boolean;
+        expires_at?: string;
+        deleted_by_user_id?: string;
+        updated_by_user_id?: string;
+        [key: string]: unknown;
+    };
+    [key: string]: unknown;
+}
+
+/** A person who could be invited, from `/api/user/collaboration-suggestions`. */
+export interface CollaboratorSuggestion {
+    user_id: string;
+    display_name?: string;
+    email?: string;
+    /** Where the suggestion came from: 'recent', 'group', 'local', and so on. */
+    source?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * True when a conversation must be driven through the `/api/collaboration/*` endpoints.
+ *
+ * Accepts anything carrying `conversation_kind` so the same check works on a feed row, a
+ * loaded conversation and a metadata response without the caller narrowing first.
+ */
+export function isCollaborative(
+    conversation: Record<string, unknown> | null | undefined,
+): boolean {
+    return String(conversation?.conversation_kind ?? '').trim() === COLLABORATION_KIND;
+}
+
+
+export interface AdminNavSection {
+    id: string;
+    label: string;
+    icon?: string;
+    /**
+     * Names a settings key or runtime flag that must be true for the section to
+     * apply. Workspace agent permissions, for instance, only exist while
+     * Workspace Mode is on.
+     */
+    condition?: string;
+}
+
+export interface AdminNavTab {
+    id: string;
+    label: string;
+    icon?: string;
+    sections: AdminNavSection[];
+    /**
+     * Names a tab drawn from something other than its sections. `latest_features` is
+     * the Admin Latest Features tab, whose content is generated from the release
+     * catalogue, so it declares no sections at all.
+     */
+    render?: string;
+}
+
+export interface AdminNavGroup {
+    id: string;
+    label: string;
+    icon?: string;
+    tabs: AdminNavTab[];
+}
+
+export interface WorkspaceRef {
+    id: string;
+    name: string;
+}
+
+/** How the AI notice may be dismissed. Mirrors `AI_NOTICE_FREQUENCIES`. */
+export type AiNoticeFrequency = 'non_dismissible' | 'every_session' | 'daily' | 'once';
+
+/**
+ * The administrator-configured notice shown below the composer.
+ *
+ * `hash` is a SHA-256 of the message and frequency, computed by `functions_ai_notice.py`.
+ * Editing the notice changes the hash, which invalidates every stored dismissal so the new
+ * wording is shown again. It is never recomputed in the browser.
+ */
+export interface AiNoticeConfig {
+    enabled: boolean;
+    message: string;
+    frequency: AiNoticeFrequency;
+    hash: string;
+    /** Whether the caller's stored dismissal still covers this notice. Server-decided. */
+    dismissed: boolean;
+}
+
+/** The notice shown while web search is armed, warning that the message leaves the tenant. */
+export interface WebSearchNoticeConfig {
+    enabled: boolean;
+    text: string;
+}
+
+/** A trusted page deployed under `custom_pages` and exposed at `/custom/<slug>`. */
+export interface CustomPageNavItem {
+    slug: string;
+    label: string;
+    /** A Bootstrap Icons class name, chosen per page in its metadata contract. */
+    icon: string;
+    url: string;
+    open_in_new_tab: boolean;
+}
+
+/** An administrator-approved link shown in the navigation rail. */
+export interface ExternalLinkNavItem {
+    label: string;
+    url: string;
+}
+
+/**
+ * One configurable navigation group.
+ *
+ * `menu_name` is the heading the group collapses behind. `force_menu` is the classic
+ * navigation's override for its "inline below three entries, menu at three or more" rule and
+ * is unused here: every group in this rail is a collapsible menu, so there is nothing for it
+ * to force. It stays on the type because the bootstrap payload sends it.
+ */
+export interface NavGroup<TItem> {
+    enabled: boolean;
+    menu_name: string;
+    force_menu: boolean;
+    items: TItem[];
+}
+
+/** Response shape of GET /api/v2/bootstrap. Assembled by route_backend_v2.py. */
+/**
+ * One capability the orchestration planner may schedule, as the bootstrap advertises it.
+ *
+ * This is the deployment's *menu*, not a plan: the plan card reads `label`, `summary` and
+ * `cost` to describe steps the server actually chose. The union members mirror `CostClass` in
+ * `orchestration.ts` but are inlined here so this base type module keeps importing nothing —
+ * `orchestration.ts` already imports *from* here.
+ */
+export interface OrchestrationCapability {
+    id: string;
+    label: string;
+    role?: string;
+    summary: string;
+    cost: 'low' | 'medium' | 'high';
+}
+
+/**
+ * The orchestration block of the bootstrap.
+ *
+ * Present and `enabled` only where the deployment has turned orchestration on; the composer
+ * gates its toggle on this *and* the `enable_chat_orchestration` feature flag, because a
+ * feature can be flagged on for a cohort while a given workspace has no capabilities wired.
+ * `default_approval_mode` seeds the composer's approval control, and `allow_user_approval_
+ * override` decides whether that control is even shown — an admin can pin the mode.
+ */
+export interface OrchestrationBootstrap {
+    enabled: boolean;
+    /** Mirrors `ApprovalMode` in orchestration.ts; inlined to keep this module import-free. */
+    default_approval_mode: 'manual' | 'timed' | 'auto';
+    timed_approval_seconds: number;
+    allow_user_approval_override: boolean;
+    /** Whether the manual capability/model/agent controls stay reachable under a disclosure. */
+    show_manual_controls: boolean;
+    max_steps: number;
+    capabilities: OrchestrationCapability[];
+}
+
+/**
+ * End-user Public Workspace label forms, resolved server-side by
+ * `get_public_workspace_label_context` and shipped inside sanitized bootstrap `settings`.
+ * The five string forms mirror the classic `getPublicWorkspaceLabel` selector so an admin's
+ * custom display name renders identically in both interfaces.
+ */
+export interface PublicWorkspaceLabels {
+    /** Title-case label, e.g. "Public Workspace". Used for headings and proper references. */
+    singular: string;
+    /** Title-case plural, e.g. "Public Workspaces". */
+    plural: string;
+    /** Mid-sentence singular, e.g. "public workspace". */
+    lower_singular: string;
+    /** Mid-sentence plural, e.g. "public workspaces". */
+    lower_plural: string;
+    /** Short nav label, e.g. "Public". */
+    short: string;
+    /** Whether an admin configured a custom display name. */
+    is_custom: boolean;
+    /** The admin field's max length, for the settings form. */
+    max_length: number;
+}
+
+/** Whether this deployment offers the Latest Features shortcut, before the user's own choice. */
+export interface LatestFeaturesNav {
+    available: boolean;
+    /** Development builds hide the shortcut for everyone, as the classic interface does. */
+    hidden_by_development: boolean;
+    url: string;
+    menu_name: string;
+}
+
+/**
+ * Whether this deployment offers the Support menu's Send Feedback destination.
+ *
+ * The recipient mailbox is deliberately absent: the browser learns it only in the reply to
+ * a submission, as the classic page does.
+ */
+export interface SendFeedbackNav {
+    available: boolean;
+    url: string;
+    menu_name: string;
+}
+
+export interface BootstrapFeatures extends Record<string, boolean | undefined> {
+    enable_workflow_alert_sounds?: boolean;
+}
+
+export interface ControlCenterCapabilities {
+    can_view_dashboard: boolean;
+    can_manage_users: boolean;
+    can_manage_groups: boolean;
+    can_manage_workspaces: boolean;
+    can_view_activity_logs: boolean;
+    can_run_maintenance: boolean;
+}
+
+/** The caller's saved active scope, as bootstrap reports it under `scope`. */
+export interface ActiveScope {
+    active_group_id: string | null;
+    active_group_name: string | null;
+    active_public_workspace_id: string | null;
+}
+
+/** GET /api/v2/scope: the active scope alone, for confirming a workspace switch. */
+export interface ActiveScopePayload {
+    user: { id: string };
+    scope: ActiveScope;
+}
+
+export interface BootstrapPayload {
+    version: string;
+    user: {
+        id: string;
+        display_name: string;
+        email?: string;
+        is_admin: boolean;
+        roles: string[];
+    };
+    branding: {
+        app_title: string;
+        hide_app_title: boolean;
+        show_logo: boolean;
+        logo_url: string | null;
+        logo_dark_url: string | null;
+        /** Versioned when a custom icon is stored, so a replacement is not served stale. */
+        favicon_url: string;
+        classification_banner: {
+            enabled: boolean;
+            text?: string;
+            color?: string;
+            text_color?: string;
+        } | null;
+        /** Home page copy. Falls back server-side to the same default the classic UI uses. */
+        landing_page_text: string;
+        landing_page_alignment: 'left' | 'center' | 'right';
+        landing_page_logo_scale_percent: number;
+    };
+    /**
+     * Administrator-configured navigation groups, resolved server-side.
+     *
+     * Not derivable from `features` or `settings`: custom pages are filtered per page
+     * against the caller's roles, and neither the link list nor the menu names are
+     * `enable_*` keys.
+     */
+    navigation: {
+        custom_pages: NavGroup<CustomPageNavItem>;
+        external_links: NavGroup<ExternalLinkNavItem>;
+        /** The Support menu's Latest Features shortcut. Absent from older servers. */
+        latest_features?: LatestFeaturesNav;
+        /** The Support menu's Send Feedback destination. Absent from older servers. */
+        send_feedback?: SendFeedbackNav;
+    };
+    features: BootstrapFeatures;
+    control_center: ControlCenterCapabilities;
+    /**
+     * What the deployment can do, where the answer is not an `enable_*` settings flag.
+     *
+     * Whether part of an image can be changed depends on which model the selected image
+     * deployment runs and which API version is configured — neither of which is a switch
+     * anybody set, so it cannot live in `features`.
+     */
+    capabilities?: {
+        image_edit?: ImageEditCapability;
+    };
+    catalogs: {
+        models: ModelOption[];
+        agents: AgentOption[];
+        prompts: PromptOption[];
+        initial_model_selection: ModelOption | null;
+    };
+    /**
+     * Chat-orchestration configuration, present when the deployment ships the framework.
+     *
+     * Optional because a build without orchestration omits it entirely, and every reader
+     * therefore has to treat "absent" and "present but disabled" the same way. Read via
+     * `useBootstrapStore`.
+     */
+    orchestration?: OrchestrationBootstrap;
+    scope: ActiveScope & {
+        groups: WorkspaceRef[];
+        public_workspaces: WorkspaceRef[];
+    };
+    admin_nav: AdminNavGroup[];
+    /**
+     * Administrator-configured chat notices, resolved server-side.
+     *
+     * Not derivable from `features`: the AI notice's dismissal state depends on a stored
+     * record, and the web search notice depends on `web_search_consent_accepted`, which is
+     * not an `enable_*` key and so never appears in `features`.
+     */
+    notices: {
+        ai: AiNoticeConfig;
+        web_search: WebSearchNoticeConfig;
+    };
+    /**
+     * Which personal workspace sections this user may see.
+     *
+     * Resolved server-side by functions_workspace_sections, because the answer combines
+     * plain settings, app-role checks and governance policy. `features` cannot carry it:
+     * it only forwards `enable_*` keys, so `allow_user_agents`, `allow_user_plugins`,
+     * `per_user_semantic_kernel` and `allow_user_custom_endpoints` would all be missing,
+     * and the file sync and governance checks are not settings keys at all.
+     */
+    workspace: WorkspaceAvailability;
+    /** Server-owned workspace formats; older backends omit this catalog. */
+    workspace_uploads?: {
+        categories: { name: string; extensions: string[] }[];
+    };
+    /**
+     * Safety warnings an administrator sent that still need this user's acknowledgment.
+     * Only the count: the warnings themselves are read when it is above zero.
+     */
+    safety_warnings?: {
+        pending: number;
+    };
+    /** Sanitized settings. Never contains keys, secrets or connection strings. */
+    settings: Json;
+}
+
+/**
+ * The group a workspace section belongs to, as reported by the server.
+ *
+ * `manage` is group-only: the group workspace context reports its management sections
+ * (Members) there, and the personal workspace never uses it.
+ */
+export type WorkspaceSectionGroup = 'knowledge' | 'automation' | 'connections' | 'manage';
+
+export interface WorkspaceSectionAvailability {
+    enabled: boolean;
+    /** Why the section is unavailable. Null when it is enabled. */
+    reason: string | null;
+    group: WorkspaceSectionGroup;
+}
+
+export interface WorkspaceAvailability {
+    enabled: boolean;
+    file_sync_enabled?: boolean;
+    governance?: Record<string, boolean>;
+    sections: Record<string, WorkspaceSectionAvailability>;
+}
+
+/**
+ * A single decoded SSE frame from POST /api/chat/stream.
+ *
+ * The server emits `data: {json}\n\n` with the discriminator carried *inside* the JSON as
+ * `type`, rather than using SSE `event:` lines. Content deltas and the terminal frame are
+ * signalled by the presence of `content` / `done` rather than by a `type` value, which is
+ * why almost everything here is optional.
+ */
+export interface ChatStreamEvent {
+    input_request?: import('../stores/userInputStore').UserInputRequest;
+    credential_request?: CredentialRequest;
+    role?: MessageRole;
+    blocked?: boolean;
+    replace_content?: boolean;
+    full_content?: string;
+    reasoning_adjustments?: ReasoningResolution[];
+    reasoning_effort?: string | null;
+    requested_reasoning_effort?: string | null;
+    reasoning_mode?: 'explicit' | 'model_default';
+    type?:
+        | 'thought'
+        | 'conversation_metadata'
+        | 'user_message_persisted'
+        | 'cancelled'
+        | 'canceled'
+        | string;
+    content?: string;
+    done?: boolean;
+    /** Direct image generation completes with a source URL rather than assistant text. */
+    image_url?: string;
+    error?: string;
+    auth_required?: boolean;
+    /** Same-origin handoff that reauthorizes the target and starts Foundry consent. */
+    auth_url?: string;
+    consent_url?: string;
+    partial_content?: string;
+    cancelled?: boolean;
+    canceled?: boolean;
+    conversation_id?: string;
+    conversation_title?: string;
+    message_id?: string;
+    user_message_id?: string;
+    message_persisted?: boolean;
+    conversation_kind?: string;
+    model_deployment_name?: string;
+    agent_display_name?: string;
+    augmented?: boolean;
+    hybrid_citations?: HybridCitation[];
+    web_search_citations?: WebCitation[];
+    cited_web_search_citations?: WebCitation[];
+    agent_citations?: AgentCitation[];
+    m365_citations?: M365Citation[];
+    metadata?: Json;
+    /** The outgoing Microsoft 365 action a `type: "m365_pending_action"` frame announces. */
+    pending_action?: Json;
+    /** Outgoing actions a terminal frame carries for the chat run that saved them. */
+    m365_pending_actions?: Json;
+    /** Set when those actions could not be listed; the conversation's list is the fallback. */
+    m365_pending_actions_error?: Json;
+    request_id?: string;
+    /** A shared conversation's frame names the user turn in the hidden source conversation. */
+    m365_source_user_message_id?: string;
+    [key: string]: unknown;
+}
+
+/** Request body for POST /api/chat/stream. Field names verified against the Flask route. */
+export interface ChatStreamRequest {
+    document_source_selection?: import('./documentSourceSelection').DocumentSourceSelection;
+    public_workspace_selection?: PublicWorkspaceSelection;
+    message: string;
+    conversation_id?: string | null;
+    analysis_result_context?: AnalysisResultContext;
+    workflow_result_context?: WorkflowResultContext;
+    /** The browser's IANA zone, so an answer from a workflow result names its run in local time. */
+    time_zone?: string;
+    chat_type?: string;
+    /**
+     * A model is identified by these four fields together, not by the deployment name
+     * alone. `resolve_streaming_multi_endpoint_gpt_config` returns None when the endpoint
+     * id is missing, which silently falls back to the legacy single-endpoint client.
+     */
+    model_deployment?: string;
+    model_id?: string;
+    model_endpoint_id?: string;
+    model_provider?: string;
+    agent_selection?: string;
+    reasoning_effort?: string;
+    hybrid_search?: boolean;
+    web_search_enabled?: boolean;
+    image_generation?: boolean;
+    image_references?: ImageReferenceRequest[];
+    image_mask?: string;
+    image_mask_regions?: number;
+    /** Deep research. Both fields are sent together, matching the existing client. */
+    source_review_enabled?: boolean;
+    deep_research_enabled?: boolean;
+    url_access_enabled?: boolean;
+    doc_scope?: string;
+    selected_document_id?: string | null;
+    selected_document_ids?: string[];
+    /**
+     * Tag names to filter on, read as `tags_filter` by `hybrid_search`.
+     *
+     * Joined with `and` by `build_tags_filter`, so a document must carry every tag sent here.
+     */
+    tags?: string[];
+    /**
+     * How `selected_document_ids` and `tags` combine.
+     *
+     * `_build_document_content_filter` defaults to `intersection`, which requires a picked
+     * document to also carry every picked tag. The composer sends `union` when it has both,
+     * so its chips add context instead of cancelling each other out.
+     */
+    document_filter_mode?: 'union' | 'intersection';
+    active_group_id?: string | null;
+    active_group_ids?: string[];
+    active_public_workspace_id?: string | null;
+    active_public_workspace_ids?: string[];
+    /**
+     * The saved prompt behind this message, read by `route_backend_chats` into the message's
+     * `prompt_selection` metadata and by `resolve_seeds` when orchestration is planning.
+     */
+    prompt_info?: Json;
+    conversation_references?: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
+    [key: string]: unknown;
+}
+
+export interface Citation {
+    citation_id?: string;
+    cited_text?: string;
+    file_name?: string;
+    page_number?: number | string;
+    native_annotation?: {
+        kind?: string;
+        author?: string;
+        date?: string;
+        sheet?: string;
+        cell?: string;
+        parent_id?: string;
+        resolved?: boolean;
+        cell_value?: unknown;
+        cell_value_status?: string;
+    };
+    native_coverage?: {
+        returned_records?: number;
+        total_records?: number;
+        partial?: boolean;
+        inventory_complete?: boolean;
+    };
+    [key: string]: unknown;
+}
+
+/**
+ * A single reasoning step surfaced by a `type: "thought"` stream frame.
+ *
+ * `stepType`, `detail` and `activity` are what `serialize_thought_event` actually sends;
+ * without them a live run cannot be drawn as staged progress, only as a list of sentences.
+ * They are optional because plenty of steps are exactly that.
+ */
+export interface ThoughtEntry {
+    id: string;
+    title: string;
+    content: string;
+    stepType?: string;
+    detail?: string;
+    /** The staged-work payload, when the step reports one. See `lib/activityLanes.ts`. */
+    activity?: Json;
+    progress?: Json;
+    stepIndex?: number;
+}
+
+/**
+ * A reasoning step as returned by the persisted-thoughts endpoint.
+ *
+ * This is NOT the same shape as `ThoughtEntry`, which comes from a live stream frame. The
+ * stored record has `step_type` where the live one has `title`, plus timing the stream does
+ * not carry. Keys are quoted from `route_backend_thoughts.py`, which passes `activity` and
+ * `progress` through as the objects they were stored as.
+ */
+export interface PersistedThought {
+    id?: string;
+    message_id?: string;
+    step_index?: number;
+    step_type?: string;
+    content?: string;
+    detail?: string;
+    activity?: Json;
+    progress?: Json;
+    duration_ms?: number | null;
+    timestamp?: string;
+}
+
+/**
+ * A document citation on an assistant message, under `hybrid_citations`.
+ *
+ * Field names are those `createCitationsHtml` reads in chat-messages.js.
+ */
+export interface HybridCitation {
+    citation_id?: string;
+    file_name?: string;
+    document_id?: string;
+    location_label?: string;
+    location_value?: string | number;
+    sheet_name?: string;
+    page_number?: string | number;
+    chunk_id?: string | number;
+    /** Present when the citation points at a document summary rather than a passage. */
+    metadata_type?: string;
+    metadata_content?: string;
+    [key: string]: unknown;
+}
+
+/** A web result cited by an assistant message, under `web_search_citations`. */
+export interface WebCitation {
+    publisher?: string;
+    duration?: string;
+    moments?: { title?: string; url?: string; start_time?: string }[];
+    provider?: string;
+    source_kind?: 'web' | 'news' | 'image' | 'video';
+    delivery_mode?: 'text_only' | 'with_media';
+    citation_id?: string;
+    description?: string;
+    image_url?: string;
+    thumbnail_url?: string;
+    video_url?: string;
+    media_width?: number;
+    media_height?: number;
+    cited?: boolean;
+    url?: string;
+    title?: string;
+    [key: string]: unknown;
+}
+
+/** A tool invocation recorded on an assistant message, under `agent_citations`. */
+export interface AgentCitation {
+    tool_name?: string;
+    function_name?: string;
+    plugin_name?: string;
+    function_arguments?: unknown;
+    function_result?: unknown;
+    success?: boolean | null;
+    error_message?: unknown;
+    timestamp?: string;
+    artifact_id?: string;
+    [key: string]: unknown;
+}

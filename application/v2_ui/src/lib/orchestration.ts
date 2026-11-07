@@ -1,0 +1,1699 @@
+// orchestration.ts
+// The two-phase chat-orchestration contract, typed, plus the SSE clients that speak it.
+//
+// Orchestration replaces the composer's pick-everything-first flow: the user asks, the server
+// *plans* the work (`POST /api/v2/orchestration/plan`), the plan is shown and approved, and
+// then the server *runs* it (`POST /api/v2/orchestration/run`). Both phases are SSE POSTs.
+//
+// The types here mirror `functions_orchestration_schema.py`, which is the source of truth and
+// the security boundary: a plan is language-model output that the server validates and repairs
+// before it will run one, and every field below is quoted from that module so the card renders
+// what the server actually settled on -- `validation.repairs` included, because a repaired plan
+// differs from what the model proposed and the user is owed the difference.
+//
+// SSE REUSE. There is one SSE reader in this app -- `readSsePost` in `sse.ts` -- and this file
+// reuses it rather than adding a second. `sse.ts` was parameterised (the byte pump, the `\n\n`
+// framing, the legacy escaped-delimiter repair and malformed-frame tolerance were lifted out of
+// the chat-specific `consumeStreamResponse` into `readSsePost`); the chat client and these two
+// clients now share that one loop and differ only in how they dispatch a decoded event. Opening
+// the POST and reading a pre-stream JSON error is done inline below because that is an HTTP
+// concern, not a framing one, and it diverges from chat: chat can reattach a dropped generation
+// through `/api/chat/stream/reattach`, and orchestration has no such endpoint, so a dropped
+// stream here is reported rather than recovered.
+
+import { api, apiUrl, CREDENTIALS_MODE } from './apiClient';
+import { v2ApiFetch } from './v2SourcePolicy';
+import { readSsePost, resolveStreamContent } from './sse';
+import type { ComposerReference } from './composerDraft';
+import type { PlanReferenceInput, PlanScopeNotice, PlanTurnReference } from './planReferences';
+import type { ChatStreamEvent, Json } from './types';
+import { normalizeReasoningAdjustments, type ReasoningResolution } from './reasoning';
+import { readGeneratedArtifacts, type GeneratedArtifact } from './generatedArtifacts';
+import type { ImageReferenceRequest, ImageReferenceScope } from './imageReferences';
+import type { OrchestrationExportFormat } from './orchestrationExports';
+import { ASSIST_INSTRUCTION_LIMITS } from './assistLimits';
+import {
+    hasPendingOrchestrationOutputs, normalizeOrchestrationOutputs, type OrchestrationOutput,
+} from './orchestrationOutputs';
+import { LEGACY_PLAN_ERROR_CODE } from './orchestrationErrors';
+import { publishCredentialRequest } from './actionCredentialEvents';
+import { publishUserInput } from './userInput';
+import { openCredentialContinuation } from './actionCredentials';
+import type { CredentialRequest } from './actionCredentialTypes';
+
+// `Json` is the shape of a step's `arguments` and the plan's opaque `inputs`/`outputs`, so it is
+// part of this contract's surface. Re-exported here (rather than making consumers reach into
+// `./types`) so `orchestrationPlan.ts`, the store and the cards all read one type module.
+export type { Json } from './types';
+
+/* -------------------------------------------------------------------------- */
+/* Contract enumerations                                                       */
+/* -------------------------------------------------------------------------- */
+
+/** Triage's read on the request, from `intent.complexity`. */
+export type PlanComplexity = 'trivial' | 'simple' | 'complex';
+
+/** A step's lifecycle, from `STEP_STATUSES`. Live status arrives on run-stream frames. */
+export type StepStatus =
+    | 'pending'
+    | 'running'
+    | 'waiting'
+    | 'partial'
+    | 'completed'
+    | 'failed'
+    | 'skipped'
+    | 'cancelled';
+
+export type OrchestrationOutcome = 'completed' | 'partial' | 'failed' | 'cancelled' | 'waiting';
+export type OrchestrationFinalizationStatus = 'pending' | 'saved' | 'failed' | 'interrupted';
+
+export interface OrchestrationFailure {
+    code: string;
+    message: string;
+    step_id?: string;
+    capability_id?: string;
+    provider_status?: number;
+    /** The Microsoft 365 sources a sign-in or approval stop needs, when the step reported them. */
+    m365_sources?: string[];
+    /** The pending Microsoft 365 approval an `m365_approval_required` stop is waiting on. */
+    approval_id?: string;
+}
+
+export interface OrchestrationRecovery {
+    eligible: boolean;
+    reason_code: string | null;
+    message: string | null;
+    expected_version: string | null;
+    source_run_id: string;
+    current_run_id?: string;
+    retry_step_ids: string[];
+    reused_step_ids: string[];
+    requires_confirmation: boolean;
+    can_use_available_information?: boolean;
+    /** Only a server-confirmed checker checkpoint may use the check-only recovery label. */
+    retry_scope?: 'check' | 'step';
+}
+
+/** The server's check, after a run, of whether the answer shows a chart or diagram the user asked for. */
+export interface OrchestrationDeliverableCheck {
+    id: string;
+    state: 'delivered' | 'not_delivered';
+    /** Why it was not delivered, in the server's words. */
+    message?: string;
+}
+
+export interface OrchestrationAttempt {
+    run_id?: string;
+    turn_id?: string | null;
+    outcome?: OrchestrationOutcome;
+    failure?: OrchestrationFailure | null;
+    failures?: OrchestrationFailure[];
+    recovery?: OrchestrationRecovery;
+    attempt_index?: number;
+    retry_of_run_id?: string | null;
+    latest_attempt_run_id?: string;
+    finalization_status?: OrchestrationFinalizationStatus;
+    message_saved?: boolean;
+    outputs?: OrchestrationOutput[];
+    generated_artifacts?: GeneratedArtifact[];
+    export_catalog?: OrchestrationExportFormat[];
+    deliverable_states?: OrchestrationDeliverableCheck[];
+}
+
+function recordOf(value: unknown): Record<string, unknown> {
+    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+/** Microsoft 365 approval ids are minted by the server as `m365-` and a SHA-256 hex digest. */
+const M365_APPROVAL_ID = /^m365-[0-9a-f]{64}$/;
+
+export function normalizeOrchestrationFailure(value: unknown): OrchestrationFailure | null {
+    const data = recordOf(value);
+    if (typeof data.code !== 'string' || typeof data.message !== 'string') return null;
+    return {
+        code: data.code,
+        message: data.message,
+        ...(typeof data.step_id === 'string' ? { step_id: data.step_id } : {}),
+        ...(typeof data.capability_id === 'string' ? { capability_id: data.capability_id } : {}),
+        ...(typeof data.provider_status === 'number' ? { provider_status: data.provider_status } : {}),
+        ...(Array.isArray(data.m365_sources)
+            ? { m365_sources: data.m365_sources.filter((source): source is string => typeof source === 'string') }
+            : {}),
+        ...(data.code === 'm365_approval_required' && typeof data.approval_id === 'string'
+            && M365_APPROVAL_ID.test(data.approval_id)
+            ? { approval_id: data.approval_id } : {}),
+    };
+}
+
+export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRecovery | undefined {
+    const data = recordOf(value);
+    if (typeof data.source_run_id !== 'string' || typeof data.eligible !== 'boolean') return undefined;
+    const ids = (value: unknown): string[] => Array.isArray(value)
+        ? value.filter((id): id is string => typeof id === 'string') : [];
+    return {
+        eligible: data.eligible,
+        source_run_id: data.source_run_id,
+        reason_code: typeof data.reason_code === 'string' ? data.reason_code : null,
+        message: typeof data.message === 'string' ? data.message : null,
+        expected_version: typeof data.expected_version === 'string' ? data.expected_version : null,
+        current_run_id: typeof data.current_run_id === 'string' ? data.current_run_id : undefined,
+        retry_step_ids: ids(data.retry_step_ids),
+        reused_step_ids: ids(data.reused_step_ids),
+        // Missing replay-safety information must never silently authorize external effects.
+        requires_confirmation: data.requires_confirmation !== false,
+        ...(data.can_use_available_information === true ? { can_use_available_information: true } : {}),
+        ...(data.retry_scope === 'check' || data.retry_scope === 'step' ? { retry_scope: data.retry_scope } : {}),
+    };
+}
+
+export function normalizeDeliverableChecks(value: unknown): OrchestrationDeliverableCheck[] | undefined {
+    if (!Array.isArray(value)) return undefined;
+    return value.flatMap((entry): OrchestrationDeliverableCheck[] => {
+        const data = recordOf(entry);
+        const state = data.state === 'delivered' || data.state === 'not_delivered' ? data.state : null;
+        if (typeof data.id !== 'string' || !state) return [];
+        return [{
+            id: data.id,
+            state,
+            ...(typeof data.message === 'string' ? { message: data.message } : {}),
+        }];
+    });
+}
+
+export function normalizeOrchestrationAttempt(value: unknown): OrchestrationAttempt {
+    const outer = recordOf(value);
+    const metadata = recordOf(outer.metadata);
+    const data = { ...recordOf(metadata.orchestration), ...outer };
+    const outcome = data.outcome;
+    const finalization = data.finalization_status;
+    const outputs = normalizeOrchestrationOutputs(data.outputs);
+    const deliverableStates = normalizeDeliverableChecks(data.deliverable_states);
+    return {
+        run_id: typeof data.run_id === 'string' ? data.run_id : undefined,
+        turn_id: typeof data.turn_id === 'string' ? data.turn_id : undefined,
+        outcome: outcome === 'completed' || outcome === 'partial' || outcome === 'failed'
+            || outcome === 'cancelled' || outcome === 'waiting'
+            ? outcome : undefined,
+        failure: normalizeOrchestrationFailure(data.failure),
+        failures: Array.isArray(data.failures)
+            ? data.failures.map(normalizeOrchestrationFailure).filter((value): value is OrchestrationFailure => value !== null) : [],
+        recovery: normalizeOrchestrationRecovery(data.recovery),
+        attempt_index: typeof data.attempt_index === 'number' ? data.attempt_index : undefined,
+        retry_of_run_id: typeof data.retry_of_run_id === 'string' ? data.retry_of_run_id : undefined,
+        latest_attempt_run_id: typeof data.latest_attempt_run_id === 'string' ? data.latest_attempt_run_id : undefined,
+        finalization_status: finalization === 'pending' || finalization === 'saved'
+            || finalization === 'failed' || finalization === 'interrupted' ? finalization : undefined,
+        message_saved: typeof data.message_saved === 'boolean' ? data.message_saved : undefined,
+        ...(outputs !== undefined ? { outputs } : {}),
+        ...(Array.isArray(data.generated_artifacts) || Array.isArray(metadata.generated_artifacts)
+            ? { generated_artifacts: readGeneratedArtifacts({ ...metadata, ...data }) } : {}),
+        ...(Array.isArray(data.export_catalog) ? { export_catalog: data.export_catalog } : {}),
+        ...(deliverableStates ? { deliverable_states: deliverableStates } : {}),
+    };
+}
+
+/**
+ * The run id and the retried run id an assistant message records, read the way
+ * `normalizeOrchestrationAttempt` reads them: top-level fields win over `metadata.orchestration`.
+ */
+function attemptLineage(message: unknown): { runId?: string; retryOf?: string } {
+    const outer = recordOf(message);
+    const saved = recordOf(recordOf(outer.metadata).orchestration);
+    const text = (key: string): string | undefined => {
+        const value = outer[key] ?? saved[key];
+        return typeof value === 'string' && value ? value : undefined;
+    };
+    return { runId: text('run_id'), retryOf: text('retry_of_run_id') };
+}
+
+/**
+ * The runs a later attempt in this thread replaced.
+ *
+ * A retry saves its answer as a new assistant message and keeps the earlier attempt's message
+ * for the record. Once the retry's message is in the thread, the earlier attempt no longer
+ * describes the request: its failure and its retry controls are history, not the answer.
+ */
+export function supersededOrchestrationRunIds(messages: readonly unknown[]): Set<string> {
+    const superseded = new Set<string>();
+    for (const message of messages) {
+        const { runId, retryOf } = attemptLineage(message);
+        if (retryOf && retryOf !== runId) superseded.add(retryOf);
+    }
+    return superseded;
+}
+
+/** Whether an assistant message is an attempt that a later retry in the thread replaced. */
+export function isSupersededOrchestrationAttempt(message: unknown, superseded: ReadonlySet<string>): boolean {
+    if (superseded.size === 0 || recordOf(message).role !== 'assistant') return false;
+    const { runId } = attemptLineage(message);
+    return Boolean(runId && superseded.has(runId));
+}
+
+/** A terminal execution status can precede durable final-message publication. */
+export function isOrchestrationRunPending(run: OrchestrationAttempt & { status?: string | null }): boolean {
+    return run.status === 'running' || isOrchestrationRunWaiting(run) || run.finalization_status === 'pending'
+        || run.recovery?.reason_code === 'execution_live';
+}
+
+export function isOrchestrationRunWaiting(run: OrchestrationAttempt & { status?: string | null }): boolean {
+    return run.status === 'waiting' || run.outcome === 'waiting';
+}
+
+const SETTLED_RUN_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'cancelled', 'superseded']);
+
+/** Whether the server has recorded the run's end and has nothing left to publish for it. */
+export function isOrchestrationRunSettled(run: OrchestrationAttempt & { status?: string | null }): boolean {
+    return typeof run.status === 'string' && SETTLED_RUN_STATUSES.has(run.status) && !isOrchestrationRunPending(run);
+}
+
+/**
+ * A stored run's plan, with the status the run has now.
+ *
+ * The server marks a plan `running` when it claims the run and records the outcome on the run
+ * alone, so a finished run's stored plan still reads `running`. Adopted as it is, that plan is
+ * neither running here nor finished, and its card falls back to offering Approve.
+ */
+export function persistedRunPlan(record: PersistedRun): Json {
+    const plan = record.plan;
+    if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return plan;
+    const status = isOrchestrationRunWaiting(record) ? 'waiting'
+        : isOrchestrationRunSettled(record) ? record.status : null;
+    return status ? { ...plan, status } : plan;
+}
+
+/** A closed stream can acknowledge a durable wait without completing the producing attempt. */
+export function orchestrationTerminalStatus(event: RunStreamEvent): 'completed' | 'failed' | 'cancelled' | 'waiting' {
+    const outcome = normalizeOrchestrationAttempt(event).outcome;
+    if (isOrchestrationRunWaiting({ ...event, outcome })) return 'waiting';
+    if (event.status === 'failed' || outcome === 'failed' || outcome === 'partial' || event.error) return 'failed';
+    if (event.status === 'cancelled' || outcome === 'cancelled') return 'cancelled';
+    if (event.status === 'completed' || outcome === 'completed') return 'completed';
+    if (event.cancelled || event.canceled || event.type === 'cancelled' || event.type === 'canceled') return 'cancelled';
+    return 'completed';
+}
+
+/** How a plan is approved before it runs, from `APPROVAL_MODES`. */
+export type ApprovalMode = 'manual' | 'timed' | 'auto';
+
+/** Where approval currently stands, from `APPROVAL_STATES`. */
+export type ApprovalState = 'pending' | 'approved' | 'rejected' | 'expired';
+
+/** A plan's lifecycle, from `PLAN_STATUSES`. */
+export type PlanStatus =
+    | 'draft'
+    | 'awaiting_approval'
+    | 'approved'
+    | 'running'
+    | 'waiting'
+    | 'completed'
+    | 'failed'
+    | 'cancelled'
+    | 'superseded';
+
+/** A capability's rough cost, from `COST_CLASSES`. Carried on a step as `estimated_cost`. */
+export type CostClass = 'low' | 'medium' | 'high';
+
+/** Step roles describe purpose, not a global scheduling order. */
+export type OrchestrationRole = 'gather' | 'reason' | 'render';
+
+/** Exact public InputBinding wire shape from functions_orchestration_result_contracts.py. */
+export interface OrchestrationInputBinding {
+    version: string;
+    step_id: string | null;
+    output_name: string | null;
+    existing_result: string | null;
+}
+
+export interface OrchestrationNamedInput {
+    binding: OrchestrationInputBinding | null;
+    allow_partial?: boolean;
+    /** The consumer runs without this input, and says so, when its producer fails. */
+    optional?: boolean;
+}
+
+export interface OrchestrationNamedOutput {
+    name: string;
+    kind: string;
+    columns?: Array<{ name: string; value_type: string; nullable: boolean }>;
+    schema?: Json;
+    profile?: string;
+}
+
+/** MCP elicitation response actions, named exactly as MCP names them (`ELICITATION_ACTIONS`). */
+export type ElicitationAction = 'accept' | 'decline' | 'cancel';
+
+/** The primitive types an elicitation field may take, from `ELICITATION_PRIMITIVE_TYPES`. */
+export type ElicitationPrimitiveType = 'string' | 'number' | 'integer' | 'boolean';
+
+/* -------------------------------------------------------------------------- */
+/* Plan                                                                        */
+/* -------------------------------------------------------------------------- */
+
+/** Triage's summary of what the user is asking for, from `intent`. */
+export interface OrchestrationIntent {
+    summary: string;
+    complexity: PlanComplexity;
+    /** A model-reported confidence, passed through unchanged, so it may be absent. */
+    confidence?: number | null;
+}
+
+/**
+ * One planned unit of work.
+ *
+ * `arguments` is the capability's own input object (a `document_search` step, say, carries
+ * `query`, `document_ids`, `doc_scope`, `top_n`). The document-bearing keys are the ones the
+ * narrowing edits in `orchestrationPlan.ts` may prune -- see `DOCUMENT_ARRAY_FIELDS` there.
+ * `capability_id` is deliberately a string, not a closed union: the registry is defined and
+ * gated server-side, and a client that hard-codes its members would drop a step the moment an
+ * admin enables a capability this build had not heard of.
+ */
+export interface OrchestrationStep {
+    model_binding?: { label: string; reason: string; profile_id: string };
+    step_id: string;
+    capability_id: string;
+    title: string;
+    rationale: string;
+    arguments: Json;
+    depends_on: string[];
+    optional: boolean;
+    enabled: boolean;
+    estimated_cost: CostClass;
+    status: StepStatus;
+    /** Server-owned step purpose. */
+    role?: string;
+    /** Named result bindings are distinct from capability arguments and plan-level sources. */
+    inputs?: Record<string, OrchestrationNamedInput>;
+    outputs?: OrchestrationNamedOutput[];
+    /** Ids of the plan deliverables this step produces. */
+    delivers?: string[];
+}
+
+/**
+ * What a deliverable is: the chat answer, a downloadable file, an image, a chart, a diagram, or a
+ * proposed workflow the user approves on its own card (only when an administrator allows it).
+ */
+export type OrchestrationDeliverableKind = 'answer' | 'file' | 'image' | 'chart' | 'diagram' | 'workflow';
+
+/**
+ * One thing the plan will deliver, from the plan's `deliverables`.
+ *
+ * `requested` separates what the user asked for from what the planner added. An
+ * `unavailable` deliverable carries a server-verified reason code and its application-owned
+ * message; `implicit` marks the answer the server assumes for plans that declared nothing.
+ */
+export interface OrchestrationDeliverable {
+    id: string;
+    kind: OrchestrationDeliverableKind;
+    /** File format id, for file deliverables. */
+    format?: string;
+    requested: 'explicit' | 'suggested';
+    quantity?: number;
+    description: string;
+    status: 'planned' | 'unavailable';
+    unavailable_reason?: string;
+    unavailable_message?: string;
+    implicit?: boolean;
+}
+
+/**
+ * Why a plan always waits for the user, from `normalize_plan`'s `approval.floor`.
+ *
+ * A plan that starts a saved workflow is forced to manual approval whatever mode was asked for,
+ * so it never runs on arrival or when a countdown ends.
+ */
+export interface OrchestrationApprovalFloor {
+    mode: 'manual';
+    /** The capability that set the floor, for example `workflow_run`. */
+    reason: string;
+}
+
+/** The approval block, from `normalize_plan`'s `approval`. */
+export interface OrchestrationApproval {
+    mode: ApprovalMode;
+    /** Countdown length for timed mode; the countdown itself runs in the browser. */
+    timeout_seconds: number;
+    state: ApprovalState;
+    /** ISO timestamp once approved, otherwise null. */
+    approved_at: string | null;
+    /** User id once approved, otherwise null. */
+    approved_by: string | null;
+    /** Set once the user narrows the plan; see `apply_plan_edits`. */
+    edited: boolean;
+    /** Present when the plan's work always waits for the user; see `planHasApprovalFloor`. */
+    floor?: OrchestrationApprovalFloor;
+}
+
+/**
+ * What the validator did to the plan, from `validate_plan`'s `validation`.
+ *
+ * `ok` is false only when the model's plan contained hard errors; `repairs` is the honest
+ * record of what was silently corrected, and the card is expected to show it, because running a
+ * repaired plan without saying so would be as opaque as running an invalid one.
+ */
+export interface OrchestrationValidation {
+    ok: boolean;
+    errors: string[];
+    repairs: string[];
+}
+
+/**
+ * A document the plan will act on, as the server described it.
+ *
+ * `build_plan_inputs` derives this from the *validated* steps rather than from what the planner
+ * proposed, so it reflects what will actually run after unauthorized documents were dropped.
+ *
+ * `selected_by_user` is the distinction worth showing: a document the user picked in the
+ * composer and one the planner chose from a relevance probe are both "documents this plan
+ * reads", but only the second is a decision the user is being asked to check.
+ */
+export interface OrchestrationPlanDocument {
+    document_id: string;
+    /** Falls back to the id server-side when no name could be resolved. */
+    display_name: string;
+    selected_by_user: boolean;
+}
+
+export interface OrchestrationImageReferenceDocument {
+    document_id: string;
+    scope: ImageReferenceScope;
+    scope_id: string | null;
+    file_name: string;
+}
+
+export interface OrchestrationImageReferenceMessage {
+    message_id: string;
+    file_name: string;
+    label: string;
+}
+
+/** Server-resolved action identity; never an executable manifest or connection settings. */
+export interface OrchestrationPlanAction {
+    action_ref: string;
+    display_name: string;
+    scope_label: string;
+}
+
+/**
+ * A saved workflow the plan starts, from `build_plan_inputs`. Match steps by `handle`, the
+ * request-local name in the step's `workflow` argument; the workflow's id never reaches the plan.
+ */
+export interface OrchestrationPlanWorkflow {
+    handle: string;
+    /** The user's own name for the workflow: plain text, never markup. */
+    name: string;
+    /** How the workflow is triggered, for example "Manual" or "Mondays 08:00". */
+    trigger_summary: string;
+    /** The workflow is turned off. Starting it from chat still runs it once. */
+    paused: boolean;
+}
+
+/**
+ * A saved workflow whose stored result the plan reads, from `build_plan_inputs`. Match steps by
+ * `handle`, the request-local name in the step's `workflow` argument; neither the workflow's id
+ * nor anything about its runs reaches the plan.
+ */
+export interface OrchestrationPlanWorkflowResult {
+    handle: string;
+    /** The user's own name for the workflow: plain text, never markup. */
+    name: string;
+}
+
+/** What the plan will act on, for the approval card. */
+export interface OrchestrationPlanInputs {
+    /** Original positive selections resolved by the server, never inferred from planned usage. */
+    required_capabilities?: string[];
+    documents: OrchestrationPlanDocument[];
+    /** Older plans do not carry action metadata. Match steps by action_ref, not by name. */
+    actions?: OrchestrationPlanAction[];
+    /** Present only when the plan starts a saved workflow. */
+    workflows?: OrchestrationPlanWorkflow[];
+    /** Present only when the plan reads a saved workflow's stored result. */
+    workflow_results?: OrchestrationPlanWorkflowResult[];
+    image_reference_documents?: OrchestrationImageReferenceDocument[];
+    image_reference_messages?: OrchestrationImageReferenceMessage[];
+    conversation_references?: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
+    web: boolean;
+    agent?: Json;
+    model?: Json;
+    prompt?: Json;
+}
+
+/**
+ * The model that wrote a plan, as the server described it: a display label and how it was
+ * chosen. Connection details never reach the browser.
+ */
+export interface OrchestrationPlanner {
+    label: string;
+    source: 'selected' | 'planner_setting' | 'default';
+    reasoning_effort?: string;
+}
+
+/**
+ * A validated, runnable plan.
+ *
+ * `outputs` is carried opaquely: its shape is owned by the executor work being built in
+ * parallel, so it is typed loosely rather than guessed at. `inputs` is not -- `build_plan_inputs`
+ * commits to a shape, and reading it is what lets the card name a document rather than resolve
+ * the name a second time from the browser.
+ */
+export interface OrchestrationPlan {
+    reasoning_adjustments?: ReasoningResolution[];
+    requires_fresh_review?: boolean;
+    plan_id: string;
+    run_id: string;
+    /** Conditional approval token for a manually held or revised plan. */
+    edit_version?: string;
+    /**
+     * The turn this plan answers, echoed from the plan request.
+     *
+     * One turn is one question, and it keeps this id across every re-plan even though `plan_id`
+     * and `run_id` are minted fresh each revision. The client mints it and sends it; the server
+     * carries it back here rather than one of its own, so both halves key the turn on one value.
+     */
+    turn_id: string;
+    /** Bumped each time the same turn is re-planned. */
+    revision: number;
+    conversation_id: string;
+    user_id: string;
+    planner_contract_version: number;
+    intent: OrchestrationIntent;
+    assumptions: string[];
+    inputs?: OrchestrationPlanInputs;
+    steps: OrchestrationStep[];
+    outputs?: Json[];
+    /** Prepared answer selection, not the executor's private result reference. */
+    final_response?: OrchestrationInputBinding | null;
+    /** What the plan will deliver, listed before its steps. */
+    deliverables?: OrchestrationDeliverable[];
+    /** Who planned this run; older plans do not carry it. */
+    planner?: OrchestrationPlanner;
+    /** Present when each model-backed step was bound to its own model by Auto routing. */
+    model_routing?: 'auto';
+    approval: OrchestrationApproval;
+    validation: OrchestrationValidation;
+    status: PlanStatus;
+}
+
+/**
+ * The user's edits to a plan before it runs. Narrowing only.
+ *
+ * The one shape both this client and `apply_plan_edits` agree on: a set of step ids to disable,
+ * and, per step, a set of document ids to drop. Widening is deliberately unrepresentable here --
+ * there is no way to add a step or a document -- because a plan the browser widened would never
+ * have passed the planner's reasoning or the authorization check that followed it.
+ */
+export interface PlanEdits {
+    disabled_step_ids: string[];
+    removed_document_ids: Record<string, string[]>;
+    semantic_review?: Record<string, 'auto' | 'on' | 'off'>;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Elicitation                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One field of an elicitation's `requested_schema.properties`.
+ *
+ * MCP restricts elicitation schemas to a flat object of primitives (or arrays of primitives) so
+ * that any client can render one without a general JSON Schema implementation. `validate_
+ * elicitation_schema` enforces exactly this, which is why nesting cannot appear: a `type` is a
+ * primitive, or it is `'array'` with primitive `items`. `enum`, `title`, `description` and
+ * `default` pass through.
+ */
+export interface ElicitationFieldSchema {
+    type: ElicitationPrimitiveType | 'array';
+    minItems?: number;
+    maxItems?: number;
+    items?: {
+        type: ElicitationPrimitiveType;
+        enum?: unknown[];
+    };
+    enum?: unknown[];
+    title?: string;
+    description?: string;
+    default?: unknown;
+}
+
+/** The MCP-clean schema the card renders a form from, from `validate_elicitation_schema`. */
+export interface ElicitationRequestedSchema {
+    type: 'object';
+    properties: Record<string, ElicitationFieldSchema>;
+    required: string[];
+}
+
+/**
+ * Our paging, kept beside the schema rather than inside it.
+ *
+ * Paging is SimpleChat's, not MCP's, so it lives in `ui_hints` and leaves `requested_schema`
+ * MCP-clean. `order` is every field in ask order; `pages` groups them, one field per page by
+ * default, which reads as an interview rather than a form.
+ */
+export interface ElicitationUiHints {
+    order: string[];
+    pages: string[][];
+    fields?: Record<string, {
+        input: 'files' | 'choices';
+        candidates?: ComposerReference[];
+        choices?: { value: string; label: string; description?: string }[];
+        allow_custom?: boolean;
+    }>;
+}
+
+/** What the planner returns instead of a plan when it cannot plan without more information. */
+export interface Elicitation {
+    elicitation_id: string;
+    contract_version: number;
+    run_id: string;
+    /** The turn this question belongs to, echoed from the request; see `OrchestrationPlan.turn_id`. */
+    turn_id: string;
+    revision: number;
+    message: string;
+    requested_schema: ElicitationRequestedSchema;
+    ui_hints: ElicitationUiHints;
+}
+
+/**
+ * The answer to an elicitation, in MCP's shape verbatim.
+ *
+ * `content` is only meaningful when `action` is `accept`; a decline or cancel carries `{}`,
+ * because reading answers past the user's refusal would be a way to smuggle them in. The same
+ * shape serves an answer typed into our card and one arriving from an MCP client.
+ */
+export interface ElicitationResponse {
+    action: ElicitationAction;
+    content: Record<string, unknown>;
+}
+
+/** Answer-local context, kept outside the primitive MCP response. */
+export interface ElicitationFieldContext {
+    text?: string;
+    prompt_info?: Json;
+    references?: ComposerReference[];
+}
+
+export type ElicitationContext = Record<string, ElicitationFieldContext>;
+
+export interface PlanEditorHistoryEntry {
+    run_id: string;
+    plan_id: string;
+    revision: number;
+    created_at: string;
+    origin: 'original' | 'ai' | 'restore';
+    note: string;
+}
+
+/** Server-owned editor state. `edits` overlays the raw canonical plan. */
+export interface PlanEditorState {
+    plan: OrchestrationPlan;
+    version: string;
+    edits: PlanEdits;
+    chat: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+        timestamp: string;
+        /** The client's id for the exchange this turn belongs to, when the browser sent one. */
+        submission_id?: string;
+        /** A user turn's `#` documents and tags, as the server authorized and labelled them. */
+        references?: PlanTurnReference[];
+        /** On the planner's turn when its revision first limited what the plan searches. */
+        scope_notice?: PlanScopeNotice;
+    }>;
+    history: PlanEditorHistoryEntry[];
+    next_before_revision: number | null;
+    pending: Elicitation | null;
+    busy: boolean;
+    export_catalog?: OrchestrationExportFormat[];
+}
+
+export type PlanRevisionAction =
+    | {
+        action: 'ask';
+        instruction: string;
+        /** `#` documents and tags. Canonicalized before sending; see planReferences.ts. */
+        references?: readonly PlanReferenceInput[];
+        conversation_references?: ReadonlyArray<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
+    }
+    | { action: 'restore'; source_run_id: string }
+    | {
+        action: 'answer';
+        elicitation_id: string;
+        elicitation_revision: number;
+        elicitation_response: ElicitationResponse;
+        elicitation_context?: ElicitationContext;
+    }
+    | { action: 'discard'; elicitation_id?: string; elicitation_revision?: number };
+
+export type PlanRevisionRequest = PlanRevisionAction & {
+    conversation_id: string;
+    expected_version: string;
+    submission_id: string;
+    edits?: PlanEdits;
+};
+
+export interface OrchestrationRequestError {
+    status?: number;
+    code?: string;
+    message?: string;
+    current_run_id?: string;
+}
+
+/**
+ * Longest planner instruction the editor sends. Matches EDIT_INSTRUCTION_LIMIT on the server.
+ * Longer text is refused with a counter rather than cut short.
+ */
+export const MAX_PLAN_INSTRUCTION_LENGTH = ASSIST_INSTRUCTION_LIMITS.plan;
+
+/* -------------------------------------------------------------------------- */
+/* Request bodies                                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The plan request.
+ *
+ * The message and conversation are the parts this client is sure of; the workspace/scope
+ * context the planner needs to know which documents are in play is server-resolved and varies,
+ * so the body stays open (`[key: string]: unknown`) rather than pinning fields the route
+ * contract has not fixed. `elicitation_response` is present when re-planning after the user has
+ * answered a question, and `revision` tracks how many times this turn has been re-planned.
+ *
+ * `turn_id` is minted by the client and sent so the server keys the turn on the same value the
+ * client's store does; a re-plan of the same turn sends the same id. The server honours it and
+ * echoes it back on the plan, rather than minting one of its own.
+ */
+export interface OrchestrationSeeds {
+    required_capabilities?: string[];
+    image_references?: ImageReferenceRequest[];
+    image_reference_documents?: OrchestrationImageReferenceDocument[];
+    image_reference_messages?: OrchestrationImageReferenceMessage[];
+    [key: string]: unknown;
+}
+
+export interface OrchestrationPlanRequest extends OrchestrationSeeds {
+    message: string;
+    conversation_id?: string | null;
+    turn_id?: string;
+    planning_submission_id?: string;
+    elicitation_response?: ElicitationResponse;
+    elicitation_id?: string;
+    elicitation_revision?: number;
+    elicitation_submission_id?: string;
+    elicitation_context?: ElicitationContext;
+    /** Legacy question metadata; current servers validate the stored question identified above. */
+    elicitation?: Elicitation;
+    revision?: number;
+    approval_mode?: ApprovalMode;
+    /**
+     * The browser's IANA time zone. The server validates it and uses it only for workflow
+     * proposals, whose calendar schedules default to it; an unknown zone falls back to UTC.
+     */
+    time_zone?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * The run request: which plan to run, and the narrowing edits to apply first.
+ *
+ * `run_id` identifies the run; `plan_id` is sent alongside it for the server to match against
+ * the plan it persisted. `edits` is applied server-side by `apply_plan_edits` before the run,
+ * so the browser never assembles the plan that executes.
+ */
+export interface OrchestrationRunRequest {
+    run_id: string;
+    plan_id?: string;
+    conversation_id?: string | null;
+    edits?: PlanEdits;
+    expected_version?: string;
+    reviewed_regeneration?: boolean;
+    [key: string]: unknown;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stream events                                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * A frame from the plan stream.
+ *
+ * `thought` frames stream while the planner reasons; the stream then ends with exactly one of
+ * `orchestration_plan` or `orchestration_elicitation`, each carrying `done: true`. An `error`
+ * frame ends it too.
+ */
+export interface PlannedTurnIdentity {
+    conversation_id: string;
+    turn_id: string;
+    run_id: string;
+    user_message_id: string;
+}
+
+export interface SavedPlanningTurn {
+    conversation_id: string;
+    turn_id: string;
+    user_message_id: string;
+    submission_id: string;
+    status: PlanStatus | 'planning' | 'awaiting_clarification' | 'awaiting_review' | 'interrupted';
+    updated_at: string;
+    run_id?: string;
+    run_started?: boolean;
+    error?: string;
+    error_code?: string;
+    request?: OrchestrationPlanRequest;
+    elicitation?: Elicitation;
+}
+
+function isSavedPlanningTurn(value: unknown): value is SavedPlanningTurn {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    const turn = value as Record<string, unknown>;
+    return ['conversation_id', 'turn_id', 'user_message_id', 'submission_id', 'status', 'updated_at']
+        .every((field) => typeof turn[field] === 'string' && Boolean(turn[field]))
+        && [
+            'planning', 'awaiting_clarification', 'awaiting_review', 'interrupted',
+            'draft', 'awaiting_approval', 'approved', 'running', 'waiting',
+            'completed', 'failed', 'cancelled', 'superseded',
+        ].includes(String(turn.status))
+        && (turn.run_started === undefined || typeof turn.run_started === 'boolean');
+}
+
+export interface PlanStreamEvent {
+    reasoning_adjustments?: ReasoningResolution[];
+    type?: 'thought' | 'orchestration_plan' | 'orchestration_elicitation' | string;
+    plan?: OrchestrationPlan;
+    elicitation?: Elicitation;
+    editor?: PlanEditorState;
+    export_catalog?: OrchestrationExportFormat[];
+    turn_identity?: PlannedTurnIdentity;
+    server_managed?: boolean;
+    turn?: SavedPlanningTurn;
+    done?: boolean;
+    error?: string;
+    details?: unknown;
+    field_errors?: unknown;
+    [key: string]: unknown;
+}
+
+/**
+ * A frame from the run stream.
+ *
+ * It is a `ChatStreamEvent` with three step fields added, because the run ends with a terminal
+ * frame shaped like chat's own `done` payload (message id, model, citations and the rest) and
+ * reusing that type is how the two stay in step. `orchestration_step` frames carry the live
+ * status of a step as it runs; content deltas arrive exactly as they do in chat.
+ */
+export interface RunStreamEvent extends ChatStreamEvent, OrchestrationAttempt {
+    step_id?: string;
+    status?: StepStatus;
+    summary?: string;
+    reused?: boolean;
+    reused_from_run_id?: string | null;
+    checkpoint_available?: boolean;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Plan stream client                                                          */
+/* -------------------------------------------------------------------------- */
+
+export interface PlanStreamHandlers {
+    /** Durable acceptance, before replacement planning has finished. */
+    onElicitationAccepted?: (event: PlanStreamEvent) => void;
+    /** A planner reasoning step arrived (`type: "thought"`). */
+    onThought?: (event: ChatStreamEvent) => void;
+    /**
+     * The server named the conversation this turn belongs to (`type: "conversation_metadata"`).
+     *
+     * Emitted before any planning progress, and only when the server had to create the
+     * conversation itself. It is the same event the chat stream carries, so the client adopts a
+     * new conversation's id by the path it already knows rather than a second mechanism.
+     */
+    onConversationMetadata?: (event: ChatStreamEvent) => void;
+    onUserMessagePersisted?: (event: ChatStreamEvent) => void;
+    onTurn?: (turn: SavedPlanningTurn) => void;
+    /** The planner produced a plan; the stream is over. */
+    onPlan?: (
+        plan: OrchestrationPlan,
+        exportCatalog?: OrchestrationExportFormat[],
+        turnIdentity?: PlannedTurnIdentity,
+        serverManaged?: boolean,
+    ) => void;
+    /** The planner asked a question instead of planning; the stream is over. */
+    onElicitation?: (elicitation: Elicitation) => void;
+    /** Editor results never need to enter the main conversation's message dispatch. */
+    onEditor?: (editor: PlanEditorState) => void;
+    /** An error frame arrived, or the transport failed. */
+    onError?: (message: string, error?: OrchestrationRequestError) => void;
+}
+
+export interface PlanStreamResult {
+    plan: OrchestrationPlan | null;
+    elicitation: Elicitation | null;
+    editor: PlanEditorState | null;
+    completed: boolean;
+    cancelled: boolean;
+    errored: boolean;
+}
+
+export interface RunStreamHandlers {
+    /** A durably saved outgoing action, before the final assistant reply exists. */
+    onM365PendingActions?: (event: RunStreamEvent) => void;
+    /** A step changed status (`type: "orchestration_step"`). */
+    onStep?: (event: RunStreamEvent) => void;
+    /**
+     * A run-time progress step arrived (`type: "thought"`).
+     *
+     * The run reports each step starting and finishing on the same `thought` event planning
+     * uses, so the orchestration progress lane is fed by the same handler in both phases. These
+     * frames carry a `content` summary that is progress, not answer text, which is why the reader
+     * routes them here rather than appending them to the streamed answer.
+     */
+    onThought?: (event: ChatStreamEvent) => void;
+    /** A content delta arrived. Append it to the answer being built. */
+    onContent?: (delta: string, accumulated: string) => void;
+    /** Terminal frame carrying the final assistant message and its metadata. */
+    onDone?: (event: RunStreamEvent, accumulated: string) => void;
+    /** The same attempt is waiting for retained computation; this is not a retry or completion. */
+    onWaiting?: (event: RunStreamEvent) => void;
+    /** The run was cancelled, either by the user or server-side. */
+    onCancelled?: (event: RunStreamEvent, accumulated: string) => void;
+    /**
+     * The server refused because this plan has already been run (HTTP 409).
+     *
+     * Not a failure, and it must not be shown as one. It means another device -- or an earlier
+     * tab -- already approved this plan and the answer exists; the right response is to drop the
+     * card and reload the thread, not to tell the user their run broke.
+     */
+    onAlreadyRun?: (message: string) => void;
+    /** A stale approval is still pending; do not treat it as a completed run. */
+    onConflict?: (message: string, error: OrchestrationRequestError) => void;
+    /** An error frame arrived, or the transport failed. */
+    onError?: (message: string, event?: RunStreamEvent) => void;
+}
+
+export interface RunStreamResult {
+    accumulated: string;
+    completed: boolean;
+    cancelled: boolean;
+    errored: boolean;
+    /** The plan was already run elsewhere. Distinct from `errored`; see `onAlreadyRun`. */
+    alreadyRun: boolean;
+    waiting?: boolean;
+    conflict?: OrchestrationRequestError;
+    rejection?: OrchestrationRequestError;
+    /** No terminal acknowledgement: the server may still be executing. */
+    transportUnknown?: boolean;
+}
+
+export const ORCHESTRATION_PLAN_PATH = '/api/v2/orchestration/plan';
+export const ORCHESTRATION_RUN_PATH = '/api/v2/orchestration/run';
+export const ORCHESTRATION_RUNS_PATH = '/api/v2/orchestration/runs';
+
+export async function fetchOrchestrationTurn(
+    conversationId: string,
+    turnId: string,
+    options: { messageId?: string; includeRequest?: boolean; signal?: AbortSignal } = {},
+): Promise<SavedPlanningTurn> {
+    const params = new URLSearchParams({ conversation_id: conversationId });
+    if (options.messageId) params.set('message_id', options.messageId);
+    if (options.includeRequest) params.set('include_request', '1');
+    const payload = await api.get<{ turn: SavedPlanningTurn }>(
+        `/api/v2/orchestration/turns/${encodeURIComponent(turnId)}?${params}`, options.signal,
+    );
+    if (!isSavedPlanningTurn(payload.turn)
+        || payload.turn.conversation_id !== conversationId || payload.turn.turn_id !== turnId
+        || (options.messageId && payload.turn.user_message_id !== options.messageId)
+        || (options.includeRequest && (
+            !payload.turn.request || typeof payload.turn.request.message !== 'string'
+            || payload.turn.request.conversation_id !== conversationId || payload.turn.request.turn_id !== turnId
+        ))) {
+        throw new Error('The saved planning status did not match this question.');
+    }
+    return payload.turn;
+}
+
+export async function cancelOrchestrationTurn(
+    conversationId: string, turnId: string, submissionId: string, messageId?: string,
+): Promise<SavedPlanningTurn | null> {
+    const result = await api.post<{
+        success: boolean; turn_id: string; submission_id: string; turn?: SavedPlanningTurn;
+    }>(
+        `/api/v2/orchestration/turns/${encodeURIComponent(turnId)}/cancel`,
+        {
+            conversation_id: conversationId, submission_id: submissionId,
+            ...(messageId && !messageId.startsWith('pending-user-') ? { message_id: messageId } : {}),
+        },
+    );
+    if (!result.success || result.turn_id !== turnId || result.submission_id !== submissionId) {
+        throw new Error('Stop could not be confirmed for this planning submission.');
+    }
+    if (result.turn && (!isSavedPlanningTurn(result.turn)
+        || result.turn.conversation_id !== conversationId || result.turn.turn_id !== turnId)) {
+        throw new Error('Stop returned an invalid saved planning status.');
+    }
+    return result.turn ?? null;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Stored runs                                                                 */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One stored run as the listing returns it: a row, not a plan.
+ *
+ * Mirrors `_run_summary_row` in `route_backend_orchestration.py`, which is an allowlist. The
+ * listing deliberately omits `plan` -- twenty-five rows would otherwise carry twenty-five full
+ * plans -- so anything that needs the steps themselves fetches the run through
+ * `fetchOrchestrationRun`.
+ */
+export interface PersistedRunSummary extends OrchestrationAttempt {
+    run_id: string;
+    conversation_id: string;
+    /** The turn this run answered. Present on every run the plan route created. */
+    turn_id: string | null;
+    turn_index: number;
+    status: PlanStatus | null;
+    created_at: string | null;
+    started_at: string | null;
+    completed_at: string | null;
+    error: string | null;
+    user_message: string;
+    /** The stored question's message id, which is how a reloaded thread finds the turn. */
+    user_message_id: string | null;
+    assistant_message_id: string | null;
+    plan_summary: {
+        run_id?: string;
+        plan_id?: string;
+        turn_id?: string;
+        intent_summary?: string;
+        step_count?: number;
+        capabilities_used?: string[];
+        status?: PlanStatus;
+    };
+    capabilities_used: string[];
+    artifact_count: number;
+    revision: number;
+    approval: { mode: ApprovalMode | null; state: ApprovalState | null };
+}
+
+/** A stored run with its plan, from the detail route. Mirrors `_run_detail_row`. */
+export interface PersistedRun extends PersistedRunSummary {
+    plan: Json;
+}
+
+/**
+ * One stored step, as `list_run_steps` returns it.
+ *
+ * Loose about everything but the fields the map view reads, because a step record is written by
+ * the executor and carries result payloads this client has no use for.
+ */
+export interface PersistedRunStep {
+    step_id: string;
+    step_index: number;
+    capability_id?: string;
+    title?: string;
+    status?: StepStatus;
+    summary?: string;
+    failure?: OrchestrationFailure | null;
+    reused?: boolean;
+    reused_from_run_id?: string | null;
+    checkpoint_available?: boolean;
+    [key: string]: unknown;
+}
+
+/**
+ * A conversation's stored runs, oldest first.
+ *
+ * This is the read half that was missing: runs have always been persisted, and the planner has
+ * always read them back, but nothing drew them. Without this a conversation opened on a second
+ * device shows an empty Plan drawer for work that definitely happened.
+ */
+export async function fetchConversationRuns(
+    conversationId: string,
+    options: { limit?: number; signal?: AbortSignal } = {},
+): Promise<PersistedRunSummary[]> {
+    const params = new URLSearchParams({ conversation_id: conversationId });
+    if (options.limit) {
+        params.set('limit', String(options.limit));
+    }
+    const payload = await api.get<{ runs?: PersistedRunSummary[] }>(
+        `${ORCHESTRATION_RUNS_PATH}?${params.toString()}`,
+        options.signal,
+    );
+    return Array.isArray(payload?.runs) ? payload.runs : [];
+}
+
+/** One stored run in full, including its plan. */
+export async function fetchOrchestrationRun(
+    runId: string,
+    options: { conversationId?: string; signal?: AbortSignal } = {},
+): Promise<PersistedRun | null> {
+    const params = new URLSearchParams();
+    if (options.conversationId) {
+        params.set('conversation_id', options.conversationId);
+    }
+    const query = params.toString();
+    const payload = await api.get<{ run?: PersistedRun }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}${query ? `?${query}` : ''}`,
+        options.signal,
+    );
+    return payload?.run ?? null;
+}
+
+/** One stored run's steps, in execution order. */
+export async function fetchRunSteps(
+    runId: string,
+    options: { conversationId?: string; signal?: AbortSignal } = {},
+): Promise<PersistedRunStep[]> {
+    const params = new URLSearchParams();
+    if (options.conversationId) {
+        params.set('conversation_id', options.conversationId);
+    }
+    const query = params.toString();
+    const payload = await api.get<{ steps?: PersistedRunStep[] }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/steps${query ? `?${query}` : ''}`,
+        options.signal,
+    );
+    return Array.isArray(payload?.steps) ? payload.steps : [];
+}
+
+export async function fetchOrchestrationExportCatalog(
+    conversationId: string,
+    runId: string,
+    signal?: AbortSignal,
+): Promise<OrchestrationExportFormat[]> {
+    const params = new URLSearchParams({ conversation_id: conversationId, run_id: runId });
+    const payload = await api.get<{ formats?: OrchestrationExportFormat[] }>(
+        `/api/v2/orchestration/export-catalog?${params.toString()}`, signal,
+    );
+    if (!Array.isArray(payload?.formats)) throw new Error('File format reference unavailable');
+    return payload.formats;
+}
+
+export async function retryOrchestrationFile(
+    runId: string,
+    outputId: string,
+    body: { conversation_id: string; submission_id: string },
+    signal?: AbortSignal,
+): Promise<{ output: OrchestrationOutput; run: PersistedRun }> {
+    return api.post(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/outputs/${encodeURIComponent(outputId)}/retry`,
+        body, signal,
+    );
+}
+
+export async function prepareOrchestrationRetry(
+    runId: string,
+    body: {
+        conversation_id: string;
+        submission_id: string;
+        expected_version: string;
+        confirm_external_effects: boolean;
+        use_available_information?: boolean;
+    },
+): Promise<PersistedRun> {
+    const payload = await api.post<{ run: PersistedRun }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/retry`, body,
+    );
+    return payload.run;
+}
+
+export async function cancelOrchestrationRun(runId: string, conversationId: string): Promise<void> {
+    await api.post(`/api/v2/orchestration/cancel/${encodeURIComponent(runId)}`, {
+        conversation_id: conversationId,
+    });
+}
+
+export async function beginPlanEdit(
+    runId: string,
+    body: {
+        conversation_id: string;
+        plan_id: string;
+        edits?: PlanEdits;
+        expected_version?: string;
+    },
+    signal?: AbortSignal,
+): Promise<PlanEditorState> {
+    const payload = await api.post<{ editor: PlanEditorState }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/edit`, body, signal,
+    );
+    return payload.editor;
+}
+
+export async function fetchPlanEditor(
+    runId: string,
+    conversationId: string,
+    options: { beforeRevision?: number; signal?: AbortSignal } = {},
+): Promise<PlanEditorState> {
+    const params = new URLSearchParams({ conversation_id: conversationId });
+    if (options.beforeRevision !== undefined) {
+        params.set('before_revision', String(options.beforeRevision));
+    }
+    const payload = await api.get<{ editor: PlanEditorState }>(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/editor?${params}`,
+        options.signal,
+    );
+    return payload.editor;
+}
+
+export function orchestrationErrorInfo(
+    payload: unknown,
+    status?: number,
+): OrchestrationRequestError {
+    const data = payload && typeof payload === 'object'
+        ? payload as Record<string, unknown> : {};
+    return {
+        status,
+        code: typeof data.code === 'string' ? data.code : undefined,
+        message: typeof data.error === 'string' ? data.error : undefined,
+        current_run_id: typeof data.current_run_id === 'string' ? data.current_run_id : undefined,
+    };
+}
+
+function errorDetails(payload: { details?: unknown; field_errors?: unknown }): string {
+    const details = payload.field_errors ?? payload.details;
+    if (Array.isArray(details)) {
+        return details.filter((value): value is string => typeof value === 'string').join(' ');
+    }
+    if (details && typeof details === 'object') {
+        return Object.values(details)
+            .filter((value): value is string => typeof value === 'string')
+            .join(' ');
+    }
+    return '';
+}
+
+/**
+ * Open a POST SSE stream and hand back the response, or report why it could not open.
+ *
+ * A failure before the stream opens comes back as an ordinary JSON error, not an SSE frame, so
+ * it is read here rather than in the framing loop. The error code and HTTP status accompany the
+ * safe message: an already-run conflict needs different recovery from a stale version or an
+ * edit in progress. An abort before the
+ * response arrives is returned as a plain null with no error reported, so the caller can record
+ * it as a cancellation rather than a failure -- pressing Stop before the first byte is not an
+ * error.
+ */
+async function openOrchestrationStream(
+    path: string,
+    body: unknown,
+    signal: AbortSignal | undefined,
+    onError: (message: string, error?: OrchestrationRequestError) => void,
+): Promise<Response | null> {
+    let response: Response;
+    try {
+        response = await v2ApiFetch(apiUrl(path), {
+            method: 'POST',
+            credentials: CREDENTIALS_MODE,
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'text/event-stream',
+            },
+            body: JSON.stringify(body),
+            signal,
+        });
+    } catch {
+        if (signal?.aborted) {
+            return null;
+        }
+        onError('The request could not connect. Please try again.');
+        return null;
+    }
+
+    if (!response.ok || !response.body) {
+        let message = `Request failed with status ${response.status}`;
+        let info: OrchestrationRequestError = { status: response.status };
+        try {
+            const payload = (await response.json()) as {
+                error?: string;
+                details?: unknown;
+                field_errors?: unknown;
+            };
+            if (payload?.error) {
+                message = [payload.error, errorDetails(payload)].filter(Boolean).join(' ');
+            }
+            info = orchestrationErrorInfo(payload, response.status);
+        } catch {
+            /* Non-JSON error body; keep the status-based message. */
+        }
+        onError(message, info);
+        return null;
+    }
+
+    return response;
+}
+
+/**
+ * Plan a turn: POST the request, stream the planner's thoughts, and resolve once the planner
+ * has committed to either a plan or a question.
+ *
+ * Aborting via `signal` resolves with `cancelled: true` rather than throwing, matching how the
+ * chat transport treats a Stop press: it is a normal outcome, not a failure.
+ */
+export async function planOrchestration(
+    body: OrchestrationPlanRequest,
+    handlers: PlanStreamHandlers,
+    signal?: AbortSignal,
+): Promise<PlanStreamResult> {
+    return readPlanStream(ORCHESTRATION_PLAN_PATH, body, handlers, signal);
+}
+
+export async function reviseOrchestrationPlan(
+    runId: string,
+    body: PlanRevisionRequest,
+    handlers: PlanStreamHandlers,
+    signal?: AbortSignal,
+): Promise<PlanStreamResult> {
+    return readPlanStream(
+        `${ORCHESTRATION_RUNS_PATH}/${encodeURIComponent(runId)}/revisions`,
+        body, handlers, signal,
+    );
+}
+
+async function readPlanStream(
+    path: string,
+    body: OrchestrationPlanRequest | PlanRevisionRequest,
+    handlers: PlanStreamHandlers,
+    signal?: AbortSignal,
+): Promise<PlanStreamResult> {
+    const result: PlanStreamResult = {
+        plan: null,
+        elicitation: null,
+        editor: null,
+        completed: false,
+        cancelled: false,
+        errored: false,
+    };
+
+    const response = await openOrchestrationStream(
+        path,
+        body,
+        signal,
+        (message, error) => {
+            result.errored = true;
+            handlers.onError?.(message, error);
+        },
+    );
+    if (!response) {
+        if (signal?.aborted) {
+            result.cancelled = true;
+        }
+        return result;
+    }
+
+    const onEvent = (event: PlanStreamEvent): boolean => {
+        if (typeof event.error === 'string' && event.error) {
+            result.errored = true;
+            handlers.onError?.(
+                [event.error, errorDetails(event)].filter(Boolean).join(' '),
+                orchestrationErrorInfo(event),
+            );
+            return true;
+        }
+
+        if (event.type === 'thought') {
+            handlers.onThought?.(event as ChatStreamEvent);
+            return false;
+        }
+
+        if (event.type === 'conversation_metadata') {
+            // Not terminal: it precedes planning progress and merely names the conversation, so
+            // the reader keeps going after handing it to the caller.
+            handlers.onConversationMetadata?.(event as ChatStreamEvent);
+            return false;
+        }
+
+        if (event.type === 'user_message_persisted') {
+            handlers.onUserMessagePersisted?.(event as ChatStreamEvent);
+            return false;
+        }
+
+        if (event.type === 'orchestration_elicitation_accepted') {
+            handlers.onElicitationAccepted?.(event);
+            return false;
+        }
+
+        if (event.type === 'orchestration_turn') {
+            if (!isSavedPlanningTurn(event.turn)) {
+                result.errored = true;
+                handlers.onError?.('The saved planning status was invalid.');
+            } else {
+                result.completed = true;
+                handlers.onTurn?.(event.turn);
+            }
+            return true;
+        }
+
+        const editor = event.editor ? {
+            ...event.editor,
+            ...(Array.isArray(event.export_catalog) ? { export_catalog: event.export_catalog } : {}),
+        } : null;
+        if (event.type === 'orchestration_plan') {
+            result.editor = editor;
+            if (result.editor) {
+                handlers.onEditor?.(result.editor);
+            }
+            result.plan = event.plan ?? null;
+            if (result.plan && event.reasoning_adjustments?.length) {
+                result.plan = {
+                    ...result.plan,
+                    reasoning_adjustments: normalizeReasoningAdjustments([
+                        ...(result.plan.reasoning_adjustments ?? []),
+                        ...event.reasoning_adjustments,
+                    ]),
+                };
+            }
+            result.completed = true;
+            if (result.plan) {
+                handlers.onPlan?.(result.plan, event.export_catalog, event.turn_identity, event.server_managed === true);
+            }
+            return true;
+        }
+
+        if (event.type === 'orchestration_elicitation') {
+            result.editor = editor;
+            if (result.editor) {
+                handlers.onEditor?.(result.editor);
+            }
+            result.elicitation = event.elicitation ?? null;
+            result.completed = true;
+            if (result.elicitation) {
+                handlers.onElicitation?.(result.elicitation);
+            }
+            return true;
+        }
+
+        // A done frame naming no recognised terminal still ends the stream, so a malformed
+        // terminal does not leave the reader waiting for a frame that will never come.
+        if (event.done) {
+            result.completed = true;
+            return true;
+        }
+
+        return false;
+    };
+
+    const outcome = await readSsePost<PlanStreamEvent>(response, onEvent, signal);
+
+    if (outcome.aborted) {
+        result.cancelled = true;
+    } else if (outcome.transportError) {
+        result.errored = true;
+        handlers.onError?.(outcome.transportError.message);
+    } else if (
+        outcome.endedWithoutTerminal &&
+        !result.completed &&
+        !result.cancelled &&
+        !result.errored
+    ) {
+        result.errored = true;
+        handlers.onError?.('The plan stream ended before a plan arrived.');
+    }
+
+    return result;
+}
+
+/**
+ * Run an approved plan: POST the run request, stream step status and content deltas, and
+ * resolve on the terminal frame.
+ *
+ * The terminal frame is shaped like chat's `done` payload, so `onDone` receives the same
+ * assistant-message metadata a chat completion would carry. Reader aborts and unexpected EOF
+ * report unknown transport state; only a server terminal frame can establish cancellation.
+ */
+export async function runOrchestration(
+    body: OrchestrationRunRequest,
+    handlers: RunStreamHandlers,
+    signal?: AbortSignal,
+    credentialRequest?: CredentialRequest,
+    openContinuation?: (signal?: AbortSignal) => Promise<Response>,
+): Promise<RunStreamResult> {
+    const result: RunStreamResult = {
+        accumulated: '',
+        completed: false,
+        cancelled: false,
+        errored: false,
+        alreadyRun: false,
+    };
+    let requiresExecutionOutcome = false;
+
+    let credentialResponse: Response | undefined;
+    if (credentialRequest || openContinuation) {
+        try {
+            if (openContinuation) credentialResponse = await openContinuation(signal);
+            else if (credentialRequest) credentialResponse = await openCredentialContinuation(credentialRequest, signal);
+        } catch (error) {
+            result.transportUnknown = true;
+            handlers.onError?.(error instanceof Error ? error.message : 'The action could not be continued.');
+            return result;
+        }
+    }
+    const response = credentialResponse ?? await openOrchestrationStream(
+        ORCHESTRATION_RUN_PATH,
+        body,
+        signal,
+        (message, error) => {
+            if (error?.status === 409
+                && (error.code === 'plan_changed' || error.code === 'edit_in_progress')) {
+                result.errored = true;
+                result.conflict = error;
+                if (handlers.onConflict) {
+                    handlers.onConflict(message, error);
+                } else {
+                    handlers.onError?.(message);
+                }
+                return;
+            }
+            if (error?.status === 409 && error.code === LEGACY_PLAN_ERROR_CODE) {
+                result.rejection = error;
+                result.errored = true;
+                handlers.onError?.(message);
+                return;
+            }
+            // Uncoded 409s and already_run retain the existing duplicate-run recovery.
+            if (error?.status === 409 && (!error.code || error.code === 'already_run')) {
+                result.alreadyRun = true;
+                handlers.onAlreadyRun?.(message);
+                return;
+            }
+            if (error?.status === 409 || error?.status === 400 || error?.status === 401
+                || error?.status === 403 || error?.status === 404) {
+                result.rejection = error;
+                result.errored = true;
+                return;
+            }
+            result.transportUnknown = true;
+        },
+    );
+    if (!response) {
+        if (signal?.aborted) {
+            result.transportUnknown = true;
+        }
+        return result;
+    }
+
+    const onEvent = (event: RunStreamEvent): boolean => {
+        if ((event.conversation_id && event.conversation_id !== body.conversation_id)
+            || (event.run_id && event.run_id !== body.run_id)) return false;
+        if (event.type === 'user_input_required' && event.input_request) {
+            publishUserInput(event.input_request);
+            result.waiting = true;
+            handlers.onWaiting?.({ ...event, status: 'waiting' });
+            return true;
+        }
+        if (event.type === 'action_credentials_required') {
+            publishCredentialRequest(event.credential_request);
+            result.waiting = true;
+            handlers.onWaiting?.({ ...event, status: 'waiting' });
+            return true;
+        }
+        if (event.type === 'm365_pending_action') {
+            if (event.conversation_id === body.conversation_id && event.run_id === body.run_id
+                && typeof event.step_id === 'string' && event.step_id
+                && typeof event.user_message_id === 'string' && event.user_message_id) {
+                handlers.onM365PendingActions?.(event);
+            }
+            return false;
+        }
+        if (hasPendingOrchestrationOutputs(normalizeOrchestrationAttempt(event).outputs)) {
+            requiresExecutionOutcome = true;
+        }
+        if (event.replace_content === true) {
+            result.accumulated = resolveStreamContent(event, '');
+            handlers.onContent?.('', result.accumulated);
+        }
+        if (typeof event.error === 'string' && event.error && !event.done) {
+            result.errored = true;
+            handlers.onError?.(event.error, event);
+            // Finalization can still provide a safe terminal status after a save error.
+            return false;
+        }
+
+        // A run streams progress on the same `thought` event planning uses, and those frames
+        // carry a `content` summary of the step. Handed to the caller and returned here so that
+        // summary drives the progress lane rather than being appended to the answer below as if
+        // the model had written it.
+        if (event.type === 'thought') {
+            handlers.onThought?.(event);
+            return false;
+        }
+
+        if (event.type === 'orchestration_step') {
+            if (event.status === 'waiting' || event.status === 'partial') requiresExecutionOutcome = true;
+            handlers.onStep?.(event);
+            // A step frame carries neither content nor a terminal marker, but fall through
+            // rather than return so a frame that ever carried both is still fully handled.
+        }
+
+        if (event.replace_content !== true && typeof event.content === 'string' && event.content.length > 0) {
+            result.accumulated += event.content;
+            handlers.onContent?.(event.content, result.accumulated);
+        }
+
+        if (event.done) {
+            if (typeof event.full_content === 'string') {
+                result.accumulated = event.full_content;
+            }
+            // A legacy done-only acknowledgement cannot prove a v2 wait or partial result
+            // completed. Reconcile the existing attempt rather than manufacture success.
+            if (requiresExecutionOutcome && !normalizeOrchestrationAttempt(event).outcome
+                && !['waiting', 'completed', 'failed', 'cancelled'].includes(event.status ?? '')
+                && !event.cancelled && !event.canceled
+                && event.type !== 'cancelled' && event.type !== 'canceled') {
+                result.transportUnknown = true;
+                return true;
+            }
+            const status = orchestrationTerminalStatus(event);
+
+            if (status === 'waiting') {
+                result.waiting = true;
+                handlers.onWaiting?.(event);
+            } else if (status === 'cancelled' && event.blocked !== true) {
+                // A content-check removal is a saved safety reply, not a user cancellation.
+                result.cancelled = true;
+                handlers.onCancelled?.(event, result.accumulated);
+            } else {
+                result.completed = status === 'completed';
+                result.errored = status === 'failed';
+                handlers.onDone?.(event, result.accumulated);
+            }
+            return true;
+        }
+
+        return false;
+    };
+
+    const outcome = await readSsePost<RunStreamEvent>(response, onEvent, signal);
+
+    if (outcome.aborted) {
+        result.transportUnknown = true;
+    } else if (outcome.transportError) {
+        result.transportUnknown = true;
+    } else if (
+        outcome.endedWithoutTerminal &&
+        !result.completed &&
+        !result.waiting &&
+        !result.cancelled &&
+        !result.errored
+    ) {
+        result.transportUnknown = true;
+    }
+
+    return result;
+}

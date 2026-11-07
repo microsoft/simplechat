@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for source-bounded Microsoft 365 providers and file evidence.
-Version: 0.261.038
+Version: 0.261.347
 Implemented in: 0.261.029
 
 External Graph, authentication, logging, and storage I/O is mocked. The tests
@@ -1282,7 +1282,7 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
     execution, memory_runtime, real_content_helpers, monkeypatch,
 ):
     from dataclasses import replace
-    import functions_m365_approvals as approval_module
+    from functions_m365_approvals import M365ApprovalService
     import functions_m365_execution as execution_module
     from test_m365_runtime_adapters import load_module, module_stub
     from test_support.m365 import CosmosContainer, Notifications
@@ -1300,7 +1300,7 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
         shared=True, audience_version="audience-1", action_configs={actions.action_id: manifest},
     )
     container = CosmosContainer()
-    service = approval_module.M365ApprovalService(
+    service = M365ApprovalService(
         container_factory=lambda: container, notification_sender=Notifications(),
         decision_validator=lambda approval: True,
     )
@@ -1314,7 +1314,7 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
         "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
     })
     monkeypatch.setattr(memory_runtime.store, "authorize_publish", runtime._authorize_memory_publication)
-    monkeypatch.setattr(approval_module, "_service", service)
+    monkeypatch.setattr("functions_m365_approvals._service", service)
     monkeypatch.setattr(execution_module, "_action_config_resolver", lambda *args: manifest)
     monkeypatch.setattr(execution_module, "_action_selection_resolver", lambda context: [actions.action_id])
     for module in (retrieval, transport_module):
@@ -1338,6 +1338,71 @@ def test_snapshot_only_action_publishes_a_prior_capture_without_remote_access(
     assert published["snapshot_state"] == reused["snapshot_state"] == "published_snapshot"
     assert published["text"] == reused["text"] == "file content"
     assert forbidden.call_count == 0
+
+
+def test_shared_request_consent_publishes_a_capture_without_an_approval(
+    execution, memory_runtime, real_content_helpers, monkeypatch,
+):
+    """Asking for your own file in a shared conversation shares it there; no approval waits (#1659)."""
+    from dataclasses import replace
+    from functions_m365_approvals import M365ApprovalService
+    import functions_m365_execution as execution_module
+    from test_m365_runtime_adapters import load_module, module_stub
+    from test_support.m365 import CosmosContainer, Notifications
+
+    actions = ContentGraphFixture().operations()
+    prepared = actions.prepare_file("drive-1", "item-1")
+    manifest = {
+        "id": actions.action_id, "type": "m365_onedrive", "source": "onedrive",
+        "enabled_functions": ["read_file_chunk"],
+    }
+    actions.manifest["enabled_functions"] = ["read_file_chunk"]
+    context = execution_module.M365ExecutionContext(
+        actor_user_id="user-1", data_user_id="user-1", tenant_id="tenant-1",
+        conversation_id="conversation-1", request_id="shared-chat-request",
+        shared=True, audience_version="audience-1", action_configs={actions.action_id: manifest},
+        shared_by_request=True,
+    )
+    container = CosmosContainer()
+    notifications = Notifications()
+    service = M365ApprovalService(
+        container_factory=lambda: container, notification_sender=notifications,
+        decision_validator=lambda approval: True,
+    )
+    runtime = load_module("conversation_memory_runtime", {
+        "config": module_stub(
+            "config", CLIENTS={}, TENANT_ID="tenant-1", cosmos_conversations_container=None,
+            cosmos_messages_container=None, build_enhanced_citations_blob_service_client=lambda settings: None,
+        ),
+        "functions_appinsights": module_stub("functions_appinsights", log_event=Mock()),
+        "functions_collaboration": module_stub("functions_collaboration", build_conversation_participation_context=lambda *args: None),
+        "functions_settings": module_stub("functions_settings", get_settings=lambda: {}),
+    })
+    monkeypatch.setattr(memory_runtime.store, "authorize_publish", runtime._authorize_memory_publication)
+    monkeypatch.setattr("functions_m365_approvals._service", service)
+    monkeypatch.setattr(execution_module, "_action_config_resolver", lambda *args: manifest)
+    monkeypatch.setattr(execution_module, "_action_selection_resolver", lambda context: [actions.action_id])
+    for module in (retrieval, transport_module):
+        monkeypatch.setattr(module, "get_m365_context", lambda **kwargs: execution_module.get_m365_execution_context())
+    monkeypatch.setattr(retrieval, "authorize_m365_capability", REAL_AUTHORIZE_CAPABILITY)
+    monkeypatch.setattr(retrieval, "authorize_m365_publication", transport_module.authorize_m365_publication)
+    forbidden = Mock(side_effect=AssertionError("Publishing a retained snapshot must not fetch source data or tokens."))
+    monkeypatch.setattr(retrieval, "authorize_m365_source", forbidden)
+    monkeypatch.setattr(M365Transport, "get_token", forbidden)
+    monkeypatch.setattr(M365Transport, "request_json", forbidden)
+    with execution_module.m365_execution_context(context):
+        published = actions.read_file_chunk(prepared["memory_id"])
+    reader = replace(context, actor_user_id="user-2", data_user_id="user-2", request_id="reader-request")
+    with execution_module.m365_execution_context(reader):
+        reused = actions.read_file_chunk(prepared["memory_id"])
+
+    assert published["snapshot_state"] == reused["snapshot_state"] == "published_snapshot"
+    assert published["text"] == reused["text"] == "file content"
+    records = list(container.items.values())
+    assert [(record.get("event_type"), record.get("source")) for record in records] == [
+        ("shared_by_request", "onedrive"),
+    ]
+    assert notifications.calls == [] and forbidden.call_count == 0
 
 
 def test_source_schemas_accept_defaults_and_reject_cross_source_capabilities():
@@ -1412,6 +1477,43 @@ def test_all_typed_plugins_register_without_source_access_or_execution_context(g
     assert forbidden.call_count == 0
 
 
+@pytest.mark.parametrize("action_type", ["m365_calendar", "m365_email", "m365_onedrive", "m365_sharepoint"])
+def test_typed_custom_fed_names_register_without_source_access(graph_plugins, monkeypatch, action_type):
+    from action_runtime_contracts import register_action_plugin
+    from functions_action_manifest import bind_action_origin, get_action_origin
+    from semantic_kernel import Kernel
+    from semantic_kernel_plugins.m365_onedrive_plugin import M365OneDrivePlugin
+    from semantic_kernel_plugins.m365_sharepoint_plugin import M365SharePointPlugin
+
+    modules, _ = graph_plugins
+    forbidden = Mock(side_effect=AssertionError("Registration must not authorize, authenticate, or access a source."))
+    for module, names in (
+        (modules["msgraph_plugin"], ("authorize_m365_source", "authorize_m365_capability", "get_m365_context", "get_current_user_info")),
+        (transport_module, ("authorize_m365_source", "authorize_m365_capability", "get_m365_context", "_delegated_token")),
+        (retrieval, ("authorize_m365_source", "authorize_m365_capability", "get_m365_context", "_memory_resolver")),
+    ):
+        for name in names:
+            monkeypatch.setattr(module, name, forbidden)
+    classes = {
+        "m365_calendar": modules["m365_calendar_plugin"].M365CalendarPlugin,
+        "m365_email": modules["m365_email_plugin"].M365EmailPlugin,
+        "m365_onedrive": M365OneDrivePlugin, "m365_sharepoint": M365SharePointPlugin,
+    }
+    action = bind_action_origin({
+        "id": action_type, "name": "FED-unblock-seven-20261019-a-FED-29-send-" + action_type,
+        "type": action_type,
+    }, "personal", "owner")
+    original = deepcopy(action)
+    plugin = classes[action_type](action)
+    kernel = Kernel()
+    alias = register_action_plugin(kernel, plugin, action)
+    assert kernel.plugins[alias].functions
+    assert action == original
+    assert get_action_origin(action).action_id == action_type
+    assert all(len(function.metadata.fully_qualified_name) <= 64 for function in kernel.plugins[alias].functions.values())
+    assert not forbidden.called
+
+
 def test_all_typed_direct_guards_preserve_approval_required_exceptions(graph_plugins, monkeypatch):
     from semantic_kernel_plugins.m365_onedrive_plugin import M365OneDrivePlugin
     from semantic_kernel_plugins.m365_sharepoint_plugin import M365SharePointPlugin
@@ -1457,7 +1559,13 @@ def test_legacy_mail_pagination_preserves_result_shapes_and_delegated_scopes(exe
     plugin._transports["email"] = transport
     result = plugin.get_my_messages(top=3)
     assert result["count"] == 3 and result["truncated"] is True
-    assert result["value"] == [{"id": "1"}, {"id": "2"}, {"id": "3"}]
+    # Since 0.261.303 each message also carries the citation value an answer copies; the Graph
+    # fields themselves are passed through unchanged.
+    citation_keys = {"citation_id", "citation"}
+    assert all(citation_keys <= set(item) for item in result["value"])
+    assert [
+        {key: value for key, value in item.items() if key not in citation_keys} for item in result["value"]
+    ] == [{"id": "1"}, {"id": "2"}, {"id": "3"}]
     assert result["source"] == "email" and request.call_count == 2
     assert token_provider.call_args.args[0] == ["https://graph.microsoft.com/Mail.Read"]
 

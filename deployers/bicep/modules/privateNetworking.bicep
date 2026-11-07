@@ -3,6 +3,8 @@ targetScope = 'resourceGroup'
 param virtualNetworkId string
 param privateEndpointSubnetId string
 param privateDnsZoneConfigs object = {}
+param enableAzureMonitorPrivateLink bool = false
+param monitoringResourceIds array = []
 
 param location string
 param appName string
@@ -19,9 +21,8 @@ param openAIName string
 param openAIResourceGroupName string
 param openAISubscriptionId string
 param webAppName string
-
-
-// // redis cache
+param redisCacheResourceId string = ''
+param redisCacheKind string = 'managed'
 param contentSafetyName string
 param speechServiceName string
 param videoIndexerName string
@@ -42,6 +43,9 @@ var cosmosDbDnsZoneName = privateDnsZoneData[cloudName].cosmosDb
 var keyVaultDnsZoneName = privateDnsZoneData[cloudName].keyVault
 var openAiDnsZoneName = privateDnsZoneData[cloudName].openAi
 var webSitesDnsZoneName = privateDnsZoneData[cloudName].webSites
+var redisDnsZoneName = redisCacheKind == 'managed' ? privateDnsZoneData[cloudName].redisManaged : privateDnsZoneData[cloudName].redisClassic
+var videoIndexerDnsZoneName = privateDnsZoneData[cloudName].videoIndexer
+var deployVideoIndexerPrivateEndpoint = videoIndexerName != '' && videoIndexerSupportsPrivateEndpoints && !empty(videoIndexerDnsZoneName)
 var defaultPrivateDnsZoneConfig = {
   zoneResourceId: ''
   createVNetLink: true
@@ -54,6 +58,37 @@ var blobStoragePrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'blobStora
 var cognitiveServicesPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'cognitiveServices') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.cognitiveServices) : defaultPrivateDnsZoneConfig
 var openAiPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'openAi') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.openAi) : defaultPrivateDnsZoneConfig
 var webSitesPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'webSites') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.webSites) : defaultPrivateDnsZoneConfig
+var redisPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'redis') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.redis) : defaultPrivateDnsZoneConfig
+var videoIndexerPrivateDnsZoneConfig = contains(privateDnsZoneConfigs, 'videoIndexer') ? union(defaultPrivateDnsZoneConfig, privateDnsZoneConfigs.videoIndexer) : defaultPrivateDnsZoneConfig
+
+module redisDNSZone 'privateDNS.bicep' = if (!empty(redisCacheResourceId)) {
+  name: 'redisDNSZone'
+  params: {
+    zoneName: redisDnsZoneName
+    appName: appName
+    environment: environment
+    name: 'redis'
+    vNetId: virtualNetworkId
+    tags: tags
+    existingZoneResourceId: redisPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: redisPrivateDnsZoneConfig.createVNetLink
+  }
+}
+
+module redisPE 'privateEndpoint.bicep' = if (!empty(redisCacheResourceId)) {
+  name: 'redisPE'
+  params: {
+    name: 'redis'
+    location: location
+    appName: appName
+    environment: environment
+    serviceResourceID: redisCacheResourceId
+    subnetId: privateEndpointSubnetId
+    groupIDs: [redisCacheKind == 'managed' ? 'redisEnterprise' : 'redisCache']
+    privateDnsZoneIds: [redisDNSZone!.outputs.privateDnsZoneId]
+    tags: tags
+  }
+}
 
 //=========================================================
 // key vault
@@ -312,6 +347,21 @@ resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existin
   name: openAIName
 }
 
+module azureMonitorPrivateNetworking 'azureMonitorPrivateNetworking.bicep' = if (enableAzureMonitorPrivateLink) {
+  name: 'azureMonitorPrivateNetworking'
+  params: {
+    location: location
+    appName: appName
+    environment: environment
+    tags: tags
+    virtualNetworkId: virtualNetworkId
+    privateEndpointSubnetId: privateEndpointSubnetId
+    privateDnsZoneConfigs: privateDnsZoneConfigs
+    blobStorageDnsZoneId: storageAccountDNSZone.outputs.privateDnsZoneId
+    monitoringResourceIds: monitoringResourceIds
+  }
+}
+
 resource openAiServiceExternal 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = if (useExternalOpenAIResource) {
   name: openAIName
   scope: resourceGroup(openAISubscriptionId, openAIResourceGroupName)
@@ -453,11 +503,25 @@ module speechServicePE 'privateEndpoint.bicep' = if (speechServiceName != '') {
 //=========================================================
 // video indexer service - Optional
 //=========================================================
-resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' existing = if (videoIndexerName != '' && videoIndexerSupportsPrivateEndpoints) {
+resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2025-04-01' existing = if (deployVideoIndexerPrivateEndpoint) {
   name: videoIndexerName
 }
 
-module videoIndexerPE 'privateEndpoint.bicep' = if (videoIndexerName != '' && videoIndexerSupportsPrivateEndpoints) {
+module videoIndexerDNSZone 'privateDNS.bicep' = if (deployVideoIndexerPrivateEndpoint) {
+  name: 'videoIndexerDNSZone'
+  params: {
+    zoneName: videoIndexerDnsZoneName
+    appName: appName
+    environment: environment
+    name: 'videoIndexer'
+    vNetId: virtualNetworkId
+    tags: tags
+    existingZoneResourceId: videoIndexerPrivateDnsZoneConfig.zoneResourceId
+    createVNetLink: videoIndexerPrivateDnsZoneConfig.createVNetLink
+  }
+}
+
+module videoIndexerPE 'privateEndpoint.bicep' = if (deployVideoIndexerPrivateEndpoint) {
   name: 'videoIndexerPE'
   dependsOn: [
     videoIndexerService
@@ -473,7 +537,7 @@ module videoIndexerPE 'privateEndpoint.bicep' = if (videoIndexerName != '' && vi
       'account'
     ]
     privateDnsZoneIds: [
-      docIntelDNSZone.outputs.privateDnsZoneId
+      videoIndexerDNSZone!.outputs.privateDnsZoneId
     ]
     tags: tags
   }

@@ -1,0 +1,441 @@
+// test_v2_bootstrap_refresh_logic.mjs
+//
+// Runtime test for the V2 bootstrap store's refresh action.
+// Version: 0.261.338
+// Implemented in: 0.261.046
+// Required authoring selection refresh added in: 0.261.096
+// Scope-only refresh for group switching added in: 0.261.305 (#1725)
+//
+// The companion test, test_v2_admin_settings_live_shell_refresh.py, asserts that the pieces
+// are wired together. Those are source assertions: they prove the call exists, not that it
+// behaves. This file executes the real store, because the two ways this can go quietly wrong
+// both look fine in the source.
+//
+// The first is that a background refetch must never drive `loading` or `error`. App.tsx
+// replaces the entire interface with the boot screen while `loading` is set, and with the
+// boot error when `error` is, so an administrator mid-edit would lose the page and the
+// unsaved draft with it. Asserting on the final state would miss it -- the flag only has to
+// be set transiently to blank the screen -- so every intermediate state is recorded here.
+//
+// The second is ordering. Two saves in a row issue two refetches, and nothing guarantees the
+// responses return in the order the requests left. The stale one winning is invisible except
+// at the moment it happens.
+//
+// Run directly with `node functional_tests/test_v2_bootstrap_refresh_logic.mjs`. Requires
+// Node 22.6 or newer, which strips the TypeScript types so the real module is imported
+// rather than a copy.
+
+import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
+
+// The V2 source imports without file extensions, which Vite resolves and Node's ESM
+// resolver does not. Resolving them here is what lets this test execute the real store
+// rather than a transcription of it that could drift from what ships.
+registerHooks({
+    resolve(specifier, context, nextResolve) {
+        if (specifier.startsWith('.') && !/\.[cm]?[jt]s$/.test(specifier)) {
+            try {
+                return nextResolve(`${specifier}.ts`, context);
+            } catch {
+                /* Not a TypeScript module; fall through to the default resolution. */
+            }
+        }
+        return nextResolve(specifier, context);
+    },
+});
+
+const STORE_URL = new URL(
+    '../application/v2_ui/src/stores/bootstrapStore.ts',
+    import.meta.url,
+);
+
+/** Swapped per test; every request the store makes lands here. */
+let fetchImpl = () => {
+    throw new Error('No fetch behaviour was installed for this test');
+};
+
+globalThis.fetch = (...args) => fetchImpl(...args);
+
+const { useBootstrapStore } = await import(STORE_URL);
+const { useAppSessionStore } = await import('../application/v2_ui/src/stores/appSessionStore.ts');
+
+/** A minimal Response the api client is happy to read. */
+function jsonResponse(body, status = 200) {
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        headers: { get: () => 'application/json' },
+        json: async () => body,
+        text: async () => JSON.stringify(body),
+    };
+}
+
+/** A bootstrap payload carrying the classification banner in a given state. */
+function payloadWithBanner(banner) {
+    return {
+        version: '0.261.046',
+        user: { id: 'u1', display_name: 'Tester', is_admin: true, roles: ['Admin'] },
+        branding: {
+            app_title: 'SimpleChat',
+            hide_app_title: false,
+            show_logo: false,
+            logo_url: null,
+            logo_dark_url: null,
+            classification_banner: banner,
+        },
+        features: {},
+    };
+}
+
+const BANNER_OFF = null;
+const BANNER_ON = {
+    enabled: true,
+    text: 'UNCLASSIFIED',
+    color: '#ffc107',
+    text_color: '#ffffff',
+};
+
+/** Reset the store to a resolved load carrying `banner`, and return its state. */
+async function loadWith(banner) {
+    fetchImpl = async () => jsonResponse(payloadWithBanner(banner));
+    await useBootstrapStore.getState().load();
+    return useBootstrapStore.getState();
+}
+
+/** Record every state the store passes through while `run` executes. */
+async function recordStates(run) {
+    const seen = [];
+    const unsubscribe = useBootstrapStore.subscribe((state) => {
+        seen.push({ loading: state.loading, error: state.error, authExpired: state.authExpired });
+    });
+    try {
+        await run();
+    } finally {
+        unsubscribe();
+    }
+    return seen;
+}
+
+async function testRefreshAppliesTheNewPayload() {
+    console.log('Testing that a refresh applies the new payload...');
+
+    await loadWith(BANNER_OFF);
+    assert.equal(
+        useBootstrapStore.getState().data.branding.classification_banner,
+        null,
+        'The banner starts off, as it would before an administrator enabled it',
+    );
+
+    fetchImpl = async () => jsonResponse(payloadWithBanner(BANNER_ON));
+    await useBootstrapStore.getState().refresh();
+
+    assert.deepEqual(
+        useBootstrapStore.getState().data.branding.classification_banner,
+        BANNER_ON,
+        'A refresh must replace the payload the shell reads, or enabling the banner stays '
+            + 'invisible until the browser is reloaded',
+    );
+
+    // The same mechanism has to work in reverse, or a banner cannot be turned off either.
+    fetchImpl = async () => jsonResponse(payloadWithBanner(BANNER_OFF));
+    await useBootstrapStore.getState().refresh();
+
+    assert.equal(
+        useBootstrapStore.getState().data.branding.classification_banner,
+        null,
+        'Turning the banner off must reach the shell just as immediately',
+    );
+
+    console.log('Refresh payload test passed!');
+}
+
+async function testRefreshNeverBlanksTheInterface() {
+    console.log('Testing that a refresh never blanks the interface...');
+
+    await loadWith(BANNER_OFF);
+
+    fetchImpl = async () => jsonResponse(payloadWithBanner(BANNER_ON));
+    const seen = await recordStates(() => useBootstrapStore.getState().refresh());
+
+    assert.ok(seen.length > 0, 'The refresh should have produced at least one state update');
+    for (const state of seen) {
+        assert.equal(
+            state.loading,
+            false,
+            'A refresh must never set `loading`, even transiently: App.tsx swaps the whole '
+                + 'interface for the boot screen while it is set, so the page being edited '
+                + 'would be torn down and its unsaved draft lost',
+        );
+        assert.equal(state.error, null, 'A successful refresh must not report an error');
+    }
+
+    console.log('Interface blanking test passed!');
+}
+
+async function testAFailedRefreshIsAdvisory() {
+    console.log('Testing that a failed refresh is advisory...');
+
+    const before = (await loadWith(BANNER_ON)).data;
+
+    fetchImpl = async () => jsonResponse({ error: 'Failed to load application bootstrap' }, 500);
+    const seen = await recordStates(() => useBootstrapStore.getState().refresh());
+
+    const after = useBootstrapStore.getState();
+    assert.equal(
+        after.data,
+        before,
+        'A failed refresh must leave the payload alone; the write it follows already '
+            + 'succeeded, so the previous state is still the best available',
+    );
+    assert.equal(
+        after.error,
+        null,
+        'A failed refresh must not set `error`: App.tsx replaces the whole interface with '
+            + 'the boot error when it is set, so a page whose save had just succeeded would '
+            + 'be thrown away over a background refetch nobody asked for',
+    );
+    assert.equal(after.authExpired, false, 'A failed refresh must not claim the session expired');
+    assert.equal(after.loading, false, 'A failed refresh must not leave the store loading');
+
+    for (const state of seen) {
+        assert.equal(state.loading, false, 'A failing refresh must not blank the interface either');
+        assert.equal(state.error, null, 'A failing refresh must not surface an error state');
+    }
+
+    console.log('Failed refresh test passed!');
+}
+
+async function testARejectedRefreshDoesNotEscape() {
+    console.log('Testing that a refresh never rejects...');
+
+    await loadWith(BANNER_ON);
+
+    // A network-level failure rather than an HTTP error response.
+    fetchImpl = async () => {
+        throw new TypeError('Failed to fetch');
+    };
+
+    await assert.doesNotReject(
+        () => useBootstrapStore.getState().refresh(),
+        'Callers fire the refresh without awaiting it, so a rejection would surface as an '
+            + 'unhandled promise rejection rather than being reported anywhere useful',
+    );
+
+    console.log('Rejection test passed!');
+}
+
+async function testAStaleRefreshCannotOverwriteANewerOne() {
+    console.log('Testing the refresh ordering guard...');
+
+    await loadWith(BANNER_OFF);
+
+    const slowBanner = { ...BANNER_ON, text: 'FROM THE FIRST SAVE' };
+    const fastBanner = { ...BANNER_ON, text: 'FROM THE SECOND SAVE' };
+
+    let releaseSlow;
+    const slowArrived = new Promise((resolve) => {
+        releaseSlow = () => resolve(jsonResponse(payloadWithBanner(slowBanner)));
+    });
+
+    // The first refresh hangs; the second is served immediately.
+    fetchImpl = () => slowArrived;
+    const first = useBootstrapStore.getState().refresh();
+
+    fetchImpl = async () => jsonResponse(payloadWithBanner(fastBanner));
+    await useBootstrapStore.getState().refresh();
+
+    assert.equal(
+        useBootstrapStore.getState().data.branding.classification_banner.text,
+        fastBanner.text,
+        'The newer refresh should have been applied',
+    );
+
+    // Now let the older request finish. It must be discarded.
+    releaseSlow();
+    await first;
+
+    assert.equal(
+        useBootstrapStore.getState().data.branding.classification_banner.text,
+        fastBanner.text,
+        'A slower earlier refresh must not overwrite a newer one, or two saves in quick '
+            + 'succession leave the interface showing the state from before the second',
+    );
+
+    console.log('Refresh ordering test passed!');
+}
+
+async function testRequiredRefreshReturnsFreshDataWithoutBlanking() {
+    await loadWith(BANNER_OFF);
+    const fresh = payloadWithBanner(BANNER_ON);
+    fresh.catalogs = { agents: [{ id: 'authorized', scope_type: 'personal' }] };
+    fetchImpl = async () => jsonResponse(fresh);
+    let result;
+    const states = await recordStates(async () => {
+        result = await useBootstrapStore.getState().refreshRequired();
+    });
+    assert.equal(result, fresh);
+    assert.equal(useBootstrapStore.getState().data, fresh);
+    assert.ok(states.every((state) => !state.loading && !state.error));
+}
+
+async function testRequiredRefreshRejectsInsteadOfReturningCachedAgents() {
+    const previous = (await loadWith(BANNER_ON)).data;
+    fetchImpl = async () => jsonResponse({ error: 'Unavailable' }, 503);
+    await assert.rejects(useBootstrapStore.getState().refreshRequired(), /Unavailable/);
+    assert.equal(useBootstrapStore.getState().data, previous);
+    fetchImpl = async () => { throw new TypeError('Network unavailable'); };
+    await assert.rejects(useBootstrapStore.getState().refreshRequired(), /Network unavailable/);
+    assert.equal(useBootstrapStore.getState().data, previous);
+    assert.equal(useBootstrapStore.getState().error, null);
+}
+
+async function testSupersededRequiredRefreshCannotAuthorizeFromAnOlderResult() {
+    await loadWith(BANNER_OFF);
+    let release;
+    fetchImpl = () => new Promise((resolve) => { release = resolve; });
+    const requested = useBootstrapStore.getState().refreshRequired();
+    const latest = payloadWithBanner(BANNER_ON);
+    latest.catalogs = { agents: [] };
+    fetchImpl = async () => jsonResponse(latest);
+    await useBootstrapStore.getState().refresh();
+    release(jsonResponse(payloadWithBanner(BANNER_OFF)));
+    await assert.rejects(requested, /availability changed during refresh/);
+    assert.equal(useBootstrapStore.getState().data, latest);
+}
+
+async function testScopeRefreshPatchesOnlyTheActiveScope() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', active_group_name: 'One', active_public_workspace_id: null, groups: [{ id: 'g1' }, { id: 'g2' }], public_workspaces: [] };
+    loaded.catalogs = { agents: [{ id: 'kept' }] };
+    let seen;
+    fetchImpl = async (path, init) => {
+        seen = { path: String(path), cache: init?.cache };
+        return jsonResponse({ user: { id: 'u1' }, scope: { active_group_id: 'g2', active_group_name: 'Two', active_public_workspace_id: null } });
+    };
+    const result = await useBootstrapStore.getState().refreshScope('u1');
+    assert.equal(seen.path, '/api/v2/scope');
+    assert.equal(seen.cache, 'no-store', 'A group switch must not queue behind a cached bootstrap read');
+    assert.equal(result.scope.active_group_id, 'g2');
+    assert.equal(result.scope.active_group_name, 'Two');
+    assert.equal(result.scope.groups, loaded.scope.groups);
+    assert.equal(result.catalogs, loaded.catalogs);
+    assert.equal(result.branding, loaded.branding);
+    assert.equal(useBootstrapStore.getState().data, result);
+}
+
+async function testScopeRefreshRejectsAnotherViewer() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    fetchImpl = async () => jsonResponse({ user: { id: 'someone-else' }, scope: { active_group_id: 'g2' } });
+    await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /sign-in changed/);
+    await assert.rejects(useBootstrapStore.getState().refreshScope('not-u1'), /sign-in changed/);
+    assert.equal(useAppSessionStore.getState().status, 'changed');
+    useAppSessionStore.setState({ status: 'ready', viewerId: 'u1', revision: 0 });
+    fetchImpl = async () => jsonResponse({ user: { id: 'u1' } });
+    await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /could not be read/);
+    assert.equal(useBootstrapStore.getState().data, loaded);
+}
+
+async function testSupersededScopeRefreshCannotApply() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    let release;
+    fetchImpl = () => new Promise((resolve) => { release = resolve; });
+    const older = useBootstrapStore.getState().refreshScope('u1');
+    const releaseOlder = release;
+    fetchImpl = async () => jsonResponse({
+        user: { id: 'u1' },
+        scope: { active_group_id: 'g3', active_group_name: 'Three', active_public_workspace_id: null },
+    });
+    await useBootstrapStore.getState().refreshScope('u1');
+    releaseOlder(jsonResponse({ user: { id: 'u1' }, scope: { active_group_id: 'g2' } }));
+    await assert.rejects(older, /active workspace changed/);
+    assert.equal(useBootstrapStore.getState().data.scope.active_group_id, 'g3');
+}
+
+async function testMalformedScopeIsNotAnEmptySelection() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    for (const scope of [
+        {}, { active_group_id: 12, active_group_name: null, active_public_workspace_id: null },
+        { active_group_id: '', active_group_name: null, active_public_workspace_id: null },
+        { active_group_id: null, active_group_name: {}, active_public_workspace_id: null },
+    ]) {
+        fetchImpl = async () => jsonResponse({ user: { id: 'u1' }, scope });
+        await assert.rejects(useBootstrapStore.getState().refreshScope('u1'), /could not be read/);
+        assert.equal(useBootstrapStore.getState().data, loaded);
+    }
+}
+
+async function testBootstrapStartedDuringScopeRefreshCannotRestoreOldSelection() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    let releaseScope;
+    let releaseBootstrap;
+    fetchImpl = (path) => new Promise((resolve) => {
+        if (String(path) === '/api/v2/scope') releaseScope = resolve;
+        else releaseBootstrap = resolve;
+    });
+    const scopeRead = useBootstrapStore.getState().refreshScope('u1');
+    const fullRead = useBootstrapStore.getState().refresh();
+    releaseScope(jsonResponse({
+        user: { id: 'u1' },
+        scope: { active_group_id: 'g2', active_group_name: 'Two', active_public_workspace_id: null },
+    }));
+    await scopeRead;
+    const stale = payloadWithBanner(BANNER_OFF);
+    stale.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    releaseBootstrap(jsonResponse(stale));
+    await fullRead;
+    assert.equal(useBootstrapStore.getState().data.scope.active_group_id, 'g2');
+    assert.equal(useBootstrapStore.getState().data.branding.classification_banner, BANNER_OFF);
+}
+
+async function testScopeRefreshCannotHideACompetingSelectionAlreadyInstalled() {
+    const loaded = (await loadWith(BANNER_ON)).data;
+    loaded.scope = { active_group_id: 'g1', groups: [], public_workspaces: [] };
+    let releaseScope;
+    fetchImpl = () => new Promise((resolve) => { releaseScope = resolve; });
+    const scopeRead = useBootstrapStore.getState().refreshScope('u1');
+    const competing = payloadWithBanner(BANNER_ON);
+    competing.scope = { active_group_id: 'g3', active_public_workspace_id: null };
+    useBootstrapStore.setState({ data: competing });
+    releaseScope(jsonResponse({
+        user: { id: 'u1' },
+        scope: { active_group_id: 'g2', active_group_name: 'Two', active_public_workspace_id: null },
+    }));
+    await assert.rejects(scopeRead, /active workspace changed/);
+    assert.equal(useBootstrapStore.getState().data, competing);
+}
+
+const tests = [
+    testRefreshAppliesTheNewPayload,
+    testRefreshNeverBlanksTheInterface,
+    testAFailedRefreshIsAdvisory,
+    testARejectedRefreshDoesNotEscape,
+    testAStaleRefreshCannotOverwriteANewerOne,
+    testRequiredRefreshReturnsFreshDataWithoutBlanking,
+    testRequiredRefreshRejectsInsteadOfReturningCachedAgents,
+    testSupersededRequiredRefreshCannotAuthorizeFromAnOlderResult,
+    testScopeRefreshPatchesOnlyTheActiveScope,
+    testScopeRefreshRejectsAnotherViewer,
+    testSupersededScopeRefreshCannotApply,
+    testMalformedScopeIsNotAnEmptySelection,
+    testBootstrapStartedDuringScopeRefreshCannotRestoreOldSelection,
+    testScopeRefreshCannotHideACompetingSelectionAlreadyInstalled,
+];
+
+let passed = 0;
+for (const test of tests) {
+    console.log(`\nRunning ${test.name}...`);
+    try {
+        useAppSessionStore.setState({ status: 'ready', viewerId: 'u1', revision: 0 });
+        await test();
+        passed += 1;
+    } catch (error) {
+        console.error(`Test failed: ${error.message}`);
+        console.error(error);
+    }
+}
+
+console.log(`\nResults: ${passed}/${tests.length} tests passed`);
+process.exit(passed === tests.length ? 0 : 1);

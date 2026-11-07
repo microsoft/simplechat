@@ -1,12 +1,32 @@
 # functions_group.py
 
+import copy
+
+from azure.core import MatchConditions
+
 from config import *
 import functions_authentication
 import functions_settings
 from typing import Iterable
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_appinsights import log_event
 from functions_workspace_branding import DEFAULT_WORKSPACE_HERO_COLOR
+
+
+# How many times a conditional group-document write re-reads and re-applies its
+# change after losing a race to another writer before it reports a conflict.
+GROUP_DOCUMENT_WRITE_ATTEMPTS = 3
+
+
+class GroupDocumentWriteConflict(RuntimeError):
+    """The group document kept changing while a write was being applied to it."""
+
+
+# Every group route answers GroupDocumentWriteConflict the same way: 409 with this
+# code and this reviewed sentence. Other modules import these rather than copy them.
+GROUP_WRITE_CONFLICT_CODE = "group_write_conflict"
+GROUP_WRITE_CONFLICT_MESSAGE = "The group changed while your request was being saved. Try again."
 
 
 def create_group(name, description):
@@ -55,10 +75,10 @@ def create_group(name, description):
 
 def search_groups(search_query, user_id):
     """
-    Return a list of groups the user is in. 
-    For simplicity, this only returns groups where the user is a member.
+    Return the groups the user is a member of whose name or description contains the
+    search term, ignoring case, as the group directory and the admin search do.
     """
-    query = query = """
+    query = """
         SELECT *
         FROM c
         WHERE EXISTS (
@@ -71,9 +91,13 @@ def search_groups(search_query, user_id):
     params = [
         { "name": "@user_id", "value": user_id }
     ]
-    if search_query:
-        query += " AND CONTAINS(c.name, @search) "
-        params.append({"name": "@search", "value": search_query})
+    normalized_query = str(search_query or "").strip().lower()
+    if normalized_query:
+        query += (
+            " AND (CONTAINS(LOWER(c.name), @search)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))) "
+        )
+        params.append({"name": "@search", "value": normalized_query})
 
     results = list(cosmos_groups_container.query_items(
         query=query,
@@ -106,6 +130,94 @@ def search_all_groups(search_query, limit=10):
         enable_cross_partition_query=True
     ))
     return results[:max(1, min(int(limit or 10), 50))]
+
+GROUP_DIRECTORY_MAX_LIMIT = 200
+GROUP_DIRECTORY_DEFAULT_LIMIT = 50
+
+GROUP_DIRECTORY_TYPE_FILTER = "(c.type = 'group' OR NOT IS_DEFINED(c.type))"
+
+
+def _to_group_directory_row(group_doc):
+    """Project a group document down to the fields an assignment picker needs."""
+    return {
+        "id": str(group_doc.get("id") or ""),
+        "name": group_doc.get("name") or "",
+        "description": group_doc.get("description") or "",
+        "member_count": len(group_doc.get("users") or []),
+    }
+
+
+def find_groups_by_ids(group_ids):
+    """Return directory rows for specific group ids, skipping ids that no longer exist.
+
+    Used to label an assignment an administrator has already saved. Ids that
+    resolve to nothing are simply absent from the result, which lets the caller
+    tell a live assignment apart from one pointing at a deleted group.
+    """
+    wanted_ids = [str(group_id or "").strip() for group_id in (group_ids or [])]
+    wanted_ids = [group_id for group_id in wanted_ids if group_id]
+    if not wanted_ids:
+        return []
+
+    query = f"""
+        SELECT c.id, c.name, c.description, c.users
+        FROM c
+        WHERE {GROUP_DIRECTORY_TYPE_FILTER} AND ARRAY_CONTAINS(@ids, c.id)
+    """
+    results = list(cosmos_groups_container.query_items(
+        query=query,
+        parameters=[{"name": "@ids", "value": wanted_ids}],
+        enable_cross_partition_query=True
+    ))
+
+    rows_by_id = {row["id"]: row for row in (_to_group_directory_row(doc) for doc in results)}
+    # Preserve the order the caller asked in, so a saved assignment keeps the
+    # order an administrator built it in rather than Cosmos's storage order.
+    return [rows_by_id[group_id] for group_id in wanted_ids if group_id in rows_by_id]
+
+
+def list_groups_for_admin_directory(search_query="", limit=GROUP_DIRECTORY_DEFAULT_LIMIT):
+    """Return ``(rows, truncated)`` for an administrator's group assignment picker.
+
+    An empty search browses the directory. The query asks for one row more than
+    ``limit`` so a truncated result can be reported instead of silently hiding
+    groups, which matters because an administrator who cannot see a group has no
+    way to tell whether it is missing or merely beyond the cap.
+    """
+    normalized_query = str(search_query or "").strip().lower()
+    capped_limit = max(1, min(int(limit or GROUP_DIRECTORY_DEFAULT_LIMIT), GROUP_DIRECTORY_MAX_LIMIT))
+
+    filters = [GROUP_DIRECTORY_TYPE_FILTER]
+    parameters = []
+    if normalized_query:
+        filters.append(
+            "(CONTAINS(LOWER(c.name), @search)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))"
+            " OR LOWER(c.id) = @search)"
+        )
+        parameters.append({"name": "@search", "value": normalized_query})
+
+    # No ORDER BY: Cosmos drops documents that lack the sorted property, which
+    # would hide legacy groups saved without a name. The page is sorted below.
+    query = f"""
+        SELECT c.id, c.name, c.description, c.users
+        FROM c
+        WHERE {' AND '.join(filters)}
+        OFFSET 0 LIMIT @limit
+    """
+    parameters.append({"name": "@limit", "value": capped_limit + 1})
+
+    results = list(cosmos_groups_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True
+    ))
+
+    truncated = len(results) > capped_limit
+    rows = [_to_group_directory_row(doc) for doc in results[:capped_limit]]
+    rows.sort(key=lambda row: (row["name"].lower(), row["id"]))
+    return rows, truncated
+
 
 def get_user_groups(user_id):
     """
@@ -174,6 +286,33 @@ def get_user_role_in_group(group_doc, user_id):
     return None
 
 
+def get_group_document_reviewer_ids(group_doc):
+    group_doc = group_doc or {}
+    candidates = [
+        (group_doc.get("owner") or {}).get("id"),
+        *(group_doc.get("admins") or []),
+        *(group_doc.get("documentManagers") or []),
+    ]
+    return sorted({
+        user_id for user_id in candidates
+        if isinstance(user_id, str) and user_id
+        and get_user_role_in_group(group_doc, user_id) in {"Owner", "Admin", "DocumentManager"}
+    })
+
+
+def discover_group_records(search=""):
+    """The sharing directory uses the same all-group visibility as showAll=true."""
+    search = str(search or "").lower()
+    groups = list(cosmos_groups_container.query_items(
+        query="SELECT * FROM c WHERE c.type = 'group' or NOT IS_DEFINED(c.type)",
+        enable_cross_partition_query=True,
+    ))
+    return [
+        group for group in groups
+        if not search or any(search in str(group.get(field) or "").lower() for field in ("name", "description", "id"))
+    ]
+
+
 def require_active_group(
     user_id: str,
     allowed_roles: Iterable[str] = ("Owner", "Admin", "DocumentManager", "User"),
@@ -186,6 +325,25 @@ def require_active_group(
 
     assert_group_role(user_id, active_group_id, allowed_roles=allowed_roles)
     return active_group_id
+
+
+def get_optional_active_group(user_id):
+    """Resolve an optional scope, repairing only confirmed lost membership/deletion."""
+    settings = functions_settings.get_user_settings(user_id)
+    active_group_id = settings.get("settings", {}).get("activeGroupOid")
+    if not active_group_id:
+        return None
+
+    group_doc = find_group_by_id(active_group_id)
+    if group_doc and get_user_role_in_group(group_doc, user_id):
+        return active_group_id
+
+    repaired = functions_settings._clear_stale_active_group(user_id, active_group_id)
+    log_event(
+        "[USER_SETTINGS] Stale active group is no longer selected.",
+        extra={"user_id": user_id, "group_id": active_group_id, "persisted": repaired},
+    )
+    return None
 
 
 def assert_group_role(user_id: str, group_id: str, allowed_roles: Iterable[str] = ("Owner", "Admin")) -> str:
@@ -335,15 +493,103 @@ def get_group_model_endpoints(group_id: str):
     return []
 
 
-def update_group_model_endpoints(group_id: str, endpoints):
-    """Persist the model endpoints list onto the group document."""
-    group_doc = find_group_by_id(group_id)
-    if not group_doc:
-        raise ValueError("Group not found")
+def update_group_model_endpoints(group_id: str, endpoints, *, user_id=None, outcome=None):
+    """Replace the model endpoint list on the group document.
+
+    This is the collection writer behind the legacy ``POST /api/group/model-endpoints``.
+    The list replaces the stored one, so the last bulk or per-item endpoint writer
+    wins, as before. It is applied to the copy ``update_group_document_with_etag_guard``
+    reads: membership, status and every other field come from that copy, and a group
+    deleted meanwhile raises ``LookupError`` rather than being recreated. With
+    ``user_id``, the caller must still be the group's Owner or an Admin on that copy
+    (``PermissionError`` otherwise). ``outcome``, when given, receives the endpoints
+    the committed write replaced (``previous``) and wrote (``saved``), so the caller
+    removes superseded credentials only after the commit. A group that keeps changing
+    raises ``GroupDocumentWriteConflict``.
+    """
     if not isinstance(endpoints, list):
         raise ValueError("model_endpoints must be a list")
-    group_doc["model_endpoints"] = endpoints
-    group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_groups_container.upsert_item(group_doc)
-    bump_chat_bootstrap_global_cache_version(reason="group_model_endpoints_updated")
-    return group_doc
+
+    def apply(group_doc):
+        if user_id is not None:
+            role = get_user_role_in_group(group_doc, user_id)
+            if not role:
+                raise PermissionError("User is not a member of this group")
+            if role not in ("Owner", "Admin"):
+                raise PermissionError("Insufficient permissions for this group")
+        previous = group_doc.get("model_endpoints")
+        if outcome is not None:
+            outcome.update(
+                previous=[endpoint for endpoint in previous if isinstance(endpoint, dict)]
+                if isinstance(previous, list) else [],
+                saved=endpoints,
+            )
+        group_doc["model_endpoints"] = endpoints
+        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        return group_doc
+
+    committed = update_group_document_with_etag_guard(
+        group_id, apply, cache_reason="group_model_endpoints_updated",
+    )
+    if committed is None:
+        raise LookupError("Group not found")
+    return committed
+
+
+def _stored_group_fields(document):
+    """A group document without the Cosmos system properties (``_etag``, ``_ts``, ...)."""
+    return {key: value for key, value in (document or {}).items() if not key.startswith("_")}
+
+
+def update_group_document_with_etag_guard(group_id, apply_changes, *, cache_reason, attempts=GROUP_DOCUMENT_WRITE_ATTEMPTS):
+    """Apply one change to the stored group document and write it back conditionally.
+
+    The group document also carries membership, status and every other group-scoped
+    setting, so a writer that changes one part of it must never restore the rest from
+    an outdated copy. ``apply_changes`` receives a private copy of the document just
+    read and returns the document to write; the replace is conditional on that read's
+    ``_etag`` (``IfNotModified``). When another writer lands in between, the document
+    is read again and ``apply_changes`` is re-applied to the newer copy, up to
+    ``attempts`` writes, after which ``GroupDocumentWriteConflict`` is raised. Because
+    it can run more than once, ``apply_changes`` must derive its result only from the
+    copy it is given; raising from it abandons the write with nothing stored.
+
+    A group that is missing at read time or at replace time is never recreated: the
+    function returns ``None`` and writes nothing. When a re-read finds exactly the body
+    this call sent, the earlier replace committed and only its response was lost (a
+    transport retry of a committed write fails its own precondition), so that is
+    reported as the committed write rather than as a conflict.
+
+    A committed write returns the stored document and bumps the global chat bootstrap
+    cache with ``cache_reason``. ``cache_reason`` is required, and ``None`` is the
+    explicit choice for a change no bootstrap payload reads, such as a join request,
+    which commits without a bump.
+    """
+    attempted = None
+    for attempt in range(attempts + 1):
+        try:
+            current = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        if attempted is not None and _stored_group_fields(current) == _stored_group_fields(attempted):
+            if cache_reason is not None:
+                bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+            return current
+        if attempt == attempts:
+            break
+        attempted = apply_changes(copy.deepcopy(current))
+        try:
+            written = cosmos_groups_container.replace_item(
+                item=group_id,
+                body=attempted,
+                etag=current.get("_etag"),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        if cache_reason is not None:
+            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+        return written
+    raise GroupDocumentWriteConflict("The group document kept changing while it was being saved.")

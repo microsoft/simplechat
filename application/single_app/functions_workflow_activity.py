@@ -4,7 +4,15 @@
 
 from datetime import datetime, timezone
 
-from functions_workflow_alerts import describe_alert_condition, resolve_workflow_alert_config
+from functions_workflow_alerts import (
+    WORKFLOW_ALERT_AUDIENCE_ORDER,
+    WORKFLOW_ALERT_SIZE_ORDER,
+    WORKFLOW_ALERT_SOUND_ORDER,
+    describe_alert_condition,
+    normalize_alert_flag,
+    resolve_alert_option,
+    resolve_workflow_alert_config,
+)
 from functions_workflow_alert_safety import sanitize_workflow_alert_record
 from functions_m365_workflow_binding import M365_ACTIVE_STATES
 
@@ -40,7 +48,7 @@ def _normalize_status(value):
         return 'running'
     if normalized_value in {'cancelled', 'canceled'}:
         return 'cancelled'
-    if normalized_value in {'failed', 'error'}:
+    if normalized_value in {'failed', 'error', 'invalid', 'incomplete'}:
         return 'failed'
     if normalized_value in {'completed', 'complete', 'succeeded', 'success', 'done'}:
         return 'completed'
@@ -69,6 +77,10 @@ def _serialize_workflow(workflow):
                 'enabled': rule.get('enabled', True),
                 'severity': rule.get('severity'),
                 'delivery': rule.get('delivery'),
+                'require_acknowledgment': normalize_alert_flag(rule.get('require_acknowledgment', False)),
+                'sound': resolve_alert_option(rule.get('sound'), WORKFLOW_ALERT_SOUND_ORDER),
+                'size': resolve_alert_option(rule.get('size'), WORKFLOW_ALERT_SIZE_ORDER),
+                'audience': resolve_alert_option(rule.get('audience'), WORKFLOW_ALERT_AUDIENCE_ORDER),
                 'condition_summary': describe_alert_condition(rule.get('condition')),
             }
             for rule in alert_config.get('alert_rules') or []
@@ -115,6 +127,18 @@ def _serialize_run(run_record):
         'response_preview': run_record.get('response_preview'),
         'error': run_record.get('error'),
         'alert_decision': run_record.get('alert_decision') or {},
+        'task_results': [
+            {
+                field: task.get(field)
+                for field in (
+                    'task_id', 'task_name', 'task_order', 'status',
+                    'execution_id', 'node_id', 'iteration_path', 'attempt',
+                    'workflow_result', 'context_budget', 'consumed_inputs', 'workflow_validation',
+                )
+            }
+            for task in run_record.get('task_results') or []
+            if isinstance(task, dict)
+        ],
     }
 
 

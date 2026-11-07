@@ -2,8 +2,8 @@
 # test_collaboration_shared_ai_workflow.py
 """
 Functional test for collaboration shared AI workflow parity.
-Version: 0.261.045
-Implemented in: 0.261.045
+Version: 0.261.055
+Implemented in: 0.261.055
 
 This test ensures collaborative conversations route shared AI requests through
 the collaboration stream bridge, persist explicit AI-request metadata, and
@@ -135,4 +135,5 @@ if __name__ == '__main__':
     test_backend_collaboration_stream_bridge()
     test_frontend_collaboration_stream_wiring()
     test_streaming_metadata_alignment_for_explicit_agent_targets()
+    test_collaboration_lifecycle_and_participant_action_wiring()
     print('All collaboration shared AI workflow checks passed.')

@@ -1,5 +1,9 @@
 // chat-message-export.js
 import { showToast } from "./chat-toast.js";
+import {
+    buildMessageVisualAssets,
+    extractMermaidSources,
+} from "./chat-visual-rasterizer.js";
 
 /**
  * Per-message export module.
@@ -56,7 +60,7 @@ function getMessageContentOverride(messageDiv, role) {
     return String(getMessageMarkdown(messageDiv, role) || '');
 }
 
-function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {}) {
+async function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {}) {
     const requestBody = {
         message_id: messageId,
         conversation_id: conversationId,
@@ -66,7 +70,32 @@ function buildMessageExportRequestBody(messageDiv, messageId, conversationId, ro
     if (messageContentOverride) {
         requestBody.message_content_override = messageContentOverride;
     }
+
+    const visualAssets = await buildExportVisualAssets(
+        messageContentOverride || getMessageMarkdown(messageDiv, role)
+    );
+    if (visualAssets.length > 0) {
+        requestBody.visual_assets = visualAssets;
+    }
     return requestBody;
+}
+
+/**
+ * Rasterize any diagrams in a message so the export can embed them as images.
+ * Diagrams that fail to render are skipped and stay as code blocks in the export.
+ */
+async function buildExportVisualAssets(markdownContent) {
+    if (extractMermaidSources(markdownContent).length === 0) {
+        return [];
+    }
+
+    showToast('Rendering diagrams for export...', 'info');
+    try {
+        return await buildMessageVisualAssets(markdownContent);
+    } catch (err) {
+        console.warn('Unable to render diagrams for export:', err);
+        return [];
+    }
 }
 
 /**
@@ -233,11 +262,22 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
         return;
     }
 
+    // The document is built entirely on the server, and diagrams the browser could not
+    // rasterize are redrawn there in a headless browser, so this can run for a while with
+    // nothing happening on the page.
+    const progressToast = showToast(
+        'Building your Word document… diagrams can make this take a while.',
+        'info',
+        { autohide: false }
+    );
+
     try {
         const response = await fetch('/api/message/export-word', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))
+            body: JSON.stringify(
+                await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role)
+            )
         });
 
         if (!response.ok) {
@@ -254,6 +294,8 @@ export async function exportMessageAsWord(messageDiv, messageId, role) {
     } catch (err) {
         console.error('Error exporting message to Word:', err);
         showToast('Failed to export message to Word.', 'danger');
+    } finally {
+        progressToast?.dismiss();
     }
 }
 
@@ -274,8 +316,16 @@ export async function exportMessageAsPowerPoint(messageDiv, messageId, role, opt
         return;
     }
 
+    // Slowest of the exports: the slide plan is written by a model before python-pptx builds
+    // anything, so the wait is measured in tens of seconds rather than in a spinner frame.
+    const progressToast = showToast(
+        'Building your PowerPoint… planning the slides can take a minute.',
+        'info',
+        { autohide: false }
+    );
+
     try {
-        const requestBody = buildMessageExportRequestBody(messageDiv, messageId, conversationId, role);
+        const requestBody = await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role);
         if (preferredArtifactSource?.artifactMessageId) {
             requestBody.artifact_message_id = preferredArtifactSource.artifactMessageId;
             delete requestBody.message_content_override;
@@ -306,6 +356,8 @@ export async function exportMessageAsPowerPoint(messageDiv, messageId, role, opt
     } catch (err) {
         console.error('Error exporting message to PowerPoint:', err);
         showToast('Failed to export message to PowerPoint.', 'danger');
+    } finally {
+        progressToast?.dismiss();
     }
 }
 
@@ -351,11 +403,17 @@ export async function openInEmail(messageDiv, messageId, role) {
         return;
     }
 
+    // The subject line is written by a model and any diagram may need rendering, so this is
+    // not the instant hand-off to the mail client that it looks like.
+    const progressToast = showToast('Preparing your email draft…', 'info', { autohide: false });
+
     try {
         const response = await fetch('/api/message/export-email-draft', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))
+            body: JSON.stringify(
+                await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role)
+            )
         });
 
         const data = await response.json().catch(() => null);
@@ -379,5 +437,7 @@ export async function openInEmail(messageDiv, messageId, role) {
     } catch (err) {
         console.error('Error exporting message to email:', err);
         showToast('Failed to open email draft.', 'danger');
+    } finally {
+        progressToast?.dismiss();
     }
 }

@@ -77,8 +77,6 @@ resource managedRedis 'Microsoft.Cache/redisEnterprise@2025-07-01' = if (deployM
   properties: {
     highAvailability: redisHighAvailability
     minimumTlsVersion: '1.2'
-    // Azure Managed Redis does not support virtual network injection; the deployer does not
-    // provision a Redis private endpoint today, matching the classic cache behavior.
     publicNetworkAccess: 'Enabled'
   }
   tags: tags
@@ -165,3 +163,5 @@ output redisCacheName string = deployManagedRedis ? managedRedis.name : classicR
 output redisCacheHostName string = deployManagedRedis ? managedRedis.properties.hostName : classicRedisCache.properties.hostName
 output redisCachePort int = deployManagedRedis ? 10000 : 6380
 output redisCacheKind string = redisCacheKind
+#disable-next-line BCP318 // exactly one of the two cache resources is deployed
+output redisCacheResourceId string = deployManagedRedis ? managedRedis.id : classicRedisCache.id

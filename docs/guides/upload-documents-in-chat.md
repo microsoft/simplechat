@@ -46,16 +46,109 @@ Use chat upload when you need to ask about a file in the moment: a PDF someone s
 
 6. Use the cancel icon on the **File** button if you selected the wrong file.
 
+## Paste or drop attachments in V2
+
+Fixed/Implemented in version: **0.261.368**
+(`application/single_app/config.py`).
+
+You can attach a screenshot or a supported file without opening the file picker.
+**Image** does not need to be on when the file is a source for a normal chat answer.
+
+1. Copy a screenshot, image, or file, then focus the **Message** box and paste with
+   `Ctrl+V` (`Command+V` on macOS). Alternatively, drag a local file onto the message box.
+2. Check the **Attached files** list. Uploads start immediately; supported images also
+   show a local thumbnail. Multiple files are queued in order. If there is no conversation
+   yet, the first upload creates one and the rest of the batch use that same conversation.
+3. Wait for **Ready**, add your question, and send. A failed attachment shows the reason;
+   use **Retry** or **Remove** without losing the text you have written.
+
+Ordinary text paste still inserts text at the cursor or replaces the selected text, including
+after an image upload. Text-only drops also retain normal text-editing behavior.
+Pasted and dropped files use the same upload permissions, supported formats, size limit, and
+processing as files chosen with **Attach a file**. With **Image** on, the existing
+reference-image restrictions still apply.
+
+File paste depends on what the browser receives from the source application. SimpleChat can
+attach actual clipboard files, but a copied path, link, or HTML image is not automatically a
+file upload. If pasting does not provide a file, use **Attach a file** instead.
+
+## Switching conversations in V2
+
+Fixed/Implemented in version: **0.261.414**
+(`application/single_app/config.py`).
+
+Unsent attachment selections stay with the conversation where you added them.
+Opening another chat does not attach those files there. Return to the original
+conversation in the same browser tab to recover its unsent selections, with their
+filenames and processing state.
+
+Leaving during the file transfer cancels that browser transfer. Its original
+selection shows **Retry** or **Remove** when you return; you may need to choose
+the file again. If the upload already returned a processing reference, the
+original conversation resumes checking that document rather than uploading a copy.
+
+Switching chats, removing a selection, and sending a message do not move or delete
+an already uploaded file. New chats start without the previous conversation's
+attachments. These unsent selections are kept in tab memory, not as drafts that
+survive a browser refresh.
+
+## Answer an inline file question in V2
+
+From version **0.261.096**, an orchestration follow-up can ask for missing files directly.
+You do not need to leave that question or repeat the original request in the main composer.
+
+1. Review any suggested files. Choose one or several, according to the question.
+2. If the suggestions are wrong, type `#` in the inline answer to find another accessible file, or select **Attach a file** there.
+3. Wait for each upload to become ready. **Finish** remains unavailable during upload and processing; retry or remove a failed attachment.
+4. Add any explanation in the same answer. You can also use `/` to attach a saved prompt without changing the original request's prompt.
+5. Select **Finish**. SimpleChat continues planning the original request with the files and details you supplied.
+
+A different referenced or uploaded file can answer a file question without selecting any
+suggested file. This is not limited to tabular uploads: the existing supported file types
+and upload permissions still apply.
+
+If submitting the answer fails, the card keeps your draft so you can correct it or retry.
+Removing a reference or declining the question does not delete an already uploaded file;
+the normal chat/workspace retention rules still apply.
+
 ## Verify it worked
 
 The response can reference the uploaded file when relevant. If enabled, **Open used documents** can show documents used by the conversation.
+
+When the upload is also saved to your personal or group workspace, the document remembers this conversation. Its V2 document details show **Created in chat · *conversation title*** under **Origin**, linking back here. See [Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
+
+## Uploaded images (V2)
+
+From version **0.261.192**, an uploaded PNG, JPG, BMP, or TIFF image appears in the V2
+conversation as the picture itself rather than as a file name, so you and anyone reading the
+thread later can see what was asked about. Select the image to open it full size.
+
+- While the workspace is still processing the upload, the card shows **Processing image…** and
+  draws the picture once it is ready.
+- TIFF images are shown as their first page.
+- HEIC and HEIF photos (the iPhone default) are shown only in Safari. Other browsers show the file
+  card with a hint to convert the photo to JPG or PNG.
+- Shared conversations keep showing the file card.
+
+When the chat model can read images, the pictures you attach to a message are also sent to it
+as images, so it can describe or compare what is in them rather than relying only on text
+extracted from them. This applies to up to four images from the message you are sending, when
+the answer comes from a model directly rather than an agent or Orchestrate. Earlier images in the
+conversation are remembered as their extracted text only.
+
+To create a new picture from an uploaded image, for example a cartoon of a house from a photo,
+use **Use as reference** or **Edit** under the image. See
+[Generate images]({{ '/guides/generate-images/' | relative_url }}).
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | The **File** button is missing | Chat uploads are disabled or role-gated | Ask an admin to enable chat uploads and assign the role if required. |
-| Image mode disables file controls | Image generation intentionally turns off source controls | Turn off **Image** before uploading. |
+| Pasting a copied file or image does not attach it | The browser received only text, a path, a link, or HTML instead of an actual file | Use **Attach a file**. Pasting cannot bypass upload permissions or format restrictions. |
+| Image mode only accepts image files | With **Image** on, uploads become reference pictures for the image model | Turn off **Image** to upload documents for chat. |
+| Upload is disabled with **Image** on | The selected image model can't use reference images | Turn off **Image** before uploading, or ask an admin about an edit-capable image model. |
+| An uploaded image shows as a file name | The file is HEIC in a browser other than Safari, or the conversation is shared | Convert HEIC to JPG or PNG. The file is still available to chat either way. |
 
 ## Related
 

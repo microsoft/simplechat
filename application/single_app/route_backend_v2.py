@@ -1,0 +1,3575 @@
+# route_backend_v2.py
+
+"""JSON APIs that back the V2 React interface.
+
+The V2 SPA cannot read Jinja template context, so this module exposes the same data the
+server-rendered chat page receives as a single bootstrap payload. It deliberately reuses
+the catalog builders from ``route_frontend_chats`` rather than reimplementing them, so the
+two interfaces cannot drift apart in which models, agents or prompts a user may see.
+
+Two blueprints are registered from here:
+
+``backend_v2``
+    login_required + user_required. Serves the bootstrap payload. Settings returned to the
+    browser go through ``sanitize_settings_for_user`` first.
+
+``backend_v2_admin``
+    login_required + admin_required. Serves and updates the raw settings document for the
+    admin surface. Admin settings are intentionally *not* sanitized, because sanitization
+    strips the very fields an administrator needs to manage.
+"""
+
+import copy
+import json
+import logging
+import time
+import uuid
+
+from flask import current_app, jsonify, request, session, url_for
+from werkzeug.exceptions import BadRequest, RequestEntityTooLarge
+from werkzeug.routing import BuildError
+
+from admin_app_roles import get_app_role_requirements
+from admin_settings_fields import (
+    LANDING_PAGE_ALIGNMENTS,
+    LOGO_SCALE_DEFAULT_PERCENT,
+    LOGO_SCALE_MAX_PERCENT,
+    LOGO_SCALE_MIN_PERCENT,
+    SECRET_REDACTED_VALUE,
+    get_admin_section_guides,
+    get_admin_section_status,
+    get_admin_settings_fields,
+    get_secret_field_keys,
+    get_secret_storage_paths,
+    get_suppressed_capability_keys,
+    is_safe_external_link_url,
+    normalize_admin_settings_updates,
+    read_nested_setting,
+    write_nested_setting,
+)
+from admin_settings_nav import ADMIN_NAV
+from content_screening.contracts import ScreeningError
+from functions_mcp_server_config import is_mcp_ui_enabled
+from functions_mcp_destinations import describe_mcp_destination_environment_policy
+from config import (
+    AZURE_ENVIRONMENT,
+    CLIENTS,
+    ensure_custom_favicon_file_exists,
+    ensure_custom_logo_file_exists,
+    get_allowed_extension_categories,
+)
+from functions_activity_logging import log_governance_change
+from functions_appinsights import get_appinsights_runtime_state, log_event
+from functions_branding_images import (
+    ALLOWED_FAVICON_EXTENSIONS,
+    ALLOWED_LOGO_EXTENSIONS,
+    is_allowed_branding_image_filename,
+    prepare_favicon_image_for_storage,
+    prepare_logo_image_for_storage,
+)
+from functions_orchestration_registry import (
+    build_capability_client_projection,
+    effective_capability_ids,
+    resolve_available_capabilities,
+)
+from functions_branding_urls import (
+    FAVICON_STATIC_URL,
+    LOGO_DARK_STATIC_URL,
+    LOGO_STATIC_URL,
+    build_custom_logo_urls,
+    build_favicon_url,
+)
+from functions_authentication import (
+    admin_required,
+    get_control_center_capabilities,
+    get_current_user_id,
+    get_current_user_info,
+    login_required,
+    user_required,
+)
+from functions_conversation_contents import is_conversation_contents_drawer_enabled
+from functions_custom_pages import get_custom_pages_nav
+from functions_governance import GOVERNANCE_AUDITED_SETTING_KEYS
+from document_source_selection import DocumentSourceSelectionError
+from functions_document_source_discovery import discover_document_sources
+from functions_group import (
+    GROUP_DIRECTORY_DEFAULT_LIMIT,
+    GROUP_DIRECTORY_MAX_LIMIT,
+    find_group_by_id,
+    find_groups_by_ids,
+    get_user_groups,
+    get_optional_active_group,
+    list_groups_for_admin_directory,
+)
+from functions_group_assignment_ids import normalize_group_workflow_allowed_group_ids
+from functions_image_edit import resolve_image_edit_capability
+from functions_ai_connections import (
+    AIConnectionError,
+    CAPABILITY_DEFINITIONS,
+    EMBEDDINGS_CAPABILITY,
+    EMBEDDING_MIGRATION_VERSION,
+    EMBEDDING_MIGRATION_VERSION_KEY,
+    EMBEDDING_SELECTION_KEY,
+    EMPTY_MODEL_SELECTION,
+    IMAGE_MIGRATION_VERSION,
+    IMAGE_MIGRATION_VERSION_KEY,
+    IMAGE_SELECTION_KEY,
+    build_capability_model_catalog,
+    embedding_settings_use_connections,
+    filter_model_endpoints_by_capability,
+    get_capability_definition,
+    is_capability_enabled,
+    image_settings_use_connections,
+    normalize_capability_selection,
+    resolve_capability_model_selection,
+    supports_model_capability,
+)
+from functions_ai_connection_migration import EMBEDDING_MIGRATION_NOTICE_KEY, MIGRATION_NOTICE_KEY
+from functions_embedding_compatibility import (
+    embedding_compatibility_status,
+    preflight_embedding_settings,
+    read_embedding_settings,
+)
+from functions_embedding_profile import EMBEDDING_VECTOR_PROFILE_KEY, resolve_embedding_profile
+from functions_public_workspaces import (
+    find_public_workspace_by_id,
+    get_public_source_workspace_ids,
+)
+from functions_prompt_variables import (
+    MAX_REQUEST_BYTES as PROMPT_FILL_MAX_REQUEST_BYTES,
+    PromptKnowledgeFillError,
+    fill_prompt_variables,
+)
+from functions_settings import (
+    ADMIN_SETTINGS_SECRET_REDACTED_VALUE,
+    WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+    build_migrated_model_endpoints_from_legacy,
+    enabled_required,
+    get_admin_settings_api_secret_fields,
+    get_application_update_status,
+    get_settings,
+    get_user_settings,
+    is_action_assistant_enabled,
+    is_admin_review_assistant_enabled,
+    is_admin_settings_redacted_secret,
+    is_agent_assistant_enabled,
+    is_chat_file_upload_enabled_for_user,
+    is_chat_workflow_results_enabled_for_user,
+    is_content_understanding_supported_environment,
+    is_user_workflows_enabled_for_user,
+    is_workflow_assistant_enabled_for_user,
+    merge_model_endpoint_payload,
+    normalize_default_model_selection,
+    normalize_model_endpoints,
+    redact_admin_settings_secrets_for_api,
+    redact_admin_settings_secrets_for_form,
+    resolve_admin_settings_secret_value,
+    resolve_default_model_selection,
+    resolve_metadata_extraction_model_selection,
+    sanitize_settings_for_user,
+    sanitize_model_endpoints_for_frontend,
+    update_settings,
+    validate_content_screening_settings,
+)
+from functions_keyvault import (
+    keyvault_model_endpoint_cleanup_helper,
+    keyvault_model_endpoint_delete_helper,
+    keyvault_model_endpoint_save_helper,
+    secret_reference_matches_context,
+    validate_secret_name_dynamic,
+)
+from functions_keyvault_errors import KeyVaultSecretStorageError
+from functions_m365_connections import ensure_m365_workflow_encryption_key
+from functions_safety_remediation import count_pending_safety_warnings
+from functions_source_review import (
+    get_source_review_runtime_capabilities,
+    is_source_review_enabled_for_user,
+    is_url_access_enabled_for_user,
+)
+from functions_terms_of_use import (
+    TERMS_OF_USE_RETURN_PATH_SESSION_KEY,
+    get_terms_of_use_config,
+    has_terms_of_use_acceptance,
+    normalize_terms_of_use_return_path,
+    record_terms_of_use_acceptance,
+    record_terms_of_use_decline,
+)
+from functions_workspace_sections import build_workspace_section_availability
+from functions_support_latest_features import (
+    build_latest_features_payload,
+    build_user_latest_features_payload,
+)
+from functions_v2_agents_catalog import build_v2_agents_catalog_payload
+from functions_workspace_context import (
+    WorkspaceContextError,
+    build_group_workspace_context,
+    build_public_workspace_context,
+)
+from route_frontend_chats import (
+    _build_chat_model_catalog,
+    _build_chat_prompt_catalog,
+    _build_initial_chat_model_selection,
+    _is_chat_agent_allowed_by_governance,
+)
+# Shared with the server-rendered Agents page so both interfaces read the same
+# title, hero colours, disclaimer and instructions setting.
+from route_frontend_agents import build_agents_page_config
+# Shared with the server-rendered admin page so both interfaces run the same
+# connection tests rather than maintaining two lists of what can be tested.
+from route_backend_settings import run_admin_settings_connection_test
+from functions_agent_catalog import (
+    apply_agent_popular_promotions,
+    apply_agent_usage_counts,
+    build_accessible_agent_catalog,
+)
+from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
+from functions_model_capabilities import resolve_model_vision_support
+from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
+from functions_model_endpoint_validation import (
+    ModelEndpointValidationError,
+    validate_custom_model_endpoint,
+    validate_custom_model_endpoints,
+)
+from functions_documents import get_audio_runtime_capabilities
+from functions_cosmos_throughput import get_cosmos_resource_config
+from config import IS_DEVELOPMENT, VERSION
+from support_menu_config import has_visible_support_latest_features
+from swagger_wrapper import are_swagger_routes_registered, get_auth_security, swagger_route
+
+logger = logging.getLogger(__name__)
+
+# Where an accepted V2 Terms of Use returns when no safe local path was recorded.
+V2_TERMS_OF_USE_DEFAULT_RETURN_PATH = "/v2"
+
+
+# Describes each branding asset an administrator can replace: how to convert the
+# upload, which settings keys hold it, and the static path it is written to. The
+# paths come from ``functions_branding_urls``, which is also what the bootstrap
+# payload and the SPA shell read, so a change there cannot leave one surface
+# pointing at a file another no longer writes.
+BRANDING_IMAGE_TARGETS = {
+    "logo": {
+        "settings_key": "custom_logo_base64",
+        "version_key": "logo_version",
+        "static_url": LOGO_STATIC_URL,
+        "extensions": ALLOWED_LOGO_EXTENSIONS,
+        "prepare": prepare_logo_image_for_storage,
+    },
+    "logo_dark": {
+        "settings_key": "custom_logo_dark_base64",
+        "version_key": "logo_dark_version",
+        "static_url": LOGO_DARK_STATIC_URL,
+        "extensions": ALLOWED_LOGO_EXTENSIONS,
+        "prepare": prepare_logo_image_for_storage,
+    },
+    "favicon": {
+        "settings_key": "custom_favicon_base64",
+        "version_key": "favicon_version",
+        "static_url": FAVICON_STATIC_URL,
+        "extensions": ALLOWED_FAVICON_EXTENSIONS,
+        "prepare": prepare_favicon_image_for_storage,
+    },
+}
+
+
+def _build_branding_assets(settings):
+    """Describe the stored branding images without returning the encoded blobs.
+
+    The admin surface needs to show which assets exist and render a preview of
+    each. The base64 payloads are large and already served as static files, so
+    only presence, version and URL are returned.
+    """
+    assets = {}
+    for target, spec in BRANDING_IMAGE_TARGETS.items():
+        version = settings.get(spec["version_key"]) or 1
+        has_asset = bool(settings.get(spec["settings_key"]))
+        assets[target] = {
+            "present": has_asset,
+            "version": version,
+            "url": f"{spec['static_url']}?v={version}" if has_asset else None,
+        }
+    return assets
+
+
+def _refresh_branding_static_files():
+    """Rewrite the logo and favicon static files from the stored settings.
+
+    The files are generated from the settings document rather than uploaded to
+    disk directly, so any save that could have changed them has to regenerate
+    them or the browser keeps being served the previous image.
+    """
+    try:
+        refreshed_settings = get_settings()
+        if not refreshed_settings:
+            return
+        ensure_custom_logo_file_exists(current_app, refreshed_settings)
+        ensure_custom_favicon_file_exists(current_app, refreshed_settings)
+    except Exception as exc:
+        # A stale static file is a cosmetic problem; it must not turn a saved
+        # settings change into a failed request.
+        log_event(
+            f"[V2_ADMIN_SETTINGS] Could not refresh branding static files: {exc}",
+            level=logging.WARNING,
+            exceptionTraceback=True,
+        )
+
+
+def _build_branding(raw_settings, public_settings):
+    """Describe branding for the SPA without leaking the encoded logo payloads.
+
+    ``sanitize_settings_for_user`` strips any key containing "base64", which removes the
+    logo blobs from public settings. The blobs are not what the browser needs anyway: the
+    images are already served as static files, so the URLs are derived here from the raw
+    settings and only the URLs are returned.
+
+    The landing page fields ride along because the SPA renders its own home page and would
+    otherwise need a second request for three values it needs on first paint.
+    """
+    show_logo = bool(raw_settings.get("show_logo", False))
+    logo_url, logo_dark_url = build_custom_logo_urls(raw_settings)
+
+    classification_banner = None
+    if raw_settings.get("classification_banner_enabled") and raw_settings.get(
+        "classification_banner_text"
+    ):
+        classification_banner = {
+            "enabled": True,
+            "text": raw_settings.get("classification_banner_text"),
+            "color": raw_settings.get("classification_banner_color") or "#ffc107",
+            "text_color": raw_settings.get("classification_banner_text_color") or "#ffffff",
+        }
+
+    landing_alignment = raw_settings.get("landing_page_alignment") or "left"
+    if landing_alignment not in LANDING_PAGE_ALIGNMENTS:
+        landing_alignment = "left"
+
+    return {
+        "app_title": public_settings.get("app_title") or "SimpleChat",
+        "hide_app_title": bool(raw_settings.get("hide_app_title", False)),
+        "show_logo": show_logo,
+        "logo_url": logo_url if show_logo else None,
+        "logo_dark_url": logo_dark_url if show_logo else None,
+        "favicon_url": build_favicon_url(raw_settings),
+        "classification_banner": classification_banner,
+        # Passed through as stored apart from trimming, including when that leaves it
+        # empty. ``get_settings`` merges the seeded default into every document, so a
+        # blank value is an administrator's deletion, and substituting default copy would
+        # put wording they removed -- including an acceptable-use statement -- back on
+        # the page.
+        "landing_page_text": str(raw_settings.get("landing_page_text") or "").strip(),
+        "landing_page_alignment": landing_alignment,
+        "landing_page_logo_scale_percent": _coerce_logo_scale(
+            raw_settings.get("landing_page_logo_scale_percent")
+        ),
+    }
+
+
+def _coerce_logo_scale(value):
+    """Clamp the stored home page logo scale into the range the slider offers."""
+    try:
+        scale = int(float(value))
+    except (TypeError, ValueError):
+        return LOGO_SCALE_DEFAULT_PERCENT
+    return max(LOGO_SCALE_MIN_PERCENT, min(LOGO_SCALE_MAX_PERCENT, scale))
+
+
+def _menu_name(value, fallback):
+    """Return a navigation group's heading, falling back when it is blank.
+
+    ``fallback_when_empty`` in the field schema already restores the default on save, but
+    a settings document written before that rule existed can still hold an empty string,
+    and an unlabelled group in the rail is worse than a defaulted one.
+    """
+    return str(value or "").strip() or fallback
+
+
+def _build_navigation(raw_settings, user_roles):
+    """Describe the administrator-configured navigation entries for the SPA.
+
+    Both groups exist in the server-rendered interface, where custom pages arrive as
+    template context built in ``app.py`` and external links are read straight off
+    ``app_settings`` in ``_sidebar_nav.html``. Neither is reachable from the SPA, and
+    neither can be derived from the feature flags: custom pages are filtered per page
+    against the caller's roles, and the external link list is not an ``enable_*`` key.
+
+    ``menu_name`` and ``force_menu`` travel with each group so the browser can apply the
+    same "inline below three, menu at three or more" rule the templates use.
+    """
+    custom_pages = []
+    if raw_settings.get("enable_custom_pages"):
+        try:
+            for page in get_custom_pages_nav(raw_settings):
+                url = page.get("url") or page.get("href")
+                if not page.get("slug") or not url:
+                    continue
+                custom_pages.append(
+                    {
+                        "slug": page["slug"],
+                        "label": page.get("label") or page["slug"],
+                        "icon": page.get("icon") or "bi-file-earmark-text",
+                        "url": url,
+                        "open_in_new_tab": bool(page.get("open_in_new_tab", False)),
+                    }
+                )
+        except Exception as exc:
+            # A missing navigation group is a degraded rail, not a broken app, so it
+            # must not take the whole bootstrap payload down with it.
+            log_event(
+                f"[V2_BOOTSTRAP] Could not resolve custom page navigation: {exc}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            custom_pages = []
+
+    # Matches the role gate in _sidebar_nav.html: external links are shown to signed-in
+    # users holding a real application role, not to anyone who merely has a session.
+    may_see_external_links = any(role in ("Admin", "User") for role in user_roles or [])
+    external_links = []
+    if raw_settings.get("enable_external_links") and may_see_external_links:
+        for link in raw_settings.get("external_links") or []:
+            if not isinstance(link, dict):
+                continue
+            url = str(link.get("url") or "").strip()
+            label = str(link.get("label") or "").strip()
+            if not url or not label:
+                continue
+            # Re-checked on the way out, not just on the way in. The V2 settings PATCH
+            # is the only write path that applies the scheme rule, so a link stored
+            # through the server-rendered admin form, or already in the document, could
+            # otherwise put a script-scheme URL into every user's navigation.
+            if not is_safe_external_link_url(url):
+                log_event(
+                    "[V2_BOOTSTRAP] Dropped an external link with an unsupported URL "
+                    f"scheme: {label}",
+                    level=logging.WARNING,
+                )
+                continue
+            external_links.append({"label": label, "url": url})
+
+    return {
+        "custom_pages": {
+            "enabled": bool(raw_settings.get("enable_custom_pages")),
+            "menu_name": _menu_name(
+                raw_settings.get("custom_pages_menu_name"), "Custom Pages"
+            ),
+            "force_menu": bool(raw_settings.get("custom_pages_force_menu")),
+            "items": custom_pages,
+        },
+        "external_links": {
+            "enabled": bool(raw_settings.get("enable_external_links")),
+            "menu_name": _menu_name(
+                raw_settings.get("external_links_menu_name"), "External Links"
+            ),
+            "force_menu": bool(raw_settings.get("external_links_force_menu")),
+            "items": external_links,
+        },
+        "latest_features": _build_latest_features_nav(raw_settings, user_roles),
+        "send_feedback": _build_send_feedback_nav(raw_settings, user_roles),
+    }
+
+
+def _build_latest_features_nav(raw_settings, user_roles):
+    """Describe the Support menu's Latest Features shortcut for the SPA rail.
+
+    Mirrors the gate in ``_sidebar_nav.html``: a real application role, the Support menu
+    and its Latest Features page switched on, and at least one feature left visible.
+    Whether this user hid the shortcut is not decided here; the browser compares the
+    user's ``latestFeaturesHiddenVersion`` with the bootstrap ``version`` so hiding and
+    unhiding take effect without a reload.
+    """
+    may_see_support = any(role in ("Admin", "User") for role in user_roles or [])
+    available = False
+    if (
+        may_see_support
+        and raw_settings.get("enable_support_menu")
+        and raw_settings.get("enable_support_latest_features", True)
+    ):
+        try:
+            available = bool(has_visible_support_latest_features(raw_settings))
+        except Exception as exc:
+            log_event(
+                f"[V2_BOOTSTRAP] Could not resolve latest features visibility: {exc}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            available = False
+
+    return {
+        "available": available,
+        "hidden_by_development": bool(IS_DEVELOPMENT),
+        "url": "/support/latest-features",
+        "menu_name": _menu_name(raw_settings.get("support_menu_name"), "Support"),
+    }
+
+
+def _build_send_feedback_nav(raw_settings, user_roles):
+    """Describe the Support menu's Send Feedback destination for the SPA rail.
+
+    Mirrors the gate in ``_sidebar_nav.html``: a real application role, the Support menu
+    and its Send Feedback destination switched on, and a recipient mailbox configured.
+    The recipient must also look like an address, because that is what
+    ``/api/support/send_feedback_email`` accepts; offering a form whose every submission
+    is refused would be worse than not offering it. The address itself never leaves the
+    server here -- the browser receives it only in reply to a submission.
+    """
+    may_see_support = any(role in ("Admin", "User") for role in user_roles or [])
+    recipient = str(raw_settings.get("support_feedback_recipient_email") or "").strip()
+    available = bool(
+        may_see_support
+        and raw_settings.get("enable_support_menu")
+        and raw_settings.get("enable_support_send_feedback", True)
+        and "@" in recipient
+    )
+    return {
+        "available": available,
+        "url": "/support/send-feedback",
+        "menu_name": _menu_name(raw_settings.get("support_menu_name"), "Support"),
+    }
+
+
+def _latest_feature_endpoint_url(endpoint):
+    """Resolve a Latest Features shortcut's Flask endpoint, or '' when it is not registered.
+
+    Shared by the admin catalogue and the end-user page, so a shortcut naming an endpoint
+    that no longer exists is dropped the same way on both.
+    """
+    try:
+        return url_for(endpoint)
+    except BuildError:
+        log_event(
+            "[SUPPORT_LATEST_FEATURES] A Latest Features shortcut names an unknown endpoint.",
+            extra={"endpoint": endpoint},
+            level=logging.WARNING,
+        )
+        return ""
+
+
+def _build_feature_flags(public_settings, per_user_overrides):
+    """Collapse the settings document into the boolean flags the SPA branches on.
+
+    Every ``enable_*`` key is forwarded so a newly added capability shows up in the SPA
+    without a change here, and the per-user computed values are layered on top because
+    they depend on the caller's roles rather than on global configuration alone.
+    """
+    features = {
+        key: bool(value)
+        for key, value in public_settings.items()
+        if key.startswith("enable_") and isinstance(value, bool)
+    }
+    features.update(per_user_overrides)
+    if public_settings.get("web_search_provider") == "web_iq":
+        features["enable_web_search"] = bool(
+            features.get("enable_web_search")
+            and public_settings.get("web_iq_consent_accepted") is True
+            and str(AZURE_ENVIRONMENT).lower() in ("public", "azurecloud")
+        )
+    return features
+
+
+def _build_capabilities(settings):
+    """Describe what the deployment can do, where the answer is not a settings flag.
+
+    ``features`` above forwards every ``enable_*`` boolean, which is the right shape for a
+    capability an administrator switches on. Some capabilities are not switches: whether an
+    image can have part of it changed depends on which model the selected deployment runs and
+    which API version is configured, and neither is a boolean anyone set.
+
+    Naming one of these ``enable_something`` to smuggle it into ``features`` would make it look
+    like a settings key to everything that reads the application's surface, including the
+    documentation inventory. It is reported separately instead.
+
+    Computed from raw settings, then reduced to safe operation metadata. Connection URLs,
+    authentication, provider payloads and internal model-routing paths never reach the browser.
+    """
+    capability = resolve_image_edit_capability(settings)
+    return {
+        "image_edit": {
+            key: capability[key]
+            for key in (
+                "enabled", "mode", "model_name", "reason", "provider_label", "cloud_label",
+                "availability", "availability_reason", "editing", "masking",
+                "sizes", "qualities", "backgrounds", "max_reference_images", "input_fidelity",
+            )
+        },
+    }
+
+
+def _build_orchestration(settings, public_settings):
+    """Describe the chat orchestration surface the SPA has to render.
+
+    ``features`` forwards every ``enable_*`` boolean, so ``enable_chat_orchestration``
+    reaches the browser without help. The rest of the configuration does not: approval
+    mode, the countdown length and whether a user may override either are ordinary
+    settings values rather than flags, and the composer cannot decide what to draw without
+    them.
+
+    The capability list is resolved here rather than in the browser because it is the
+    answer to a question only the server can settle -- which capabilities this deployment's
+    gates currently permit, including the document actions whose enablement lives in a
+    nested capability record rather than in a flag. The projection carries labels and cost
+    classes so the plan card can name a step it did not choose.
+    """
+    enabled = bool(public_settings.get('enable_chat_orchestration'))
+
+    # Resolved from raw settings: the document action gate reads a nested record that
+    # sanitization leaves alone but which the public view is not guaranteed to carry.
+    capabilities = resolve_available_capabilities(
+        settings,
+        allowed_ids=settings.get('chat_orchestration_enabled_capabilities'),
+        include_runtime_bindings=False,
+    )
+
+    approval_mode = str(
+        public_settings.get('chat_orchestration_default_approval_mode') or 'manual'
+    ).strip().lower()
+    if approval_mode not in ('manual', 'timed', 'auto'):
+        approval_mode = 'manual'
+
+    try:
+        timed_seconds = int(public_settings.get('chat_orchestration_timed_approval_seconds') or 10)
+    except (TypeError, ValueError):
+        timed_seconds = 10
+    timed_seconds = max(3, min(timed_seconds, 120))
+
+    try:
+        max_steps = int(public_settings.get('chat_orchestration_max_steps') or 8)
+    except (TypeError, ValueError):
+        max_steps = 8
+
+    return {
+        'enabled': enabled,
+        'default_approval_mode': approval_mode,
+        'timed_approval_seconds': timed_seconds,
+        'allow_user_approval_override': bool(
+            public_settings.get('chat_orchestration_allow_user_approval_override', True)
+        ),
+        'show_manual_controls': bool(
+            public_settings.get('chat_orchestration_show_manual_controls', True)
+        ),
+        'max_steps': max_steps,
+        'capabilities': build_capability_client_projection(capabilities),
+    }
+
+
+def _build_notices(public_settings, user_settings_dict):
+    """Describe the administrator-configured notices the chat surface must render.
+
+    Both notices exist in the server-rendered interface, where the AI notice arrives as
+    template context and the web search notice as a Jinja condition over three settings
+    keys. The SPA can read neither, so they are resolved here rather than in the browser:
+
+    - The AI notice carries a SHA-256 of its message and frequency, and whether the caller
+      has already dismissed it depends on a stored, server-timestamped record. Recomputing
+      either client-side would let the two interfaces disagree about whether an
+      administrator's edit should re-surface a notice somebody had dismissed.
+    - The web search notice depends on ``web_search_consent_accepted``, which is not an
+      ``enable_*`` key and so never reaches the feature flags the composer branches on.
+    """
+    ai_notice = get_ai_notice_config(public_settings)
+    ai_notice["dismissed"] = is_ai_notice_dismissed(ai_notice, user_settings_dict)
+
+    # All three are required, matching the condition in chats.html: the capability, the
+    # administrator's acknowledgement that messages leave the tenant, and the notice itself.
+    web_search_notice_enabled = bool(
+        public_settings.get("enable_web_search")
+        and public_settings.get(
+            "web_iq_consent_accepted" if public_settings.get("web_search_provider") == "web_iq"
+            else "web_search_consent_accepted"
+        )
+        and public_settings.get("enable_web_search_user_notice")
+    )
+    web_search_notice_text = str(
+        public_settings.get("web_search_user_notice_text") or ""
+    ).strip()
+
+    return {
+        "ai": ai_notice,
+        "web_search": {
+            "enabled": web_search_notice_enabled,
+            "text": web_search_notice_text or WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
+        },
+    }
+
+
+def _build_workspace_uploads(public_settings):
+    """Use the classic workspace's format catalog, not the chat attachment list."""
+    return {
+        "categories": get_allowed_extension_categories(
+            enable_video=public_settings.get("enable_video_file_support") in (True, "True", "true"),
+            enable_audio=public_settings.get("enable_audio_file_support") in (True, "True", "true"),
+            enable_xsd=bool(
+                public_settings.get("enable_enhanced_citations", False)
+                and CLIENTS.get("storage_account_office_docs_client")
+            ),
+        ),
+    }
+
+
+def register_route_backend_v2(bp):
+    @bp.route("/api/v2/prompts/fill-variables", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_fill_prompt_variables():
+        """Fill explicitly requested custom fields from authorized selected knowledge."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401
+        if request.content_length and request.content_length > PROMPT_FILL_MAX_REQUEST_BYTES:
+            return jsonify({"error": "The knowledge-fill request is too large."}), 413
+        if not request.is_json:
+            return jsonify({"error": "The request must be a JSON object."}), 400
+        try:
+            raw_body = (
+                request.get_data(cache=True)
+                if request.content_length is not None
+                else request.stream.read(PROMPT_FILL_MAX_REQUEST_BYTES + 1)
+            )
+            if len(raw_body) > PROMPT_FILL_MAX_REQUEST_BYTES:
+                return jsonify({"error": "The knowledge-fill request is too large."}), 413
+            try:
+                payload = json.loads(raw_body)
+            except (ValueError, UnicodeError, RecursionError):
+                return jsonify({"error": "The request must be a JSON object."}), 400
+            return jsonify(fill_prompt_variables(payload, user_id, get_settings()))
+        except RequestEntityTooLarge:
+            return jsonify({"error": "The knowledge-fill request is too large."}), 413
+        except BadRequest:
+            return jsonify({"error": "The request must be a JSON object."}), 400
+        except PromptKnowledgeFillError as exc:
+            return jsonify({"error": exc.public_message}), exc.status_code
+        except Exception as exc:
+            log_event(
+                "[PROMPT_KNOWLEDGE_FILL] Unable to complete knowledge fill.",
+                extra={"exception_type": type(exc).__name__},
+                level=logging.WARNING,
+                debug_only=True,
+            )
+            return jsonify({"error": "Unable to fill variables from knowledge. Please try again."}), 500
+
+    @bp.route("/api/v2/workspaces/group/<group_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_group_workspaces")
+    def v2_group_workspace_context(group_id):
+        """Return safe metadata and eligibility for this explicitly selected group."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401, {"Cache-Control": "no-store"}
+        try:
+            user_info = dict(get_current_user_info() or {})
+            session_user = session.get("user")
+            if isinstance(session_user, dict) and session_user.get("roles"):
+                user_info["roles"] = session_user["roles"]
+            payload = build_group_workspace_context(
+                user_id, group_id, get_settings(), user_info=user_info,
+            )
+            status = 200
+        except WorkspaceContextError as exc:
+            payload, status = {"error": exc.public_message}, exc.status_code
+        except Exception as exc:
+            log_event(
+                "[V2_BOOTSTRAP] Unable to resolve selected group workspace context.",
+                level=logging.ERROR,
+                extra={"user_id": user_id, "group_id": group_id, "error_type": type(exc).__name__},
+            )
+            payload, status = {"error": "Workspace details are temporarily unavailable. Please retry."}, 503
+        return jsonify(payload), status, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/workspaces/public/<workspace_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    def v2_public_workspace_context(workspace_id):
+        """Return safe metadata and eligibility for this explicitly selected public workspace."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401, {"Cache-Control": "no-store"}
+        try:
+            user_info = dict(get_current_user_info() or {})
+            session_user = session.get("user")
+            if isinstance(session_user, dict) and session_user.get("roles"):
+                user_info["roles"] = session_user["roles"]
+            payload = build_public_workspace_context(
+                user_id, workspace_id, get_settings(), user_info=user_info,
+            )
+            status = 200
+        except WorkspaceContextError as exc:
+            payload, status = {"error": exc.public_message}, exc.status_code
+        except Exception as exc:
+            log_event(
+                "[V2_BOOTSTRAP] Unable to resolve selected public workspace context.",
+                level=logging.ERROR,
+                extra={"user_id": user_id, "workspace_id": workspace_id, "error_type": type(exc).__name__},
+            )
+            payload, status = {"error": "Workspace details are temporarily unavailable. Please retry."}, 503
+        return jsonify(payload), status, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/terms-of-use", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_terms_of_use():
+        """Return the Terms of Use the V2 interstitial page shows before the app loads.
+
+        Exempt from the Terms of Use gate in app.py, since this is what the gate sends a V2
+        user to. ``next`` is stored server-side, normalized to a local path, so the accept
+        call can return the user to where they were without trusting a client value then.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401, {"Cache-Control": "no-store"}
+
+        settings = get_settings() or {}
+        terms_config = get_terms_of_use_config(settings)
+        return_path = normalize_terms_of_use_return_path(
+            request.args.get("next"),
+            fallback=V2_TERMS_OF_USE_DEFAULT_RETURN_PATH,
+        )
+        session[TERMS_OF_USE_RETURN_PATH_SESSION_KEY] = return_path
+        session.modified = True
+
+        public_settings = sanitize_settings_for_user(settings)
+        branding = _build_branding(settings, public_settings)
+        payload = {
+            "enabled": terms_config["enabled"],
+            "required": bool(
+                terms_config["enabled"]
+                and not has_terms_of_use_acceptance(settings, user_id=user_id)
+            ),
+            "title": terms_config["title"],
+            "message": terms_config["message"] if terms_config["enabled"] else "",
+            "accept_button_text": terms_config["accept_button_text"],
+            "decline_button_text": terms_config["decline_button_text"],
+            "return_path": return_path,
+            "branding": {
+                "app_title": branding["app_title"],
+                "hide_app_title": branding["hide_app_title"],
+                "show_logo": branding["show_logo"],
+                "logo_url": branding["logo_url"],
+                "logo_dark_url": branding["logo_dark_url"],
+                "classification_banner": branding["classification_banner"],
+            },
+        }
+        return jsonify(payload), 200, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/terms-of-use/accept", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_accept_terms_of_use():
+        """Record acceptance and return the local path the V2 page should reopen."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated."}), 401, {"Cache-Control": "no-store"}
+
+        settings = get_settings() or {}
+        terms_config = get_terms_of_use_config(settings)
+        return_path = normalize_terms_of_use_return_path(
+            session.pop(TERMS_OF_USE_RETURN_PATH_SESSION_KEY, None),
+            fallback=V2_TERMS_OF_USE_DEFAULT_RETURN_PATH,
+        )
+        session.modified = True
+
+        if terms_config["enabled"]:
+            try:
+                record_terms_of_use_acceptance(
+                    user_id=user_id,
+                    settings=settings,
+                    source="post_auth_v2",
+                )
+            except Exception as exc:
+                log_event(
+                    "[TERMS_OF_USE] V2 acceptance could not be recorded.",
+                    extra={"user_id": user_id, "error_type": type(exc).__name__},
+                    level=logging.ERROR,
+                )
+                return (
+                    jsonify({"error": "Your acceptance could not be saved. Please try again."}),
+                    500,
+                    {"Cache-Control": "no-store"},
+                )
+
+        return jsonify({"success": True, "redirect_url": return_path}), 200, {"Cache-Control": "no-store"}
+
+    @bp.route("/api/v2/terms-of-use/decline", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_decline_terms_of_use():
+        """Record a decline, end the session and return where the browser should go."""
+        user_id = get_current_user_id()
+        settings = get_settings() or {}
+        terms_config = get_terms_of_use_config(settings)
+
+        if user_id and terms_config["enabled"]:
+            try:
+                record_terms_of_use_decline(
+                    user_id=user_id,
+                    settings=settings,
+                    source="post_auth_v2",
+                )
+            except Exception as exc:
+                log_event(
+                    "[TERMS_OF_USE] V2 decline audit logging failed.",
+                    extra={"user_id": user_id, "error_type": type(exc).__name__},
+                    level=logging.ERROR,
+                )
+
+        session.clear()
+        return (
+            jsonify({"success": True, "redirect_url": terms_config["decline_redirect_url"]}),
+            200,
+            {"Cache-Control": "no-store"},
+        )
+
+    @bp.route("/api/v2/support/latest-features", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_support_menu")
+    def v2_support_latest_features():
+        """Return the Latest Features announcements administrators shared with end users.
+
+        The V2 counterpart of the classic ``/support/latest-features`` page, behind the
+        same gates: an application role, the Support menu, and its Latest Features
+        destination. Whether this user hid the rail shortcut until the next release is
+        not a gate here, as it is not on the classic page: hiding the shortcut is not
+        losing the page.
+        """
+        session_user = session.get("user") or {}
+        roles = session_user.get("roles") if isinstance(session_user, dict) else None
+        if not isinstance(roles, list) or not any(role in ("Admin", "User") for role in roles):
+            return jsonify({"error": "The Support menu is available to signed-in app users only."}), 403
+
+        settings = get_settings()
+        if not settings.get("enable_support_latest_features", True):
+            return jsonify({"error": "Latest Features is not available."}), 404
+
+        try:
+            payload = build_user_latest_features_payload(
+                settings,
+                resolve_endpoint_url=_latest_feature_endpoint_url,
+                resolve_static_url=lambda path: url_for("static", filename=path),
+                version=VERSION,
+            )
+            return jsonify(payload), 200
+        except Exception as exc:
+            log_event(
+                "[SUPPORT_LATEST_FEATURES] Failed to load the shared Latest Features announcements.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load Latest Features."}), 500
+
+    @bp.route("/api/v2/agents/catalog", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_semantic_kernel")
+    def v2_agents_catalog():
+        """Return the agents this user may chat with, for the V2 Agents page.
+
+        The V2 counterpart of the classic ``/agents`` page, behind the same gates: an
+        application role and Semantic Kernel. Unlike the classic catalogue it leaves out
+        agents governance blocks for this user, as the chat picker does, so every card it
+        draws can start a chat. Usage counts and the administrator's Popular promotions
+        are applied after that filter, and the page configuration is sent alongside so
+        the SPA does not need a second request to draw the hero.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        try:
+            settings = get_settings()
+            payload = build_v2_agents_catalog_payload(
+                load_catalog=lambda: build_accessible_agent_catalog(user_id, settings=settings),
+                is_allowed=lambda agent, scope: _is_chat_agent_allowed_by_governance(
+                    user_id, agent, scope
+                ),
+                apply_usage_counts=apply_agent_usage_counts,
+                apply_promotions=lambda catalog: apply_agent_popular_promotions(
+                    catalog, settings=settings
+                ),
+                page_config=build_agents_page_config(sanitize_settings_for_user(settings)),
+            )
+            return jsonify(payload), 200
+        except Exception as exc:
+            log_event(
+                "[AGENTS_CATALOG] Failed to load the V2 agent catalogue.",
+                extra={"user_id": user_id, "error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load agents."}), 500
+
+    @bp.route("/api/v2/document-sources", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_document_sources():
+        """Page the authorized workspace directory independently of matching documents."""
+        try:
+            workspace_offset = int(request.args.get("workspace_offset", 0))
+            source_offset = int(request.args.get("source_offset", 0))
+            page_size = int(request.args.get("page_size", 40))
+            if workspace_offset < 0 or source_offset < 0 or not 1 <= page_size <= 100:
+                return jsonify({"error": "Invalid source page."}), 400
+            query = request.args.get("query", "")
+            if len(query) > 512:
+                return jsonify({"error": "Use a shorter source search."}), 400
+            result = discover_document_sources(
+                get_current_user_id(), get_settings(), query=query,
+                workspace=request.args.get("workspace") or None,
+                conversation_id=request.args.get("conversation_id") or None,
+                workspace_offset=workspace_offset, source_offset=source_offset, page_size=page_size,
+            )
+            return jsonify(result)
+        except DocumentSourceSelectionError as error:
+            return jsonify({"error": error.public_message}), 400
+        except ValueError:
+            return jsonify({"error": "Invalid source page."}), 400
+        except Exception as error:
+            log_event("[V2_BOOTSTRAP] Could not discover document sources.",
+                      extra={"error_type": type(error).__name__}, level=logging.ERROR,
+                      exceptionTraceback=True)
+            return jsonify({"error": "Could not load document sources. Please retry."}), 503
+
+    @bp.route("/api/v2/bootstrap", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_bootstrap():
+        """Return everything the V2 SPA needs for its first paint.
+
+        Mirrors the template context that ``route_frontend_chats.chats`` passes to
+        chats.html, so the two front ends agree on catalogs, scope and feature flags.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        # Per-section timings, emitted as one trace per request. The Cosmos calls behind
+        # this payload are instrumented, but most of its time is spent in Python between
+        # them, which no dependency span covers.
+        timer = BootstrapPhaseTimer()
+        try:
+            settings = get_settings()
+            timer.mark("settings")
+            public_settings = sanitize_settings_for_user(settings)
+            timer.mark("sanitize_settings")
+
+            get_optional_active_group(user_id)
+            user_settings = get_user_settings(user_id)
+            user_settings_dict = (
+                user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
+            )
+            timer.mark("user_settings")
+            current_user_info = get_current_user_info() or {}
+            session_user = session.get("user") or {}
+            current_user_roles = session_user.get("roles", []) or []
+            timer.mark("user_info")
+
+            measure = timer.measure
+            per_user_overrides = {
+                "enable_chat_file_uploads": measure(
+                    "chat_file_uploads",
+                    is_chat_file_upload_enabled_for_user,
+                    settings,
+                    current_user_roles,
+                ),
+                "allow_user_workflows": measure(
+                    "user_workflows",
+                    is_user_workflows_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
+                ),
+                "enable_workflow_ai_assistant": measure(
+                    "workflow_assistant",
+                    is_workflow_assistant_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
+                ),
+                # Only hides Ask AI; each assist route re-checks the scope permission.
+                "enable_agent_ai_assistant": measure(
+                    "agent_assistant", is_agent_assistant_enabled, settings
+                ),
+                "enable_action_ai_assistant": measure(
+                    "action_assistant", is_action_assistant_enabled, settings
+                ),
+                # Only shows the Review center's AI entry points; every assist and suggestion
+                # route re-checks the toggle and the caller's reviewer role. The guidance text
+                # itself is never sent.
+                "enable_admin_review_ai_assistant": measure(
+                    "admin_review_assistant", is_admin_review_assistant_enabled, settings
+                ),
+                # Only hides the chip and entry points; the server re-checks every read.
+                "enable_chat_workflow_results": measure(
+                    "chat_workflow_results",
+                    is_chat_workflow_results_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
+                ),
+                "enable_workflow_alert_sounds": (
+                    settings.get("enable_workflow_alert_sounds", True) is not False
+                ),
+                "enable_source_review": measure(
+                    "source_review",
+                    is_source_review_enabled_for_user,
+                    settings,
+                    user_id,
+                    user_email=current_user_info.get("email"),
+                    user_roles=current_user_roles,
+                ),
+                "enable_url_access": measure(
+                    "url_access",
+                    is_url_access_enabled_for_user,
+                    settings,
+                    user_roles=current_user_roles,
+                ),
+                "enable_conversation_contents_drawer": measure(
+                    "conversation_contents_drawer",
+                    is_conversation_contents_drawer_enabled,
+                    public_settings,
+                    user_settings_dict,
+                ),
+            }
+
+            user_groups_raw = []
+            groups = []
+            try:
+                user_groups_raw = get_user_groups(user_id) or []
+                groups = [
+                    {"id": group["id"], "name": group.get("name", "Unnamed")}
+                    for group in user_groups_raw
+                ]
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to load user groups: {exc}")
+            timer.mark("groups")
+
+            public_workspaces = []
+            try:
+                for workspace_id in get_public_source_workspace_ids(user_id, settings=settings):
+                    workspace_doc = find_public_workspace_by_id(workspace_id)
+                    if workspace_doc:
+                        public_workspaces.append(
+                            {"id": workspace_id, "name": workspace_doc.get("name", "Unknown")}
+                        )
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to load public workspaces: {exc}")
+            timer.mark("public_workspaces")
+
+            agents = []
+            try:
+                agents = [
+                    agent
+                    for agent in build_accessible_agent_catalog(
+                        user_id, settings=settings, user_groups=user_groups_raw
+                    )
+                    if _is_chat_agent_allowed_by_governance(
+                        user_id,
+                        agent,
+                        str(agent.get("scope_type") or "").strip().lower() or "personal",
+                    )
+                ]
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to load agent catalog: {exc}")
+            timer.mark("agent_catalog")
+
+            models = []
+            try:
+                models = _build_chat_model_catalog(
+                    user_id=user_id,
+                    settings=settings,
+                    user_settings_dict=user_settings_dict,
+                    user_groups_raw=user_groups_raw,
+                )
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to load model catalog: {exc}")
+            timer.mark("model_catalog")
+
+            prompts = []
+            try:
+                prompts = _build_chat_prompt_catalog(
+                    user_id=user_id,
+                    settings=settings,
+                    user_groups_raw=user_groups_raw,
+                    user_visible_public_workspaces=public_workspaces,
+                )
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to load prompt catalog: {exc}")
+            timer.mark("prompt_catalog")
+
+            initial_model_selection = None
+            try:
+                initial_model_selection = _build_initial_chat_model_selection(
+                    chat_model_options=models,
+                    preferred_model_id=user_settings_dict.get("preferredModelId"),
+                    preferred_model_deployment=user_settings_dict.get(
+                        "preferredModelDeployment"
+                    ),
+                    default_model_selection=settings.get("default_model_selection", {}),
+                    use_admin_default=bool(
+                        settings.get("enable_multi_model_endpoints", False)
+                        and settings.get("enable_default_model_for_new_conversations", False)
+                    ),
+                )
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to resolve initial model: {exc}")
+            timer.mark("initial_model")
+
+            authorized_group_ids = {group["id"] for group in groups}
+            visible_workspace_ids = {workspace["id"] for workspace in public_workspaces}
+            active_scope = _resolve_active_scope(
+                user_settings_dict,
+                authorized_group_ids,
+                lambda workspace_id: workspace_id in visible_workspace_ids,
+            )
+            timer.mark("active_scope")
+
+            # Which workspace sections this user may see. Computed server-side because the
+            # answer combines settings, app-role checks and governance policy, and only
+            # `enable_*` keys reach `features` above -- `allow_user_agents`,
+            # `allow_user_plugins`, `per_user_semantic_kernel` and the file sync and
+            # governance checks would all be invisible to the SPA otherwise.
+            workspace = {"enabled": False, "sections": {}}
+            try:
+                workspace = build_workspace_section_availability(
+                    settings,
+                    user_id,
+                    user_info=current_user_info,
+                    user_roles=current_user_roles,
+                )
+            except Exception as exc:
+                logger.warning(f"[V2_BOOTSTRAP] Failed to resolve workspace sections: {exc}")
+            timer.mark("workspace_sections")
+
+            # Safety warnings an administrator sent that still need the user's
+            # acknowledgment. Only the count rides here, so the interface asks for the
+            # warnings themselves only when there are some. A failed read counts none; the
+            # next bootstrap, on reload or when the tab comes back, reads again.
+            pending_safety_warnings = 0
+            try:
+                pending_safety_warnings = count_pending_safety_warnings(user_id)
+            except Exception as exc:
+                log_event(
+                    "[V2_BOOTSTRAP] Pending safety warnings could not be counted.",
+                    extra={"user_id": user_id, "error_type": type(exc).__name__},
+                    level=logging.WARNING,
+                )
+            timer.mark("safety_warnings")
+
+            branding = _build_branding(settings, public_settings)
+            timer.mark("branding")
+            navigation = _build_navigation(settings, current_user_roles)
+            timer.mark("navigation")
+            features = _build_feature_flags(public_settings, per_user_overrides)
+            timer.mark("features")
+            capabilities = _build_capabilities(settings)
+            timer.mark("capabilities")
+            control_center = get_control_center_capabilities(session_user, settings)
+            timer.mark("control_center")
+            orchestration = _build_orchestration(settings, public_settings)
+            timer.mark("orchestration")
+            notices = _build_notices(public_settings, user_settings_dict)
+            timer.mark("notices")
+            workspace_uploads = _build_workspace_uploads(public_settings)
+            timer.mark("workspace_uploads")
+
+            payload = {
+                "version": VERSION,
+                "user": {
+                    "id": user_id,
+                    "display_name": (
+                        (user_settings or {}).get("display_name")
+                        or current_user_info.get("displayName")
+                        or ""
+                    ),
+                    "email": current_user_info.get("email"),
+                    "is_admin": "Admin" in current_user_roles,
+                    "roles": list(current_user_roles),
+                },
+                "branding": branding,
+                "navigation": navigation,
+                "features": features,
+                "capabilities": capabilities,
+                "control_center": control_center,
+                "orchestration": orchestration,
+                "catalogs": {
+                    "models": models,
+                    "agents": agents,
+                    "prompts": prompts,
+                    "initial_model_selection": initial_model_selection,
+                },
+                "scope": {
+                    **active_scope,
+                    "groups": groups,
+                    "public_workspaces": public_workspaces,
+                },
+                "admin_nav": ADMIN_NAV if "Admin" in current_user_roles else [],
+                "notices": notices,
+                "workspace": workspace,
+                "workspace_uploads": workspace_uploads,
+                "safety_warnings": {"pending": pending_safety_warnings},
+                "settings": public_settings,
+            }
+
+            response = jsonify(payload)
+            timer.mark("serialize")
+            return response, 200
+        except Exception as exc:
+            log_event(
+                f"[V2_BOOTSTRAP] Failed to build bootstrap payload: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load application bootstrap"}), 500
+        finally:
+            timer.mark("response_tail")
+            timer.emit()
+
+    @bp.route("/api/v2/scope", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def v2_scope():
+        """Return only the caller's active group and public workspace.
+
+        Switching group workspaces changes nothing else in the bootstrap payload, so the
+        SPA confirms a switch with this read instead of rebuilding every catalog. The
+        values are validated exactly as the bootstrap validates them, by the same helper.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401, {"Cache-Control": "no-store"}
+
+        try:
+            get_optional_active_group(user_id)
+            user_settings = get_user_settings(user_id)
+            user_settings_dict = (
+                user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
+            )
+            authorized_group_ids = {
+                group["id"] for group in (get_user_groups(user_id) or []) if group.get("id")
+            }
+
+            def is_visible_workspace(workspace_id):
+                visible_ids = get_public_source_workspace_ids(user_id, user_settings=user_settings)
+                if workspace_id not in visible_ids:
+                    return False
+                return find_public_workspace_by_id(workspace_id) is not None
+
+            active_scope = _resolve_active_scope(
+                user_settings_dict, authorized_group_ids, is_visible_workspace
+            )
+            response = jsonify({"user": {"id": user_id}, "scope": active_scope})
+            return response, 200, {"Cache-Control": "no-store"}
+        except Exception as exc:
+            log_event(
+                "[V2_SCOPE] Failed to resolve active scope.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load active scope"}), 503, {"Cache-Control": "no-store"}
+
+
+class BootstrapPhaseTimer:
+    """Accumulate elapsed milliseconds per named section of one bootstrap request."""
+
+    def __init__(self, clock=time.perf_counter):
+        self._clock = clock
+        self._started = clock()
+        self._last = self._started
+        self.phases_ms = {}
+
+    def mark(self, phase):
+        """Charge the time since the previous mark to ``phase``."""
+        now = self._clock()
+        self.phases_ms[phase] = round(
+            self.phases_ms.get(phase, 0.0) + (now - self._last) * 1000.0, 1
+        )
+        self._last = now
+
+    def measure(self, phase, func, *args, **kwargs):
+        """Call ``func`` and charge its duration to ``phase``, even when it raises."""
+        self.mark("_between")
+        try:
+            return func(*args, **kwargs)
+        finally:
+            self.mark(phase)
+
+    def total_ms(self):
+        return round((self._clock() - self._started) * 1000.0, 1)
+
+    def emit(self):
+        """Log the timings as one trace, correlated to the request by operation id.
+
+        ``log_event`` keeps only numeric values from ``extra`` (nested dicts collapse to a
+        count and strings to a length), so each phase is a flat ``phase_<name>_ms`` key.
+        """
+        extra = {"total_ms": self.total_ms()}
+        for phase, elapsed_ms in self.phases_ms.items():
+            if phase != "_between":
+                extra[f"phase_{phase}_ms"] = elapsed_ms
+        log_event("[V2_BOOTSTRAP] Phase timings", extra=extra)
+
+
+def _resolve_active_scope(user_settings_dict, authorized_group_ids, is_visible_workspace):
+    """Report the caller's stored active group and public workspace, if still authorized.
+
+    The stored active scope is only a UI preference, so it is reported back rather than
+    used to authorize anything: the chat endpoints re-derive and authorize scope on every
+    request via _get_authorized_chat_scope_context.
+
+    It is still validated against the caller's own authorized lists, because a group or
+    workspace can be revoked after the preference was saved and echoing a stale id would
+    show the user a scope badge they no longer have access to. Both the bootstrap and the
+    scope endpoint use this helper, so the two cannot disagree on a user's active scope.
+    """
+    user_settings_dict = user_settings_dict if isinstance(user_settings_dict, dict) else {}
+    # bac-check: ignore - preference read, filtered against the caller's authorized
+    # group list below; not used for an authorization decision.
+    stored_group_id = user_settings_dict.get("activeGroupOid", "") or None
+    # bac-check: ignore - preference read, filtered against the caller's visible
+    # public workspace list below; not used for an authorization decision.
+    stored_workspace_id = user_settings_dict.get("activePublicWorkspaceOid", "") or None
+
+    active_group_id = stored_group_id if stored_group_id in authorized_group_ids else None
+    active_group_name = None
+    if active_group_id:
+        group_doc = find_group_by_id(active_group_id)
+        if group_doc:
+            active_group_name = group_doc.get("name", "")
+        else:
+            active_group_id = None
+
+    active_public_workspace_id = (
+        stored_workspace_id
+        if stored_workspace_id and is_visible_workspace(stored_workspace_id)
+        else None
+    )
+    return {
+        "active_group_id": active_group_id,
+        "active_group_name": active_group_name,
+        "active_public_workspace_id": active_public_workspace_id,
+    }
+
+
+def _load_global_model_endpoints(settings=None):
+    """Read the stored global model endpoints as a list."""
+    source = get_settings() if settings is None else settings
+    if not isinstance(source, dict):
+        raise AIConnectionError("AI connection settings are unavailable.", "settings_unavailable")
+    endpoints = source.get("model_endpoints", [])
+    return endpoints if isinstance(endpoints, list) else []
+
+
+def _ai_connection_error_response(error):
+    """Map safe configuration errors without exposing provider or storage exceptions."""
+    if error.code in {
+        "embedding_rebuild_required",
+        "embedding_profile_mismatch",
+        "embedding_profile_changed",
+        "embedding_dimensions_mismatch",
+        "embedding_schema_update_required",
+        "settings_conflict",
+    }:
+        status = 409
+    elif error.code in {"embedding_compatibility_unavailable", "settings_unavailable"}:
+        status = 503
+    else:
+        status = 400
+    return jsonify({"error": error.public_message, "code": error.code}), status
+
+
+# The classic single-endpoint model catalogs. Each is stored as
+# ``{"selected": [...], "all": [...]}`` -- the deployments last discovered, plus the one
+# in use. The shape is a dict, so it cannot travel through the settings PATCH, which
+# coerces by declared scalar type.
+MODEL_CATALOG_KINDS = {
+    "embedding": {
+        "settings_key": "embedding_model",
+        "discovery_path": "/api/models/embedding",
+        "label": "embedding",
+    },
+    "image": {
+        "settings_key": "image_gen_model",
+        "discovery_path": "/api/models/image",
+        "label": "image generation",
+    },
+}
+
+
+def _read_model_catalog(settings, settings_key):
+    """Return a stored catalog as ``(selected, all)``, tolerating an absent key."""
+    stored = settings.get(settings_key)
+    if not isinstance(stored, dict):
+        return [], []
+
+    selected = stored.get("selected")
+    available = stored.get("all")
+    return (
+        [item for item in selected if isinstance(item, dict)] if isinstance(selected, list) else [],
+        [item for item in available if isinstance(item, dict)] if isinstance(available, list) else [],
+    )
+
+
+def _normalize_model_deployment(entry):
+    """Return one catalog entry reduced to the two fields the application reads."""
+    deployment_name = str(entry.get("deploymentName") or "").strip()
+    if not deployment_name:
+        return None
+
+    model_name = entry.get("modelName")
+    return {
+        "deploymentName": deployment_name,
+        "modelName": str(model_name).strip() if model_name else "",
+    }
+
+
+def normalize_model_catalog(payload, stored_available):
+    """Return ``(catalog, error)`` for a requested classic model catalog.
+
+    ``catalog`` is the ``{"selected": [...], "all": [...]}`` value to store. Both admin
+    interfaces treat these catalogs as single-select, so ``selected`` holds at most one
+    deployment; storing more would offer a choice the rest of the application ignores.
+
+    A selection is required to name a deployment that is in the catalog. The alternative
+    -- accepting it and letting it fail at call time -- produces an admin page that looks
+    correctly configured while every embedding or image request returns a deployment-not
+    -found error, which reads like an outage rather than a settings mistake.
+
+    ``all`` is omitted rather than emptied when the caller has not re-run discovery, so
+    saving a selection from an already-loaded list cannot erase the list it came from.
+    """
+    if not isinstance(payload, dict):
+        return None, "Supply the model selection as an object."
+
+    raw_available = payload.get("models")
+    if raw_available is None:
+        available = list(stored_available)
+    elif isinstance(raw_available, list):
+        available = []
+        seen = set()
+        for entry in raw_available:
+            if not isinstance(entry, dict):
+                return None, "Each model must be an object."
+            deployment = _normalize_model_deployment(entry)
+            if deployment is None:
+                return None, "Each model must name a deployment."
+            if deployment["deploymentName"] in seen:
+                continue
+            seen.add(deployment["deploymentName"])
+            available.append(deployment)
+    else:
+        return None, "Expected a list of models."
+
+    raw_selected = payload.get("selected")
+    if raw_selected is None:
+        return {"selected": [], "all": available}, None
+    if not isinstance(raw_selected, dict):
+        return None, "Supply the selected model as an object, or null to clear it."
+
+    selected = _normalize_model_deployment(raw_selected)
+    if selected is None:
+        return None, "The selected model must name a deployment."
+
+    match = next(
+        (
+            entry
+            for entry in available
+            if entry["deploymentName"] == selected["deploymentName"]
+        ),
+        None,
+    )
+    if match is None:
+        return None, (
+            f"{selected['deploymentName']} is not in the fetched deployment list. "
+            "Fetch the deployments again and choose one of them."
+        )
+
+    return {"selected": [match], "all": available}, None
+
+
+def _find_model_endpoint(endpoints, endpoint_id):
+    """Return the endpoint with the given id, or None."""
+    reference = str(endpoint_id or "")
+    for endpoint in endpoints:
+        if isinstance(endpoint, dict) and str(endpoint.get("id") or "") == reference:
+            return endpoint
+    return None
+
+
+def _model_endpoint_response(saved_endpoints, endpoint_id, status):
+    """Return one saved endpoint, sanitized, as the response to a write."""
+    saved = _find_model_endpoint(saved_endpoints, endpoint_id)
+    sanitized = sanitize_model_endpoints_for_frontend([saved]) if saved else []
+    return jsonify({"endpoint": sanitized[0] if sanitized else {}}), status
+
+
+def _persist_global_model_endpoints(endpoints, existing, *, updated_endpoint_id=None):
+    """Save the global endpoint list, moving Key Vault secrets to match.
+
+    Only the requested create/update is normalized by its caller, validated here,
+    and stages credentials. Unchanged records must survive even when a legacy
+    connection needs repair. Deletions do not stage remaining credentials.
+    Whole-state embedding checks and default reconciliation still apply, and
+    obsolete secrets are removed only after the settings commit.
+    """
+    settings = read_embedding_settings()
+    if not isinstance(settings, dict):
+        raise AIConnectionError("AI connection settings are unavailable.", "settings_unavailable")
+    preflight_embedding_settings(settings, {**settings, "model_endpoints": endpoints})
+    changed = [
+        endpoint for endpoint in endpoints
+        if isinstance(endpoint, dict) and endpoint.get("id") == updated_endpoint_id
+    ] if updated_endpoint_id is not None else []
+    validate_custom_model_endpoints(changed, settings)
+    existing_by_id = {
+        endpoint.get("id"): endpoint
+        for endpoint in existing
+        if isinstance(endpoint, dict) and endpoint.get("id")
+    }
+
+    saved_endpoints = []
+    for endpoint in endpoints:
+        if (
+            updated_endpoint_id is not None
+            and isinstance(endpoint, dict)
+            and endpoint.get("id") == updated_endpoint_id
+        ):
+            endpoint = keyvault_model_endpoint_save_helper(
+                endpoint,
+                updated_endpoint_id,
+                scope="global",
+                existing_endpoint=existing_by_id.get(updated_endpoint_id),
+                stage_new_secrets=True,
+            )
+        saved_endpoints.append(endpoint)
+
+    updates = {"model_endpoints": saved_endpoints}
+    multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
+
+    # Both stored selections name an endpoint and a model by id, so deleting or disabling
+    # either leaves them pointing at nothing. A dangling default makes chat fall back
+    # quietly; a dangling metadata extraction selection makes document ingestion raise,
+    # and its caller only logs that. Neither is acceptable, so both are re-resolved against
+    # what was actually saved.
+    resolved_default, _ = resolve_default_model_selection(
+        settings.get("default_model_selection"),
+        saved_endpoints,
+        multi_endpoint_enabled=multi_endpoint_enabled,
+    )
+    if resolved_default != settings.get("default_model_selection"):
+        updates["default_model_selection"] = resolved_default
+
+    resolved_metadata, _ = resolve_metadata_extraction_model_selection(
+        settings.get("metadata_extraction_model_selection"),
+        saved_endpoints,
+        multi_endpoint_enabled=multi_endpoint_enabled,
+    )
+    if resolved_metadata != settings.get("metadata_extraction_model_selection"):
+        updates["metadata_extraction_model_selection"] = resolved_metadata
+
+    if "multimodal_vision_model_selection" in settings:
+        resolved_vision, _ = resolve_metadata_extraction_model_selection(
+            settings.get("multimodal_vision_model_selection"),
+            saved_endpoints,
+            multi_endpoint_enabled=multi_endpoint_enabled,
+        )
+        if resolved_vision != settings.get("multimodal_vision_model_selection"):
+            updates["multimodal_vision_model_selection"] = resolved_vision
+
+    if IMAGE_SELECTION_KEY in settings:
+        resolved_image, image_reason = resolve_capability_model_selection(
+            settings.get(IMAGE_SELECTION_KEY), saved_endpoints, "image_generation"
+        )
+        if resolved_image != settings.get(IMAGE_SELECTION_KEY):
+            updates[IMAGE_SELECTION_KEY] = resolved_image
+            notices = dict(settings.get("ai_connection_default_notices") or {})
+            notices["image_generation"] = image_reason or "The image default was cleared."
+            updates["ai_connection_default_notices"] = notices
+
+    if embedding_settings_use_connections(settings):
+        resolved_embedding, embedding_reason = resolve_capability_model_selection(
+            settings.get(EMBEDDING_SELECTION_KEY), saved_endpoints, EMBEDDINGS_CAPABILITY
+        )
+        if resolved_embedding != settings.get(EMBEDDING_SELECTION_KEY):
+            updates[EMBEDDING_SELECTION_KEY] = resolved_embedding
+            notices = dict(
+                updates.get("ai_connection_default_notices")
+                or settings.get("ai_connection_default_notices") or {}
+            )
+            notices[EMBEDDINGS_CAPABILITY] = (
+                embedding_reason
+                or "The embedding default was cleared. Select a compatible embedding model in AI Connections."
+            )
+            updates["ai_connection_default_notices"] = notices
+
+    # Obsolete credentials remain usable until their dependent settings commit.
+    if not update_settings(updates):
+        raise RuntimeError("The settings document could not be updated.")
+
+    saved_endpoint_ids = {
+        endpoint.get("id") for endpoint in saved_endpoints if isinstance(endpoint, dict)
+    }
+    for endpoint in saved_endpoints:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = endpoint.get("id")
+        if endpoint_id and endpoint_id == updated_endpoint_id:
+            keyvault_model_endpoint_cleanup_helper(
+                existing_by_id.get(endpoint_id), endpoint, endpoint_id, scope="global"
+            )
+    for endpoint in existing:
+        if not isinstance(endpoint, dict):
+            continue
+        endpoint_id = endpoint.get("id")
+        if endpoint_id and endpoint_id not in saved_endpoint_ids:
+            keyvault_model_endpoint_delete_helper(endpoint, endpoint_id, scope="global")
+
+    return saved_endpoints
+
+
+def _persist_v2_admin_settings(updates, current_settings):
+    """Stage Web IQ credentials once, before the retried settings write."""
+    relevant = {
+        "web_iq", "web_search_provider", "enable_key_vault_secret_storage",
+        "key_vault_name", "key_vault_identity",
+    }
+    merged = {**current_settings, **updates}
+    if not relevant.intersection(updates) or merged.get("enable_key_vault_secret_storage") is not True:
+        return update_settings(updates)
+
+    connection = copy.deepcopy(merged.get("web_iq") or {})
+    previous = current_settings.get("web_iq") or {}
+    credentials = {"key": ("api_key", "api_key"), "client_secret": ("client_secret", "service_principal")}
+    previous_auth = {field: previous.get(name, "") for name, (field, _) in credentials.items()}
+    staged_auth = {}
+
+    def own_reference(value):
+        return validate_secret_name_dynamic(value) and secret_reference_matches_context(
+            value, scope_value="web-iq", scope="global", allowed_sources={"model-endpoint"},
+        )
+
+    def cleanup(previous_values, current_values):
+        retained = set(current_values.values())
+        obsolete = {
+            name: value for name, value in previous_values.items()
+            if value and value not in retained and own_reference(value)
+        }
+        if not obsolete:
+            return
+        try:
+            keyvault_model_endpoint_cleanup_helper(
+                {"auth": obsolete}, {"auth": current_values}, "web-iq", scope="global",
+            )
+        except Exception as error:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Web IQ credential cleanup was not confirmed.",
+                extra={"error_type": type(error).__name__}, level=logging.WARNING,
+            )
+
+    try:
+        if any(connection.get(name) for name in credentials) and (
+            current_settings.get("enable_key_vault_secret_storage") is not True
+            or any(merged.get(name) != current_settings.get(name) for name in ("key_vault_name", "key_vault_identity"))
+        ):
+            raise ValueError("Save the Key Vault configuration before staging Web IQ credentials.")
+        # Validate both inactive and active references before staging any replacements.
+        for value in [*previous_auth.values(), *(connection.get(name, "") for name in credentials)]:
+            if value and validate_secret_name_dynamic(value) and not own_reference(value):
+                raise ValueError("Web IQ credential reference has an invalid scope.")
+        for name, (field, auth_type) in credentials.items():
+            value = connection.get(name, "")
+            if not value:
+                continue
+            saved = keyvault_model_endpoint_save_helper(
+                {"auth": {"type": auth_type, field: value}},
+                "web-iq", scope="global",
+                existing_endpoint={"auth": {"type": auth_type, field: previous.get(name, "")}},
+                stage_new_secrets=True,
+            )
+            reference = (saved.get("auth") or {}).get(field)
+            # The shared helper reads live vault configuration. A draft first-enable
+            # must fail closed if that configuration is not yet available to it.
+            if not reference or not own_reference(reference):
+                raise ValueError("Web IQ credential storage was not confirmed.")
+            connection[name] = reference
+            if reference not in previous_auth.values():
+                staged_auth[field] = reference
+    except Exception as error:
+        # No settings write was attempted, so these scoped staged names are not live.
+        cleanup(staged_auth, previous_auth)
+        raise KeyVaultSecretStorageError(error) from None
+
+    if connection or "web_iq" in updates:
+        updates["web_iq"] = connection
+    saved = update_settings(updates)
+    if saved:
+        current_auth = {field: connection.get(name, "") for name, (field, _) in credentials.items()}
+        cleanup(previous_auth, current_auth)
+    # False means the settings owner could not confirm the commit, not proof of
+    # failure. Retain staged names so an uncertain successful write stays usable.
+    return saved
+
+
+def _seed_connections_on_first_enable(updates, current_settings):
+    """Carry the classic chat endpoint into the connection list when connections go on.
+
+    Enabling connections is one-way. A deployment that already had a working classic
+    endpoint, and enables connections without carrying it over, is left with an empty model
+    catalog and no way to switch back -- so chat stops working outright.
+
+    The classic form has always migrated on this transition. Mirroring it here, through the
+    same shared builder, is what stops the V2 surface from being the one path that strands
+    a deployment.
+    """
+    if not updates.get("enable_multi_model_endpoints"):
+        return
+    if current_settings.get("enable_multi_model_endpoints", False):
+        return
+    existing = _load_global_model_endpoints(current_settings)
+    if filter_model_endpoints_by_capability(existing, "chat"):
+        return
+
+    migrated = build_migrated_model_endpoints_from_legacy(current_settings)
+    if not migrated:
+        return
+
+    normalized, _ = normalize_model_endpoints(migrated)
+    updates["model_endpoints"] = existing + [
+        keyvault_model_endpoint_save_helper(
+            endpoint, endpoint.get("id"), scope="global", existing_endpoint=None
+        )
+        for endpoint in normalized
+    ]
+    log_event(
+        f"[V2_ADMIN_ENDPOINTS] Migrated the classic chat endpoint into "
+        f"{len(updates['model_endpoints'])} connection(s) on first enable",
+        level=logging.INFO,
+    )
+
+
+def _log_governance_setting_changes(current_settings, normalized):
+    """Record governance switch changes in the governance audit log.
+
+    The server-rendered save writes one ``governance_feature_toggles_updated`` entry,
+    with the before and after state of every governance switch, whenever a save
+    changes one of them. The V2 page saves through the settings PATCH instead, so
+    without this a governance change made there would leave no audit trail at all.
+
+    Nothing is coerced here. A governance switch keeps its value while the feature it
+    governs is off, so turning a feature off and on again cannot silently drop the
+    governance an administrator configured for it.
+    """
+    changed_toggles = {}
+    for key in GOVERNANCE_AUDITED_SETTING_KEYS:
+        if key not in normalized:
+            continue
+        before_value = bool(current_settings.get(key, False))
+        after_value = bool(normalized[key])
+        if before_value != after_value:
+            changed_toggles[key] = {"before": before_value, "after": after_value}
+
+    if not changed_toggles:
+        return
+
+    before_state = {key: bool(current_settings.get(key, False)) for key in GOVERNANCE_AUDITED_SETTING_KEYS}
+    after_state = dict(before_state)
+    after_state.update({key: change["after"] for key, change in changed_toggles.items()})
+
+    try:
+        user_info = get_current_user_info() or {}
+        log_governance_change(
+            admin_user_id=str(get_current_user_id() or "").strip(),
+            admin_email=str(user_info.get("email") or "").strip(),
+            action="governance_feature_toggles_updated",
+            scope="feature_policy",
+            target_id="governance_feature_toggles",
+            before_state=before_state,
+            after_state=after_state,
+            change_details={"changed_toggles": changed_toggles},
+        )
+    except Exception as exc:
+        # The settings are already saved; a failed audit write is reported rather
+        # than turned into a failed save the administrator would retry.
+        log_event(
+            "[V2_ADMIN_SETTINGS] Failed to record a governance setting change.",
+            extra={
+                "error_type": type(exc).__name__,
+                "changed_keys": sorted(changed_toggles),
+            },
+            level=logging.ERROR,
+        )
+
+
+def register_route_backend_v2_admin(bp):
+    def _build_model_catalog(settings):
+        """Return the models an administrator can pick, with resolved capabilities.
+
+        A picker that offered every model would let an administrator choose one that
+        cannot read images for Multi-Modal Vision Analysis, which fails at upload time
+        rather than at configuration time. Resolving here keeps the decision on the
+        server, where ``functions_model_capabilities`` is the single implementation, so
+        the browser does not need a second copy of the rules.
+
+        ``vision_source`` says whether the answer is known or guessed, which is what
+        lets the picker mark an inferred model rather than presenting a guess as fact.
+        """
+        catalog = []
+        seen = set()
+
+        use_connections = bool(
+            settings.get("enable_multi_model_endpoints", bool(settings.get("model_endpoints")))
+        )
+        if use_connections:
+            for endpoint in settings.get("model_endpoints") or []:
+                if not isinstance(endpoint, dict) or not endpoint.get("enabled", True):
+                    continue
+                endpoint_id = str(endpoint.get("id") or "").strip()
+                endpoint_label = endpoint.get("name") or endpoint_id or ""
+                provider = str(endpoint.get("provider") or "").strip().lower()
+
+                for model in endpoint.get("models") or []:
+                    if not isinstance(model, dict) or not model.get("enabled", True):
+                        continue
+
+                    deployment = str(
+                        model.get("deploymentName")
+                        or model.get("deployment")
+                        or model.get("modelName")
+                        or ""
+                    ).strip()
+                    model_id = str(model.get("id") or "").strip()
+                    dedupe_key = (endpoint_id, model_id or deployment)
+                    if not deployment or dedupe_key in seen:
+                        continue
+
+                    if not supports_model_capability(model, "chat", endpoint.get("provider")):
+                        continue
+                    seen.add(dedupe_key)
+                    supports_vision, vision_source = resolve_model_vision_support(model)
+                    catalog.append(
+                        {
+                            "deployment": deployment,
+                            "label": model.get("displayName")
+                            or model.get("modelName")
+                            or deployment,
+                            "endpoint": endpoint_label,
+                            "endpoint_id": endpoint.get("id"),
+                            "model_id": model_id,
+                            "provider": provider,
+                            "model_name": model.get("modelName") or "",
+                            "supports_vision": supports_vision,
+                            "vision_source": vision_source,
+                        }
+                    )
+        elif settings.get("enable_gpt_apim", False):
+            for raw_deployment in str(settings.get("azure_apim_gpt_deployment") or "").split(","):
+                deployment = raw_deployment.strip()
+                if not deployment or ("", deployment) in seen:
+                    continue
+                if not supports_model_capability(deployment, "chat", "aoai"):
+                    continue
+                seen.add(("", deployment))
+                supports_vision, vision_source = resolve_model_vision_support(deployment)
+                catalog.append(
+                    {
+                        "deployment": deployment,
+                        "label": deployment,
+                        "endpoint": "",
+                        "endpoint_id": "",
+                        "model_id": "",
+                        "provider": "aoai",
+                        "model_name": deployment,
+                        "supports_vision": supports_vision,
+                        "vision_source": vision_source,
+                    }
+                )
+        else:
+            selected_models = (settings.get("gpt_model") or {}).get("selected") or []
+            for model in selected_models:
+                if not isinstance(model, dict):
+                    continue
+                deployment = str(
+                    model.get("deploymentName") or model.get("deployment") or ""
+                ).strip()
+                if not deployment or ("", deployment) in seen:
+                    continue
+                if not supports_model_capability(model, "chat", "aoai"):
+                    continue
+                seen.add(("", deployment))
+                supports_vision, vision_source = resolve_model_vision_support(model)
+                catalog.append(
+                    {
+                        "deployment": deployment,
+                        "label": model.get("displayName")
+                        or model.get("modelName")
+                        or deployment,
+                        "endpoint": "",
+                        "endpoint_id": "",
+                        "model_id": str(model.get("id") or "").strip(),
+                        "provider": "aoai",
+                        "model_name": model.get("modelName") or "",
+                        "supports_vision": supports_vision,
+                        "vision_source": vision_source,
+                    }
+                )
+
+        catalog.sort(
+            key=lambda entry: (
+                entry["label"].lower(),
+                entry["endpoint"].lower(),
+                entry["deployment"].lower(),
+            )
+        )
+        return catalog
+
+    def _build_status_readouts():
+        """Return the server-computed readouts declared `status` fields render.
+
+        Some of what an administrator needs is not a setting: whether the Playwright
+        runtime can render JavaScript, which endpoint a cloud selection resolves to,
+        whether audio transcoding is available. The server-rendered panes pass these
+        into the template as loose context and print them as stray markup. Naming them
+        here lets the schema declare a readout, which keeps the reason a control is
+        unavailable next to the control and makes it findable by search.
+
+        Each entry is ``{ok, message}``: the renderer needs the tone as well as the
+        text, and inferring it from wording would be guesswork.
+        """
+        readouts = {}
+
+        try:
+            capabilities = get_source_review_runtime_capabilities()
+            readouts["source_review_js_runtime"] = {
+                "ok": bool(capabilities.get("js_rendering_available")),
+                "message": capabilities.get("message")
+                or "Runtime support has not been checked yet.",
+            }
+            if capabilities.get("sandbox_disabled"):
+                readouts["source_review_js_runtime"]["message"] += (
+                    " The Chromium sandbox is disabled by environment configuration."
+                )
+        except Exception as exc:
+            # A probe that launches a browser can fail for reasons that have nothing
+            # to do with the settings page, and it must not take the page down.
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Source review runtime probe failed: {exc}",
+                level=logging.WARNING,
+            )
+            readouts["source_review_js_runtime"] = {
+                "ok": False,
+                "message": "Runtime support could not be checked.",
+            }
+
+        try:
+            audio = get_audio_runtime_capabilities()
+            broad = bool(audio.get("broad_transcoding_available"))
+            supported = ", ".join(audio.get("supported_extensions") or []) or "none"
+            message = audio.get("message") or "Audio runtime support has not been checked."
+            readouts["audio_runtime"] = {
+                "ok": broad,
+                "message": f"{message} Accepted uploads: {supported}.",
+            }
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Audio runtime probe failed: {exc}",
+                level=logging.WARNING,
+            )
+            readouts["audio_runtime"] = {
+                "ok": False,
+                "message": "Audio runtime support could not be checked.",
+            }
+
+        try:
+            floor = describe_mcp_destination_environment_policy()
+            forced = []
+            if floor.get("enforcement_required"):
+                forced.append("requires the destination allowlist")
+            if floor.get("unsafe_blocking_required"):
+                forced.append("blocks private and local IP destinations")
+            pattern_count = int(floor.get("allowed_pattern_count") or 0)
+            pattern_note = (
+                f" It contributes {pattern_count} allowed destination pattern"
+                f"{'' if pattern_count == 1 else 's'}."
+                if pattern_count
+                else ""
+            )
+            if forced:
+                # Tinted as a warning because a switch above can read "off" while the
+                # deployment enforces anyway, and that is worth noticing.
+                readouts["mcp_destination_environment_policy"] = {
+                    "ok": False,
+                    "message": (
+                        f"The deployment environment {' and '.join(forced)}. Settings "
+                        f"here can add restrictions but cannot turn these off.{pattern_note}"
+                    ),
+                }
+            else:
+                readouts["mcp_destination_environment_policy"] = {
+                    "ok": True,
+                    "message": (
+                        "The deployment environment adds no destination restrictions, "
+                        f"so the switches above decide enforcement.{pattern_note}"
+                    ),
+                }
+        except Exception as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] MCP destination environment policy could not be read.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.WARNING,
+            )
+            readouts["mcp_destination_environment_policy"] = {
+                "ok": False,
+                "message": "Deployment destination restrictions could not be checked.",
+            }
+
+        readouts["appinsights_connection"] = _build_appinsights_connection_readout()
+
+        return readouts
+
+    def _build_appinsights_connection_readout():
+        """Say whether Application Insights has anywhere to send telemetry.
+
+        Global logging is a switch on this page, but the destination is an App Service
+        application setting. Turning the switch on without one does nothing at all,
+        and nothing else on the page would say so.
+        """
+        state = get_appinsights_runtime_state()
+        if not state["connection_configured"]:
+            return {
+                "ok": False,
+                "message": (
+                    "APPLICATIONINSIGHTS_CONNECTION_STRING is not set on this App "
+                    "Service, so nothing reaches Application Insights whatever the "
+                    "switch above says."
+                ),
+            }
+        if not state["exporter_configured"]:
+            return {
+                "ok": False,
+                "message": (
+                    "APPLICATIONINSIGHTS_CONNECTION_STRING is set, but the exporter did "
+                    "not start. Check the application's startup log."
+                ),
+            }
+        return {
+            "ok": True,
+            "message": (
+                "Connected through the APPLICATIONINSIGHTS_CONNECTION_STRING App "
+                "Service setting."
+            ),
+        }
+
+    def _build_runtime_flags():
+        """Server-resolved flags the admin surface reads but cannot set.
+
+        ``mcp_ui_enabled`` gates a navigation section on an App Service application
+        setting. ``content_understanding_supported`` says whether this Azure cloud
+        offers Content Understanding, which only the server's AZURE_ENVIRONMENT can
+        say. The rest describe how this process was started -- whether Application
+        Insights has a destination, whether its global logging is live and whether
+        the Swagger routes were registered -- so a section can say when a saved
+        change is still waiting for a restart.
+        """
+        appinsights = get_appinsights_runtime_state()
+        return {
+            "mcp_ui_enabled": is_mcp_ui_enabled(),
+            "content_understanding_supported": (
+                is_content_understanding_supported_environment()
+            ),
+            "web_iq_supported": str(AZURE_ENVIRONMENT).lower() in ("public", "azurecloud"),
+            "appinsights_connection_configured": appinsights["connection_configured"],
+            "appinsights_global_logging_active": appinsights["global_logging_active"],
+            "swagger_routes_registered": are_swagger_routes_registered(current_app),
+        }
+
+    def _build_endpoint_readouts(settings):
+        """Readouts derived from the settings document rather than from the host."""
+        endpoint = str(settings.get("video_indexer_endpoint") or "").strip()
+        return {
+            "video_indexer_endpoint": {
+                "ok": bool(endpoint),
+                "message": endpoint or "No endpoint resolved yet.",
+            },
+            "cosmos_throughput_resource": _build_cosmos_throughput_readout(settings),
+        }
+
+    def _build_cosmos_throughput_readout(settings):
+        """Describe the Cosmos account and database throughput actions will manage.
+
+        Blank resource fields fall back to App Service settings, so the stored values
+        alone do not say what is targeted. The server-rendered page answers that by
+        pre-filling its inputs with the resolved values, which then get saved as if an
+        administrator had typed them. Stating the resolution beside empty inputs keeps
+        the environment the source of truth for anything left blank.
+        """
+        try:
+            resource = get_cosmos_resource_config(settings)
+        except Exception as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Cosmos throughput target could not be resolved.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.WARNING,
+            )
+            return {"ok": False, "message": "The Cosmos throughput target could not be resolved."}
+
+        parts = (
+            ("subscription_id", "Subscription", "cosmos_throughput_subscription_id"),
+            ("resource_group", "Resource group", "cosmos_throughput_resource_group"),
+            ("account_name", "Account", "cosmos_throughput_account_name"),
+            ("database_name", "Database", "cosmos_throughput_database_name"),
+        )
+        described = []
+        missing = []
+        for resource_key, label, setting_key in parts:
+            value = str(resource.get(resource_key) or "").strip()
+            if not value:
+                missing.append(label.lower())
+                continue
+            source = "saved" if str(settings.get(setting_key) or "").strip() else "App Service setting or default"
+            described.append(f"{label} {value} ({source})")
+
+        if missing:
+            return {
+                "ok": False,
+                "message": (
+                    f"Missing {', '.join(missing)}. Enter each one here or set the matching "
+                    "App Service setting."
+                ),
+            }
+        return {"ok": True, "message": "; ".join(described) + "."}
+
+    def _redact_admin_settings_for_v2(settings):
+        """Replace stored credentials with the redaction placeholder.
+
+        Three lists feed this, and all three are needed:
+
+        ``redact_admin_settings_secrets_for_api`` covers what the server-rendered form
+        protects plus the keys only this endpoint returns, because it hands back the
+        whole settings document rather than the subset a template draws.
+
+        ``get_secret_storage_paths`` adds anything the V2 schema declares as a secret,
+        so declaring a new credential field protects it without a second edit here. It
+        reports storage paths rather than field keys, because a credential is not always
+        stored under the name of its control -- the Web Search client secret lives inside
+        ``web_search_agent``, and redacting the field key would leave the real value in
+        place under its actual path.
+
+        Model endpoint credentials are reached by none of the above, because they sit
+        inside a list rather than at a fixed key. ``sanitize_model_endpoints_for_frontend``
+        strips those, and it runs here rather than at the call site so the PATCH echo is
+        covered by the same guarantee as the GET.
+        """
+        redacted = redact_admin_settings_secrets_for_api(settings)
+        for path in get_secret_storage_paths():
+            if "." in path:
+                if read_nested_setting(redacted, path):
+                    write_nested_setting(redacted, path, SECRET_REDACTED_VALUE)
+            elif redacted.get(path):
+                redacted[path] = SECRET_REDACTED_VALUE
+        # Only when it is present: the PATCH echo carries just the submitted keys, and
+        # adding one the caller never sent would write it into the page's stored copy.
+        if "model_endpoints" in redacted:
+            redacted["model_endpoints"] = sanitize_model_endpoints_for_frontend(
+                redacted.get("model_endpoints")
+            )
+        # A saved capability list may still name a retired capability. The checkbox set
+        # shows its replacement selected, so editing the list keeps it.
+        if "chat_orchestration_enabled_capabilities" in redacted:
+            redacted["chat_orchestration_enabled_capabilities"] = effective_capability_ids(
+                redacted["chat_orchestration_enabled_capabilities"]
+            )
+        return redacted
+
+    @bp.route("/api/v2/admin/settings", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_settings():
+        """Return the settings document, the admin navigation and the field schema.
+
+        Admin settings are not passed through ``sanitize_settings_for_user``: that
+        removes endpoint and integration configuration, which is exactly what an
+        administrator is here to manage. Access is restricted to the Admin role by the
+        blueprint guard and the decorator.
+
+        Secrets are a separate question from sanitization and *are* withheld. Every known
+        secret is replaced with a placeholder, matching what the server-rendered form
+        does, so a stored key never reaches the browser merely because someone opened the
+        page. The list used here is wider than the form's, because this endpoint returns
+        the whole settings document rather than the subset a template draws, and it also
+        covers credentials the schema declares at a nested path rather than under a
+        top-level key of their own.
+
+        Submitting a placeholder back means "unchanged". The normalizer drops it, and the
+        PATCH below resolves anything that reaches it against the stored document, so an
+        untouched secret survives a save either way.
+
+        Model endpoint credentials sit inside the ``model_endpoints`` list rather than at
+        a fixed key, so no key-based list reaches them. They are stripped separately by
+        ``sanitize_model_endpoints_for_frontend``, which is what the server-rendered page
+        passes to its template.
+
+        ``field_schema`` describes the concrete controls each section owns. Sections with
+        no entry are rendered by the SPA's ``enable_*`` fallback scan, so groups that have
+        not been described yet keep working. ``suppressed_capabilities`` names the keys
+        that scan must skip because they are derived or are staged rollout flags with no
+        administrator control. ``section_guides`` names the in-app guide a section header
+        offers, for settings that depend on work done outside SimpleChat.
+
+        The application release status is deliberately not part of this response. A
+        release check can contact GitHub, so it is served by ``v2_admin_get_update_status``
+        and requested alongside this one; a slow or unreachable release page then delays
+        only the version banner rather than every setting on the page.
+        """
+        try:
+            settings = get_settings()
+            field_schema = copy.deepcopy(get_admin_settings_fields())
+            if str(AZURE_ENVIRONMENT).lower() not in ("public", "azurecloud"):
+                for field in field_schema.get("web-search-section", []):
+                    if field.get("key") == "web_search_provider":
+                        for option in field.get("options", []):
+                            if option.get("value") == "web_iq":
+                                option["disabled"] = True
+            return (
+                jsonify(
+                    {
+                        "settings": _redact_admin_settings_for_v2(settings),
+                        "admin_nav": ADMIN_NAV,
+                        "field_schema": field_schema,
+                        "section_status": get_admin_section_status(),
+                        "section_guides": get_admin_section_guides(),
+                        "app_role_requirements": get_app_role_requirements(),
+                        "branding_assets": _build_branding_assets(settings),
+                        "status_readouts": {
+                            **_build_status_readouts(),
+                            **_build_endpoint_readouts(settings),
+                        },
+                        "model_catalog": _build_model_catalog(settings),
+                        # Navigation sections may be conditional on a runtime flag
+                        # rather than a stored setting, and Operations reports how
+                        # the running process was started. See _build_runtime_flags.
+                        "runtime_flags": _build_runtime_flags(),
+                        "suppressed_capabilities": get_suppressed_capability_keys(),
+                        "version": VERSION,
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Failed to load settings: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load settings"}), 500
+
+    @bp.route("/api/v2/admin/update-status", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_update_status():
+        """Return the running version and the shared application release status.
+
+        This is kept apart from the settings GET on purpose. When the shared 24-hour
+        cache has expired, ``get_application_update_status`` fetches the GitHub releases
+        page and persists what it found, which can take seconds -- longer still when the
+        server cannot reach GitHub. Served on its own, the SPA requests it at the same
+        time as the settings, so the settings render as soon as they are read and only
+        the version banner waits for the check.
+
+        ``version`` is the running server version that ``update_available`` was compared
+        against. A failed check is not an error here: it comes back as a ``stale`` or
+        ``unavailable`` status, exactly as the settings page used to receive it. Only an
+        unexpected failure returns a 500, with a stable message rather than exception text.
+        """
+        try:
+            settings = get_settings()
+            return (
+                jsonify(
+                    {
+                        "version": VERSION,
+                        "update_status": get_application_update_status(settings, VERSION),
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                "[APP_UPDATES] Failed to load the application update status.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Unable to check for application updates."}), 500
+
+    @bp.route("/api/v2/admin/latest-features", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_latest_features():
+        """Return the admin and user-facing Latest Features catalogues.
+
+        The server-rendered Help tabs build these cards with Jinja, resolving each
+        shortcut through ``url_for`` and each screenshot through the static route.
+        The V2 surface cannot, so the resolved catalogues are served here.
+
+        Kept apart from the settings GET because the catalogues are long and only the
+        Help group draws them: the SPA requests this beside the settings when its
+        navigation includes those cards, so it never holds up the rest of the page.
+        The payload holds release copy and links only, no settings values.
+        """
+        try:
+            payload = build_latest_features_payload(
+                get_settings(),
+                resolve_endpoint_url=_latest_feature_endpoint_url,
+                resolve_static_url=lambda path: url_for("static", filename=path),
+                version=VERSION,
+            )
+            return jsonify(payload), 200
+        except Exception as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Failed to load the Latest Features catalogues.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load Latest Features."}), 500
+
+    @bp.route("/api/v2/admin/settings", methods=["PATCH"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_patch_settings():
+        """Apply a partial settings update.
+
+        The V2 admin surface edits a section at a time rather than posting the whole
+        settings form, so only the supplied keys are forwarded to ``update_settings``.
+
+        Values are normalized against the field schema first, which is what keeps the two
+        admin interfaces agreeing on what a valid value is. The update is applied only if
+        every supplied key validates, so a save never lands half-applied.
+
+        Secrets need one step beyond normalization. The browser was handed a placeholder
+        rather than the stored value, so a save that did not touch a secret sends the
+        placeholder straight back; storing it verbatim would overwrite a working
+        credential with the literal string. Every key redacted on the way out is
+        therefore resolved against the current document on the way in, exactly as the
+        server-rendered form does -- not just the ones the schema declares, so a redacted
+        key reaching the payload some other way cannot land as the placeholder either.
+        """
+        payload = request.get_json(silent=True)
+        updates = payload.get("settings") if isinstance(payload, dict) else None
+
+        if not isinstance(updates, dict) or not updates:
+            return jsonify({"error": "No settings supplied"}), 400
+
+        # These values are not scalar form fields. Only the validated capability API
+        # and the server-side compatibility guard may change them.
+        protected_keys = {
+            EMBEDDING_SELECTION_KEY,
+            EMBEDDING_VECTOR_PROFILE_KEY,
+            EMBEDDING_MIGRATION_VERSION_KEY,
+            EMBEDDING_MIGRATION_NOTICE_KEY,
+        } & updates.keys()
+        if protected_keys:
+            return jsonify({
+                "error": "Embedding defaults must be managed through AI Connections.",
+                "field_errors": {
+                    key: "Use the embedding capability default API; vector provenance is managed by the server."
+                    for key in sorted(protected_keys)
+                },
+            }), 400
+
+        try:
+            current_settings = get_settings()
+            if "enable_content_screening" in updates or (
+                isinstance(current_settings, dict) and current_settings.get("enable_content_screening") is True
+            ):
+                current_settings = get_settings(use_cosmos=True)
+            if not isinstance(current_settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            normalized, errors, warnings = normalize_admin_settings_updates(
+                updates, current_settings
+            )
+            if normalized.get("web_search_provider", current_settings.get("web_search_provider")) == "web_iq":
+                if str(AZURE_ENVIRONMENT).lower() not in ("public", "azurecloud"):
+                    if {"web_search_provider", "enable_web_search", "web_iq"} & normalized.keys():
+                        errors["web_search_provider"] = "Web IQ is available on Azure Public only."
+            for key in ('allow_private_custom_model_endpoints', 'allow_insecure_custom_model_endpoints'):
+                if key in updates and not isinstance(updates[key], bool):
+                    errors[key] = "Custom network permissions must be true or false."
+            ca_path_key = 'custom_model_endpoint_ca_bundle_path'
+            if ca_path_key in updates:
+                if not isinstance(updates[ca_path_key], str):
+                    errors[ca_path_key] = "The CA bundle must be a deployment-mounted file path."
+                else:
+                    normalized[ca_path_key] = updates[ca_path_key].strip()
+
+            if errors:
+                log_event(
+                    f"[V2_ADMIN_SETTINGS] Rejected update for "
+                    f"{', '.join(sorted(errors.keys()))}",
+                    level=logging.WARNING,
+                )
+                return (
+                    jsonify(
+                        {
+                            "error": "Some settings could not be saved.",
+                            "field_errors": errors,
+                        }
+                    ),
+                    400,
+                )
+
+            if not normalized:
+                # Every supplied key normalized away. In practice that means the payload
+                # held nothing but untouched credentials, which is a no-op rather than a
+                # mistake, so it succeeds with an empty result instead of a 400.
+                return (
+                    jsonify(
+                        {
+                            "success": True,
+                            "updated_keys": [],
+                            "settings": {},
+                            "warnings": warnings,
+                        }
+                    ),
+                    200,
+                )
+
+            secret_keys = set(get_admin_settings_api_secret_fields()) | get_secret_field_keys()
+            for key in secret_keys & set(normalized):
+                normalized[key] = resolve_admin_settings_secret_value(
+                    key, normalized[key], current_settings
+                )
+
+            # After the secret pass, so the derived endpoints this adds -- whose own
+            # secrets are already stored through Key Vault -- are not run through it.
+            preflight_embedding_settings(current_settings, {**current_settings, **normalized})
+            _seed_connections_on_first_enable(normalized, current_settings)
+
+            validate_content_screening_settings(normalized, current_settings)
+            if not _persist_v2_admin_settings(normalized, current_settings):
+                log_event(
+                    "[V2_ADMIN_SETTINGS] Settings persistence did not succeed.",
+                    extra={"updated_keys": sorted(normalized.keys())},
+                    level=logging.WARNING,
+                )
+                return jsonify({
+                    "error": "Settings were not saved. Reload the current settings and try again.",
+                    "success": False,
+                }), 503
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Updated {len(normalized)} setting(s): "
+                f"{', '.join(sorted(normalized.keys()))}",
+                level=logging.INFO,
+            )
+            _log_governance_setting_changes(current_settings, normalized)
+
+            # Logo scale and title changes are read from the settings document on the
+            # next request, but the favicon and logo static files are written from it, so
+            # a branding change has to refresh them.
+            _refresh_branding_static_files()
+
+            # Saved Microsoft 365 workflow connections need the deployment's encryption key.
+            # Create it now rather than when someone first connects; a failure is reported
+            # beside the Key Vault settings only when this save changed them.
+            m365_workflow_key = ensure_m365_workflow_encryption_key(get_settings())
+            if m365_workflow_key["status"] == "unavailable" and {
+                "enable_key_vault_secret_storage", "key_vault_name", "key_vault_identity",
+            } & normalized.keys():
+                warnings = {
+                    **warnings,
+                    "key_vault_name": (
+                        "Microsoft 365 workflow connections are not ready. "
+                        f"{m365_workflow_key['message']}"
+                    ),
+                }
+
+            # The response reflects the draft back into the page's stored state, so a
+            # resolved secret has to be re-redacted on the way out, which
+            # _redact_admin_settings_for_v2 does below.
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "updated_keys": sorted(normalized.keys()),
+                        # The browser merges this into its copy of the document, so a
+                        # credential that was just set has to come back redacted rather
+                        # than echoing the value straight out again. This follows nested
+                        # storage paths too, which a flat key check over `normalized`
+                        # would miss for the Foundry client secret.
+                        "settings": _redact_admin_settings_for_v2(normalized),
+                        "warnings": warnings,
+                    }
+                ),
+                200,
+            )
+        except KeyVaultSecretStorageError as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Web IQ credential storage failed.",
+                extra={"error_code": exc.code}, level=logging.WARNING,
+            )
+            return jsonify({
+                "error": exc.public_message,
+                "error_code": exc.code,
+                "field_errors": {"web_iq_key": exc.public_message, "web_iq_client_secret": exc.public_message},
+                "success": False,
+            }), 503
+        except ScreeningError as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Content screening settings were rejected.",
+                extra={"error_code": exc.code},
+                level=logging.WARNING,
+            )
+            return jsonify({
+                "error": exc.public_message,
+                "error_code": exc.code,
+                "field_errors": {"enable_content_screening": exc.public_message},
+                "success": False,
+            }), exc.status_code
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except Exception as exc:
+            log_event(
+                "[V2_ADMIN_SETTINGS] Failed to update settings.",
+                extra={"error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Failed to update settings"}), 500
+
+    @bp.route("/api/v2/admin/settings/test-connection", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_test_connection():
+        """Run one connection test against the values currently on screen.
+
+        Endpoints and credentials are worth nothing if they are wrong, and the only
+        way to find out is to try them. The server-rendered page has always offered
+        this; without it here, configuring a connection in the V2 surface would mean
+        saving blind and waiting for a user to hit the failure.
+
+        Testing before saving is the point, so the payload carries the draft values
+        rather than the stored ones. The one thing the browser cannot supply is a
+        credential it was never sent: a stored secret arrives as the redaction
+        placeholder and is resolved server-side by the shared dispatcher.
+
+        The dispatcher is shared with ``/api/admin/settings/test_connection`` so both
+        interfaces support exactly the same set of tests.
+        """
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Connection test payload must be an object."}), 400
+
+        test_type = str(payload.get("test_type") or "").strip()
+        if not test_type:
+            return jsonify({"error": "No test_type supplied"}), 400
+
+        _prepare_v2_test_payload(payload, test_type)
+
+        log_event(
+            f"[V2_ADMIN_SETTINGS] Running '{test_type}' connection test",
+            level=logging.INFO,
+        )
+        if test_type == "web_search" and payload.get("web_search_provider") == "web_iq":
+            # Kept local so the legacy Foundry test path is unchanged.
+            from functions_web_search_test import run_web_iq_connection_test
+
+            result, status = run_web_iq_connection_test(payload, global_settings=get_settings())
+            return jsonify(result), status
+        return run_admin_settings_connection_test(payload)
+
+    def _prepare_v2_test_payload(payload, test_type):
+        """Fill in what the V2 picker knows but the schema cannot express.
+
+        A ``test_payload`` maps settings keys to request fields, which covers a
+        connection assembled from settings. The vision test is different: it needs the
+        endpoint that hosts the chosen model, and that is a property of the selection
+        rather than a setting of its own.
+
+        Resolving it here rather than sending it from the browser also keeps the
+        endpoint's credentials out of the request. The handler looks the endpoint up in
+        the stored settings from the id alone.
+        """
+        if test_type != "multimodal_vision":
+            return
+
+        if isinstance(payload.get("multi_endpoint"), dict):
+            return
+
+        deployment = str(payload.get("vision_model") or "").strip()
+        if not deployment:
+            return
+
+        settings = get_settings()
+        for endpoint in settings.get("model_endpoints") or []:
+            if not isinstance(endpoint, dict):
+                continue
+            for model in endpoint.get("models") or []:
+                if not isinstance(model, dict):
+                    continue
+                candidate = str(
+                    model.get("deploymentName") or model.get("deployment") or ""
+                ).strip()
+                if candidate != deployment:
+                    continue
+
+                payload["multi_endpoint"] = {
+                    "endpoint_id": endpoint.get("id"),
+                    "model_id": model.get("id"),
+                    "provider": endpoint.get("provider"),
+                    "deployment_name": candidate,
+                }
+                return
+
+    @bp.route("/api/v2/admin/settings/branding-image", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_upload_branding_image():
+        """Store an uploaded logo or favicon and return its new static URL.
+
+        Branding images cannot travel through the JSON settings PATCH, so they get their
+        own multipart endpoint. The conversion is the shared one in
+        ``functions_branding_images``, so an asset uploaded here is byte-for-byte what the
+        server-rendered form would have stored.
+
+        The version counter is bumped on every successful upload because the static file
+        keeps a stable name; without the counter, browsers would keep serving the previous
+        image from cache.
+        """
+        target = str(request.form.get("target") or "").strip().lower()
+        spec = BRANDING_IMAGE_TARGETS.get(target)
+        if not spec:
+            return (
+                jsonify(
+                    {
+                        "error": "Unsupported branding image target. Expected one of: "
+                        f"{', '.join(sorted(BRANDING_IMAGE_TARGETS))}."
+                    }
+                ),
+                400,
+            )
+
+        upload = request.files.get("file")
+        if not upload or not upload.filename:
+            return jsonify({"error": "No file was supplied."}), 400
+
+        if not is_allowed_branding_image_filename(upload.filename, spec["extensions"]):
+            return (
+                jsonify(
+                    {
+                        "error": "Unsupported file type. Allowed extensions: "
+                        f"{', '.join(sorted(spec['extensions']))}."
+                    }
+                ),
+                400,
+            )
+
+        try:
+            file_bytes = upload.read()
+            processed = spec["prepare"](file_bytes, upload.filename)
+        except Exception as exc:
+            # A decode failure is administrator error, not a server fault, and the
+            # existing asset must survive it.
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Rejected {target} upload: {exc}",
+                level=logging.WARNING,
+            )
+            return (
+                jsonify({"error": f"That image could not be processed: {exc}"}),
+                400,
+            )
+
+        try:
+            settings = get_settings()
+            next_version = int(settings.get(spec["version_key"], 1) or 1) + 1
+
+            update_settings(
+                {
+                    spec["settings_key"]: processed["base64_str"],
+                    spec["version_key"]: next_version,
+                }
+            )
+            _refresh_branding_static_files()
+
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Stored {target} image "
+                f"({processed['detected_format']}, {processed['original_size']} -> "
+                f"{processed['stored_size']}, version {next_version})",
+                level=logging.INFO,
+            )
+
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "target": target,
+                        "url": f"{spec['static_url']}?v={next_version}",
+                        "version": next_version,
+                        "stored_size": list(processed["stored_size"]),
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_SETTINGS] Failed to store {target} image: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to store the uploaded image"}), 500
+
+    # ---------------------------------------------------------------------
+    # Global model endpoints
+    # ---------------------------------------------------------------------
+    #
+    # Personal and group scopes have had per-endpoint REST routes for a while; global
+    # scope never did. It was written through a hidden ``model_endpoints_json`` field on
+    # the classic admin form, which means adding or editing an endpoint there stores
+    # nothing until the whole settings page is submitted. These routes give global scope
+    # the same per-resource handling the other two scopes already have, so a save is a
+    # save.
+    #
+    # Secrets never travel outward: responses go through
+    # ``sanitize_model_endpoints_for_frontend``, which strips ``auth.api_key`` and
+    # ``auth.client_secret`` and leaves ``has_api_key`` / ``has_client_secret`` behind. An
+    # omitted secret on the way back in therefore means "keep what is stored" rather than
+    # "clear it", which is what ``merge_model_endpoint_payload`` implements.
+
+    @bp.route("/api/v2/admin/model-endpoints", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_list_model_endpoints():
+        """Return every global model endpoint, with secrets stripped."""
+        try:
+            settings = get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            endpoints = _load_global_model_endpoints(settings)
+            return (
+                jsonify(
+                    {
+                        "endpoints": sanitize_model_endpoints_for_frontend(endpoints),
+                        "multi_endpoint_enabled": bool(
+                            settings.get("enable_multi_model_endpoints", False)
+                        ),
+                        "migration": settings.get(MIGRATION_NOTICE_KEY),
+                        "embedding_migration": settings.get(EMBEDDING_MIGRATION_NOTICE_KEY),
+                        "default_notices": settings.get("ai_connection_default_notices", {}),
+                        "custom_api_types": get_model_endpoint_provider_ui_options(),
+                        "custom_network_policy": {
+                            "allow_private_custom_model_endpoints": settings.get("allow_private_custom_model_endpoints") is True,
+                            "allow_insecure_custom_model_endpoints": settings.get("allow_insecure_custom_model_endpoints") is True,
+                            "custom_model_endpoint_ca_bundle_path": settings.get("custom_model_endpoint_ca_bundle_path") or "",
+                        },
+                    }
+                ),
+                200,
+            )
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to list model endpoints: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load model endpoints"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints", methods=["POST"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_create_model_endpoint():
+        """Add one global model endpoint."""
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not payload:
+            return jsonify({"error": "Model endpoint payload must be an object."}), 400
+
+        try:
+            existing = _load_global_model_endpoints()
+            candidate = dict(payload)
+
+            endpoint_id = str(candidate.get("id") or "").strip()
+            if not endpoint_id:
+                endpoint_id = str(uuid.uuid4())
+            elif _find_model_endpoint(existing, endpoint_id):
+                return (
+                    jsonify({"error": "A model endpoint with that id already exists."}),
+                    409,
+                )
+            candidate["id"] = endpoint_id
+
+            normalized, _ = normalize_model_endpoints([candidate])
+            saved = _persist_global_model_endpoints(
+                list(existing) + normalized, existing, updated_endpoint_id=endpoint_id
+            )
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Created model endpoint {endpoint_id}",
+                level=logging.INFO,
+            )
+            return _model_endpoint_response(saved, endpoint_id, 201)
+        except KeyVaultSecretStorageError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 500
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to create model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to create the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints/<endpoint_id>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_model_endpoint(endpoint_id):
+        """Return one global model endpoint, with its secrets stripped."""
+        try:
+            endpoint = _find_model_endpoint(_load_global_model_endpoints(), endpoint_id)
+            if not endpoint:
+                return jsonify({"error": "Model endpoint not found."}), 404
+
+            sanitized = sanitize_model_endpoints_for_frontend([endpoint])
+            return jsonify({"endpoint": sanitized[0] if sanitized else {}}), 200
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to read model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints/<endpoint_id>", methods=["PATCH"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_update_model_endpoint(endpoint_id):
+        """Apply a partial update to one global model endpoint.
+
+        The stored endpoint is merged with the supplied keys server-side. A client only
+        ever holds a copy with the secrets stripped out, so sending that copy back must
+        not blank them -- and because the merge skips empty values, it does not.
+        """
+        updates = request.get_json(silent=True)
+        if not isinstance(updates, dict):
+            return jsonify({"error": "Model endpoint payload must be an object."}), 400
+
+        try:
+            existing = _load_global_model_endpoints()
+            current = _find_model_endpoint(existing, endpoint_id)
+            if not current:
+                return jsonify({"error": "Model endpoint not found."}), 404
+
+            merged = merge_model_endpoint_payload(
+                current, {**updates, "id": current.get("id")}
+            )
+            normalized, _ = normalize_model_endpoints([merged])
+            replaced = [
+                normalized[0]
+                if isinstance(endpoint, dict)
+                and str(endpoint.get("id") or "") == str(endpoint_id)
+                else endpoint
+                for endpoint in existing
+            ]
+
+            saved = _persist_global_model_endpoints(
+                replaced, existing, updated_endpoint_id=current.get("id")
+            )
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Updated model endpoint {endpoint_id}",
+                level=logging.INFO,
+            )
+            return _model_endpoint_response(saved, current.get("id"), 200)
+        except KeyVaultSecretStorageError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 500
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to update model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to update the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/model-endpoints/<endpoint_id>", methods=["DELETE"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_delete_model_endpoint(endpoint_id):
+        """Remove one global model endpoint and the secrets it owned.
+
+        The stored list is read server-side rather than taken from the request, so a
+        stale copy in one browser tab cannot drop endpoints it never knew about.
+        """
+        try:
+            existing = _load_global_model_endpoints()
+            if not _find_model_endpoint(existing, endpoint_id):
+                return jsonify({"error": "Model endpoint not found."}), 404
+
+            remaining = [
+                endpoint
+                for endpoint in existing
+                if not (
+                    isinstance(endpoint, dict)
+                    and str(endpoint.get("id") or "") == str(endpoint_id)
+                )
+            ]
+
+            _persist_global_model_endpoints(remaining, existing)
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Deleted model endpoint {endpoint_id}",
+                level=logging.INFO,
+            )
+            return jsonify({"success": True}), 200
+        except KeyVaultSecretStorageError as exc:
+            return jsonify({"error": exc.public_message, "code": exc.code}), 500
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_ENDPOINTS] Failed to delete model endpoint: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to delete the model endpoint"}), 500
+
+    @bp.route("/api/v2/admin/groups", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_list_groups():
+        """Return group directory rows for an administrator's assignment picker.
+
+        Settings such as ``group_workflow_allowed_group_ids`` store group ids. An
+        id is not something an administrator can recognise, so the picker needs to
+        resolve one to a name, and needs to search the directory to add another.
+
+        This exists rather than reusing ``/api/groups/discover`` because that
+        endpoint answers a different question: it is a member-facing directory,
+        gated on the User role and on group workspaces being enabled, it returns
+        every group in one unbounded response, and it cannot resolve a specific
+        set of ids. An administrator managing an assignment may hold neither the
+        User role nor a membership in the groups being assigned.
+
+        ``ids`` resolves an existing assignment; ids that no longer exist are
+        absent from the response, which is how the caller detects a stale entry.
+        Otherwise ``search`` matches on name, description or id.
+        """
+        raw_ids = str(request.args.get("ids") or "").strip()
+        if raw_ids:
+            requested_ids = normalize_group_workflow_allowed_group_ids(raw_ids)
+            if not requested_ids:
+                return jsonify({"groups": [], "truncated": False}), 200
+            if len(requested_ids) > GROUP_DIRECTORY_MAX_LIMIT:
+                return (
+                    jsonify(
+                        {
+                            "error": "Too many group ids requested. Limit is "
+                            f"{GROUP_DIRECTORY_MAX_LIMIT}."
+                        }
+                    ),
+                    400,
+                )
+
+            try:
+                return (
+                    jsonify({"groups": find_groups_by_ids(requested_ids), "truncated": False}),
+                    200,
+                )
+            except Exception as exc:
+                log_event(
+                    f"[V2_ADMIN_GROUPS] Failed to resolve {len(requested_ids)} group id(s): {exc}",
+                    level=logging.ERROR,
+                    exceptionTraceback=True,
+                )
+                return jsonify({"error": "Failed to load groups"}), 500
+
+        try:
+            limit = int(request.args.get("limit") or GROUP_DIRECTORY_DEFAULT_LIMIT)
+        except (TypeError, ValueError):
+            limit = GROUP_DIRECTORY_DEFAULT_LIMIT
+
+        try:
+            groups, truncated = list_groups_for_admin_directory(
+                search_query=request.args.get("search", ""),
+                limit=limit,
+            )
+            return jsonify({"groups": groups, "truncated": truncated}), 200
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_GROUPS] Failed to list groups: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load groups"}), 500
+
+    def _capability_model_payload(settings, capability):
+        definition = get_capability_definition(capability)
+        endpoints = _load_global_model_endpoints(settings)
+        selection, reason = resolve_capability_model_selection(
+            settings.get(definition.selection_key),
+            endpoints,
+            capability,
+        )
+        enabled = is_capability_enabled(settings, capability)
+        if capability == "chat" and not enabled:
+            selection = dict(EMPTY_MODEL_SELECTION)
+        choices = build_capability_model_catalog(endpoints, capability)
+        if capability == EMBEDDINGS_CAPABILITY:
+            compatible_choices = []
+            for choice in choices:
+                reference = {
+                    key: choice[key] for key in ("endpoint_id", "model_id", "provider")
+                }
+                try:
+                    profile = resolve_embedding_profile({
+                        **settings, EMBEDDING_SELECTION_KEY: reference,
+                    })
+                except AIConnectionError as exc:
+                    if selection == reference:
+                        selection = dict(EMPTY_MODEL_SELECTION)
+                        reason = exc.public_message
+                    continue
+                compatible_choices.append({
+                    **choice,
+                    "embedding_policy": {
+                        key: profile.policy[key]
+                        for key in choice.get("embedding_policy", {})
+                        if key in profile.policy
+                    },
+                })
+            choices = compatible_choices
+        notices = settings.get("ai_connection_default_notices")
+        notices = notices if isinstance(notices, dict) else {}
+        payload = {
+            "capability": capability,
+            "selection": selection,
+            "choices": choices,
+            "reason": reason or notices.get(capability),
+            "enabled": enabled,
+            "migration": settings.get(
+                EMBEDDING_MIGRATION_NOTICE_KEY
+                if capability == EMBEDDINGS_CAPABILITY else MIGRATION_NOTICE_KEY
+            ),
+        }
+        if capability == EMBEDDINGS_CAPABILITY:
+            payload["compatibility"] = embedding_compatibility_status(settings)
+        return payload
+
+    @bp.route("/api/v2/admin/capability-models/<capability>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_capability_model(capability):
+        """Read a task-specific reference and its eligible shared model choices."""
+        if capability not in CAPABILITY_DEFINITIONS:
+            return jsonify({
+                "error": "This AI capability is not implemented.",
+                "code": "unsupported_capability",
+            }), 404
+        try:
+            settings = get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            return jsonify(_capability_model_payload(settings, capability)), 200
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except Exception as exc:
+            log_event(
+                "[AI_CONNECTIONS] Capability defaults could not be read",
+                extra={"capability": capability, "error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "AI connection settings are unavailable."}), 503
+
+    @bp.route("/api/v2/admin/capability-models/<capability>", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_set_capability_model(capability):
+        """Store only a validated, globally authorized capability/model reference."""
+        if capability not in CAPABILITY_DEFINITIONS:
+            return jsonify({
+                "error": "This AI capability is not implemented.",
+                "code": "unsupported_capability",
+            }), 404
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or not isinstance(payload.get("selection"), dict):
+            return _ai_connection_error_response(AIConnectionError(
+                "Supply the model selection as an object.", "invalid_model_selection",
+            ))
+        if any(
+            payload["selection"].get(key) is not None
+            and not isinstance(payload["selection"][key], str)
+            for key in ("endpoint_id", "model_id", "provider")
+        ):
+            return _ai_connection_error_response(AIConnectionError(
+                "Model selection identifiers must be text.", "invalid_model_selection",
+            ))
+        try:
+            settings = (
+                read_embedding_settings() if capability == EMBEDDINGS_CAPABILITY
+                else get_settings()
+            )
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            definition = get_capability_definition(capability)
+            requested = normalize_capability_selection(payload["selection"])
+            clearing = not requested["endpoint_id"] and not requested["model_id"]
+            if bool(requested["endpoint_id"]) != bool(requested["model_id"]):
+                raise AIConnectionError(
+                    "Choose a connection and its model, or clear both identifiers.",
+                    "invalid_model_selection",
+                )
+            if capability == "chat" and not clearing and not settings.get("enable_multi_model_endpoints"):
+                raise AIConnectionError(
+                    "Turn on Use connections for chat before selecting its default.",
+                    "capability_disabled",
+                )
+            resolved, reason = resolve_capability_model_selection(
+                requested, _load_global_model_endpoints(settings), capability
+            )
+            if not clearing and not resolved["endpoint_id"]:
+                raise AIConnectionError(
+                    reason or "Choose a connection and a compatible enabled model.",
+                    "invalid_model_selection",
+                )
+            notices = settings.get("ai_connection_default_notices")
+            notices = dict(notices) if isinstance(notices, dict) else {}
+            notices.pop(capability, None)
+            updates = {definition.selection_key: resolved, "ai_connection_default_notices": notices}
+            if capability in ("image_generation", EMBEDDINGS_CAPABILITY):
+                is_embedding = capability == EMBEDDINGS_CAPABILITY
+                migration_version_key = (
+                    EMBEDDING_MIGRATION_VERSION_KEY if is_embedding else IMAGE_MIGRATION_VERSION_KEY
+                )
+                migration_notice_key = (
+                    EMBEDDING_MIGRATION_NOTICE_KEY if is_embedding else MIGRATION_NOTICE_KEY
+                )
+                updates[migration_version_key] = (
+                    EMBEDDING_MIGRATION_VERSION if is_embedding else IMAGE_MIGRATION_VERSION
+                )
+                previous_notice = settings.get(migration_notice_key)
+                imported_count = (
+                    previous_notice.get("imported_connections", 0)
+                    if isinstance(previous_notice, dict) else 0
+                )
+                updates[migration_notice_key] = {
+                    "status": "complete",
+                    "imported_connections": (
+                        imported_count if type(imported_count) is int else 0
+                    ),
+                    "message": (
+                        "Embeddings are managed through AI Connections."
+                        if is_embedding else "Image generation is managed through AI Connections."
+                    ),
+                }
+            if capability == EMBEDDINGS_CAPABILITY and not clearing:
+                profile = resolve_embedding_profile({**settings, **updates})
+                validate_custom_model_endpoint(profile.binding.endpoint, settings)
+            if not update_settings(updates):
+                return jsonify({"error": "The default model could not be stored."}), 500
+            log_event("[AI_CONNECTIONS] Capability default updated", extra={"capability": capability})
+            updated = (
+                read_embedding_settings() if capability == EMBEDDINGS_CAPABILITY
+                else {**settings, **updates}
+            )
+            if not isinstance(updated, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            return jsonify(_capability_model_payload(updated, capability)), 200
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except ModelEndpointValidationError as exc:
+            return jsonify({"error": exc.public_message, "code": "invalid_custom_endpoint"}), 400
+        except Exception as exc:
+            log_event(
+                "[AI_CONNECTIONS] Capability default could not be stored",
+                extra={"capability": capability, "error_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The default model could not be stored."}), 500
+
+    # ---------------------------------------------------------------------
+    # Default chat model
+    # ---------------------------------------------------------------------
+    #
+    # ``default_model_selection`` is a reference -- an endpoint id plus a model id --
+    # rather than a scalar, so it cannot travel through the settings PATCH: values there
+    # are coerced by type, and a reference has to be checked against what is actually
+    # configured before it means anything. It gets its own pair of routes instead, and
+    # the schema declares it as a ``component`` so the PATCH refuses it outright rather
+    # than storing an unchecked dict.
+
+    @bp.route("/api/v2/admin/default-model", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_default_model():
+        """Return the default chat model, resolved against the connections that exist.
+
+        The answer is what the selection currently means, not what is stored, because the
+        two diverge as soon as the connection or model it names is deleted or disabled.
+        ``reason`` carries that difference so the administrator is told why the field
+        looks empty instead of assuming it was never set.
+
+        The stored value is deliberately left alone: a read should not write.
+        """
+        try:
+            settings = get_settings()
+            multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
+            selection, reason = resolve_default_model_selection(
+                settings.get("default_model_selection"),
+                _load_global_model_endpoints(settings),
+                multi_endpoint_enabled=multi_endpoint_enabled,
+            )
+            return (
+                jsonify(
+                    {
+                        "selection": selection,
+                        "multi_endpoint_enabled": multi_endpoint_enabled,
+                        "reason": reason,
+                    }
+                ),
+                200,
+            )
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_DEFAULT_MODEL] Failed to read the default model: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load the default model"}), 500
+
+    @bp.route("/api/v2/admin/default-model", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_set_default_model():
+        """Store the default chat model, or clear it.
+
+        A selection that does not resolve is rejected rather than quietly stored or
+        quietly emptied. Both of those failure modes look identical to an administrator --
+        the field reads as "no default" afterwards -- and neither says which connection or
+        model went missing, which is the thing worth knowing.
+        """
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Default model payload must be an object."}), 400
+
+        candidate = payload.get("selection")
+        if not isinstance(candidate, dict):
+            return jsonify({"error": "Supply the selection as an object."}), 400
+
+        try:
+            settings = get_settings()
+            multi_endpoint_enabled = bool(settings.get("enable_multi_model_endpoints", False))
+            requested = normalize_default_model_selection(candidate)
+            clearing = not requested["endpoint_id"] and not requested["model_id"]
+
+            if not clearing and not multi_endpoint_enabled:
+                return (
+                    jsonify(
+                        {
+                            "error": (
+                                "Chat is running on the classic single endpoint, so a "
+                                "default chosen from the connections would not be used. "
+                                "Turn on \"Use connections for chat\" first."
+                            )
+                        }
+                    ),
+                    400,
+                )
+
+            resolved, reason = resolve_default_model_selection(
+                requested,
+                _load_global_model_endpoints(settings),
+                multi_endpoint_enabled=multi_endpoint_enabled,
+            )
+
+            if not clearing and not resolved["endpoint_id"]:
+                # ``reason`` is empty when only one half of the reference was supplied,
+                # which is a different mistake and deserves its own wording.
+                return (
+                    jsonify(
+                        {
+                            "error": reason
+                            or "Choose a connection and one of its enabled models."
+                        }
+                    ),
+                    400,
+                )
+
+            # ``update_settings`` catches its own exceptions and answers False, so an
+            # unchecked call would report a save that never reached storage.
+            if not update_settings({"default_model_selection": resolved}):
+                return jsonify({"error": "Failed to store the default model"}), 500
+
+            log_event(
+                "[V2_ADMIN_DEFAULT_MODEL] Default model set to "
+                f"{resolved['endpoint_id'] or 'none'}/{resolved['model_id'] or 'none'}",
+                level=logging.INFO,
+            )
+            return jsonify({"selection": resolved}), 200
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_DEFAULT_MODEL] Failed to store the default model: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to store the default model"}), 500
+
+    # ``embedding_model`` and ``image_gen_model`` are catalogs -- a list of discovered
+    # deployments plus the one in use -- rather than scalars, so like
+    # ``default_model_selection`` they are declared as ``component`` fields and the
+    # settings PATCH refuses them. These are the routes that write them, and they
+    # enforce the one rule the shape does not: the selection has to be a deployment
+    # that is actually in the catalog.
+    #
+    # Discovery is left where it already is, on ``/api/models/embedding`` and
+    # ``/api/models/image``. Both are admin-gated, both read the same stored endpoint
+    # configuration, and both are what the classic page calls, so re-implementing them
+    # would create a second answer to the same question.
+
+    @bp.route("/api/v2/admin/model-selection/<kind>", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_get_model_selection(kind):
+        """Return the stored deployment catalog for embeddings or image generation.
+
+        The stored list is returned rather than a fresh discovery call, so opening the
+        admin page never depends on Azure Resource Manager being reachable. Refreshing
+        the list is a deliberate action, exactly as it is on the classic page.
+        """
+        kind = str(kind or "").strip().lower()
+        catalog_kind = MODEL_CATALOG_KINDS.get(kind)
+        if catalog_kind is None:
+            return jsonify({"error": "Unknown model selection."}), 404
+
+        try:
+            settings = get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            if kind == "image" and image_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Image models are now selected through AI Connections.",
+                    "code": "image_catalog_migrated",
+                }), 409
+            if kind == "embedding" and embedding_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Embedding models are now selected through AI Connections.",
+                    "code": "embedding_catalog_migrated",
+                }), 409
+            selected, available = _read_model_catalog(
+                settings, catalog_kind["settings_key"]
+            )
+            return (
+                jsonify(
+                    {
+                        "kind": kind,
+                        "selected": selected[0] if selected else None,
+                        "models": available,
+                        "discovery_path": catalog_kind["discovery_path"],
+                    }
+                ),
+                200,
+            )
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_MODEL_SELECTION] Failed to read the {kind} catalog: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to load the model selection"}), 500
+
+    @bp.route("/api/v2/admin/model-selection/<kind>", methods=["PUT"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    def v2_admin_set_model_selection(kind):
+        """Store the deployment catalog and the single deployment in use."""
+        kind = str(kind or "").strip().lower()
+        catalog_kind = MODEL_CATALOG_KINDS.get(kind)
+        if catalog_kind is None:
+            return jsonify({"error": "Unknown model selection."}), 404
+
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Model selection payload must be an object."}), 400
+
+        settings_key = catalog_kind["settings_key"]
+        try:
+            settings = read_embedding_settings() if kind == "embedding" else get_settings()
+            if not isinstance(settings, dict):
+                return jsonify({"error": "AI connection settings are unavailable."}), 503
+            if kind == "image" and image_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Image models are now selected through AI Connections.",
+                    "code": "image_catalog_migrated",
+                }), 409
+            if kind == "embedding" and embedding_settings_use_connections(settings):
+                return jsonify({
+                    "error": "Embedding models are now selected through AI Connections.",
+                    "code": "embedding_catalog_migrated",
+                }), 409
+            _selected, stored_available = _read_model_catalog(settings, settings_key)
+            catalog, error = normalize_model_catalog(payload, stored_available)
+            if error:
+                return jsonify({"error": error}), 400
+
+            # ``update_settings`` catches its own exceptions and answers False, so an
+            # unchecked call would report a save that never reached storage.
+            if not update_settings({settings_key: catalog}):
+                return jsonify({"error": "Failed to store the model selection"}), 500
+
+            chosen = catalog["selected"][0]["deploymentName"] if catalog["selected"] else "none"
+            log_event(
+                f"[V2_ADMIN_MODEL_SELECTION] {catalog_kind['label']} deployment set to "
+                f"{chosen} from {len(catalog['all'])} discovered deployment(s)",
+                level=logging.INFO,
+            )
+            return (
+                jsonify(
+                    {
+                        "kind": kind,
+                        "selected": catalog["selected"][0] if catalog["selected"] else None,
+                        "models": catalog["all"],
+                    }
+                ),
+                200,
+            )
+        except AIConnectionError as exc:
+            return _ai_connection_error_response(exc)
+        except Exception as exc:
+            log_event(
+                f"[V2_ADMIN_MODEL_SELECTION] Failed to store the {kind} catalog: {exc}",
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({"error": "Failed to store the model selection"}), 500

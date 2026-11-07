@@ -175,27 +175,33 @@ def save_user_kernel(user_id, kernel, kernel_agents, redis_client):
 def sort_messages_by_thread(messages):
     """
     Sorts messages based on the thread chain (linked list via thread_id and previous_thread_id).
-    Legacy messages (without thread_id) are placed first, sorted by timestamp.
-    Threaded messages are appended, following the chain based on the EARLIEST timestamp 
-    for each thread_id (to handle retries correctly where newer timestamps shouldn't affect order).
+    Legacy or unthreaded messages (such as orchestration turns without thread_id) are interleaved
+    chronologically with threaded message chains based on the EARLIEST timestamp for each
+    thread_id (to handle retries correctly where newer timestamps shouldn't affect order).
     """
     if not messages:
         return []
     
-    # Helper function to get thread_id from metadata
+    # Helper function to get thread_id from metadata or top-level message fields
     def get_thread_id(msg):
-        return msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
+        thread_info = (msg.get('metadata') or {}).get('thread_info')
+        if isinstance(thread_info, dict) and thread_info.get('thread_id'):
+            return thread_info.get('thread_id')
+        return msg.get('thread_id')
     
     def get_previous_thread_id(msg):
-        return msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
+        thread_info = (msg.get('metadata') or {}).get('thread_info')
+        if isinstance(thread_info, dict) and 'previous_thread_id' in thread_info:
+            return thread_info.get('previous_thread_id')
+        return msg.get('previous_thread_id')
     
-    # Separate legacy and threaded messages
+    # Separate legacy/unthreaded and threaded messages
     legacy_msgs = [m for m in messages if not get_thread_id(m)]
     threaded_msgs = [m for m in messages if get_thread_id(m)]
     
     print(f"[SORT] Total messages: {len(messages)}, Legacy: {len(legacy_msgs)}, Threaded: {len(threaded_msgs)}")
     
-    # Sort legacy by timestamp
+    # Sort legacy/unthreaded messages by timestamp
     legacy_msgs.sort(key=lambda x: x.get('timestamp', ''))
     
     if not threaded_msgs:
@@ -207,7 +213,9 @@ def sort_messages_by_thread(messages):
     for m in threaded_msgs:
         tid = get_thread_id(m)
         thread_ids_seen.add(tid)
-        timestamp = m.get('timestamp', '')
+        thread_info = (m.get('metadata') or {}).get('thread_info')
+        root_ts = thread_info.get('root_timestamp') if isinstance(thread_info, dict) else None
+        timestamp = root_ts or m.get('timestamp', '')
         if tid not in earliest_timestamp_by_thread or timestamp < earliest_timestamp_by_thread[tid]:
             earliest_timestamp_by_thread[tid] = timestamp
     
@@ -248,6 +256,25 @@ def sort_messages_by_thread(messages):
     
     print(f"[SORT] Found {len(root_thread_ids)} root thread_ids: {root_thread_ids}")
     
+    # Ensure a parent thread's effective earliest timestamp is never later than a descendant's
+    # when an earlier retry attempt was pruned without root_timestamp metadata.
+    visited_earliest = set()
+
+    def compute_effective_earliest(thread_id):
+        if thread_id in visited_earliest:
+            return earliest_timestamp_by_thread.get(thread_id, '')
+        visited_earliest.add(thread_id)
+        earliest = earliest_timestamp_by_thread.get(thread_id, '')
+        for child_tid in children_thread_map.get(thread_id, []):
+            child_earliest = compute_effective_earliest(child_tid)
+            if child_earliest and (not earliest or child_earliest < earliest):
+                earliest = child_earliest
+        earliest_timestamp_by_thread[thread_id] = earliest
+        return earliest
+
+    for tid in list(thread_ids_seen):
+        compute_effective_earliest(tid)
+
     # Sort root thread_ids by the EARLIEST timestamp to maintain order even after retries
     root_thread_ids.sort(key=lambda tid: earliest_timestamp_by_thread.get(tid, ''))
     
@@ -256,14 +283,25 @@ def sort_messages_by_thread(messages):
         earliest = earliest_timestamp_by_thread.get(tid)
         print(f"  {i+1}. thread_id={tid}, earliest={earliest}")
     
-    ordered_threaded = []
+    ordered_messages = []
+    legacy_index = 0
+    visited_threads = set()
     
     def traverse_thread(thread_id):
         """Traverse all messages in a thread, then traverse child threads"""
+        nonlocal legacy_index
+        if thread_id in visited_threads:
+            return
+        visited_threads.add(thread_id)
+        thread_earliest = earliest_timestamp_by_thread.get(thread_id, '')
+        while legacy_index < len(legacy_msgs) and (legacy_msgs[legacy_index].get('timestamp', '') or '') <= thread_earliest:
+            ordered_messages.append(legacy_msgs[legacy_index])
+            legacy_index += 1
+
         # Add all messages from this thread (sorted by timestamp within the thread)
         thread_messages = messages_by_thread.get(thread_id, [])
         thread_messages_sorted = sorted(thread_messages, key=lambda x: x.get('timestamp', ''))
-        ordered_threaded.extend(thread_messages_sorted)
+        ordered_messages.extend(thread_messages_sorted)
         
         # Then traverse child threads
         if thread_id in children_thread_map:
@@ -275,5 +313,14 @@ def sort_messages_by_thread(messages):
 
     for root_tid in root_thread_ids:
         traverse_thread(root_tid)
+
+    for remaining_tid in sorted(
+        thread_ids_seen - visited_threads,
+        key=lambda tid: earliest_timestamp_by_thread.get(tid, ''),
+    ):
+        traverse_thread(remaining_tid)
+
+    if legacy_index < len(legacy_msgs):
+        ordered_messages.extend(legacy_msgs[legacy_index:])
         
-    return legacy_msgs + ordered_threaded
+    return ordered_messages

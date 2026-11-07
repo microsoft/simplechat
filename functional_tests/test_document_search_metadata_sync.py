@@ -2,14 +2,16 @@
 # test_document_search_metadata_sync.py
 """
 Functional test for durable, batched document search metadata sync.
-Version: 0.261.053
-Implemented in: 0.261.052
-Updated in: 0.261.053
+Version: 0.261.354
+Implemented in: 0.261.268
 
 This test ensures that document metadata edits no longer do per-chunk Search work inside the
-request: update_document() records a durable sync request in the same save, a background worker
-merges only the changed fields into every chunk in key-paged batches, failures retry with
-backoff, and access-control changes are projected to the chunks before they are saved.
+request: update_document() records a durable sync request whose token rides in the same save
+(strict or not), a background worker merges only the changed fields into every chunk in key-paged
+batches without ever writing to the document and then clears cached search results for the
+workspace and approved share recipients, failures retry with backoff, and access-control changes
+are projected safely: personal lists before the save, group revocations before the save through
+the projection fence, and group grants once Cosmos records them.
 """
 
 import ast
@@ -18,20 +20,37 @@ import json
 import logging
 import re
 import sys
-import threading
-import time
 import traceback
 import uuid
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosHttpResponseError, CosmosResourceNotFoundError
+from azure.cosmos._cosmos_responses import CosmosDict
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "application" / "single_app"
 DOCUMENTS_PATH = APP_ROOT / "functions_documents.py"
 sys.path.append(str(REPO_ROOT / "functional_tests"))
+sys.path.insert(0, str(APP_ROOT))
 
+from content_screening.contracts import (  # noqa: E402
+    SCREENING_FIELD,
+    ScreeningConflictError,
+    ScreeningValidationError,
+    document_is_available,
+)
+import functions_group_document_projection_fence as fence  # noqa: E402
+from functions_document_status import is_document_processing_complete, is_document_processing_failure  # noqa: E402
+from test_support.document_search_sync import (  # noqa: E402
+    FakeSearchClient,
+    FakeSettingsContainer,
+    RecordingExecutor,
+    load_document_search_sync_definitions,
+)
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
 
 
@@ -39,134 +58,38 @@ LOADED_FUNCTIONS = {
     "_search_indexing_results_succeeded",
     "_execute_document_search_write",
     "_get_documents_container",
+    "_build_archived_scope_value",
+    "_upsert_document_and_sync_access_index",
     "ensure_list",
     "update_document",
     "share_document_with_user",
-    "_escape_search_filter_literal",
-    "_resolve_document_chunk_scope",
-    "get_document_search_acl_fields",
-    "iter_document_chunk_key_pages",
-    "project_fields_to_document_chunks",
-    "project_document_acl_to_chunks",
-    "build_document_search_metadata_fields",
-    "_document_search_sync_now",
-    "_format_document_search_sync_time",
-    "_parse_document_search_sync_time",
-    "_get_document_search_sync_scope_name",
-    "get_document_search_sync_record_id",
-    "_document_search_sync_lease_is_active",
-    "_document_search_sync_intent_is_stale",
-    "_is_cosmos_write_conflict",
-    "_is_cosmos_not_found",
-    "_normalize_search_acl_entries",
-    "_read_document_search_sync_record",
-    "_replace_document_search_sync_record",
-    "request_document_search_metadata_sync",
-    "_get_document_search_sync_executor",
-    "schedule_document_search_metadata_sync",
-    "_run_scheduled_document_search_metadata_sync",
-    "_acquire_document_search_sync_lease",
-    "_renew_document_search_sync_lease",
-    "_release_document_search_sync_lease",
-    "_record_document_search_sync_failure",
-    "_complete_document_search_sync_pass",
-    "_delete_document_search_sync_record",
-    "_read_document_for_search_sync",
-    "_approved_search_share_principals",
-    "_invalidate_document_search_results_cache",
-    "run_document_search_metadata_sync",
-    "process_due_document_search_metadata_syncs",
+    "unshare_document_from_user",
 }
-LOADED_CLASSES = {
-    "DocumentSearchAclProjectionDeferredError",
-    "DocumentSearchAclProjectionError",
-    "DocumentSearchSyncLeaseLostError",
-}
-
-
-class FakeNotFoundError(Exception):
-    status_code = 404
-
-    def __init__(self, message=None, status=None):
-        super().__init__(message or "Not found")
-
-
-class FakeHttpError(Exception):
-    def __init__(self, status_code):
-        super().__init__(f"HTTP {status_code}")
-        self.status_code = status_code
+METADATA_INDEX_FIELDS = {"title", "author", "file_name", "document_classification", "document_tags"}
 
 
 class FakeSearchWritesFrozenError(Exception):
     pass
 
 
-class FakeExecutor:
-    """Capture queued sync work so a test decides when it runs."""
-
-    def __init__(self, max_workers=None, thread_name_prefix=None):
-        self.submitted = []
-
-    def submit(self, function, *args):
-        self.submitted.append((function, args))
-
-
-class FakeSettingsContainer:
-    """In-memory Cosmos container with etag preconditions."""
-
-    def __init__(self):
-        self.items = {}
-        self.before_replace = None
-
-    def _store(self, body):
-        item = copy.deepcopy(body)
-        item["_etag"] = uuid.uuid4().hex
-        self.items[item["id"]] = item
-        return copy.deepcopy(item)
-
-    def read_item(self, item, partition_key):
-        assert item == partition_key
-        if item not in self.items:
-            raise FakeNotFoundError()
-        return copy.deepcopy(self.items[item])
-
-    def create_item(self, body):
-        if body["id"] in self.items:
-            raise FakeHttpError(409)
-        return self._store(body)
-
-    def replace_item(self, item, body, etag=None, match_condition=None):
-        if self.before_replace is not None:
-            self.before_replace(item)
-        if item not in self.items:
-            raise FakeNotFoundError()
-        if etag is not None and self.items[item]["_etag"] != etag:
-            raise FakeHttpError(412)
-        return self._store(body)
-
-    def delete_item(self, item, partition_key, etag=None, match_condition=None):
-        if item not in self.items:
-            raise FakeNotFoundError()
-        if etag is not None and self.items[item]["_etag"] != etag:
-            raise FakeHttpError(412)
-        del self.items[item]
-
-    def query_items(self, query, parameters, enable_cross_partition_query=False):
-        values = {parameter["name"]: parameter["value"] for parameter in parameters}
-        due = [
-            item for item in self.items.values()
-            if item.get("type") == values["@type"] and str(item.get("next_attempt_at") or "") <= values["@now"]
-        ]
-        due.sort(key=lambda item: item.get("next_attempt_at") or "")
-        return [{"id": item["id"]} for item in due[: values["@limit"]]]
+class FakeOriginError(Exception):
+    pass
 
 
 class FakeDocumentsContainer:
-    """Document container keyed by id and scoped by one owner field."""
+    """SDK-shaped points, plain query rows, ETags, scoped queries and Cosmos errors."""
 
     def __init__(self, scope_field):
         self.scope_field = scope_field
         self.documents = {}
+        self.writes = []
+
+    def _store(self, body):
+        item = copy.deepcopy(body)
+        item["_etag"] = uuid.uuid4().hex
+        self.documents[item["id"]] = item
+        self.writes.append(item["id"])
+        return CosmosDict(copy.deepcopy(item), response_headers={})
 
     def query_items(self, query, parameters, enable_cross_partition_query=True):
         values = {parameter["name"]: parameter["value"] for parameter in parameters}
@@ -178,86 +101,36 @@ class FakeDocumentsContainer:
     def read_item(self, item, partition_key):
         assert item == partition_key
         if item not in self.documents:
-            raise FakeNotFoundError()
-        return copy.deepcopy(self.documents[item])
+            raise CosmosResourceNotFoundError(status_code=404, message="Not found")
+        return CosmosDict(copy.deepcopy(self.documents[item]), response_headers={})
 
+    def replace_item(self, item, body, etag=None, match_condition=None):
+        if item not in self.documents:
+            raise CosmosResourceNotFoundError(status_code=404, message="Not found")
+        if etag is not None and self.documents[item]["_etag"] != etag:
+            raise CosmosHttpResponseError(status_code=412, message="Precondition failed")
+        return self._store(body)
 
-class FakeSearchClient:
-    """AI Search client that evaluates the key-paging filter and applies merges."""
+    def create_item(self, body):
+        if body["id"] in self.documents:
+            raise CosmosHttpResponseError(status_code=409, message="Conflict")
+        return self._store(body)
 
-    FILTER_PATTERN = re.compile(
-        r"^document_id eq '(?P<document_id>(?:[^']|'')*)' "
-        r"and (?P<scope_field>user_id|group_id|public_workspace_id) eq '(?P<scope_value>(?:[^']|'')*)'"
-        r"(?: and id gt '(?P<last_key>(?:[^']|'')*)')?$"
-    )
-
-    def __init__(self, events):
-        self.events = events
-        self.chunks = {}
-        self.search_calls = []
-        self.merge_batches = []
-        self.fail_merges = False
-        self.before_merge = None
-
-    def add_chunk(self, chunk):
-        self.chunks[chunk["id"]] = dict(chunk)
-
-    def search(self, search_text, filter, select, order_by, top):
-        self.search_calls.append({
-            "search_text": search_text,
-            "filter": filter,
-            "select": list(select),
-            "order_by": list(order_by),
-            "top": top,
-        })
-        match = self.FILTER_PATTERN.match(filter)
-        assert match, f"Unexpected chunk filter: {filter}"
-        document_id = match.group("document_id").replace("''", "'")
-        scope_field = match.group("scope_field")
-        scope_value = match.group("scope_value").replace("''", "'")
-        last_key = match.group("last_key")
-        last_key = last_key.replace("''", "'") if last_key is not None else None
-        keys = sorted(
-            chunk_id for chunk_id, chunk in self.chunks.items()
-            if chunk.get("document_id") == document_id
-            and chunk.get(scope_field) == scope_value
-            and (last_key is None or chunk_id > last_key)
-        )
-        return [{"id": key} for key in keys[:top]]
-
-    def merge_documents(self, documents, **_kwargs):
-        if self.before_merge is not None:
-            self.before_merge(documents)
-        self.merge_batches.append(copy.deepcopy(documents))
-        self.events.append(("merge", [document["id"] for document in documents]))
-        if self.fail_merges:
-            return [{"succeeded": False} for _ in documents]
-        for document in documents:
-            self.chunks[document["id"]].update({key: value for key, value in document.items() if key != "id"})
-        return [{"succeeded": True} for _ in documents]
-
-
-class FakeSlot:
-    def __init__(self, harness):
-        self.harness = harness
-
-    def __enter__(self):
-        if self.harness.search_writes_frozen:
-            raise FakeSearchWritesFrozenError("AI Search writes are temporarily frozen.")
-        return self
-
-    def __exit__(self, *_args):
-        return False
+    def upsert_item(self, body):
+        return self._store(body)
 
 
 class Harness:
-    """Load the production sync code with in-memory Cosmos and Search fakes."""
+    """Load the production sync code with in-memory Cosmos and Search fakes and the real fence."""
 
     def __init__(self):
         self.events = []
         self.logs = []
         self.blob_tag_calls = []
         self.cache_invalidations = []
+        self.index_syncs = []
+        self.index_success = True
+        self.slot_holds = 0
         self.search_writes_frozen = False
         self.settings = FakeSettingsContainer()
         self.user_documents = FakeDocumentsContainer("user_id")
@@ -272,47 +145,59 @@ class Harness:
     def _load(self):
         source = DOCUMENTS_PATH.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(DOCUMENTS_PATH))
-        nodes = []
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef) and node.name in LOADED_FUNCTIONS:
-                nodes.append(node)
-            elif isinstance(node, ast.ClassDef) and node.name in LOADED_CLASSES:
-                nodes.append(node)
-            elif isinstance(node, ast.Assign) and any(
-                isinstance(target, ast.Name)
-                and (target.id.startswith("DOCUMENT_SEARCH_") or target.id.startswith("_document_search_sync_"))
-                for target in node.targets
-            ):
-                nodes.append(node)
-        loaded_names = {getattr(node, "name", None) for node in nodes}
-        missing = (LOADED_FUNCTIONS | LOADED_CLASSES) - loaded_names
+        nodes = [
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name in LOADED_FUNCTIONS
+        ]
+        missing = LOADED_FUNCTIONS - {node.name for node in nodes}
         assert not missing, f"Expected production definitions are missing: {sorted(missing)}"
 
         harness = self
 
-        def upsert_document(container, document_item, operation):
-            harness.events.append(("upsert", document_item["id"], operation))
-            container.documents[document_item["id"]] = copy.deepcopy(document_item)
-            return copy.deepcopy(document_item)
+        @contextmanager
+        def write_slot(_container, **_options):
+            if harness.search_writes_frozen:
+                raise FakeSearchWritesFrozenError("AI Search writes are temporarily frozen.")
+            harness.slot_holds += 1
+            yield
+
+        def sync_index(document_item, operation=None, **_kwargs):
+            harness.index_syncs.append((document_item["id"], operation))
+            return {"success": harness.index_success}
 
         namespace = {
+            "is_document_processing_complete": is_document_processing_complete,
+            "is_document_processing_failure": is_document_processing_failure,
             "json": json,
             "logging": logging,
             "re": re,
-            "threading": threading,
-            "time": time,
             "traceback": traceback,
             "uuid": uuid,
             "datetime": datetime,
             "timezone": timezone,
             "timedelta": timedelta,
-            "ThreadPoolExecutor": FakeExecutor,
-            "MatchConditions": type("MatchConditions", (), {"IfNotModified": "IfNotModified"}),
-            "CosmosResourceNotFoundError": FakeNotFoundError,
+            "nullcontext": nullcontext,
+            "MatchConditions": MatchConditions,
+            "CosmosResourceNotFoundError": CosmosResourceNotFoundError,
             "DataManagementSearchWritesFrozenError": FakeSearchWritesFrozenError,
-            "hold_data_management_search_write_slot": lambda _container: FakeSlot(harness),
+            "hold_data_management_search_write_slot": write_slot,
             "cosmos_data_management_jobs_container": object(),
-            "cosmos_settings_container": self.settings,
+            "prepare_embedding_search_documents": lambda *_args: None,
+            "hold_group_document_projection": fence.hold_group_document_projection,
+            "assert_group_document_source_writable": fence.assert_group_document_source_writable,
+            "GroupDocumentProjectionConflict": fence.GroupDocumentProjectionConflict,
+            "GROUP_DOCUMENT_PROJECTION_WRITER": fence.GROUP_DOCUMENT_PROJECTION_WRITER,
+            "SCREENING_FIELD": SCREENING_FIELD,
+            "ScreeningConflictError": ScreeningConflictError,
+            "ScreeningValidationError": ScreeningValidationError,
+            "document_is_available": document_is_available,
+            "ORIGIN_FIELD_NAMES": frozenset({"origin_kind"}),
+            "DocumentOriginError": FakeOriginError,
+            "current_extraction": lambda _document_id: None,
+            "is_publication": lambda *_args: False,
+            "subject_from_document": lambda _document: None,
+            "validate_screened_metadata_update": lambda *_args: None,
+            "sync_document_access_index_for_document_fail_open": sync_index,
             "cosmos_user_documents_container": self.user_documents,
             "cosmos_group_documents_container": self.group_documents,
             "cosmos_public_documents_container": self.public_documents,
@@ -321,21 +206,32 @@ class Harness:
                 else harness.group_search if group_id is not None
                 else harness.user_search
             ),
-            "_upsert_document_and_sync_access_index": upsert_document,
             "add_file_task_to_file_processing_log": lambda **_kwargs: None,
-            "calculate_processing_percentage": lambda document_item: document_item.get("percentage_complete", 0),
             "propagate_tags_to_blob_metadata": lambda *args: harness.blob_tag_calls.append(args),
             "invalidate_personal_search_cache": lambda user_id: harness.cache_invalidations.append(("personal", user_id)),
-            "invalidate_group_search_cache": lambda group_id: harness.cache_invalidations.append(("group", group_id)),
+            "invalidate_group_search_cache": lambda group_id, **_kwargs: harness.cache_invalidations.append(("group", group_id)),
             "invalidate_public_workspace_search_cache": (
                 lambda workspace_id: harness.cache_invalidations.append(("public", workspace_id))
             ),
             "log_event": lambda message, extra=None, **kwargs: harness.logs.append((message, extra, kwargs)),
         }
+        nodes.extend(
+            node for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "calculate_processing_percentage"
+        )
         module = ast.Module(body=nodes, type_ignores=[])
         ast.fix_missing_locations(module)
         exec(compile(module, str(DOCUMENTS_PATH), "exec"), namespace)
+        load_document_search_sync_definitions(namespace, settings_container=self.settings)
         namespace["_document_search_sync_now"] = lambda: harness.clock
+
+        real_upsert = namespace["_upsert_document_and_sync_access_index"]
+
+        def recorded_upsert(cosmos_container, document_item, operation, **kwargs):
+            harness.events.append(("upsert", document_item["id"], operation))
+            return real_upsert(cosmos_container, document_item, operation, **kwargs)
+
+        namespace["_upsert_document_and_sync_access_index"] = recorded_upsert
         return namespace
 
     def __getitem__(self, name):
@@ -351,9 +247,11 @@ class Harness:
             "title": "Large XML",
             "tags": [],
             "authors": [],
+            "version": 1,
             "status": "Processing Complete",
             "percentage_complete": 100,
             "shared_user_ids": [],
+            "_etag": uuid.uuid4().hex,
             **fields,
         }
         self.user_documents.documents[document_id] = document
@@ -366,7 +264,7 @@ class Harness:
                 "embedding": [0.1, 0.2, 0.3],
                 "document_tags": [],
                 "title": "Large XML",
-                "shared_user_ids": [],
+                "shared_user_ids": list(fields.get("shared_user_ids", [])),
             })
         return document
 
@@ -377,9 +275,11 @@ class Harness:
             "user_id": "editor-1",
             "title": "Group XML",
             "tags": [],
+            "version": 1,
             "status": "Processing Complete",
             "percentage_complete": 100,
             "shared_group_ids": [],
+            "_etag": uuid.uuid4().hex,
             **fields,
         }
         self.group_documents.documents[document_id] = document
@@ -395,7 +295,109 @@ class Harness:
         return document
 
     def sync_records(self):
-        return [item for item in self.settings.items.values() if item.get("type") == "document_search_metadata_sync"]
+        return self.settings.sync_records()
+
+
+def released_marker():
+    return {"state": "cleared", "scan_id": "scan-1"}
+
+
+# --- Engine -------------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("scope", ["personal", "group", "public"])
+def test_status_updates_preserve_sdk_points_etags_and_query_rows(scope):
+    harness = Harness()
+    if scope == "group":
+        document = harness.add_group_document()
+        container = harness.group_documents
+        identity = {"group_id": "group-1", "user_id": "editor-1"}
+    elif scope == "public":
+        document = {
+            "id": "public-doc-1", "public_workspace_id": "public-1", "user_id": "editor-1",
+            "file_name": "policy.md", "status": "Queued for processing", "percentage_complete": 0,
+            "_etag": "public-revision-1",
+        }
+        container = harness.public_documents
+        container.documents[document["id"]] = document
+        identity = {"public_workspace_id": "public-1", "user_id": "editor-1"}
+    else:
+        document = harness.add_personal_document()
+        container = harness.user_documents
+        identity = {"user_id": "owner-1"}
+    point = container.read_item(document["id"], document["id"])
+    assert type(point) is CosmosDict
+    rows = container.query_items("", [
+        {"name": "@document_id", "value": document["id"]},
+        {"name": f"@{container.scope_field}", "value": document[container.scope_field]},
+    ])
+    assert type(rows[0]) is dict
+    # Start from a new upload, not the fixture's completed document.
+    container.documents[document["id"]].update(status="Queued for processing", percentage_complete=0)
+    saved = harness["update_document"](
+        document_id=document["id"], **identity, strict=True, expected_etag=point["_etag"],
+        status="Processing file processing complete-error-failed.md, type: .md",
+    )
+    assert type(saved) is CosmosDict
+    assert saved["_etag"] != point["_etag"]
+    assert saved["percentage_complete"] == 0
+    with pytest.raises(ScreeningConflictError):
+        harness["update_document"](
+            document_id=document["id"], **identity, strict=True, expected_etag=point["_etag"],
+            status="Processing complete",
+        )
+    completed = harness["update_document"](
+        document_id=document["id"], **identity, strict=True, expected_etag=saved["_etag"],
+        status="Processing complete",
+    )
+    assert type(completed) is CosmosDict
+    assert completed["percentage_complete"] == 100
+
+
+@pytest.mark.parametrize("review_required", [False, True])
+def test_held_status_updates_distinguish_processing_details_from_final_completion(review_required):
+    harness = Harness()
+    document = harness.add_personal_document(
+        percentage_complete=42,
+        content_screening={"state": "scanning", "review_required": review_required},
+    )
+    status = "Processing file processing complete-error-failed.md, type: .md"
+    saved = harness["update_document"](
+        document_id=document["id"], user_id="owner-1", strict=True,
+        expected_etag=document["_etag"], status=status,
+    )
+    assert type(saved) is CosmosDict
+    assert saved["status"] == status
+    assert saved["percentage_complete"] == 42
+    pending = harness["update_document"](
+        document_id=document["id"], user_id="owner-1", strict=True,
+        expected_etag=saved["_etag"], status="Processing complete", percentage_complete=100,
+    )
+    assert pending["status"] == ("Content review required" if review_required else "Content screening pending")
+    assert pending["percentage_complete"] == 99
+    available = document_is_available(pending)
+    assert available is False
+
+
+@pytest.mark.parametrize("blocked_call", [1, 2])
+def test_status_update_cannot_write_after_its_operation_guard_expires(blocked_call):
+    harness = Harness()
+    document = harness.add_personal_document(percentage_complete=0)
+    calls = []
+
+    def guard():
+        calls.append("check")
+        if len(calls) == blocked_call:
+            raise ScreeningConflictError()
+
+    with pytest.raises(ScreeningConflictError):
+        harness["update_document"](
+            document_id=document["id"], user_id="owner-1", strict=True,
+            expected_etag=document["_etag"], operation_guard=guard,
+            status="Processing file failed-complete.md, type: .md",
+        )
+    assert len(calls) == blocked_call
+    assert harness.user_documents.documents[document["id"]] == document
+    assert harness.user_documents.writes == []
 
 
 def test_chunk_key_paging_is_key_ordered_scoped_and_id_only():
@@ -447,7 +449,7 @@ def test_projection_batch_size_respects_payload_byte_cap():
     assert sum(len(batch) for batch in harness.user_search.merge_batches) == 6
 
 
-def test_projection_fails_loudly_when_a_merge_is_not_acknowledged():
+def test_projection_fails_loudly_when_a_batch_is_not_acknowledged():
     """An unacknowledged merge raises instead of reporting a completed projection."""
     harness = Harness()
     harness.add_personal_document(chunk_count=2)
@@ -456,6 +458,46 @@ def test_projection_fails_loudly_when_a_merge_is_not_acknowledged():
     with pytest.raises(RuntimeError, match="did not acknowledge"):
         harness["project_fields_to_document_chunks"]("doc-1", {"title": "New"}, "owner-1")
 
+
+def test_metadata_merges_carry_only_mirrored_fields_and_hold_the_write_slot():
+    """Unfenced metadata merges carry only mirrored metadata, never access lists or scope fields,
+    and every merge still holds the Data Management Search write slot."""
+    harness = Harness()
+    harness.add_group_document(chunk_count=5, shared_group_ids=["group-2,approved"])
+    harness.namespace["DOCUMENT_SEARCH_SYNC_BATCH_SIZE"] = 2
+    harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+        title="Renamed", authors=["Ada"], document_classification="Internal", tags=["bills"],
+    )
+    etag_before_sync = harness.group_documents.documents["group-doc-1"]["_etag"]
+    writes_before_sync = len(harness.group_documents.writes)
+
+    result = harness["run_document_search_metadata_sync"]("document_search_metadata_sync:group:group-doc-1")
+
+    assert result["status"] == "complete" and result["chunks_updated"] == 5
+    merges = harness.group_search.merge_batches
+    assert len(merges) == 3 and harness.slot_holds == len(merges)
+    for batch in merges:
+        for action in batch:
+            assert set(action) - {"id"} <= METADATA_INDEX_FIELDS, action
+            assert "shared_group_ids" not in action and "shared_user_ids" not in action
+    # The worker never writes to the document: no fence claim, no sync state, no etag change.
+    assert harness.group_documents.documents["group-doc-1"]["_etag"] == etag_before_sync
+    assert len(harness.group_documents.writes) == writes_before_sync
+    assert all(chunk["shared_group_ids"] == ["group-2,approved"] for chunk in harness.group_search.chunks.values())
+
+    for field_values, scope in (
+        ({"title": "x", "shared_group_ids": []}, {"group_id": "group-1"}),
+        ({"shared_user_ids": []}, {"group_id": "group-1"}),
+        ({"shared_group_ids": []}, {}),
+        ({"group_id": "group-2"}, {"group_id": "group-1"}),
+        ({"user_id": "someone-else"}, {}),
+    ):
+        with pytest.raises(ValueError):
+            harness["project_fields_to_document_chunks"]("group-doc-1", field_values, "editor-1", **scope)
+
+
+# --- Durable sync request and worker ------------------------------------------------------------
 
 def test_update_document_queues_metadata_sync_without_chunk_work():
     """A metadata save records a durable sync request and never touches chunks inline."""
@@ -508,6 +550,7 @@ def test_worker_projects_latest_pending_values_and_clears_the_request():
     assert all(chunk["document_tags"] == ["bills"] and chunk["title"] == "Renamed" for chunk in harness.user_search.chunks.values())
     assert all(set(action) == {"id", "document_tags", "title"} for batch in harness.user_search.merge_batches for action in batch)
     assert harness.blob_tag_calls == [("doc-1", ["bills"], "owner-1", None, None)]
+    assert harness.cache_invalidations == [("personal", "owner-1")]
 
 
 def test_worker_clears_cached_search_results_for_the_owner_and_approved_recipients():
@@ -537,6 +580,28 @@ def test_worker_clears_cached_search_results_for_the_owner_and_approved_recipien
 
     assert result["status"] == "complete" and result["chunks_updated"] == 0
     assert harness.cache_invalidations == []
+
+
+def test_a_sync_clears_the_workspace_search_cache_only_when_chunks_changed():
+    """A search that ran mid-sync could have cached the old values, so a sync that changed chunks
+    clears its workspace's cached results; a document with no chunks changes nothing to clear."""
+    harness = Harness()
+    harness.add_group_document(chunk_count=2)
+    harness.add_group_document(document_id="no-chunks", chunk_count=0)
+    harness["update_document"](document_id="group-doc-1", user_id="editor-1", group_id="group-1", strict=True,
+                               expected_etag=harness.group_documents.documents["group-doc-1"]["_etag"], title="New")
+    harness["update_document"](document_id="no-chunks", user_id="editor-1", group_id="group-1", strict=True,
+                               expected_etag=harness.group_documents.documents["no-chunks"]["_etag"], title="New")
+
+    results = [harness["run_document_search_metadata_sync"](record["id"]) for record in list(harness.sync_records())]
+
+    assert sorted(result["status"] for result in results) == ["complete", "complete"]
+    assert harness.cache_invalidations == [("group", "group-1")]
+    harness.namespace["invalidate_group_search_cache"] = lambda *_args, **_kwargs: 1 / 0
+    harness["update_document"](document_id="group-doc-1", user_id="editor-1", group_id="group-1", strict=True,
+                               expected_etag=harness.group_documents.documents["group-doc-1"]["_etag"], title="Newer")
+    assert harness["run_document_search_metadata_sync"]("document_search_metadata_sync:group:group-doc-1")["status"] == "complete"
+    assert any("Cached search results were not cleared" in message for message, _extra, _kwargs in harness.logs)
 
 
 def test_worker_projects_a_newer_edit_that_arrives_mid_sync():
@@ -695,6 +760,307 @@ def test_frozen_search_writes_retry_on_a_fixed_delay():
     assert all(chunk["document_tags"] == ["bills"] for chunk in harness.user_search.chunks.values())
 
 
+def test_worker_drops_requests_for_missing_or_moved_documents():
+    """A request for a deleted document, or one that left its scope, is discarded safely."""
+    harness = Harness()
+    harness.add_personal_document(chunk_count=2)
+    harness["update_document"](document_id="doc-1", user_id="owner-1", tags=["bills"])
+    del harness.user_documents.documents["doc-1"]
+
+    result = harness["run_document_search_metadata_sync"]("document_search_metadata_sync:personal:doc-1")
+
+    assert result["status"] == "document_missing"
+    assert harness.sync_records() == []
+    assert harness.user_search.merge_batches == []
+
+
+def test_held_screened_documents_have_nothing_to_sync():
+    """A held screened document has no released chunks: a save requests no sync, and a worker that
+    finds the document held completes without projecting anything."""
+    harness = Harness()
+    harness.add_personal_document(chunk_count=3, content_screening={"state": "pending_review", "scan_id": "scan-1"})
+
+    result = harness["update_document"](document_id="doc-1", user_id="owner-1", tags=["bills"])
+
+    assert result == {"updated": True, "search_sync": {"status": "not_required"}}
+    assert harness.sync_records() == []
+    harness["request_document_search_metadata_sync"]("doc-1", ["tags"], "owner-1")
+    harness.advance(601)
+    outcome = harness["run_document_search_metadata_sync"]("document_search_metadata_sync:personal:doc-1")
+    assert outcome["status"] == "complete" and outcome["chunks_updated"] == 0
+    assert harness.user_search.merge_batches == [] and harness.blob_tag_calls == []
+    assert harness.sync_records() == []
+
+
+def test_scheduler_deduplicates_queued_documents():
+    """Repeated saves of one document queue a single in-process sync until it starts."""
+    harness = Harness()
+
+    assert harness["schedule_document_search_metadata_sync"]("doc-1") is True
+    assert harness["schedule_document_search_metadata_sync"]("doc-1") is True
+    assert harness["schedule_document_search_metadata_sync"]("doc-1", group_id="group-1") is True
+
+    executor = harness["_document_search_sync_executor"]
+    assert isinstance(executor, RecordingExecutor)
+    assert [args for _function, args in executor.submitted] == [
+        ("document_search_metadata_sync:personal:doc-1",),
+        ("document_search_metadata_sync:group:doc-1",),
+    ]
+
+
+# --- Strict mode (native group and public APIs) -------------------------------------------------
+
+def test_strict_update_carries_the_token_in_the_same_save_without_chunk_work():
+    """A strict save requests the sync before it saves, stores the token in that same save, does no
+    Search work, and re-requests the sync for every projected field it was sent (retry repairs)."""
+    harness = Harness()
+    harness.add_group_document(chunk_count=6, shared_group_ids=["group-2,approved"])
+    document = harness.group_documents.documents["group-doc-1"]
+
+    saved, search_sync = harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+        strict=True, expected_etag=document["_etag"], return_search_sync=True,
+        tags=["bills"], abstract="Summary",
+    )
+
+    (record,) = harness.sync_records()
+    assert search_sync == {"status": "pending", "revision": 1, "fields": ["tags"]}
+    assert saved["search_metadata_sync_token"] == record["latest_request_token"]
+    assert harness.group_documents.documents["group-doc-1"]["search_metadata_sync_token"] == record["latest_request_token"]
+    assert harness.group_search.merge_batches == [] and harness.group_search.search_calls == []
+    assert len([event for event in harness.events if event[0] == "upsert"]) == 1
+
+    again = harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+        strict=True, expected_etag=saved["_etag"], tags=["bills"],
+    )
+    assert isinstance(again, dict) and again["id"] == "group-doc-1"
+    (record,) = harness.sync_records()
+    assert record["revision"] == 2 and again["search_metadata_sync_token"] == record["latest_request_token"]
+
+
+def test_strict_group_metadata_edits_no_longer_race_the_projection_fence():
+    """Strict group metadata edits used to project per chunk through the projection fence, whose
+    claim rewrote the document etag after the first chunk and failed the edit. Metadata now syncs
+    outside the fence, so the saved etag stays current and the next strict edit succeeds."""
+    harness = Harness()
+    harness.add_group_document(chunk_count=5)
+    document = harness.group_documents.documents["group-doc-1"]
+
+    saved = harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+        strict=True, expected_etag=document["_etag"], title="Renamed", tags=["bills"],
+    )
+    outcome = harness["run_document_search_metadata_sync"]("document_search_metadata_sync:group:group-doc-1")
+
+    assert outcome["status"] == "complete" and outcome["chunks_updated"] == 5
+    assert harness.group_documents.documents["group-doc-1"]["_etag"] == saved["_etag"]
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in harness.group_documents.documents["group-doc-1"]
+    follow_up = harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+        strict=True, expected_etag=saved["_etag"], title="Renamed again",
+    )
+    assert follow_up["title"] == "Renamed again"
+    assert all(chunk["document_tags"] == ["bills"] for chunk in harness.group_search.chunks.values())
+
+
+def test_strict_access_index_failure_still_reports_incomplete_propagation():
+    """Metadata projection no longer fails a strict save, but the access index projection still does."""
+    harness = Harness()
+    harness.add_group_document(chunk_count=2)
+    harness.index_success = False
+    document = harness.group_documents.documents["group-doc-1"]
+
+    with pytest.raises(harness["DocumentMutationPropagationError"]):
+        harness["update_document"](
+            document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+            strict=True, expected_etag=document["_etag"], tags=["bills"],
+        )
+    assert harness.group_search.merge_batches == []
+
+
+# --- Access control ------------------------------------------------------------------------------
+
+def test_group_revocation_is_projected_before_it_is_saved():
+    """A group revocation reaches every chunk through the projection fence before Cosmos records it.
+    The fence's claim changes the document etag, which the save adopts."""
+    harness = Harness()
+    harness.add_group_document(shared_group_ids=["group-2,approved"])
+
+    result = harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=[],
+    )
+
+    assert result["search_sync"] == {"status": "not_required"}
+    kinds = [event[0] for event in harness.events]
+    assert "merge" in kinds and kinds.index("merge") < kinds.index("upsert")
+    assert all(set(action) == {"id", "shared_group_ids"} for batch in harness.group_search.merge_batches for action in batch)
+    assert all(chunk["shared_group_ids"] == [] for chunk in harness.group_search.chunks.values())
+    stored = harness.group_documents.documents["group-doc-1"]
+    assert stored["shared_group_ids"] == []
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in stored
+    # The fence claimed and released the document around the merge, then the save adopted its etag.
+    assert harness.group_documents.writes == ["group-doc-1", "group-doc-1", "group-doc-1"]
+    assert harness.sync_records() == []
+
+
+def test_group_revocation_is_not_saved_when_search_cannot_enforce_it():
+    """A failed or frozen revocation projection raises and leaves the stored access unchanged."""
+    harness = Harness()
+    harness.add_group_document(shared_group_ids=["group-2,approved"])
+    harness.group_search.fail_merges = True
+
+    with pytest.raises(harness["DocumentSearchAclProjectionError"]):
+        harness["update_document"](
+            document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=[],
+        )
+    assert harness.group_documents.documents["group-doc-1"]["shared_group_ids"] == ["group-2,approved"]
+
+    harness.group_search.fail_merges = False
+    harness.search_writes_frozen = True
+    with pytest.raises(harness["DocumentSearchAclProjectionDeferredError"], match="temporarily frozen"):
+        harness["update_document"](
+            document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=[],
+        )
+    stored = harness.group_documents.documents["group-doc-1"]
+    assert stored["shared_group_ids"] == ["group-2,approved"]
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in stored
+    assert not any(event[0] == "upsert" for event in harness.events)
+
+
+def test_concurrent_change_during_a_revocation_restores_search_to_cosmos():
+    """When another writer changes the document while a revocation is being projected, the update
+    is refused with a conflict and Search is projected back to the list Cosmos records."""
+    harness = Harness()
+    harness.add_group_document(shared_group_ids=["group-2,approved"])
+    concurrent = []
+
+    def concurrent_title_change(_documents):
+        if not concurrent:
+            concurrent.append(True)
+            harness.group_documents.documents["group-doc-1"]["title"] = "Concurrent winner"
+
+    harness.group_search.before_merge = concurrent_title_change
+
+    with pytest.raises(ScreeningConflictError):
+        harness["update_document"](
+            document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=[],
+        )
+
+    stored = harness.group_documents.documents["group-doc-1"]
+    assert stored["title"] == "Concurrent winner" and stored["shared_group_ids"] == ["group-2,approved"]
+    assert all(chunk["shared_group_ids"] == ["group-2,approved"] for chunk in harness.group_search.chunks.values())
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in stored
+    assert not any(event[0] == "upsert" for event in harness.events)
+
+
+def test_group_grant_is_projected_once_cosmos_records_it():
+    """The projection fence admits a group grant only after it is saved, so approvals are projected
+    after the save. A grant that does not reach Search is reported for a retry to complete it, while
+    a pending share, which grants nothing, is projected best effort."""
+    harness = Harness()
+    harness.add_group_document(shared_group_ids=["group-2,not_approved"])
+
+    harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=["group-2,approved"],
+    )
+
+    kinds = [event[0] for event in harness.events]
+    assert kinds.index("upsert") < kinds.index("merge")
+    assert all(chunk["shared_group_ids"] == ["group-2,approved"] for chunk in harness.group_search.chunks.values())
+    assert fence.GROUP_DOCUMENT_PROJECTION_WRITER not in harness.group_documents.documents["group-doc-1"]
+
+    harness.group_search.fail_merges = True
+    with pytest.raises(harness["DocumentMutationPropagationError"]) as failed:
+        harness["update_document"](
+            document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+            shared_group_ids=["group-2,approved", "group-3,approved"],
+        )
+    assert failed.value.search_writes_frozen is False
+    assert harness.group_documents.documents["group-doc-1"]["shared_group_ids"] == ["group-2,approved", "group-3,approved"]
+    assert harness["describe_document_search_acl_error"](failed.value)[1] == 500
+
+    harness.group_search.fail_merges = False
+    harness.search_writes_frozen = True
+    with pytest.raises(harness["DocumentMutationPropagationError"]) as frozen:
+        harness["update_document"](
+            document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+            shared_group_ids=["group-2,approved", "group-3,approved", "group-4,approved"],
+        )
+    assert frozen.value.search_writes_frozen is True
+    message, status, retry_after = harness["describe_document_search_acl_error"](frozen.value)
+    assert status == 503 and retry_after and "frozen" in message
+
+    harness.search_writes_frozen = False
+    harness.group_search.fail_merges = True
+    pending = harness["update_document"](
+        document_id="group-doc-1", group_id="group-1", user_id="editor-1",
+        shared_group_ids=["group-2,approved", "group-3,approved", "group-4,approved", "group-5,not_approved"],
+    )
+    assert pending["updated"] is True
+    assert any("grants no search access" in message for message, _extra, _kwargs in harness.logs)
+
+
+def test_reprojection_repairs_a_saved_approval():
+    """Approving an already-approved share projects the recorded list again, which completes an
+    approval saved before its search update finished. Held documents are rebuilt on publication."""
+    harness = Harness()
+    harness.add_group_document(shared_group_ids=["group-2,approved"])
+    for chunk in harness.group_search.chunks.values():
+        chunk["shared_group_ids"] = []
+    document = harness.group_documents.documents["group-doc-1"]
+
+    assert harness["reproject_document_search_acl"](document, "editor-1", group_id="group-1") == 4
+    assert all(chunk["shared_group_ids"] == ["group-2,approved"] for chunk in harness.group_search.chunks.values())
+
+    harness.add_personal_document(document_id="doc-9", shared_user_ids=["viewer-1,approved"], chunk_count=2)
+    for chunk in harness.user_search.chunks.values():
+        chunk["shared_user_ids"] = []
+    assert harness["reproject_document_search_acl"](harness.user_documents.documents["doc-9"], "viewer-1") == 2
+    assert all(chunk["shared_user_ids"] == ["viewer-1,approved"] for chunk in harness.user_search.chunks.values())
+
+    held = dict(document, content_screening={"state": "pending_review", "scan_id": "scan-1"})
+    merges = len(harness.group_search.merge_batches)
+    assert harness["reproject_document_search_acl"](held, "editor-1", group_id="group-1") == 0
+    assert len(harness.group_search.merge_batches) == merges
+
+    harness.group_search.fail_merges = True
+    with pytest.raises(harness["DocumentMutationPropagationError"]):
+        harness["reproject_document_search_acl"](document, "editor-1", group_id="group-1")
+
+
+def test_personal_access_changes_project_before_save_and_held_documents_project_only_revocations():
+    """A personal access change reaches Search before Cosmos records it. A held document projects
+    only the revocation part; its grants are rebuilt when it is published."""
+    harness = Harness()
+    harness.add_personal_document(chunk_count=2, shared_user_ids=["viewer-1,approved"])
+
+    harness["update_document"](
+        document_id="doc-1", user_id="owner-1", shared_user_ids=["viewer-2,approved"],
+    )
+    kinds = [event[0] for event in harness.events]
+    assert kinds.index("merge") < kinds.index("upsert")
+    assert all(chunk["shared_user_ids"] == ["viewer-2,approved"] for chunk in harness.user_search.chunks.values())
+
+    harness.add_personal_document(
+        document_id="doc-held", chunk_count=2, shared_user_ids=["viewer-1,approved"],
+        content_screening={"state": "pending_review", "scan_id": "scan-1"},
+    )
+    harness["update_document"](
+        document_id="doc-held", user_id="owner-1", shared_user_ids=["viewer-3,approved"],
+    )
+    held_chunks = [chunk for chunk in harness.user_search.chunks.values() if chunk["document_id"] == "doc-held"]
+    assert all(chunk["shared_user_ids"] == [] for chunk in held_chunks)
+
+
+def test_public_documents_have_no_acl_projection():
+    """Public workspace documents carry no per-document ACL fields to project."""
+    harness = Harness()
+    assert harness["get_document_search_acl_fields"](public_workspace_id="ws-1") == ()
+    assert harness["get_document_search_acl_fields"](group_id="group-1") == ("shared_group_ids",)
+    assert harness["get_document_search_acl_fields"]() == ("shared_user_ids",)
+
+
 def test_equivalent_access_lists_are_not_projected():
     """A missing access list and an empty one grant the same access, so no Search write is needed."""
     harness = Harness()
@@ -718,67 +1084,6 @@ def test_equivalent_access_lists_are_not_projected():
     assert harness.group_search.merge_batches == []
 
 
-def test_worker_drops_requests_for_missing_or_moved_documents():
-    """A request for a deleted document, or one that left its scope, is discarded safely."""
-    harness = Harness()
-    harness.add_personal_document(chunk_count=2)
-    harness["update_document"](document_id="doc-1", user_id="owner-1", tags=["bills"])
-    del harness.user_documents.documents["doc-1"]
-
-    result = harness["run_document_search_metadata_sync"]("document_search_metadata_sync:personal:doc-1")
-
-    assert result["status"] == "document_missing"
-    assert harness.sync_records() == []
-    assert harness.user_search.merge_batches == []
-
-
-def test_group_acl_change_is_projected_before_it_is_saved():
-    """Group sharing changes reach every chunk before Cosmos records them, including ACL-only saves."""
-    harness = Harness()
-    harness.add_group_document(shared_group_ids=["group-2,approved"])
-
-    result = harness["update_document"](
-        document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=[],
-    )
-
-    assert result["search_sync"] == {"status": "not_required"}
-    assert [event[0] for event in harness.events] == ["merge", "upsert"]
-    assert all(set(action) == {"id", "shared_group_ids"} for batch in harness.group_search.merge_batches for action in batch)
-    assert all(chunk["shared_group_ids"] == [] for chunk in harness.group_search.chunks.values())
-    assert harness.group_documents.documents["group-doc-1"]["shared_group_ids"] == []
-    assert harness.sync_records() == []
-
-
-def test_group_acl_change_is_not_saved_when_search_cannot_enforce_it():
-    """A failed or frozen ACL projection raises and leaves the stored access unchanged."""
-    harness = Harness()
-    harness.add_group_document(shared_group_ids=["group-2,approved"])
-    harness.group_search.fail_merges = True
-
-    with pytest.raises(harness["DocumentSearchAclProjectionError"]):
-        harness["update_document"](
-            document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=[],
-        )
-    assert harness.group_documents.documents["group-doc-1"]["shared_group_ids"] == ["group-2,approved"]
-
-    harness.group_search.fail_merges = False
-    harness.search_writes_frozen = True
-    with pytest.raises(harness["DocumentSearchAclProjectionDeferredError"], match="temporarily frozen"):
-        harness["update_document"](
-            document_id="group-doc-1", group_id="group-1", user_id="editor-1", shared_group_ids=[],
-        )
-    assert harness.group_documents.documents["group-doc-1"]["shared_group_ids"] == ["group-2,approved"]
-    assert not any(event[0] == "upsert" for event in harness.events)
-
-
-def test_public_documents_have_no_acl_projection():
-    """Public workspace documents carry no per-document ACL fields to project."""
-    harness = Harness()
-    assert harness["get_document_search_acl_fields"](public_workspace_id="ws-1") == ()
-    assert harness["get_document_search_acl_fields"](group_id="group-1") == ("shared_group_ids",)
-    assert harness["get_document_search_acl_fields"]() == ("shared_user_ids",)
-
-
 def test_pending_share_is_saved_even_when_projection_fails():
     """A pending share grants no search access, so its projection is best effort after the save."""
     harness = Harness()
@@ -790,57 +1095,131 @@ def test_pending_share_is_saved_even_when_projection_fails():
     assert any("pending share" in message for message, _extra, _kwargs in harness.logs)
 
 
-def test_scheduler_deduplicates_queued_documents():
-    """Repeated saves of one document queue a single in-process sync until it starts."""
+def test_unshare_fails_closed_and_reports_why():
+    """An unshare projects before it saves; a failed or frozen projection is raised, not hidden as
+    a generic failure, and the stored access is unchanged."""
     harness = Harness()
+    harness.add_personal_document(chunk_count=2, shared_user_ids=["viewer-1,approved"])
+    harness.user_search.fail_merges = True
 
-    assert harness["schedule_document_search_metadata_sync"]("doc-1") is True
-    assert harness["schedule_document_search_metadata_sync"]("doc-1") is True
-    assert harness["schedule_document_search_metadata_sync"]("doc-1", group_id="group-1") is True
+    with pytest.raises(harness["DocumentSearchAclProjectionError"]):
+        harness["unshare_document_from_user"]("doc-1", "owner-1", "viewer-1")
+    assert harness.user_documents.documents["doc-1"]["shared_user_ids"] == ["viewer-1,approved"]
 
-    executor = harness["_document_search_sync_executor"]
-    assert [args for _function, args in executor.submitted] == [
-        ("document_search_metadata_sync:personal:doc-1",),
-        ("document_search_metadata_sync:group:doc-1",),
-    ]
+    harness.user_search.fail_merges = False
+    harness.search_writes_frozen = True
+    with pytest.raises(harness["DocumentSearchAclProjectionDeferredError"]):
+        harness["unshare_document_from_user"]("doc-1", "owner-1", "viewer-1")
+    assert harness.user_documents.documents["doc-1"]["shared_user_ids"] == ["viewer-1,approved"]
+
+    harness.search_writes_frozen = False
+    assert harness["unshare_document_from_user"]("doc-1", "owner-1", "viewer-1") is True
+    assert harness.user_documents.documents["doc-1"]["shared_user_ids"] == []
+    assert all(chunk["shared_user_ids"] == [] for chunk in harness.user_search.chunks.values())
+
+
+def test_access_errors_map_to_fixed_safe_responses():
+    """Every access-change failure maps to a fixed message, with Retry-After while writes are frozen."""
+    harness = Harness()
+    describe = harness["describe_document_search_acl_error"]
+
+    deferred = describe(harness["DocumentSearchAclProjectionDeferredError"]("raw provider text"))
+    failed = describe(harness["DocumentSearchAclProjectionError"]("raw provider text"))
+    incomplete = describe(harness["DocumentMutationPropagationError"]("raw provider text"))
+    conflict = describe(ScreeningConflictError())
+
+    assert deferred[1:] == (503, 150) and failed[1:] == (500, None)
+    assert incomplete[1:] == (500, None) and conflict[1:] == (409, None)
+    assert all("raw provider text" not in message for message, _status, _retry in (deferred, failed, incomplete, conflict))
+    assert describe(ValueError("other")) is None
+
+
+# --- Routes, receipts, client and background wiring ----------------------------------------------
+
+def _function(tree, name):
+    return next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name)
 
 
 def test_routes_and_client_no_longer_drive_per_chunk_sync():
-    """Metadata routes save once, tag routes drop duplicate passes, and the browser loop is gone."""
-    assert_app_version_at_least("0.261.052")
+    """Metadata routes save once, tag routes drop duplicate passes, and the background loop is wired."""
+    assert_app_version_at_least("0.261.268")
     route_files = {
         "route_backend_documents.py": "api_patch_user_document",
         "route_backend_group_documents.py": "api_patch_group_document",
         "route_backend_public_documents.py": "api_patch_public_document",
+        "route_external_public_documents.py": "external_patch_public_document",
     }
     for file_name, patch_route_name in route_files.items():
         source = (APP_ROOT / file_name).read_text(encoding="utf-8")
         assert "propagate_tags_to_chunks" not in source, f"{file_name} still runs a duplicate tag pass"
         tree = ast.parse(source)
-        patch_route = next(
-            node for node in ast.walk(tree)
-            if isinstance(node, ast.FunctionDef) and node.name == patch_route_name
-        )
+        patch_route = _function(tree, patch_route_name)
         update_calls = [
             node for node in ast.walk(patch_route)
             if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "update_document"
         ]
         assert len(update_calls) == 1, f"{patch_route_name} must save every field in one update_document call"
-        assert "search_sync" in ast.get_source_segment(source, patch_route)
-        assert "_metadata_chunk_sync" not in ast.get_source_segment(source, patch_route)
+        route_source = ast.get_source_segment(source, patch_route)
+        assert "search_sync" in route_source
+        assert "str(e)" not in route_source
 
     documents_source = DOCUMENTS_PATH.read_text(encoding="utf-8")
     assert "def propagate_tags_to_chunks" not in documents_source
     assert "chunk_sync_limit" not in documents_source
 
-    workspace_js = (APP_ROOT / "static" / "js" / "workspace" / "workspace-documents.js").read_text(encoding="utf-8")
-    assert "_metadata_chunk_sync" not in workspace_js
-    assert "search_sync" in workspace_js
+    for script in (
+        APP_ROOT / "static" / "js" / "workspace" / "workspace-documents.js",
+        APP_ROOT / "static" / "js" / "public" / "public_workspace.js",
+        APP_ROOT / "templates" / "group_workspaces.html",
+    ):
+        assert "search_sync?.status === \"pending\"" in script.read_text(encoding="utf-8"), script.name
 
     background_source = (APP_ROOT / "background_tasks.py").read_text(encoding="utf-8")
     assert "def run_document_search_metadata_sync_loop():" in background_source
     assert "acquire_distributed_task_lock('document_search_metadata_sync_scan'" in background_source
     assert "run_document_search_metadata_sync_loop)," in background_source
+
+
+def test_native_receipts_report_search_sync_and_approvals_repair():
+    """Native receipts carry search_sync, and every approve route repairs an already-approved share."""
+    for file_name, metadata_name, tag_names in (
+        ("functions_group_document_management.py", "update_group_document_metadata",
+         ("tag_group_documents", "change_group_document_tag")),
+        ("functions_public_document_management.py", "update_public_document_metadata",
+         ("tag_public_documents", "change_public_document_tag")),
+    ):
+        source = (APP_ROOT / file_name).read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        metadata_source = ast.get_source_segment(source, _function(tree, metadata_name))
+        assert "return_search_sync=True" in metadata_source and '"search_sync": search_sync' in metadata_source
+        for tag_name in tag_names:
+            assert 'result["search_sync"] = summarize_document_search_sync(' in ast.get_source_segment(source, _function(tree, tag_name))
+
+    collaboration_source = (APP_ROOT / "functions_group_document_collaboration.py").read_text(encoding="utf-8")
+    change_share = ast.get_source_segment(collaboration_source, _function(ast.parse(collaboration_source), "change_group_document_share"))
+    assert "_repair_approved_share_search_acl(user_id, group_id, document)" in change_share
+    repair = ast.get_source_segment(collaboration_source, _function(ast.parse(collaboration_source), "_repair_approved_share_search_acl"))
+    assert repair.index("_search_acl_is_current(document)") < repair.index("_search_acl(document, operation_guard=guard)")
+
+    group_source = (APP_ROOT / "route_backend_group_documents.py").read_text(encoding="utf-8")
+    group_tree = ast.parse(group_source)
+    approve_group = ast.get_source_segment(group_source, _function(group_tree, "api_approve_shared_group_document"))
+    assert "reproject_document_search_acl(" in approve_group
+    for route_name in (
+        "api_approve_shared_group_document",
+        "api_share_document_with_group",
+        "api_unshare_document_with_group",
+        "api_remove_self_from_group_document",
+    ):
+        route_source = ast.get_source_segment(group_source, _function(group_tree, route_name))
+        assert "_group_share_search_acl_error_response(exc)" in route_source, route_name
+        assert "str(e)" not in route_source, route_name
+
+    personal_source = (APP_ROOT / "route_backend_documents.py").read_text(encoding="utf-8")
+    approve_personal = ast.get_source_segment(personal_source, _function(ast.parse(personal_source), "api_approve_shared_document"))
+    assert approve_personal.index("project_document_acl_to_chunks(") < approve_personal.index("upsert_item(document_item)")
+    assert 'elif f"{user_id},approved" in shared_user_ids:' in approve_personal
+    assert "reproject_document_search_acl(document_item, user_id)" in approve_personal
 
 
 if __name__ == "__main__":

@@ -4,7 +4,11 @@ from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_group import *
-from functions_debug import debug_print
+from functions_group_membership import OWNER_ROLE_MESSAGE
+from functions_group_membership_audit import (
+    log_group_member_role_change,
+    notify_group_member_role_change,
+)
 from functions_notifications import create_notification
 from functions_simplechat_operations import (
     add_group_member_for_current_user,
@@ -12,7 +16,7 @@ from functions_simplechat_operations import (
 )
 from functions_stats_windows import (
     build_stats_date_series,
-    resolve_stats_time_window,
+    resolve_bounded_stats_time_window,
     stats_window_response_payload,
     timestamp_to_stats_date_key,
 )
@@ -30,6 +34,103 @@ from functions_settings import (
     is_group_workspace_file_download_enabled,
 )
 from swagger_wrapper import swagger_route, get_auth_security
+
+# Roles that manage a group's settings, and so read its retention policy.
+GROUP_DETAILS_SETTINGS_ROLES = ("Owner", "Admin")
+
+
+def build_group_details_payload(group_doc, role, app_settings):
+    """Project a group document for one of its members.
+
+    The details route used to return the stored group document itself. That
+    carried the group's model endpoints, with their credentials inline when Key
+    Vault storage is off, along with the pending join requests, the member list
+    and the Cosmos system fields, to every member. The projection returns only
+    what the group management page reads, plus the caller's role. The retention
+    policy is included for the Owners and Admins who manage it.
+    """
+    owner = group_doc.get("owner") or {}
+    payload = {
+        "id": group_doc.get("id"),
+        "name": group_doc.get("name", ""),
+        "description": group_doc.get("description", ""),
+        "owner": {
+            "id": owner.get("id", ""),
+            "displayName": owner.get("displayName", ""),
+            "email": owner.get("email", ""),
+        },
+        "admins": list(group_doc.get("admins") or []),
+        "documentManagers": list(group_doc.get("documentManagers") or []),
+        "status": group_doc.get("status", "active"),
+        "createdDate": group_doc.get("createdDate"),
+        "modifiedDate": group_doc.get("modifiedDate"),
+        "heroColor": normalize_workspace_hero_color(
+            group_doc.get("heroColor"),
+            DEFAULT_WORKSPACE_HERO_COLOR,
+        ),
+        "disable_file_downloads": bool(group_doc.get("disable_file_downloads", False)),
+        "file_downloads_admin_enabled": is_group_workspace_file_download_admin_enabled(
+            app_settings,
+            group_doc,
+        ),
+        "file_downloads_enabled": is_group_workspace_file_download_enabled(
+            app_settings,
+            group_doc,
+        ),
+        "userRole": role,
+    }
+    payload.update(get_workspace_logo_metadata(group_doc))
+    if role in GROUP_DETAILS_SETTINGS_ROLES:
+        payload["retention_policy"] = dict(group_doc.get("retention_policy") or {})
+    return payload
+
+
+# The classic membership routes write through the group-document guard, so a
+# concurrent change is kept and a group deleted mid-write is not recreated. A group
+# that keeps changing is the one response those routes did not have before.
+GROUP_WRITE_CONFLICT_RESPONSE = {
+    "error": GROUP_WRITE_CONFLICT_MESSAGE,
+    "error_code": GROUP_WRITE_CONFLICT_CODE,
+}
+
+
+class _ClassicResponse(Exception):
+    """A classic route's own response, raised from inside a guarded change."""
+
+    def __init__(self, payload, status):
+        super().__init__(status)
+        self.payload = payload
+        self.status = status
+
+
+def _guarded_group_write(group_id, apply_changes, *, cache_reason):
+    """Run a classic route's change through ``update_group_document_with_etag_guard``.
+
+    ``apply_changes`` re-checks the route's rules on each fresh copy and raises
+    ``_ClassicResponse`` with the route's own refusal. Returns ``(committed, None)``
+    after a commit, or ``(None, response)`` with that refusal, the classic 404 for a
+    group missing or deleted mid-write, or a 409 for a group that keeps changing.
+    """
+    try:
+        committed = update_group_document_with_etag_guard(group_id, apply_changes, cache_reason=cache_reason)
+    except _ClassicResponse as refusal:
+        return None, (jsonify(refusal.payload), refusal.status)
+    except GroupDocumentWriteConflict:
+        return None, (jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409)
+    if committed is None:
+        return None, (jsonify({"error": "Group not found"}), 404)
+    return committed, None
+
+
+# The owner's role changes only by transferring ownership, with the native answer.
+OWNER_ROLE_CHANGE_RESPONSE = {"error": OWNER_ROLE_MESSAGE, "error_code": "owner_target"}
+
+
+def _has_group_role(group_doc, user_id):
+    """``get_user_role_in_group``, skipping a ``users[]`` entry without a ``userId``."""
+    users = [entry for entry in group_doc.get("users") or [] if isinstance(entry, dict) and "userId" in entry]
+    return bool(get_user_role_in_group({**group_doc, "users": users}, user_id))
+
 
 def register_route_backend_groups(bp):
     """
@@ -55,22 +156,10 @@ def register_route_backend_groups(bp):
         show_all_str = request.args.get("showAll", "false").lower()
         show_all = (show_all_str == "true")
 
-        query = "SELECT * FROM c WHERE c.type = 'group' or NOT IS_DEFINED(c.type)"
-        all_items = list(cosmos_groups_container.query_items(
-            query=query,
-            enable_cross_partition_query=True
-        ))
+        all_items = discover_group_records(search_query)
 
         results = []
         for g in all_items:
-            name = g.get("name", "").lower()
-            desc = g.get("description", "").lower()
-            group_id = str(g.get("id", "")).lower()
-
-            if search_query:
-                if search_query not in name and search_query not in desc and search_query not in group_id:
-                    continue
-
             if not show_all:
                 if is_user_in_group(g, user_id):
                     continue
@@ -211,28 +300,11 @@ def register_route_backend_groups(bp):
         if not group_doc:
             return jsonify({"error": "Group not found"}), 404
 
-        if not get_user_role_in_group(group_doc, user_id):
+        role = get_user_role_in_group(group_doc, user_id)
+        if not role:
             return jsonify({"error": "You are not a member of this group"}), 403
 
-        response_doc = dict(group_doc)
-        response_doc["heroColor"] = normalize_workspace_hero_color(
-            group_doc.get("heroColor"),
-            DEFAULT_WORKSPACE_HERO_COLOR,
-        )
-        response_doc.update(get_workspace_logo_metadata(group_doc))
-        response_doc["disable_file_downloads"] = bool(group_doc.get("disable_file_downloads", False))
-        app_settings = get_settings()
-        response_doc["file_downloads_admin_enabled"] = is_group_workspace_file_download_admin_enabled(
-            app_settings,
-            group_doc,
-        )
-        response_doc["file_downloads_enabled"] = is_group_workspace_file_download_enabled(
-            app_settings,
-            group_doc,
-        )
-        response_doc.pop("logoBase64", None)
-
-        return jsonify(response_doc), 200
+        return jsonify(build_group_details_payload(group_doc, role, get_settings())), 200
 
     @bp.route("/api/groups/<group_id>/download-settings", methods=["PATCH"])
     @swagger_route(security=get_auth_security())
@@ -259,14 +331,39 @@ def register_route_backend_groups(bp):
                 "error": "File downloads have not been enabled for this group by an administrator"
             }), 403
 
-        data = request.get_json(silent=True) or {}
-        group_doc["disable_file_downloads"] = bool(data.get("disable_file_downloads", False))
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        # The classic page always sends the checkbox's boolean. Anything else, or a body
+        # that isn't a JSON object, changes nothing rather than turning downloads on.
+        data = request.get_json(silent=True)
+        disable_file_downloads = data.get("disable_file_downloads") if isinstance(data, dict) else None
+        if not isinstance(disable_file_downloads, bool):
+            return jsonify({"error": "Set disable_file_downloads to true or false."}), 400
+
+        def apply_download_settings(fresh):
+            # The caller's role is checked again on the copy being written.
+            if get_user_role_in_group(fresh, user_id) not in ("Owner", "Admin"):
+                raise PermissionError("Only group owners and admins can update download settings")
+            fresh["disable_file_downloads"] = disable_file_downloads
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
         try:
-            cosmos_groups_container.upsert_item(group_doc)
-            bump_chat_bootstrap_global_cache_version(reason="group_updated")
+            group_doc = update_group_document_with_etag_guard(
+                group_id, apply_download_settings, cache_reason="group_updated",
+            )
+        except PermissionError:
+            return jsonify({"error": "Only group owners and admins can update download settings"}), 403
+        except GroupDocumentWriteConflict:
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+            log_event(
+                "[GROUP_SETTINGS] Classic download settings save failed.",
+                extra={"group_id": group_id, "error_type": type(ex).__name__,
+                       "status_code": getattr(ex, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The download settings could not be saved. Try again."}), 400
+        if group_doc is None:
+            return jsonify({"error": "Group not found"}), 404
 
         return jsonify({
             "success": True,
@@ -323,23 +420,40 @@ def register_route_backend_groups(bp):
             return jsonify({"error": "Only the owner can rename/edit the group"}), 403
 
         data = request.get_json()
-        name = data.get("name", group_doc.get("name"))
-        description = data.get("description", group_doc.get("description"))
-        hero_color = normalize_workspace_hero_color(
-            data.get("heroColor"),
-            group_doc.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
-        )
 
-        group_doc["name"] = name
-        group_doc["description"] = description
-        group_doc["heroColor"] = hero_color
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        def apply_group_update(fresh):
+            # The owner is checked again on the copy being written, and the fields the
+            # request leaves out are kept from that copy.
+            if (fresh.get("owner") or {}).get("id") != user_id:
+                raise PermissionError("Only the owner can rename/edit the group")
+            fresh["name"] = data.get("name", fresh.get("name"))
+            fresh["description"] = data.get("description", fresh.get("description"))
+            fresh["heroColor"] = normalize_workspace_hero_color(
+                data.get("heroColor"),
+                fresh.get("heroColor", DEFAULT_WORKSPACE_HERO_COLOR),
+            )
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
+
         try:
-            cosmos_groups_container.upsert_item(group_doc)
+            updated = update_group_document_with_etag_guard(
+                group_id, apply_group_update, cache_reason="group_updated",
+            )
+        except PermissionError:
+            return jsonify({"error": "Only the owner can rename/edit the group"}), 403
+        except GroupDocumentWriteConflict:
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+            log_event(
+                "[GROUP_SETTINGS] Classic group update failed.",
+                extra={"group_id": group_id, "error_type": type(ex).__name__,
+                       "status_code": getattr(ex, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The group could not be saved. Try again."}), 400
+        if updated is None:
+            return jsonify({"error": "Group not found"}), 404
 
-        bump_chat_bootstrap_global_cache_version(reason="group_updated")
         return jsonify({"message": "Group updated", "id": group_id}), 200
 
     @bp.route("/api/groups/<group_id>/logo", methods=["GET"])
@@ -402,22 +516,41 @@ def register_route_backend_groups(bp):
                 logo_file.read(),
                 logo_file.filename,
             )
-        except (ValueError, OSError) as ex:
-            return jsonify({"error": str(ex)}), 400
+        except Exception:  # noqa: BLE001 - any decoding failure of an untrusted image is the same 400
+            return jsonify({"error": "The logo image could not be read. Upload a PNG or JPEG image."}), 400
 
-        current_logo_version = get_workspace_logo_metadata(group_doc)["logoVersion"]
-        group_doc["logoBase64"] = processed_logo["base64_str"]
-        group_doc["logoVersion"] = current_logo_version + 1
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+        stored_logo = processed_logo["base64_str"]
+
+        def apply_logo(fresh):
+            # The owner is checked again on the copy being written, and the version
+            # follows that copy's, so a cached image is never reused.
+            if (fresh.get("owner") or {}).get("id") != user_id:
+                raise PermissionError("Only the owner can update the group logo")
+            fresh["logoBase64"] = stored_logo
+            fresh["logoVersion"] = get_workspace_logo_metadata(fresh)["logoVersion"] + 1
+            fresh["modifiedDate"] = datetime.utcnow().isoformat()
+            return fresh
 
         try:
-            cosmos_groups_container.upsert_item(group_doc)
+            updated = update_group_document_with_etag_guard(group_id, apply_logo, cache_reason=None)
+        except PermissionError:
+            return jsonify({"error": "Only the owner can update the group logo"}), 403
+        except GroupDocumentWriteConflict:
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
         except exceptions.CosmosHttpResponseError as ex:
-            return jsonify({"error": str(ex)}), 400
+            log_event(
+                "[GROUP_SETTINGS] Classic group logo save failed.",
+                extra={"group_id": group_id, "error_type": type(ex).__name__,
+                       "status_code": getattr(ex, "status_code", None)},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The logo could not be saved. Try again."}), 400
+        if updated is None:
+            return jsonify({"error": "Group not found"}), 404
 
         return jsonify({
             "message": "Group logo updated",
-            "logoVersion": group_doc["logoVersion"],
+            "logoVersion": updated["logoVersion"],
         }), 200
 
     @bp.route("/api/groups/setActive", methods=["PATCH"])
@@ -463,28 +596,28 @@ def register_route_backend_groups(bp):
         """
         user_info = get_current_user_info()
         user_id = user_info["userId"]
-        
-        group_doc = find_group_by_id(group_id)
-        
-        if not group_doc:
-            return jsonify({"error": "Group not found"}), 404
 
-        existing_role = get_user_role_in_group(group_doc, user_id)
-        if existing_role:
-            return jsonify({"error": "User is already a member"}), 400
+        def apply(group_doc):
+            existing_role = get_user_role_in_group(group_doc, user_id)
+            if existing_role:
+                raise _ClassicResponse({"error": "User is already a member"}, 400)
 
-        for p in group_doc.get("pendingUsers", []):
-            if p["userId"] == user_id:
-                return jsonify({"error": "User has already requested to join"}), 400
+            pending_users = group_doc.get("pendingUsers") or []
+            for p in pending_users:
+                if p["userId"] == user_id:
+                    raise _ClassicResponse({"error": "User has already requested to join"}, 400)
 
-        group_doc["pendingUsers"].append({
-            "userId": user_id,
-            "email": user_info["email"],
-            "displayName": user_info["displayName"]
-        })
+            group_doc["pendingUsers"] = [*pending_users, {
+                "userId": user_id,
+                "email": user_info["email"],
+                "displayName": user_info["displayName"]
+            }]
+            group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+            return group_doc
 
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_groups_container.upsert_item(group_doc)
+        _committed, refusal = _guarded_group_write(group_id, apply, cache_reason=None)
+        if refusal:
+            return refusal
 
         return jsonify({"message": "Membership request created"}), 201
 
@@ -525,45 +658,56 @@ def register_route_backend_groups(bp):
         """
         user_info = get_current_user_info()
         user_id = user_info["userId"]
-        
-        group_doc = find_group_by_id(group_id)
-        
-        if not group_doc:
-            return jsonify({"error": "Group not found"}), 404
+        outcome = {}
 
-        role = get_user_role_in_group(group_doc, user_id)
-        if role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Only the owner or admin can approve/reject requests"}), 403
+        def apply(group_doc):
+            role = get_user_role_in_group(group_doc, user_id)
+            if role not in ["Owner", "Admin"]:
+                raise _ClassicResponse({"error": "Only the owner or admin can approve/reject requests"}, 403)
 
-        data = request.get_json()
-        action = data.get("action")
-        if action not in ["approve", "reject"]:
-            return jsonify({"error": "Invalid or missing 'action'. Must be 'approve' or 'reject'."}), 400
+            data = request.get_json()
+            action = data.get("action")
+            if action not in ["approve", "reject"]:
+                raise _ClassicResponse(
+                    {"error": "Invalid or missing 'action'. Must be 'approve' or 'reject'."}, 400,
+                )
 
-        pending_list = group_doc.get("pendingUsers", [])
-        user_index = None
-        for i, pending_user in enumerate(pending_list):
-            if pending_user["userId"] == request_id:
-                user_index = i
-                break
-        if user_index is None:
-            return jsonify({"error": "Request not found"}), 404
+            pending_list = group_doc.get("pendingUsers", [])
+            user_index = None
+            for i, pending_user in enumerate(pending_list):
+                if pending_user["userId"] == request_id:
+                    user_index = i
+                    break
+            if user_index is None:
+                raise _ClassicResponse({"error": "Request not found"}, 404)
 
-        if action == "approve":
-            member_to_add = pending_list.pop(user_index)
-            group_doc["users"].append(member_to_add)
-            msg = "User approved and added as a member"
-        else:
-            pending_list.pop(user_index)
-            msg = "User rejected"
+            # A decision settles every request from the user, and an approval never
+            # adds a second entry for someone who is already a member.
+            member_to_add = pending_list[user_index]
+            group_doc["pendingUsers"] = [
+                pending_user for pending_user in pending_list
+                if not (isinstance(pending_user, dict) and pending_user.get("userId") == request_id)
+            ]
+            if action == "approve":
+                if not _has_group_role(group_doc, request_id):
+                    group_doc["users"].append(member_to_add)
+                outcome["message"] = "User approved and added as a member"
+            else:
+                outcome["message"] = "User rejected"
+            outcome["action"] = action
 
-        group_doc["pendingUsers"] = pending_list
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_groups_container.upsert_item(group_doc)
-        if action == "approve":
+            group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+            return group_doc
+
+        # Only an approval bumps the cache, and the action is read inside the change,
+        # after the role check, as it always was, so the bump follows the commit.
+        _committed, refusal = _guarded_group_write(group_id, apply, cache_reason=None)
+        if refusal:
+            return refusal
+        if outcome["action"] == "approve":
             bump_chat_bootstrap_global_cache_version(reason="group_member_request_approved")
 
-        return jsonify({"message": msg}), 200
+        return jsonify({"message": outcome["message"]}), 200
 
     @bp.route("/api/groups/<group_id>/members", methods=["POST"])
     @swagger_route(security=get_auth_security())
@@ -592,6 +736,8 @@ def register_route_backend_groups(bp):
             return jsonify({"error": str(exc)}), 404
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
+        except GroupDocumentWriteConflict:
+            return jsonify(GROUP_WRITE_CONFLICT_RESPONSE), 409
 
     @bp.route("/api/groups/<group_id>/members/<member_id>", methods=["DELETE"])
     @swagger_route(security=get_auth_security())
@@ -607,115 +753,86 @@ def register_route_backend_groups(bp):
         """
         user_info = get_current_user_info()
         user_id = user_info["userId"]
-        
-        group_doc = find_group_by_id(group_id)
-        
-        if not group_doc:
-            return jsonify({"error": "Group not found"}), 404
+        leaving = user_id == member_id
+        not_found = {"error": "You are not in this group"} if leaving else {"error": "User not found in group"}
+        outcome = {}
 
-        if user_id == member_id:
-            if group_doc["owner"]["id"] == user_id:
-                return jsonify({"error": "The owner cannot leave the group. "
-                                        "Transfer ownership or delete the group."}), 403
+        def apply(group_doc):
+            if leaving:
+                if group_doc["owner"]["id"] == user_id:
+                    raise _ClassicResponse({"error": "The owner cannot leave the group. "
+                                                     "Transfer ownership or delete the group."}, 403)
+                outcome["role"] = None
+            else:
+                role = get_user_role_in_group(group_doc, user_id)
+                if role not in ["Owner", "Admin"]:
+                    raise _ClassicResponse({"error": "Only the owner or admin can remove other members"}, 403)
+                if member_id == group_doc["owner"]["id"]:
+                    raise _ClassicResponse({"error": "Cannot remove the group owner"}, 403)
+                outcome["role"] = role
 
-            removed = False
             removed_member_info = None
             updated_users = []
             for u in group_doc["users"]:
                 if u["userId"] == member_id:
-                    removed = True
                     removed_member_info = u
                     continue
                 updated_users.append(u)
-
+            changed = removed_member_info is not None
             group_doc["users"] = updated_users
-            
+
             if member_id in group_doc.get("admins", []):
                 group_doc["admins"].remove(member_id)
+                changed = True
             if member_id in group_doc.get("documentManagers", []):
                 group_doc["documentManagers"].remove(member_id)
+                changed = True
 
+            # Nothing to remove: answer the classic 404 without writing.
+            if not changed:
+                raise _ClassicResponse(not_found, 404)
+            outcome["removed_member_info"] = removed_member_info
             group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-            cosmos_groups_container.upsert_item(group_doc)
+            return group_doc
 
-            if removed:
-                bump_chat_bootstrap_global_cache_version(reason="group_member_removed")
-                # Log activity for self-removal
-                from functions_activity_logging import log_group_member_deleted
-                user_email = user_info.get("email", "unknown")
-                member_name = removed_member_info.get('displayName', '') if removed_member_info else ''
-                member_email = removed_member_info.get('email', '') if removed_member_info else ''
-                description = f"Member {user_email} left group {group_doc.get('name', group_id)}"
-                
-                log_group_member_deleted(
-                    removed_by_user_id=user_id,
-                    removed_by_email=user_email,
-                    removed_by_role='Member',
-                    member_user_id=member_id,
-                    member_email=member_email,
-                    member_name=member_name,
-                    group_id=group_id,
-                    group_name=group_doc.get('name', 'Unknown'),
-                    action='member_left_group',
-                    description=description
-                )
-                
-                return jsonify({"message": "You have left the group"}), 200
-            else:
-                return jsonify({"error": "You are not in this group"}), 404
+        committed, refusal = _guarded_group_write(group_id, apply, cache_reason=None)
+        if refusal:
+            return refusal
 
+        removed_member_info = outcome["removed_member_info"]
+        if removed_member_info is None:
+            # Only a stale admins or documentManagers entry was cleaned up.
+            return jsonify(not_found), 404
+
+        bump_chat_bootstrap_global_cache_version(reason="group_member_removed")
+        from functions_activity_logging import log_group_member_deleted
+        user_email = user_info.get("email", "unknown")
+        member_name = removed_member_info.get('displayName', '')
+        member_email = removed_member_info.get('email', '')
+        if leaving:
+            removed_by_role, action, message = 'Member', 'member_left_group', "You have left the group"
+            description = f"Member {user_email} left group {committed.get('name', group_id)}"
         else:
-            role = get_user_role_in_group(group_doc, user_id)
-            if role not in ["Owner", "Admin"]:
-                return jsonify({"error": "Only the owner or admin can remove other members"}), 403
+            removed_by_role, action, message = outcome["role"], 'admin_removed_member', "User removed"
+            description = (
+                f"{removed_by_role} {user_email} removed member {member_name} ({member_email}) "
+                f"from group {committed.get('name', group_id)}"
+            )
 
-            if member_id == group_doc["owner"]["id"]:
-                return jsonify({"error": "Cannot remove the group owner"}), 403
+        log_group_member_deleted(
+            removed_by_user_id=user_id,
+            removed_by_email=user_email,
+            removed_by_role=removed_by_role,
+            member_user_id=member_id,
+            member_email=member_email,
+            member_name=member_name,
+            group_id=group_id,
+            group_name=committed.get('name', 'Unknown'),
+            action=action,
+            description=description
+        )
 
-            removed = False
-            removed_member_info = None
-            updated_users = []
-            for u in group_doc["users"]:
-                if u["userId"] == member_id:
-                    removed = True
-                    removed_member_info = u
-                    continue
-                updated_users.append(u)
-            group_doc["users"] = updated_users
-
-            if member_id in group_doc.get("admins", []):
-                group_doc["admins"].remove(member_id)
-            if member_id in group_doc.get("documentManagers", []):
-                group_doc["documentManagers"].remove(member_id)
-
-            group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-            cosmos_groups_container.upsert_item(group_doc)
-
-            if removed:
-                bump_chat_bootstrap_global_cache_version(reason="group_member_removed")
-                # Log activity for admin/owner removal
-                from functions_activity_logging import log_group_member_deleted
-                user_email = user_info.get("email", "unknown")
-                member_name = removed_member_info.get('displayName', '') if removed_member_info else ''
-                member_email = removed_member_info.get('email', '') if removed_member_info else ''
-                description = f"{role} {user_email} removed member {member_name} ({member_email}) from group {group_doc.get('name', group_id)}"
-                
-                log_group_member_deleted(
-                    removed_by_user_id=user_id,
-                    removed_by_email=user_email,
-                    removed_by_role=role,
-                    member_user_id=member_id,
-                    member_email=member_email,
-                    member_name=member_name,
-                    group_id=group_id,
-                    group_name=group_doc.get('name', 'Unknown'),
-                    action='admin_removed_member',
-                    description=description
-                )
-                
-                return jsonify({"message": "User removed"}), 200
-            else:
-                return jsonify({"error": "User not found in group"}), 404
+        return jsonify({"message": message, "success": True}), 200
 
 
     @bp.route("/api/groups/<group_id>/members/<member_id>", methods=["PATCH"])
@@ -732,94 +849,76 @@ def register_route_backend_groups(bp):
         user_info = get_current_user_info()
         user_id = user_info["userId"]
         user_email = user_info.get("email", "unknown")
-        
-        group_doc = find_group_by_id(group_id)
-        
-        if not group_doc:
-            return jsonify({"error": "Group not found"}), 404
+        outcome = {}
 
-        current_role = get_user_role_in_group(group_doc, user_id)
-        if current_role not in ["Owner", "Admin"]:
-            return jsonify({"error": "Only the owner or admin can update roles"}), 403
+        def apply(group_doc):
+            current_role = get_user_role_in_group(group_doc, user_id)
+            if current_role not in ["Owner", "Admin"]:
+                raise _ClassicResponse({"error": "Only the owner or admin can update roles"}, 403)
 
-        data = request.get_json()
-        new_role = data.get("role")
-        if new_role not in ["Admin", "DocumentManager", "User"]:
-            return jsonify({"error": "Invalid role. Must be Admin, DocumentManager, or User"}), 400
+            data = request.get_json()
+            new_role = data.get("role")
+            if new_role not in ["Admin", "DocumentManager", "User"]:
+                raise _ClassicResponse({"error": "Invalid role. Must be Admin, DocumentManager, or User"}, 400)
 
-        target_role = get_user_role_in_group(group_doc, member_id)
-        if not target_role:
-            return jsonify({"error": "Member is not in the group"}), 404
+            target_role = get_user_role_in_group(group_doc, member_id)
+            if not target_role:
+                raise _ClassicResponse({"error": "Member is not in the group"}, 404)
+            if target_role == "Owner":
+                raise _ClassicResponse(OWNER_ROLE_CHANGE_RESPONSE, 409)
 
-        # Get member details for logging
-        member_name = "Unknown"
-        member_email = "unknown"
-        for u in group_doc.get("users", []):
-            if u.get("userId") == member_id:
-                member_name = u.get("displayName", "Unknown")
-                member_email = u.get("email", "unknown")
-                break
+            # Get member details for logging
+            member_name = "Unknown"
+            member_email = "unknown"
+            for u in group_doc.get("users", []):
+                if u.get("userId") == member_id:
+                    member_name = u.get("displayName", "Unknown")
+                    member_email = u.get("email", "unknown")
+                    break
 
-        if member_id in group_doc.get("admins", []):
-            group_doc["admins"].remove(member_id)
-        if member_id in group_doc.get("documentManagers", []):
-            group_doc["documentManagers"].remove(member_id)
+            if member_id in group_doc.get("admins", []):
+                group_doc["admins"].remove(member_id)
+            if member_id in group_doc.get("documentManagers", []):
+                group_doc["documentManagers"].remove(member_id)
 
-        if new_role == "Admin":
-            group_doc["admins"].append(member_id)
-        elif new_role == "DocumentManager":
-            group_doc["documentManagers"].append(member_id)
-        else:
-            pass
+            if new_role == "Admin":
+                group_doc["admins"].append(member_id)
+            elif new_role == "DocumentManager":
+                group_doc["documentManagers"].append(member_id)
 
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_groups_container.upsert_item(group_doc)
-        bump_chat_bootstrap_global_cache_version(reason="group_member_role_updated")
-
-        # Log activity for role change
-        try:
-            activity_record = {
-                'id': str(uuid.uuid4()),
-                'type': 'group_member_role_changed',
-                'activity_type': 'update_member_role',
-                'timestamp': datetime.utcnow().isoformat(),
-                'changed_by_user_id': user_id,
-                'changed_by_email': user_email,
-                'changed_by_role': current_role,
-                'group_id': group_id,
-                'group_name': group_doc.get('name', 'Unknown'),
-                'member_user_id': member_id,
-                'member_email': member_email,
-                'member_name': member_name,
-                'old_role': target_role,
-                'new_role': new_role,
-                'description': f"{current_role} {user_email} changed {member_name} ({member_email}) role from {target_role} to {new_role} in group {group_doc.get('name', group_id)}"
-            }
-            cosmos_activity_logs_container.create_item(body=activity_record)
-        except Exception as log_error:
-            debug_print(f"Failed to log role change activity: {log_error}")
-        
-        # Create notification for the member whose role was changed
-        try:
-            from functions_notifications import create_notification
-            create_notification(
-                user_id=member_id,
-                notification_type='system_announcement',
-                title='Role Changed',
-                message=f"Your role in group '{group_doc.get('name', 'Unknown')}' has been changed from {target_role} to {new_role} by {user_email}.",
-                link_url=f"/manage_group/{group_id}",
-                metadata={
-                    'group_id': group_id,
-                    'group_name': group_doc.get('name', 'Unknown'),
-                    'changed_by': user_email,
-                    'old_role': target_role,
-                    'new_role': new_role
-                }
+            group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+            outcome.update(
+                current_role=current_role, new_role=new_role, target_role=target_role,
+                member_name=member_name, member_email=member_email,
             )
-        except Exception as notif_error:
-            debug_print(f"Failed to create role change notification: {notif_error}")
+            return group_doc
 
-        return jsonify({"message": f"User {member_id} updated to {new_role}"}), 200
+        group_doc, refusal = _guarded_group_write(group_id, apply, cache_reason="group_member_role_updated")
+        if refusal:
+            return refusal
+
+        log_group_member_role_change(
+            group_id=group_id,
+            group_doc=group_doc,
+            changed_by_user_id=user_id,
+            changed_by_email=user_email,
+            changed_by_role=outcome["current_role"],
+            member_id=member_id,
+            member_email=outcome["member_email"],
+            member_name=outcome["member_name"],
+            old_role=outcome["target_role"],
+            new_role=outcome["new_role"],
+        )
+        notify_group_member_role_change(
+            group_id=group_id,
+            group_doc=group_doc,
+            member_id=member_id,
+            changed_by_email=user_email,
+            old_role=outcome["target_role"],
+            new_role=outcome["new_role"],
+        )
+
+        return jsonify({"message": f"User {member_id} updated to {outcome['new_role']}"}), 200
 
     @bp.route("/api/groups/<group_id>/members", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -839,15 +938,18 @@ def register_route_backend_groups(bp):
         if not group_doc:
             return jsonify({"error": "Group not found"}), 404
 
-        if not get_user_role_in_group(group_doc, user_id):
+        if not _has_group_role(group_doc, user_id):
             return jsonify({"error": "You are not a member of this group"}), 403
 
         search = request.args.get("search", "").strip().lower()
         role_filter = request.args.get("role", "").strip()
 
         results = []
-        for u in group_doc["users"]:
-            uid = u["userId"]
+        for u in group_doc.get("users") or []:
+            # An entry without a userId is not a member row.
+            uid = u.get("userId") if isinstance(u, dict) else None
+            if not uid:
+                continue
             user_role = (
                 "Owner" if uid == group_doc["owner"]["id"] else
                 "Admin" if uid in group_doc.get("admins", []) else
@@ -858,8 +960,8 @@ def register_route_backend_groups(bp):
             if role_filter and role_filter != user_role:
                 continue
 
-            dn = u.get("displayName", "").lower()
-            em = u.get("email", "").lower()
+            dn = str(u.get("displayName") or "").lower()
+            em = str(u.get("email") or "").lower()
 
             if search and (search not in dn and search not in em):
                 continue
@@ -895,55 +997,57 @@ def register_route_backend_groups(bp):
 
         if not new_owner_id:
             return jsonify({"error": "Missing newOwnerId"}), 400
-        
-        group_doc = find_group_by_id(group_id)
 
-        if not group_doc:
-            return jsonify({"error": "Group not found"}), 404
+        def apply(group_doc):
+            if group_doc["owner"]["id"] != user_id:
+                raise _ClassicResponse({"error": "Only the current owner can transfer ownership"}, 403)
 
-        if group_doc["owner"]["id"] != user_id:
-            return jsonify({"error": "Only the current owner can transfer ownership"}), 403
+            matching_member = None
+            for m in group_doc["users"]:
+                if m["userId"] == new_owner_id:
+                    matching_member = m
+                    break
+            if not matching_member:
+                raise _ClassicResponse({"error": "The specified new owner is not a member of the group"}, 400)
 
-        matching_member = None
-        for m in group_doc["users"]:
-            if m["userId"] == new_owner_id:
-                matching_member = m
-                break
-        if not matching_member:
-            return jsonify({"error": "The specified new owner is not a member of the group"}), 400
+            old_owner = group_doc["owner"]
+            old_owner_id = old_owner["id"]
 
-        old_owner_id = group_doc["owner"]["id"]
+            group_doc["owner"] = {
+                "id": new_owner_id,
+                "email": matching_member.get("email", ""),
+                "displayName": matching_member.get("displayName", "")
+            }
 
-        group_doc["owner"] = {
-            "id": new_owner_id,
-            "email": matching_member.get("email", ""),
-            "displayName": matching_member.get("displayName", "")
-        }
+            if new_owner_id in group_doc.get("admins", []):
+                group_doc["admins"].remove(new_owner_id)
+            if new_owner_id in group_doc.get("documentManagers", []):
+                group_doc["documentManagers"].remove(new_owner_id)
 
-        if new_owner_id in group_doc.get("admins", []):
-            group_doc["admins"].remove(new_owner_id)
-        if new_owner_id in group_doc.get("documentManagers", []):
-            group_doc["documentManagers"].remove(new_owner_id)
+            found_old_owner = False
+            for member in group_doc["users"]:
+                if member["userId"] == old_owner_id:
+                    found_old_owner = True
+                    break
 
-        found_old_owner = False
-        for member in group_doc["users"]:
-            if member["userId"] == old_owner_id:
-                found_old_owner = True
-                break
+            if not found_old_owner:
+                group_doc["users"].append({
+                    "userId": old_owner_id,
+                    "email": old_owner.get("email", ""),
+                    "displayName": old_owner.get("displayName", ""),
+                })
 
-        if not found_old_owner:
-            group_doc["users"].append({
-                "userId": old_owner_id,
-            })
+            if old_owner_id in group_doc.get("admins", []):
+                group_doc["admins"].remove(old_owner_id)
+            if old_owner_id in group_doc.get("documentManagers", []):
+                group_doc["documentManagers"].remove(old_owner_id)
 
-        if old_owner_id in group_doc.get("admins", []):
-            group_doc["admins"].remove(old_owner_id)
-        if old_owner_id in group_doc.get("documentManagers", []):
-            group_doc["documentManagers"].remove(old_owner_id)
+            group_doc["modifiedDate"] = datetime.utcnow().isoformat()
+            return group_doc
 
-        group_doc["modifiedDate"] = datetime.utcnow().isoformat()
-        cosmos_groups_container.upsert_item(group_doc)
-        bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
+        _committed, refusal = _guarded_group_write(group_id, apply, cache_reason="group_ownership_transferred")
+        if refusal:
+            return refusal
 
         return jsonify({"message": "Ownership transferred successfully"}), 200
 
@@ -969,23 +1073,9 @@ def register_route_backend_groups(bp):
         if group_doc["owner"]["id"] != user_id:
             return jsonify({"error": "Only the owner can check file count"}), 403
         
-        query = """
-        SELECT VALUE COUNT(1)
-        FROM f
-        WHERE f.groupId = @groupId
-        """
-        params = [{ "name": "@groupId", "value": group_id }]
-
-        result_iter = cosmos_group_documents_container.query_items(
-            query=query,
-            parameters=params,
-            enable_cross_partition_query=True
-        )
-        file_count = 0
-        for item in result_iter:
-            file_count = item
-
-        return jsonify({ "fileCount": file_count }), 200
+        # The group's own current documents, counted as the group document list shows them.
+        from functions_group_document_reads import count_current_group_documents
+        return jsonify({ "fileCount": count_current_group_documents(group_id) }), 200
 
     @bp.route("/api/groups/<group_id>/activity", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -1075,7 +1165,11 @@ def register_route_backend_groups(bp):
             return jsonify({"error": "Forbidden"}), 403
 
         try:
-            stats_window = resolve_stats_time_window(request.args)
+            # A custom date outside 2000-01-01 to 9998-12-31, or one whose UTC offset
+            # carries it past the calendar's edge, is refused here, so the day-by-day
+            # series below can't overflow. A custom range longer than
+            # STATS_MAX_CUSTOM_DAYS (366) days is refused too, as the V2 routes refuse it.
+            stats_window = resolve_bounded_stats_time_window(request.args)
         except ValueError as ex:
             return jsonify({"error": str(ex)}), 400
 

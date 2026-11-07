@@ -4,7 +4,7 @@ title: "Microsoft Graph"
 description: "Full guide for the Microsoft Graph SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.038"
+version: "0.261.129"
 ---
 
 <!-- action-slug: msgraph -->
@@ -62,6 +62,14 @@ Cancel also leaves the draft and cannot recall a completed send. Check Outlook
 before preparing another action when the card reports an unknown outcome.
 Historical actions with no trustworthy binding must be prepared again.
 
+## Mail and calendar history
+
+From **0.261.129**, **Read my mail** and **Read my calendar events** in a legacy
+action accept the same search words, date ranges, and continuation as the
+separate [Email](../m365-email/) and [Calendar](../m365-calendar/) actions, so
+an agent can read older mail and past or future events. No capability or
+permission change is needed.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
@@ -69,6 +77,7 @@ Historical actions with no trustworthy binding must be prepared again.
 | Graph calls fail for one user | Delegated permission, consent, or mailbox access is missing for that user. | Confirm Graph scopes and have the user re-consent if required. |
 | Mail sends when drafts were expected | The action is configured for auto-send. | Change mail delivery mode to manual draft or delayed draft. |
 | Calendar invite lacks group members | The prompt or permissions did not include resolvable group context. | Enable invite capability and include group/workspace context. |
+| The agent says it can only read recent mail or upcoming events | The deployment predates **0.261.129**, whose mail and calendar reads added date ranges and search. | Update SimpleChat, then ask for a specific date range, topic, or sender. |
 
 ## Related
 

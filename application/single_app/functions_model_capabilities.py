@@ -1,5 +1,5 @@
 # functions_model_capabilities.py
-"""Model capability resolution backed by the SimpleChat model capability catalog.
+"""Resolve catalog-backed model capabilities and reasoning effort.
 
 Capability answers resolve through a precedence chain so that a model which is not
 present in the shipped catalog -- a customer's on-premises or bespoke model -- can
@@ -11,12 +11,14 @@ Only stdlib imports are used here on purpose. This module sits below the setting
 logging, and route layers, so pulling those in would risk import cycles.
 """
 
+import copy
 import json
 import os
 import re
 import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
+from datetime import date
 
 
 MODEL_IDENTIFIER_SEPARATOR_PATTERN = re.compile(r"[\s_.]+")
@@ -30,8 +32,15 @@ MODEL_IDENTIFIER_FIELDS = (
     "deployment",
     "name",
 )
+REASONING_IDENTIFIER_FIELDS = ("catalogModelId", "modelName", "behavior_name", "deploymentName", "deployment")
+REASONING_EFFORTS = frozenset(("none", "minimal", "low", "medium", "high", "xhigh"))
 
 CATALOG_RELATIVE_PATH = ("static", "json", "model_capabilities.json")
+CATALOG_FILENAME = os.path.join(*CATALOG_RELATIVE_PATH)
+VISION_OVERRIDE_FIELDS = ("supportsVision", "supports_vision")
+VISION_SOURCE_DECLARED = "declared"
+VISION_SOURCE_CATALOG = "catalog"
+VISION_SOURCE_INFERRED = "inferred"
 
 CAPABILITY_PROCESSES_IMAGES = "processesImages"
 CAPABILITY_TOOL_CALLING = "toolCalling"
@@ -74,9 +83,32 @@ def _normalize_model_identifier(value):
     )
 
 
+def get_model_foundry_chat_api(model):
+    """Resolve a known native contract without guessing an opaque deployment alias."""
+    record = _numeric_catalog_record(model)
+    if record is not None:
+        if "foundryChatApi" in record:
+            api = record["foundryChatApi"]
+            if not isinstance(api, str) or api not in {"openai", "anthropic", "mai"}:
+                raise ModelTokenBudgetError("model_context_invalid", "The model's native Foundry API metadata is invalid.")
+            return api
+        return "anthropic" if record.get("provider") == "anthropic" else "openai"
+    identity = _normalize_model_identifier(_numeric_model_identifier(model))
+    if "claude" in identity:
+        return "anthropic"
+    if identity.startswith(("gpt-", "grok-", "o1", "o3", "o4")):
+        return "openai"
+    return None
+
+
+def model_uses_mai_chat_api(model):
+    """Use only the catalog's reviewed MAI contract, not a publisher/family guess."""
+    return get_model_foundry_chat_api(model) == "mai"
+
+
 def get_model_capability_catalog_path():
     """Return the absolute path of the shipped model capability catalog."""
-    return os.path.join(os.path.dirname(__file__), *CATALOG_RELATIVE_PATH)
+    return os.path.join(os.path.dirname(__file__), CATALOG_FILENAME)
 
 
 def reset_model_capability_catalog_cache():
@@ -86,11 +118,11 @@ def reset_model_capability_catalog_cache():
         _CATALOG_CACHE = None
 
 
-def load_model_capability_catalog():
+def _load_model_capability_catalog_document(force_refresh=False):
     """Return the parsed catalog, caching it after the first successful read."""
     global _CATALOG_CACHE
     with _CATALOG_LOCK:
-        if _CATALOG_CACHE is not None:
+        if _CATALOG_CACHE is not None and not force_refresh:
             return _CATALOG_CACHE
         try:
             with open(get_model_capability_catalog_path(), "r", encoding="utf-8") as catalog_file:
@@ -103,10 +135,58 @@ def load_model_capability_catalog():
         return _CATALOG_CACHE
 
 
+def load_model_capability_catalog(force_refresh=False, *, strict_identity=False):
+    """Return the identifier-indexed capability view used by the V2 model editors."""
+    document = _load_model_capability_catalog_document(force_refresh)
+    catalog = {}
+    for record in document.get("models") or []:
+        if not isinstance(record, Mapping):
+            continue
+        capabilities = record.get("capabilities") or {}
+        if not isinstance(capabilities, Mapping):
+            continue
+        capabilities = copy.deepcopy(dict(capabilities))
+        if isinstance(record.get("reasoningPolicy"), Mapping):
+            capabilities["reasoningPolicy"] = copy.deepcopy(record["reasoningPolicy"])
+        if "embeddingPolicy" in record:
+            capabilities["embeddingPolicy"] = copy.deepcopy(record["embeddingPolicy"])
+        for field_name in ("imageProfiles", "imageLifecycle", "inputFidelity"):
+            if isinstance(record.get(field_name), Mapping):
+                capabilities[field_name] = copy.deepcopy(record[field_name])
+            elif field_name == "inputFidelity" and isinstance(record.get(field_name), bool):
+                capabilities[field_name] = record[field_name]
+        if record.get("provider"):
+            capabilities["publisher"] = record["provider"]
+        identifiers = _iter_catalog_record_identifiers(record)
+        if strict_identity:
+            identifiers = (
+                _normalize_model_identifier(identifier)
+                for identifier in [record.get("id"), *(record.get("aliases") or [])]
+                if identifier
+            )
+        for identifier in identifiers:
+            catalog[identifier] = copy.deepcopy(capabilities)
+    return catalog
+
+
+def get_image_operation_profile(profile_id):
+    """Return an isolated provider operation profile from the same cached catalog."""
+    profiles = _load_model_capability_catalog_document().get("imageOperationProfiles") or {}
+    profile = profiles.get(profile_id) if isinstance(profiles, Mapping) else None
+    return copy.deepcopy(profile) if isinstance(profile, Mapping) else None
+
+
 def get_model_capability_catalog_records():
-    """Return every model record defined by the catalog."""
-    catalog = load_model_capability_catalog()
-    return [record for record in catalog.get("models") or [] if isinstance(record, dict)]
+    """Return isolated copies of every model record defined by the catalog."""
+    catalog = _load_model_capability_catalog_document()
+    return copy.deepcopy([
+        record for record in catalog.get("models") or [] if isinstance(record, dict)
+    ])
+
+
+def get_model_capability_catalog_sources():
+    """Return evidence references without exposing the mutable catalog cache."""
+    return copy.deepcopy(_load_model_capability_catalog_document().get("sources") or [])
 
 
 def _get_record_field(record, field_name):
@@ -203,12 +283,154 @@ def _read_declared_capabilities(source):
         return {}
     capabilities = _get_record_field(source, "capabilities")
     if not isinstance(capabilities, Mapping):
-        return {}
+        capabilities = {}
     declared = {}
     for capability_name, capability_value in capabilities.items():
         if isinstance(capability_value, bool):
             declared[str(capability_name)] = capability_value
+    if CAPABILITY_PROCESSES_IMAGES not in declared:
+        for field_name in VISION_OVERRIDE_FIELDS:
+            value = _get_record_field(source, field_name)
+            if isinstance(value, bool):
+                declared[CAPABILITY_PROCESSES_IMAGES] = value
+                break
+            if isinstance(value, str) and value.strip():
+                declared[CAPABILITY_PROCESSES_IMAGES] = value.strip().lower() in ("true", "on", "yes", "1")
+                break
     return declared
+
+
+def get_model_catalog_capabilities(model, *, strict_identity=False):
+    """Look up an actual model, declared alias, or dated snapshot, not an arbitrary variant.
+
+    Vision retains its legacy deployment-name heuristic separately. Image tool
+    support must not flow from gpt-4o to gpt-4o-transcribe merely by prefix.
+    """
+    underlying = ""
+    for field_name in ("modelName", "behavior_name"):
+        value = _get_record_field(model, field_name)
+        if isinstance(value, str) and value.strip():
+            underlying = value
+            break
+    identifiers = [underlying] if underlying else _iter_model_identifiers(model)
+    if strict_identity and not underlying and not isinstance(model, str):
+        identifiers = next((
+            [_get_record_field(model, field_name)]
+            for field_name in ("deploymentName", "deployment", "name")
+            if isinstance(_get_record_field(model, field_name), str)
+            and _get_record_field(model, field_name).strip()
+        ), [])
+    catalog = (
+        load_model_capability_catalog(strict_identity=True)
+        if strict_identity else load_model_capability_catalog()
+    )
+    for identifier in identifiers:
+        normalized = _normalize_model_identifier(identifier)
+        if normalized not in catalog:
+            if strict_identity:
+                continue
+            snapshot = re.fullmatch(r"(.+)-(\d{4})-(\d{2})-(\d{2})", normalized)
+            if not snapshot or snapshot.group(1) not in catalog:
+                continue
+            try:
+                date(*(int(value) for value in snapshot.groups()[1:]))
+            except ValueError:
+                continue
+            normalized = snapshot.group(1)
+        capabilities = catalog[normalized]
+        if any(isinstance(value, bool) for value in capabilities.values()):
+            return copy.deepcopy(capabilities)
+    return None
+
+
+def _catalog_lookup(identifier, *, capability=None, reject_version_suffix=False):
+    """Resolve the V2 reasoning policy independently of audited token-capacity matching."""
+    normalized = _normalize_model_identifier(identifier)
+    if not normalized:
+        return None
+    catalog = load_model_capability_catalog()
+    if normalized in catalog and (capability is None or capability in catalog[normalized]):
+        return catalog[normalized]
+
+    best = None
+    best_length = 0
+    for candidate, capabilities in catalog.items():
+        if capability is not None and capability not in capabilities:
+            continue
+        if len(candidate) <= best_length or not normalized.startswith(f"{candidate}-"):
+            continue
+        if reject_version_suffix and re.match(
+            r"^\d{1,3}(?:-|$)", normalized[len(candidate) + 1:]
+        ):
+            # A new version is not a deployment suffix (dated snapshots still match).
+            continue
+        best = capabilities
+        best_length = len(candidate)
+    return best
+
+
+def resolve_model_reasoning_policy(model_name):
+    """Return an allowlisted Chat Completions reasoning policy, never a name guess.
+
+    Records must already be authorized by the caller. Prefer their canonical model
+    name to a deployment alias; configuration UUIDs and display labels are not
+    capability identities. ``default_effort`` is the application's fallback for an
+    invalid selection, not the provider's default for an omitted parameter.
+    """
+    if not isinstance(model_name, str):
+        model = model_name
+        model_name = ""
+        for field in REASONING_IDENTIFIER_FIELDS:
+            value = model.get(field) if isinstance(model, Mapping) else getattr(model, field, None)
+            if isinstance(value, str) and value.strip():
+                model_name = value
+                break
+    capabilities = _catalog_lookup(model_name, reject_version_suffix=True) or {}
+    policy = capabilities.get("reasoningPolicy") or {}
+    unknown = {"status": "unknown", "efforts": [], "default_effort": None}
+    if not isinstance(policy, Mapping):
+        return unknown
+    if policy.get("status") == "unsupported":
+        return {"status": "unsupported", "efforts": [], "default_effort": None}
+    efforts = policy.get("efforts")
+    if (
+        policy.get("status") != "supported" or not isinstance(efforts, list) or not efforts
+        or any(not isinstance(effort, str) or effort not in REASONING_EFFORTS for effort in efforts)
+        or len(set(efforts)) != len(efforts) or policy.get("default_effort") not in efforts
+    ):
+        return unknown
+    return {
+        "status": "supported",
+        "efforts": list(efforts),
+        "default_effort": policy["default_effort"],
+    }
+
+
+def resolve_model_reasoning_effort(model_name, requested_effort):
+    """Keep absent, explicit ``none``, and a corrected unsupported choice distinct."""
+    requested = requested_effort.strip().lower() if isinstance(requested_effort, str) else None
+    requested = requested or None
+    resolution = {
+        "requested_effort": requested,
+        "effective_effort": None,
+        "mode": "model_default",
+        "adjustment_reason": None,
+    }
+    if requested is None:
+        return resolution
+    policy = resolve_model_reasoning_policy(model_name)
+    if policy["status"] == "supported":
+        effective = requested
+        if requested not in policy["efforts"]:
+            effective = "low" if "low" in policy["efforts"] else policy["default_effort"]
+            resolution["adjustment_reason"] = "reasoning_effort_unsupported"
+        resolution.update(effective_effort=effective, mode="explicit")
+    else:
+        resolution["adjustment_reason"] = (
+            "reasoning_parameter_unsupported" if policy["status"] == "unsupported"
+            else "reasoning_capability_unknown"
+        )
+    return resolution
 
 
 def _heuristic_capability(capability_name, model):
@@ -383,16 +605,18 @@ class ModelTokenBudget:
         return max(0, min(bounds) - input_tokens)
 
 
-def _numeric_catalog_record(model, records=None):
+def _numeric_model_identifier(model):
     if isinstance(model, str):
-        identifier = model
-    else:
-        identifier = next((
-            _get_record_field(model, field_name)
-            for field_name in ("catalogModelId", "modelName", "deploymentName", "deployment", "name")
-            if _get_record_field(model, field_name)
-        ), "")
-    normalized = _normalize_model_identifier(identifier)
+        return model
+    return next((
+        _get_record_field(model, field_name)
+        for field_name in ("catalogModelId", "modelName", "deploymentName", "deployment", "name")
+        if _get_record_field(model, field_name)
+    ), "")
+
+
+def _numeric_catalog_record(model, records=None):
+    normalized = _normalize_model_identifier(_numeric_model_identifier(model))
     if not normalized:
         return None
     for record in get_model_capability_catalog_records() if records is None else records:
@@ -400,6 +624,23 @@ def _numeric_catalog_record(model, records=None):
         if any(normalized == _normalize_model_identifier(value) for value in identifiers):
             return record
     return None
+
+
+def _verified_catalog_model_version(model, record):
+    """Recover a snapshot only from an exact numeric alias and an audited profile."""
+    if record is None:
+        return ""
+    identifier = _normalize_model_identifier(_numeric_model_identifier(model))
+    aliases = {
+        _normalize_model_identifier(alias) for alias in record.get("verifiedAliases") or ()
+    }
+    if identifier not in aliases:
+        return ""
+    for profile in record.get("tokenLimitProfiles") or ():
+        for version in profile.get("modelVersions") or ():
+            if identifier == _normalize_model_identifier(f"{record['id']}-{version}"):
+                return version
+    return ""
 
 
 def _budget_provider(model, endpoint, record, provider):
@@ -464,11 +705,17 @@ def resolve_model_token_budget(
     provider = _budget_provider(
         model_overrides, endpoint_overrides, record, provider or _get_record_field(endpoint, "provider"),
     )
+    alias_version = _verified_catalog_model_version(model, record)
     version = str(
         model_version or model_overrides.get("modelVersion")
         or _get_record_field(model, "version")
-        or endpoint_overrides.get("modelVersion") or ""
+        or endpoint_overrides.get("modelVersion") or alias_version
     )
+    if alias_version and version != alias_version:
+        raise ModelTokenBudgetError(
+            "model_context_invalid",
+            "The selected model snapshot conflicts with its configured model version.",
+        )
     profile = _catalog_budget_profile(record, provider, protocol, version)
     evidence = profile.get("tokenLimitEvidence") or {}
     provenance = []
@@ -560,9 +807,12 @@ def is_vision_capable_model_name(*model_names):
     return False
 
 
-def is_vision_capable_model(model, endpoint=None):
-    """Return whether a model record or identifier names a supported vision model."""
-    return bool(
+def resolve_model_vision_support(model, endpoint=None):
+    """Return the shared vision decision and its source for model-editor controls."""
+    catalog = get_model_catalog_capabilities(model)
+    if catalog and catalog.get("generatesEmbeddings") is True and catalog.get("generatesText") is False:
+        return False, VISION_SOURCE_CATALOG
+    supports_vision = bool(
         resolve_model_capability(
             CAPABILITY_PROCESSES_IMAGES,
             model,
@@ -570,6 +820,23 @@ def is_vision_capable_model(model, endpoint=None):
             default=False,
         )
     )
+    for source in (model, endpoint):
+        if CAPABILITY_PROCESSES_IMAGES in _read_declared_capabilities(source):
+            return supports_vision, VISION_SOURCE_DECLARED
+    record = find_model_catalog_record(model)
+    if record is not None:
+        capabilities = record.get("capabilities")
+        if isinstance(capabilities, Mapping) and isinstance(
+            capabilities.get(CAPABILITY_PROCESSES_IMAGES), bool
+        ):
+            return supports_vision, VISION_SOURCE_CATALOG
+    return supports_vision, VISION_SOURCE_INFERRED
+
+
+def is_vision_capable_model(model, endpoint=None):
+    """Return whether a model record or identifier can accept image input."""
+    supports_vision, _source = resolve_model_vision_support(model, endpoint)
+    return supports_vision
 
 
 def is_reasoning_model(model, endpoint=None):

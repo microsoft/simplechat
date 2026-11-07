@@ -3,10 +3,31 @@
 import logging
 import math
 import re
+import uuid
+from functools import partial
 
-from collaboration_models import GROUP_MULTI_USER_CHAT_TYPE, PERSONAL_MULTI_USER_CHAT_TYPE
+from azure.core.exceptions import AzureError
+
+from content_screening.access import build_available_document_response, public_history_messages, read_available_document_bytes
+from content_screening.contracts import ScreeningError
+from collaboration_models import (
+    GROUP_MULTI_USER_CHAT_TYPE,
+    PERSONAL_MULTI_USER_CHAT_TYPE,
+    is_shared_conversation_backing,
+)
 from config import *
 from functions_appinsights import log_event
+from functions_chat_content_checks import CHECK_METADATA, attach_chat_check, check_chat_content, strip_private_chat_checks
+from functions_chat_content_review import patch_chat_message_metadata, record_blocked_chat_attempt
+from functions_agent_catalog import build_accessible_agent_catalog
+from functions_assist_submissions import SubmissionIdError
+from functions_chat_model_catalog import build_chat_model_catalog
+from functions_chat_retry import (
+    ChatRetryError, available_retry_attempts, build_replay_request, has_replay_agent_selection, load_owned_retry_message,
+    order_retry_messages, prepare_retry_attempt, reconcile_prepared_retry, retry_source_user, set_retry_attempt_state,
+)
+from functions_governance import ensure_governance_access
+from functions_model_catalog import ModelCatalogError
 from functions_authentication import *
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
@@ -31,7 +52,13 @@ from functions_conversation_feed import (
     tag_conversation_feed_source,
 )
 from functions_conversation_metadata import get_conversation_metadata, update_conversation_with_metadata
+from functions_conversation_references import ConversationReferenceError
+from functions_conversation_reference_runtime import (
+    resolve_conversation_references,
+    search_conversation_references,
+)
 from functions_citation_tracking import rebuild_conversation_used_documents
+from functions_m365_citations import used_m365_items_for_viewer
 from functions_conversation_unread import clear_conversation_unread, normalize_conversation_unread_state
 from functions_conversation_cache import (
     build_conversation_cache_key,
@@ -42,18 +69,38 @@ from functions_conversation_cache import (
     set_cached_conversation_payload,
 )
 from functions_image_messages import decode_image_content, get_complete_image_content, hydrate_image_messages, is_blob_backed_image_message, is_external_image_url
+from functions_message_image_revisions import resolve_served_revision
+from functions_image_edit import load_image_bytes_from_blob
+from functions_image_formats import ImageFormatError, PREVIEW_VARIANTS, is_image_file_name, to_browser_image
+from functions_image_references import references_from_metadata
 from functions_notifications import mark_chat_response_notifications_read_for_conversation
-from flask import Response, request, stream_with_context
+from flask import Response, current_app, request, stream_with_context
+from werkzeug.utils import secure_filename
 from functions_debug import debug_print
+from functions_collaboration_generated_documents import (
+    authorize_generated_document_download,
+    can_download_generated_document,
+    collect_generated_documents,
+)
 from functions_documents import (
+    build_document_download_response,
     delete_chat_upload_workspace_documents_for_conversation,
     serialize_chat_upload_workspace_documents_for_conversation,
 )
 from functions_group import get_user_groups
+from functions_public_workspaces import get_public_source_workspace_ids, resolve_public_chat_workspace_ids
+from public_chat_scope_state import PublicChatScopeError
+from functions_azure_maps import refresh_azure_maps_message_citations
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     filter_assistant_artifact_items,
     hydrate_agent_citations_from_artifacts,
+)
+from functions_orchestration_planning import PlanningStateError, public_planning_message
+from functions_message_deletion import (
+    exclude_soft_deleted_messages,
+    is_soft_deleted_message,
+    strip_soft_delete_metadata,
 )
 from functions_m365_context import M365PolicyError
 from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
@@ -68,7 +115,93 @@ from functions_simplechat_operations import (
 from swagger_wrapper import swagger_route, get_auth_security
 from functions_activity_logging import log_conversation_creation, log_conversation_deletion, log_conversation_archival
 from functions_thoughts import archive_thoughts_for_conversation, delete_thoughts_for_conversation
+from functions_orchestration_recovery import (
+    cleanup_conversation_checkpoints,
+    conversation_cleanup_failure_context,
+)
+from functions_orchestration_artifacts import is_retained_orchestration_file
+from functions_orchestration_external_configuration import ExternalConfigurationServiceError
+from functions_orchestration_external_identity import ExternalIdentityServiceError
+from functions_orchestration_output_store import OutputError, OutputStorageError
+from functions_orchestration_result_contracts import ResultContractError
+from functions_saved_analysis import (
+    cleanup_chat_analysis_conversation,
+    cleanup_chat_analysis_messages,
+    is_saved_analysis_unavailable,
+    sanitize_saved_analysis_messages,
+)
+from functions_workflow_chat_delivery import (
+    DELIVERY_EDIT_UNSUPPORTED,
+    DELIVERY_RETRY_UNSUPPORTED,
+    is_workflow_delivery_message,
+    workflow_delivery_refusal_payload,
+)
+from functions_workflow_result_masking import message_asks_about_workflow_result, message_uses_workflow_result
+from functions_workflow_result_reader import WorkflowResultUnavailable, workflow_result_error_payload
+from functions_workflow_result_store import WorkflowResultIntegrityError, WorkflowResultStorageUnavailableError
 from utils_cache import invalidate_personal_search_cache
+
+
+def _is_retained_orchestration_file(message):
+    """Leave retained file records and bytes to conditional output cleanup."""
+    return is_retained_orchestration_file(message)
+
+
+def _enroll_retained_orchestration_outputs(user_id, conversation_id, run_id):
+    """Initialize deletion-only resources only for admitted retained outputs."""
+    # Legacy conversations must not construct harness clients during deletion.
+    from functions_orchestration_bootstrap import build_orchestration_cleanup_service
+
+    return build_orchestration_cleanup_service(user_id, conversation_id).enroll_run_cleanup(run_id)
+
+
+def _conversation_delete_failure(error, conversation_id, *, stage, is_bulk=False):
+    """Map failures to trusted browser text and sanitized cleanup telemetry."""
+    code = 'conversation_delete_failed'
+    message = 'The conversation could not be deleted. Please retry deletion.'
+    status_code = 500
+    event = '[CONVERSATION_DELETE] Conversation deletion failed.'
+    if stage == 'm365_cancellation':
+        code = 'conversation_pending_actions_cleanup_failed'
+        message = 'Pending Microsoft 365 actions could not be stopped. The conversation was not deleted.'
+        status_code = 503
+        event = '[CONVERSATION_DELETE] Unable to stop outgoing Microsoft 365 actions.'
+    elif stage in {'orchestration_cleanup', 'chat_analysis_cleanup'}:
+        code = 'conversation_execution_cleanup_failed'
+        message = (
+            'Execution data could not be removed. Please retry deletion. '
+            'If this continues, contact your administrator.'
+        )
+        status_code = 503
+        event = (
+            '[ORCHESTRATION_RUNS] Conversation recovery cleanup failed.'
+            if stage == 'orchestration_cleanup'
+            else '[CONVERSATION_DELETE] Saved analysis cleanup failed.'
+        )
+        if isinstance(error, WorkflowResultIntegrityError):
+            code = 'conversation_execution_integrity_failed'
+            message = (
+                'Saved execution data could not be verified for deletion. '
+                'Contact your administrator, then retry deletion.'
+            )
+        elif isinstance(error, (AzureError, WorkflowResultStorageUnavailableError, OutputStorageError)):
+            code = 'conversation_execution_storage_unavailable'
+            message = (
+                'Execution data storage is unavailable. Please retry deletion. '
+                'If this continues, ask your administrator to check storage access.'
+            )
+    log_event(
+        event,
+        extra={
+            **conversation_cleanup_failure_context(error, conversation_id, stage=stage),
+            'response_failure': code,
+            'response_status_code': status_code,
+            'is_bulk_operation': is_bulk,
+        },
+        level=logging.ERROR, exceptionTraceback=False,
+    )
+    return {'error': message, 'code': code}, status_code
+
 
 def normalize_chat_type(conversation_item):
     chat_type = conversation_item.get('chat_type')
@@ -187,8 +320,8 @@ def _build_replayed_document_context(original_metadata):
 
     selected_document_ids = (
         workspace_search.get('requested_document_ids')
-        or workspace_search.get('selected_document_ids')
-        or []
+        if 'requested_document_ids' in workspace_search
+        else workspace_search.get('selected_document_ids') or []
     )
     if not isinstance(selected_document_ids, list):
         selected_document_ids = [selected_document_ids]
@@ -202,7 +335,10 @@ def _build_replayed_document_context(original_metadata):
         or workspace_search.get('document_id')
         or ''
     ).strip()
-    if selected_document_id and selected_document_id not in selected_document_ids:
+    if (
+        selected_document_id and selected_document_id not in selected_document_ids
+        and 'requested_document_ids' not in workspace_search
+    ):
         selected_document_ids.insert(0, selected_document_id)
 
     selection_mode = str(workspace_search.get('selection_mode') or '').strip().lower()
@@ -215,8 +351,28 @@ def _build_replayed_document_context(original_metadata):
             or workspace_search.get('enabled')
             or selected_document_ids
         )
+    raw_conversation_references = metadata.get('conversation_references')
+    conversation_references = [
+        {
+            'kind': 'conversation',
+            'id': str(item.get('id')).strip(),
+            **(
+                {
+                    'message_ids': [
+                        str(message_id).strip()
+                        for message_id in item.get('message_ids')
+                        if str(message_id or '').strip()
+                    ]
+                }
+                if isinstance(item.get('message_ids'), list) and item.get('message_ids')
+                else {}
+            ),
+        }
+        for item in (raw_conversation_references if isinstance(raw_conversation_references, list) else [])
+        if isinstance(item, dict) and item.get('kind') == 'conversation' and str(item.get('id') or '').strip()
+    ]
 
-    return {
+    context = {
         'hybrid_search': bool(
             workspace_search.get('hybrid_search_preference')
             if 'hybrid_search_preference' in workspace_search
@@ -228,50 +384,218 @@ def _build_replayed_document_context(original_metadata):
         'selected_document_id': selected_document_ids[0] if selected_document_ids else None,
         'selected_document_ids': selected_document_ids,
         'doc_scope': workspace_search.get('document_scope') or workspace_search.get('scope'),
+        **({'document_source_selection': workspace_search['document_source_selection']}
+           if workspace_search.get('document_source_selection') is not None else {}),
+        'public_workspace_selection': workspace_search.get('public_workspace_selection'),
+        **({'public_source_policy': workspace_search['public_source_policy']}
+           if 'public_source_policy' in workspace_search else {}),
+        **({'conversation_references': conversation_references}
+           if conversation_references else {}),
         'top_n': workspace_search.get('top_n'),
+        'document_filter_mode': workspace_search.get('document_filter_mode') or 'intersection',
         'classifications': (
             workspace_search.get('classification')
             or workspace_search.get('classifications')
         ),
+        # Restored alongside the document ids so a retry or edit reproduces the same search.
+        # A tag filter dropped here silently widens the replay, which reads as the assistant
+        # answering a different question the second time it is asked.
+        'tags': (
+            workspace_search.get('tags')
+            or workspace_search.get('tags_filter')
+            or []
+        ),
         'active_group_ids': workspace_search.get('active_group_ids') or [],
         'active_public_workspace_ids': workspace_search.get('active_public_workspace_ids') or [],
     }
+    if context.get('document_source_selection') is not None:
+        for field in (
+            'selected_document_id', 'selected_document_ids', 'doc_scope', 'tags',
+            'active_group_ids', 'active_public_workspace_ids', 'document_filter_mode',
+        ):
+            context.pop(field, None)
+        context['hybrid_search'] = True
+        context['document_context_requested'] = True
+    return context
 
-def _build_replayed_model_context(original_metadata, request_data=None):
-    """Rebuild model endpoint routing from stored metadata for retry and edit."""
-    metadata = original_metadata if isinstance(original_metadata, dict) else {}
-    model_selection = metadata.get('model_selection')
-    model_selection = model_selection if isinstance(model_selection, dict) else {}
-    request_data = request_data if isinstance(request_data, dict) else {}
 
-    stored_request_model = str(
-        model_selection.get('frontend_requested_model')
-        or model_selection.get('selected_model')
-        or ''
-    ).strip()
-    stored_selected_model = str(model_selection.get('selected_model') or '').strip()
-    requested_model = str(request_data.get('model') or '').strip()
-    replayed_model = requested_model or stored_request_model
-    reuses_stored_selection = not requested_model or requested_model in {
-        stored_request_model,
-        stored_selected_model,
-    }
+def _build_authorized_message_replay_request(user_id, source, options, settings, *, allow_auto_selection=False):
+    metadata = source.get('metadata') or {}
+    agent_requested = has_replay_agent_selection(metadata, options)
+    groups = get_user_groups(user_id) if settings.get('enable_group_workspaces', False) else []
+    document_context = _build_replayed_document_context(metadata)
+    models, agents = [], []
+    if agent_requested:
+        if not settings.get('enable_semantic_kernel', False):
+            raise ChatRetryError('Agent chat is no longer enabled. Choose an available model explicitly.', code='retry_agent_unavailable')
+        agents = build_accessible_agent_catalog(user_id, settings=settings, user_groups=groups)
+    elif not isinstance(metadata.get('image_generation'), dict) or not metadata['image_generation'].get('enabled'):
+        user_settings = get_user_settings(user_id) if settings.get('allow_user_custom_endpoints', False) else {}
+        models = build_chat_model_catalog(
+            user_id=user_id, settings=settings,
+            user_settings_dict=(user_settings or {}).get('settings', {}),
+            user_groups_raw=groups,
+        )
+        if allow_auto_selection and not models:
+            raise ChatRetryError('No enabled chat model is available for Auto routing. Review your selections.', code='retry_model_unavailable')
+    body = build_replay_request(
+        source, options, document_context=document_context, models=models, agents=agents,
+        allow_legacy_default=allow_auto_selection or not settings.get('enable_multi_model_endpoints', False),
+    )
+    if body.get('agent_info'):
+        agent = body['agent_info']
+        if agent.get('is_global'):
+            ensure_governance_access(
+                'governance_global_agents_usage', user_id,
+                item_entity_type='global_agent', item_id=str(agent.get('id') or agent.get('name') or ''),
+            )
+        else:
+            ensure_governance_access(
+                'governance_group_agents' if agent.get('is_group') else 'governance_user_agents',
+                user_id,
+            )
+    canonical = body.get('document_source_selection') is not None
+    requested_groups = set(body.get('active_group_ids') or []) if not canonical else set()
+    if body.get('active_group_id') and not canonical:
+        requested_groups.add(body['active_group_id'])
+    if requested_groups - {group['id'] for group in groups if group.get('id')}:
+        raise ChatRetryError('An original group workspace is unavailable. Review the message sources.', code='retry_source_unavailable')
+    requested_public = set(body.get('active_public_workspace_ids') or []) if not canonical else set()
+    if body.get('active_public_workspace_id') and not canonical:
+        requested_public.add(body['active_public_workspace_id'])
+    if requested_public:
+        available_public = (
+            resolve_public_chat_workspace_ids(user_id, body['public_workspace_selection'], settings=settings)
+            if body.get('public_workspace_selection')
+            else get_public_source_workspace_ids(user_id) or []
+        )
+        if requested_public - set(available_public):
+            raise ChatRetryError('An original public workspace is unavailable. Review the message sources.', code='retry_source_unavailable')
+    image_references = references_from_metadata(metadata)
+    if image_references:
+        body['image_references'] = image_references
+    if metadata.get('image_reference_mask'):
+        body['image_mask_dropped'] = True
+    return body
 
-    def requested_or_stored(request_key, metadata_key):
-        requested_value = request_data.get(request_key)
-        if requested_value not in (None, ''):
-            return requested_value
-        if reuses_stored_selection:
-            return model_selection.get(metadata_key)
-        return None
 
+def _message_attempt_payload(question, body, *, edited=False):
+    thread = question['metadata']['thread_info']
+    body.update({
+        'edited_user_message_id' if edited else 'retry_user_message_id': question['id'],
+        'retry_thread_id': thread['thread_id'], 'retry_thread_attempt': thread['thread_attempt'],
+        'retry_source_user_message_id': question['metadata']['response_attempt']['source_user_message_id'],
+    })
     return {
-        'model_deployment': replayed_model or None,
-        'model_id': requested_or_stored('model_id', 'model_id'),
-        'model_endpoint_id': requested_or_stored('model_endpoint_id', 'model_endpoint_id'),
-        'model_provider': requested_or_stored('model_provider', 'model_provider'),
-        'model_icon': requested_or_stored('model_icon', 'model_icon'),
+        'success': True, 'message': 'Edit initiated' if edited else 'Retry initiated',
+        'thread_id': thread['thread_id'], 'new_attempt': thread['thread_attempt'],
+        'user_message_id': question['id'], 'user_message': question,
+        'attempt_state': question['metadata']['response_attempt']['state'],
+        'available_attempts': available_retry_attempts(cosmos_messages_container, question['conversation_id'], thread['thread_id']),
+        'edited': edited, 'chat_request': body,
     }
+
+
+def _refuse_prepared_message_attempt(question, message, code):
+    if question:
+        set_retry_attempt_state(
+            cosmos_messages_container, question['conversation_id'], question['id'],
+            'failed', error=message, code=code, expected_states={'prepared'},
+        )
+
+
+def _prepare_message_attempt_response(message_id, *, edited=False):
+    user_id = get_current_user_id()
+    if not user_id:
+        return jsonify({'error': 'User not authenticated'}), 401
+    prepared_question = None
+    try:
+        data = request.get_json(silent=True)
+        if data is None and not request.get_data():
+            data = {}
+        if not isinstance(data, dict):
+            raise ChatRetryError('A retry request must be an object.', code='invalid_request', status_code=400)
+        clicked, _conversation = load_owned_retry_message(
+            cosmos_messages_container, cosmos_conversations_container, user_id, message_id,
+        )
+        attempt = (clicked.get('metadata') or {}).get('response_attempt') or {}
+        if not edited and attempt.get('kind') == 'chat' and attempt.get('state') == 'prepared':
+            if any(data.get(key) for key in ('model', 'model_deployment', 'model_id', 'model_endpoint_id', 'agent_info', 'reasoning_effort')):
+                raise ChatRetryError('This attempt is already prepared. Generate its saved response before changing selections.', code='retry_in_progress')
+            prepared_question = clicked
+            body = _build_authorized_message_replay_request(user_id, clicked, {}, get_settings())
+            question = reconcile_prepared_retry(cosmos_messages_container, cosmos_conversations_container, user_id, clicked)
+            return jsonify(_message_attempt_payload(question, body, edited=bool(clicked['metadata'].get('edited')))), 200
+        if is_workflow_delivery_message(clicked):
+            payload, status = workflow_delivery_refusal_payload(
+                DELIVERY_EDIT_UNSUPPORTED if edited else DELIVERY_RETRY_UNSUPPORTED,
+            )
+            return jsonify(payload), status
+        if edited and clicked.get('role') != 'user':
+            raise ChatRetryError('Only user messages can be edited.', code='invalid_request', status_code=400)
+        source = retry_source_user(cosmos_messages_container, clicked)
+        source_author = (source.get('metadata') or {}).get('user_info', {}).get('user_id')
+        if source_author and source_author != user_id:
+            raise ChatRetryError('You can only retry your own questions.', code='forbidden', status_code=403)
+        if (source.get('metadata') or {}).get('orchestration'):
+            raise ChatRetryError(
+                'Regenerate an orchestration plan from this message instead of replaying it as ordinary chat.',
+                code='retry_requires_orchestration',
+            )
+        if message_asks_about_workflow_result(clicked) or message_asks_about_workflow_result(source):
+            payload, status = workflow_result_error_payload(WorkflowResultUnavailable('workflow_result_retry_unsupported'))
+            return jsonify(payload), status
+        content = data.get('content') if edited else source.get('content')
+        if not isinstance(content, str) or not content.strip():
+            raise ChatRetryError('Message content cannot be empty.', code='invalid_request', status_code=400)
+        settings = get_settings()
+        input_check = check_chat_content(content, 'chat_input', user_id=user_id, settings=settings)
+        if input_check.blocked:
+            record_blocked_chat_attempt(input_check, user_id, source['conversation_id'])
+            return jsonify({'error': input_check.notice, 'blocked': True}), 422
+        body = _build_authorized_message_replay_request(user_id, source, {} if edited else data, settings)
+        body['message'] = content.strip() if edited else content
+        submission_id = data.get('submission_id') or str(uuid.uuid4())
+        question = prepare_retry_attempt(
+            cosmos_messages_container, cosmos_conversations_container, user_id, source, body,
+            submission_id=submission_id, edited=edited,
+        )
+        attach_chat_check(question, input_check)
+        patch_chat_message_metadata(cosmos_messages_container, question, fields=(CHECK_METADATA,))
+        _rebuild_authorized_personal_conversation_used_documents(user_id, source['conversation_id'])
+        _invalidate_conversation_cache_after_message_mutation(
+            source['conversation_id'], user_id, 'message_edit_created' if edited else 'message_retry_created',
+        )
+        return jsonify(_message_attempt_payload(question, body, edited=edited)), 200
+    except ChatRetryError as error:
+        _refuse_prepared_message_attempt(prepared_question, error.public_message, error.code)
+        log_event('[CHAT_RETRY] Retry refused.', extra={'code': error.code, 'user_id': user_id}, level=logging.INFO)
+        return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+    except (SubmissionIdError, ModelCatalogError) as error:
+        message = 'The retry selection or request identifier is invalid. Review your selections.'
+        _refuse_prepared_message_attempt(prepared_question, message, 'invalid_retry_selection')
+        log_event('[CHAT_RETRY] Invalid retry selection.', extra={'error_type': type(error).__name__}, level=logging.WARNING)
+        return jsonify({'error': message, 'code': 'invalid_retry_selection'}), 400
+    except PermissionError:
+        message = 'An original selection is no longer authorized. Review your selections.'
+        _refuse_prepared_message_attempt(prepared_question, message, 'forbidden')
+        log_event('[CHAT_RETRY] Retry selection is no longer authorized.', extra={'user_id': user_id}, level=logging.WARNING)
+        return jsonify({'error': message, 'code': 'forbidden'}), 403
+    except ScreeningError as error:
+        return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+    except PublicChatScopeError as error:
+        _refuse_prepared_message_attempt(prepared_question, error.public_message, error.code)
+        return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+    except AzureError as error:
+        log_event(
+            '[CHAT_RETRY] Retry preparation storage is unavailable.',
+            extra={'error_type': type(error).__name__, 'user_id': user_id}, level=logging.ERROR,
+        )
+        return jsonify({
+            'error': 'The retry could not be prepared. Reload to check the attempt before retrying.',
+            'code': 'retry_storage_unavailable',
+        }), 503
+
 
 def _get_requested_workspace_document_delete_ids_for_conversation(payload, conversation_id):
     if not isinstance(payload, dict):
@@ -473,7 +797,7 @@ def _query_matching_messages(container, search_term, match_mode):
     ))
 
     return [
-        message for message in messages
+        message for message in exclude_soft_deleted_messages(messages)
         if _matches_search_text(message.get('content', ''), search_term, match_mode)
     ]
 
@@ -622,9 +946,11 @@ def _query_legacy_conversations_for_feed(
 
 
 def _count_hidden_legacy_conversations(user_id):
+    # A shared conversation's orchestration backing record is not a hidden conversation.
     query = (
         'SELECT VALUE COUNT(1) FROM c '
-        'WHERE c.user_id = @user_id AND c.is_hidden = true'
+        'WHERE c.user_id = @user_id AND c.is_hidden = true '
+        'AND (NOT IS_DEFINED(c.collaboration_conversation_id) OR c.collaboration_conversation_id != c.id)'
     )
     results = list(cosmos_conversations_container.query_items(
         query=query,
@@ -733,10 +1059,16 @@ def _build_conversation_feed(user_id, page_size, source_offsets, include_priorit
         collaboration_conversations = []
 
     hidden_count += sum(1 for conversation in collaboration_conversations if conversation.get('is_hidden', False))
+    # A shared conversation's own id also names its orchestration backing record, and a
+    # record an earlier version created there; neither is a separate conversation.
     collaboration_source_ids = {
         str(conversation.get('source_conversation_id') or '').strip()
         for conversation in collaboration_conversations
         if conversation.get('source_conversation_id')
+    } | {
+        str(conversation.get('id') or '').strip()
+        for conversation in collaboration_conversations
+        if conversation.get('id')
     }
 
     filtered_collaboration_conversations = _filter_collaboration_conversations_for_feed(
@@ -845,8 +1177,70 @@ def _collect_child_message_documents(conversation_id, root_message_ids):
     return child_docs
 
 
+def _thread_attempt_number(message_doc):
+    """Return a message's thread attempt, defaulting to 0 like the attempt sorts do."""
+    metadata = (message_doc or {}).get('metadata') or {}
+    thread_info = metadata.get('thread_info') or {}
+    return thread_info.get('thread_attempt', 0)
+
+
+def _promote_remaining_thread_attempt(conversation_id, thread_id, deleted_attempt, deleted_message_ids):
+    """Activate another attempt after a delete removes the active attempt's question.
+
+    Deleting only an answer leaves its question, and so its attempt, in place, and nothing is
+    promoted. Soft-deleted attempts are never promoted. The promoted attempt becomes the only
+    active one, so whatever is left of the deleted attempt stops showing beside it. Returns
+    the promoted attempt number, or None when no attempt was promoted.
+    """
+    thread_messages = list(cosmos_messages_container.query_items(
+        query=(
+            'SELECT * FROM c WHERE c.conversation_id = @conversation_id '
+            'AND c.metadata.thread_info.thread_id = @thread_id'
+        ),
+        parameters=[
+            {'name': '@conversation_id', 'value': conversation_id},
+            {'name': '@thread_id', 'value': thread_id},
+        ],
+        partition_key=conversation_id,
+    ))
+    remaining_messages = [
+        message for message in exclude_soft_deleted_messages(thread_messages)
+        if message.get('id') not in deleted_message_ids
+    ]
+    remaining_attempts = {
+        _thread_attempt_number(message)
+        for message in remaining_messages
+        if message.get('role') == 'user'
+    }
+    if not remaining_attempts or deleted_attempt in remaining_attempts:
+        return None
+
+    promoted_attempt = min(remaining_attempts)
+    for message in remaining_messages:
+        metadata = message.get('metadata')
+        if not isinstance(metadata, dict):
+            metadata = {}
+            message['metadata'] = metadata
+        thread_info = metadata.get('thread_info')
+        if not isinstance(thread_info, dict):
+            thread_info = {}
+            metadata['thread_info'] = thread_info
+        should_be_active = _thread_attempt_number(message) == promoted_attempt
+        if thread_info.get('active_thread') is should_be_active:
+            continue
+        thread_info['active_thread'] = should_be_active
+        patch_chat_message_metadata(cosmos_messages_container, message)
+
+    return promoted_attempt
+
+
 def _authorize_personal_conversation_read(user_id, conversation_id):
-    """Load a personal conversation and ensure the caller owns it."""
+    """Load a personal conversation and ensure the caller owns it.
+
+    A shared conversation's Orchestrate backing record has the shared conversation's id but is
+    part of the shared conversation, so it is reported as not found here. Callers that also
+    serve shared conversations then fall through to them.
+    """
     try:
         conversation_item = cosmos_conversations_container.read_item(
             item=conversation_id,
@@ -855,6 +1249,8 @@ def _authorize_personal_conversation_read(user_id, conversation_id):
     except CosmosResourceNotFoundError as exc:
         raise LookupError(f"Conversation {conversation_id} not found") from exc
 
+    if is_shared_conversation_backing(conversation_item):
+        raise LookupError(f"Conversation {conversation_id} not found")
     if conversation_item.get('user_id') != user_id:
         raise PermissionError('Forbidden')
 
@@ -866,6 +1262,54 @@ def hydrate_m365_pending_action_cards(messages, viewer_user_id, conversation_id)
     return functions_msgraph_pending_actions.hydrate_m365_pending_action_cards(
         messages, viewer_user_id, conversation_id,
     )
+
+
+def _list_personal_conversation_generated_documents(conversation_item):
+    """Return the documents SimpleChat upload actions created in a personal conversation.
+
+    ``conversation_item`` must already be authorized with ``_authorize_personal_conversation_read``.
+    Only messages the thread shows are read, filtered the way ``/api/get_messages`` filters them:
+    deleted messages, the assistant artifact store, hidden generated chat files and replaced
+    thread attempts are left out. A citation stored in compact form is rebuilt from its artifact
+    record first, because the created document's id is in the full tool result.
+    """
+    conversation_id = conversation_item['id']
+    raw_messages = list(cosmos_messages_container.query_items(
+        query='SELECT * FROM c WHERE c.conversation_id = @conversation_id',
+        parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+        partition_key=conversation_id,
+    ))
+    raw_messages.sort(key=lambda item: (
+        str(item.get('timestamp') or ''),
+        int(item.get('fork_sequence')) if str(item.get('fork_sequence') or '').isdigit() else 0,
+        str(item.get('id') or ''),
+    ))
+    raw_messages = exclude_soft_deleted_messages(raw_messages)
+    artifact_payload_map = build_message_artifact_payload_map(raw_messages)
+
+    visible_messages = []
+    for item in filter_assistant_artifact_items(raw_messages):
+        metadata = item.get('metadata') if isinstance(item.get('metadata'), dict) else {}
+        if metadata.get('is_generated_chat_artifact', False):
+            continue
+        thread_info = metadata.get('thread_info') if isinstance(metadata.get('thread_info'), dict) else {}
+        active_thread = thread_info.get('active_thread')
+        if active_thread is True or active_thread is None:
+            visible_messages.append(item)
+
+    documents = collect_generated_documents(
+        hydrate_agent_citations_from_artifacts(visible_messages, artifact_payload_map),
+    )
+    log_event(
+        '[CONVERSATION_GENERATED_DOCUMENTS] Listed generated documents for a personal conversation.',
+        extra={
+            'conversation_id': conversation_id,
+            'message_count': len(visible_messages),
+            'document_count': len(documents),
+        },
+        debug_only=True,
+    )
+    return documents
 
 
 def _rebuild_authorized_personal_conversation_used_documents(
@@ -960,8 +1404,12 @@ def _authorize_image_conversation_read(user_id, conversation_id):
     return conversation_item, 'collaboration'
 
 
-def _stream_blob_backed_image_message(message_doc):
-    """Stream a blob-backed image message through the authenticated image endpoint."""
+def _stream_blob_backed_image_message(message_doc, cache_control='private, max-age=300'):
+    """Stream a blob-backed image message through the authenticated image endpoint.
+
+    ``message_doc`` only needs to carry the three blob fields, so a stored image revision --
+    which uses the same key names deliberately -- can be streamed through here directly.
+    """
     blob_container = str(message_doc.get('blob_container') or '').strip()
     blob_path = str(message_doc.get('blob_path') or '').strip()
     mime_type = str(message_doc.get('mime_type') or '').strip() or 'image/png'
@@ -990,7 +1438,7 @@ def _stream_blob_backed_image_message(message_doc):
             yield blob_chunk
 
     headers = {
-        'Cache-Control': 'private, max-age=300',
+        'Cache-Control': cache_control,
     }
     if content_length is not None:
         headers['Content-Length'] = str(content_length)
@@ -1008,9 +1456,12 @@ def _load_scope_lock_conversation(conversation_id, user_id):
             item=conversation_id,
             partition_key=conversation_id,
         )
-        if conversation_item.get('user_id') != user_id:
-            raise PermissionError('Forbidden')
-        return conversation_item, 'personal'
+        # Orchestrate's backing record follows its shared conversation's lock; the lock itself
+        # belongs to the shared conversation below.
+        if not is_shared_conversation_backing(conversation_item):
+            if conversation_item.get('user_id') != user_id:
+                raise PermissionError('Forbidden')
+            return conversation_item, 'personal'
     except CosmosResourceNotFoundError:
         pass
 
@@ -1040,6 +1491,61 @@ def _persist_scope_lock_update(conversation_item, conversation_kind, user_id, ne
 
 
 def register_route_backend_conversations(bp):
+    def reference_error_response(error):
+        if isinstance(error, ConversationReferenceError):
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
+        log_event(
+            '[CONVERSATION_METADATA] Conversation reference is unavailable.',
+            extra={'error_type': type(error).__name__}, level=logging.ERROR,
+        )
+        return jsonify({'error': 'Conversation reference is unavailable.', 'code': 'conversation_reference_unavailable'}), 503
+
+    @bp.route('/api/conversation-references', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def conversation_reference_search_api():
+        try:
+            search_content = request.args.get('search_content', 'false')
+            if search_content not in ('true', 'false'):
+                raise ConversationReferenceError()
+            payload = search_conversation_references(
+                get_current_user_id(), request.args.get('query', ''),
+                offset=request.args.get('offset', '0'), limit=request.args.get('limit', '10'),
+                search_content=search_content == 'true',
+                exclude_conversation_id=request.args.get('exclude_conversation_id'),
+            )
+            response = jsonify(payload)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except (ConversationReferenceError, AzureError, TypeError, ScreeningError) as error:
+            return reference_error_response(error)
+
+    @bp.route('/api/conversation-references/resolve', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def conversation_reference_resolve_api():
+        try:
+            data = request.get_json(silent=True)
+            if not isinstance(data, dict):
+                raise ConversationReferenceError()
+            payload = resolve_conversation_references(
+                get_current_user_id(), data.get('conversation_references'), data.get('query', ''),
+                destination_id=data.get('destination_conversation_id'),
+            )
+            response = jsonify(payload)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except (ConversationReferenceError, AzureError, TypeError, ScreeningError) as error:
+            return reference_error_response(error)
+
+    @bp.after_request
+    def public_conversation_json_response(response):
+        if response.is_json:
+            response.set_data(current_app.json.dumps(strip_private_chat_checks(response.get_json())))
+        return response
+
 
     @bp.route('/api/get_messages', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -1073,6 +1579,10 @@ def register_route_backend_conversations(bp):
                 int(item.get('fork_sequence')) if str(item.get('fork_sequence') or '').isdigit() else 0,
                 str(item.get('id') or ''),
             ))
+            all_items = order_retry_messages(all_items)
+            # Deleted while archiving was enabled. They are masked too, but only as a
+            # fail-safe: returned here, they would render as masked messages.
+            all_items = exclude_soft_deleted_messages(all_items)
             artifact_payload_map = build_message_artifact_payload_map(all_items)
             all_items = filter_assistant_artifact_items(all_items)
             
@@ -1100,7 +1610,25 @@ def register_route_backend_conversations(bp):
             all_items = filtered_items
             debug_print(f"After filtering: {len(all_items)} items remaining")
 
+            all_items = sanitize_saved_analysis_messages(all_items, user_id)
             all_items = hydrate_agent_citations_from_artifacts(all_items, artifact_payload_map)
+            all_items = refresh_azure_maps_message_citations(all_items)
+            try:
+                all_items = public_history_messages(all_items, user_id)
+            except (
+                ScreeningError, OutputError, OutputStorageError, ResultContractError,
+                ExternalIdentityServiceError, ExternalConfigurationServiceError,
+                AzureError, TimeoutError, ConnectionError,
+            ) as error:
+                log_event(
+                    '[ORCHESTRATION_RUNS] Current file history could not be verified.',
+                    extra={'conversation_id': conversation_id, 'error_type': type(error).__name__},
+                    level=logging.ERROR,
+                )
+                return jsonify({
+                    'error': 'Current file status is unavailable.',
+                    'code': 'output_status_unavailable',
+                }), 503
 
             messages = hydrate_image_messages(
                 all_items,
@@ -1121,7 +1649,13 @@ def register_route_backend_conversations(bp):
                     "message": "Microsoft 365 action cards could not be loaded. Reload the conversation to try again.",
                 }), status_code
 
-            return jsonify({'messages': messages})
+            return jsonify({'messages': [public_planning_message(message) for message in messages]})
+        except PlanningStateError as error:
+            log_event(
+                '[ORCHESTRATION] Saved planning history could not be projected.',
+                level=logging.ERROR, extra={'stage': 'planning_history', 'code': error.code},
+            )
+            return jsonify({'error': error.public_message, 'code': error.code}), error.status_code
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
         except LookupError:
@@ -1136,21 +1670,70 @@ def register_route_backend_conversations(bp):
     @user_required
     def api_get_image(image_id):
         """Serve chat images from blob storage or legacy chunked message content."""
-        
+
+        def preview_file_extension(mime_type):
+            return {
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/gif': 'gif',
+                'image/webp': 'webp',
+                'image/bmp': 'bmp',
+                'image/heic': 'heic',
+                'image/heif': 'heif',
+            }.get(str(mime_type or '').split(';', 1)[0].strip().lower(), 'png')
+
+        def inline_image_preview_response(image_bytes, preview_variant, *, file_name='image', cache_control='no-store, private'):
+            converted = to_browser_image(image_bytes, preview_variant)
+            safe_name = secure_filename(str(file_name or 'image').replace('\\', '/').rsplit('/', 1)[-1]) or 'image'
+            stem = safe_name.rsplit('.', 1)[0] if '.' in safe_name else safe_name
+            stem = secure_filename(stem) or 'image'
+            extension = preview_file_extension(converted['mime_type'])
+            content = converted['bytes']
+            return Response(
+                content,
+                mimetype=converted['mime_type'],
+                headers={
+                    'Content-Length': str(len(content)),
+                    'Cache-Control': cache_control,
+                    'X-Content-Type-Options': 'nosniff',
+                    'Content-Disposition': f'inline; filename="{stem}.{extension}"',
+                },
+            )
+
+        def load_blob_backed_image_bytes(message_doc):
+            blob_container = str(message_doc.get('blob_container') or '').strip()
+            blob_path = str(message_doc.get('blob_path') or '').strip()
+            if not blob_container or not blob_path:
+                raise LookupError('Image not found')
+            return load_image_bytes_from_blob(blob_container, blob_path)
+
         user_id = get_current_user_id()
         if not user_id:
-            print(f"🔥 Authentication failed for image request")
+            log_event(
+                "[CHAT_IMAGE] Authenticated image request had no user id.",
+                extra={"image_id": image_id},
+                level=logging.WARNING,
+            )
             return jsonify({'error': 'User not authenticated'}), 401
-            
+
         try:
+            variant = request.args.get('variant')
+            if variant is not None:
+                variant = str(variant or '').strip().lower()
+                if variant not in PREVIEW_VARIANTS:
+                    return jsonify({
+                        'error': 'The preview variant is not supported.',
+                        'error_code': 'invalid_preview_variant',
+                    }), 400
+
             # Extract conversation_id from image_id (format: conversation_id_image_timestamp_random)
             parts = image_id.split('_')
             if len(parts) < 4:
                 return jsonify({'error': 'Invalid image ID format'}), 400
-            
+
             # Reconstruct conversation_id (everything except the last 3 parts)
             conversation_id = '_'.join(parts[:-3])
-            
+
             debug_print(f"Serving image {image_id} from conversation {conversation_id}")
 
             _authorize_image_conversation_read(user_id, conversation_id)
@@ -1159,14 +1742,72 @@ def register_route_backend_conversations(bp):
                 conversation_id,
                 image_id,
             )
+            if image_message.get("workspace_document_id"):
+                if not variant:
+                    return build_available_document_response(
+                        image_message["workspace_document_id"], user_id=user_id, purpose="image_preview",
+                    )
+                active_document, content = read_available_document_bytes(
+                    image_message["workspace_document_id"], user_id=user_id, purpose="image_preview",
+                )
+                if not is_image_file_name(active_document.get('file_name')):
+                    return jsonify({
+                        'error': 'This file is not an image.',
+                        'error_code': 'not_an_image',
+                    }), 415
+                return inline_image_preview_response(
+                    content,
+                    variant,
+                    file_name=active_document.get('file_name') or image_message.get('filename') or image_id,
+                    cache_control='no-store, private',
+                )
+
+            # An edited image is served from the revision's own blob. `rev` names which version
+            # is wanted; it exists because this URL is otherwise identical before and after an
+            # edit, and a browser holding a cached response would keep showing the version the
+            # reader just replaced. Because the URL is addressed by revision, that response can
+            # be cached hard rather than briefly.
+            requested_revision = str(request.args.get('rev') or '').strip()
+            served_revision = resolve_served_revision(image_message, requested_revision)
+            if served_revision:
+                cache_control = (
+                    'private, max-age=31536000, immutable'
+                    if requested_revision
+                    else 'private, max-age=60'
+                )
+                if variant:
+                    return inline_image_preview_response(
+                        load_blob_backed_image_bytes(served_revision),
+                        variant,
+                        file_name=served_revision.get('file_name') or image_message.get('filename') or image_id,
+                        cache_control=cache_control,
+                    )
+                return _stream_blob_backed_image_message(
+                    served_revision,
+                    cache_control=cache_control,
+                )
 
             if is_blob_backed_image_message(image_message):
+                if variant:
+                    return inline_image_preview_response(
+                        load_blob_backed_image_bytes(image_message),
+                        variant,
+                        file_name=image_message.get('filename') or image_id,
+                        cache_control='private, max-age=300',
+                    )
                 return _stream_blob_backed_image_message(image_message)
 
             if is_external_image_url(complete_content):
                 return redirect(complete_content)
 
             mime_type, image_data = decode_image_content(complete_content)
+            if variant:
+                return inline_image_preview_response(
+                    image_data,
+                    variant,
+                    file_name=image_message.get('filename') or image_id,
+                    cache_control='private, max-age=3600',
+                )
             return Response(
                 image_data,
                 mimetype=mime_type,
@@ -1176,6 +1817,10 @@ def register_route_backend_conversations(bp):
                 }
             )
 
+        except ImageFormatError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
         except CosmosResourceNotFoundError:
@@ -1183,9 +1828,11 @@ def register_route_backend_conversations(bp):
         except LookupError:
             return jsonify({'error': 'Image not found'}), 404
         except Exception as e:
-            print(f"ERROR: Failed to serve image {image_id}: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            log_event(
+                "[CHAT_IMAGE] Failed to serve image.",
+                extra={"image_id": image_id, "exception_type": type(e).__name__},
+                level=logging.ERROR,
+            )
             return jsonify({'error': 'Failed to retrieve image'}), 500
         
     @bp.route('/api/get_conversations', methods=['GET'])
@@ -1483,22 +2130,34 @@ def register_route_backend_conversations(bp):
             }), 404
         except PermissionError:
             return jsonify({'error': 'Forbidden'}), 403
-        except Exception as e:
-            return jsonify({
-                "error": str(e)
-            }), 500
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='authorization',
+            )
+            return jsonify(payload), status_code
 
         try:
             cancel_m365_conversation_deliveries(conversation_id)
         except Exception as error:
-            log_event(
-                "[CONVERSATION_DELETE] Unable to stop outgoing Microsoft 365 actions.",
-                extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
-                level=logging.ERROR,
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='m365_cancellation',
             )
-            return jsonify({
-                "error": "Pending Microsoft 365 actions could not be stopped. The conversation was not deleted.",
-            }), 503
+            return jsonify(payload), status_code
+
+        try:
+            cleanup_conversation_checkpoints(
+                conversation_id, user_id,
+                lambda: _authorize_personal_conversation_read(user_id, conversation_id),
+                message_container=cosmos_messages_container,
+                conversation_container=cosmos_conversations_container,
+                output_cleanup=partial(_enroll_retained_orchestration_outputs, user_id, conversation_id),
+                retain_committed=archiving_enabled,
+            )
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='orchestration_cleanup',
+            )
+            return jsonify(payload), status_code
 
         if archiving_enabled:
             archived_item = dict(conversation_item)
@@ -1516,10 +2175,19 @@ def register_route_backend_conversations(bp):
             )
 
         message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
-        results = list(cosmos_messages_container.query_items(
-            query=message_query,
-            partition_key=conversation_id
-        ))
+        try:
+            results = list(cosmos_messages_container.query_items(
+                query=message_query,
+                partition_key=conversation_id
+            ))
+            cleanup_chat_analysis_conversation(conversation_id, conversation_item.get('user_id'), results)
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='chat_analysis_cleanup',
+            )
+            return jsonify(payload), status_code
+        direct_messages = [message for message in results if not _is_retained_orchestration_file(message)]
+        direct_message_ids = {message['id'] for message in direct_messages}
 
         if delete_workspace_document_ids:
             try:
@@ -1547,7 +2215,7 @@ def register_route_backend_conversations(bp):
                 }), 500
 
         if not archiving_enabled:
-            delete_blob_backed_chat_message_files(results, conversation=conversation_item)
+            delete_blob_backed_chat_message_files(direct_messages, conversation=conversation_item)
 
         for doc in results:
             if archiving_enabled:
@@ -1555,7 +2223,8 @@ def register_route_backend_conversations(bp):
                 archived_doc["archived_at"] = datetime.utcnow().isoformat()
                 cosmos_archived_messages_container.upsert_item(archived_doc)
 
-            cosmos_messages_container.delete_item(doc['id'], partition_key=conversation_id)
+            if doc['id'] in direct_message_ids:
+                cosmos_messages_container.delete_item(doc['id'], partition_key=conversation_id)
 
         # Archive/delete thoughts for conversation
         user_id_for_thoughts = conversation_item.get('user_id')
@@ -1577,16 +2246,21 @@ def register_route_backend_conversations(bp):
         )
         
         try:
+            # Ephemeral credential history is never archived with ordinary messages.
+            from functions_action_credential_state import delete_private_state
+
+            delete_private_state(user_id, conversation_id=conversation_id)
             cosmos_conversations_container.delete_item(
                 item=conversation_id,
                 partition_key=conversation_id
             )
             bump_conversation_cache_version(user_id, reason="conversation_deleted")
             # TODO: Delete any facts that were stored with this conversation.
-        except Exception as e:
-            return jsonify({
-                "error": str(e)
-            }), 500
+        except Exception as error:
+            payload, status_code = _conversation_delete_failure(
+                error, conversation_id, stage='conversation_delete',
+            )
+            return jsonify(payload), status_code
 
         return jsonify({
             "success": True
@@ -1615,19 +2289,38 @@ def register_route_backend_conversations(bp):
         
         success_count = 0
         failed_ids = []
+        failures = []
         
         for conversation_id in conversation_ids:
+            stage = 'authorization'
             try:
                 # Verify the conversation exists and belongs to the user
                 try:
                     conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
                 except (LookupError, PermissionError):
                     failed_ids.append(conversation_id)
+                    failures.append({
+                        'conversation_id': conversation_id,
+                        'error': 'Conversation not found or access denied.',
+                        'code': 'conversation_unavailable',
+                        'status_code': 404,
+                    })
                     continue
 
+                stage = 'm365_cancellation'
                 cancel_m365_conversation_deliveries(conversation_id)
+                stage = 'orchestration_cleanup'
+                cleanup_conversation_checkpoints(
+                    conversation_id, user_id,
+                    lambda: _authorize_personal_conversation_read(user_id, conversation_id),
+                    message_container=cosmos_messages_container,
+                    conversation_container=cosmos_conversations_container,
+                    output_cleanup=partial(_enroll_retained_orchestration_outputs, user_id, conversation_id),
+                    retain_committed=archiving_enabled,
+                )
                 
                 # Archive if enabled
+                stage = 'conversation_archive'
                 if archiving_enabled:
                     archived_item = dict(conversation_item)
                     archived_item["archived_at"] = datetime.utcnow().isoformat()
@@ -1644,14 +2337,21 @@ def register_route_backend_conversations(bp):
                     )
                 
                 # Get and archive messages if enabled
+                stage = 'chat_analysis_cleanup'
                 message_query = f"SELECT * FROM c WHERE c.conversation_id = '{conversation_id}'"
                 messages = list(cosmos_messages_container.query_items(
                     query=message_query,
                     partition_key=conversation_id
                 ))
+                cleanup_chat_analysis_conversation(conversation_id, user_id, messages)
+                direct_messages = [
+                    message for message in messages if not _is_retained_orchestration_file(message)
+                ]
+                direct_message_ids = {message['id'] for message in direct_messages}
 
+                stage = 'message_cleanup'
                 if not archiving_enabled:
-                    delete_blob_backed_chat_message_files(messages, conversation=conversation_item)
+                    delete_blob_backed_chat_message_files(direct_messages, conversation=conversation_item)
                 
                 for message in messages:
                     if archiving_enabled:
@@ -1659,9 +2359,11 @@ def register_route_backend_conversations(bp):
                         archived_message["archived_at"] = datetime.utcnow().isoformat()
                         cosmos_archived_messages_container.upsert_item(archived_message)
                     
-                    cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
+                    if message['id'] in direct_message_ids:
+                        cosmos_messages_container.delete_item(message['id'], partition_key=conversation_id)
 
                 # Archive/delete thoughts for conversation
+                stage = 'thoughts_cleanup'
                 if archiving_enabled:
                     archive_thoughts_for_conversation(conversation_id, user_id)
                 else:
@@ -1680,6 +2382,10 @@ def register_route_backend_conversations(bp):
                 )
                 
                 # Delete the conversation
+                stage = 'conversation_delete'
+                from functions_action_credential_state import delete_private_state
+
+                delete_private_state(user_id, conversation_id=conversation_id)
                 cosmos_conversations_container.delete_item(
                     item=conversation_id,
                     partition_key=conversation_id
@@ -1688,12 +2394,15 @@ def register_route_backend_conversations(bp):
                 success_count += 1
                 
             except Exception as error:
-                log_event(
-                    "[CONVERSATION_DELETE] Conversation deletion failed.",
-                    extra={"conversation_id": conversation_id, "exception_type": type(error).__name__},
-                    level=logging.ERROR,
+                payload, status_code = _conversation_delete_failure(
+                    error, conversation_id, stage=stage, is_bulk=True,
                 )
                 failed_ids.append(conversation_id)
+                failures.append({
+                    'conversation_id': conversation_id,
+                    **payload,
+                    'status_code': status_code,
+                })
 
         if success_count:
             bump_conversation_cache_version(user_id, reason="conversations_bulk_deleted")
@@ -1701,7 +2410,8 @@ def register_route_backend_conversations(bp):
         return jsonify({
             "success": True,
             "deleted_count": success_count,
-            "failed_ids": failed_ids
+            "failed_ids": failed_ids,
+            "failures": failures,
         }), 200
 
     @bp.route('/api/conversations/<conversation_id>/pin', methods=['POST'])
@@ -1988,6 +2698,10 @@ def register_route_backend_conversations(bp):
                 "workflow_id": conversation_item.get('workflow_id'),
                 "summary": conversation_item.get('summary'),
                 "linked_workspace_documents": linked_workspace_documents,
+                # Only the signed-in owner's own Microsoft 365 items are listed.
+                "used_m365_items": used_m365_items_for_viewer(
+                    conversation_item.get('used_m365_items'), user_id,
+                ),
             }), 200
             
         except CosmosResourceNotFoundError:
@@ -1995,6 +2709,208 @@ def register_route_backend_conversations(bp):
         except Exception as e:
             print(f"Error retrieving conversation metadata: {e}")
             return jsonify({'error': 'Failed to retrieve conversation metadata'}), 500
+
+    @bp.route('/api/conversations/<conversation_id>/generated-documents', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def list_personal_conversation_generated_documents_api(conversation_id):
+        """List the documents agents created in this conversation, and which the reader may download.
+
+        The personal counterpart of the shared conversation list: the same documents, read from the
+        SimpleChat upload actions' results, under the same workspace download rules.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+            settings = get_settings()
+            documents = [
+                {
+                    'document_id': document['document_id'],
+                    'file_name': document['file_name'],
+                    'workspace_scope': document['workspace_scope'],
+                    'preview': document['preview'],
+                    'message_id': document['message_id'],
+                    'created_at': document['created_at'],
+                    'can_download': can_download_generated_document(user_id, document, settings=settings),
+                }
+                for document in _list_personal_conversation_generated_documents(conversation_item)
+            ]
+            return jsonify({'documents': documents}), 200
+        except LookupError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+        except Exception as exc:
+            log_event(
+                '[CONVERSATION_GENERATED_DOCUMENTS] Failed to list generated documents.',
+                extra={'conversation_id': conversation_id, 'exception_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to list generated documents'}), 500
+
+    @bp.route(
+        '/api/conversations/<conversation_id>/generated-documents/<document_id>/download',
+        methods=['GET'],
+    )
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def download_personal_conversation_generated_document_api(conversation_id, document_id):
+        """Download a document an agent created in this conversation, under its workspace's rules."""
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        try:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+        except LookupError:
+            return jsonify({'error': 'Conversation not found'}), 404
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
+
+        try:
+            # Only a document this conversation produced can be fetched through it.
+            document = next(
+                (
+                    candidate
+                    for candidate in _list_personal_conversation_generated_documents(conversation_item)
+                    if candidate['document_id'] == document_id
+                ),
+                None,
+            )
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+            try:
+                document_record, group_id = authorize_generated_document_download(user_id, document)
+            except LookupError:
+                return jsonify({'error': 'Document not found or access denied'}), 404
+            return build_document_download_response(
+                document_record,
+                user_id=user_id,
+                group_id=group_id,
+            )
+        except FileNotFoundError:
+            return jsonify({'error': 'This document is not available yet.'}), 404
+        except PermissionError:
+            return jsonify({'error': 'You do not have permission to download this document'}), 403
+        except ScreeningError as error:
+            return jsonify({'error': error.public_message, 'error_code': error.code}), error.status_code
+        except Exception as exc:
+            log_event(
+                '[CONVERSATION_GENERATED_DOCUMENTS] Failed to download a generated document.',
+                extra={'conversation_id': conversation_id, 'exception_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Unable to download document'}), 500
+
+    @bp.route('/api/conversations/<conversation_id>/kind', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def get_conversation_kind_api(conversation_id):
+        """Report whether a conversation is a personal or a shared one, and prove it exists.
+
+        A conversation reached from a link is not in the loaded rail, so the client has nothing
+        to tell it which family of endpoints the conversation belongs to. It used to work this
+        out by calling the personal metadata endpoint and reading a 404 as "then it must be a
+        shared one", which was correct but made the browser log a failed request every time
+        somebody opened a link to a shared conversation.
+
+        Existence is part of the answer rather than a separate question. Neither message endpoint
+        can be used as an existence check — both answer 200 with an empty list for a conversation
+        that is not there — so without this a deleted conversation would open as an empty chat
+        and keep its id in the address bar.
+
+        A conversation the caller may not see is reported as absent rather than forbidden. The
+        two are indistinguishable to someone who should not know it exists, and the client treats
+        them identically.
+
+        A personal record stored under a shared conversation's id is part of that shared
+        conversation: Orchestrate's backing record (0.261.270), or a private copy an earlier
+        version made there. The shared conversation is reported for anyone who can see it, so
+        reopening it never turns it into a personal chat. A private copy stays reachable as
+        personal only for an owner who can no longer see the shared conversation.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+        personal_response = ({'conversation_id': conversation_id, 'kind': 'personal'}, 200)
+        not_found_response = ({'error': 'Conversation not found'}, 404)
+
+        try:
+            # bac-check: ignore reviewed: this probe exposes no record fields; owns_personal below checks ownership before any personal-kind response.
+            conversation_item = cosmos_conversations_container.read_item(
+                item=conversation_id,
+                partition_key=conversation_id,
+            )
+        except CosmosResourceNotFoundError:
+            conversation_item = None
+        except Exception as e:
+            log_event(
+                f"[CONVERSATION_KIND] Failed to read personal conversation {conversation_id}: {e}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return jsonify({'error': 'Failed to resolve conversation'}), 500
+        owns_personal = bool(
+            conversation_item
+            and conversation_item.get('user_id') == user_id
+            and not is_shared_conversation_backing(conversation_item)
+        )
+
+        def personal_or(response, status):
+            if owns_personal:
+                return jsonify(personal_response[0]), personal_response[1]
+            return jsonify(response), status
+
+        # Checked before answering "collaborative": with the feature off, the collaboration
+        # endpoints refuse everything, so naming a conversation as shared would only send the
+        # client somewhere it cannot go.
+        settings = get_settings() or {}
+        if not settings.get('enable_collaborative_conversations', False):
+            return personal_or(*not_found_response)
+
+        try:
+            collaboration_item = get_collaboration_conversation(conversation_id)
+            access_context = assert_user_can_view_collaboration_conversation(
+                user_id,
+                collaboration_item,
+                allow_pending=True,
+            )
+        except CosmosResourceNotFoundError:
+            return personal_or(*not_found_response)
+        except LookupError:
+            # Raised when the stored document is not a collaboration conversation, which for a
+            # question about kind is the same answer as it not being there.
+            return personal_or(*not_found_response)
+        except PermissionError:
+            return personal_or(*not_found_response)
+        except Exception as e:
+            log_event(
+                f"[CONVERSATION_KIND] Failed to resolve shared conversation {conversation_id}: {e}",
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            # A personal conversation still opens while shared conversations can't be read.
+            return personal_or({'error': 'Failed to resolve conversation'}, 500)
+
+        # Returned alongside the kind because the caller needs this exact document next, and
+        # asking for it twice is the cost the old probe was paying to avoid.
+        return jsonify({
+            'conversation_id': conversation_id,
+            'kind': 'collaborative',
+            'conversation': serialize_collaboration_conversation(
+                collaboration_item,
+                current_user_id=user_id,
+                user_state=access_context.get('user_state'),
+            ),
+        }), 200
 
     @bp.route('/api/conversations/<conversation_id>/mark-read', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -2068,13 +2984,10 @@ def register_route_backend_conversations(bp):
         is_collaboration_summary = False
 
         try:
-            conversation_item = cosmos_conversations_container.read_item(
-                item=conversation_id,
-                partition_key=conversation_id
-            )
-            if conversation_item.get('user_id') != user_id:
-                return jsonify({'error': 'Forbidden'}), 403
-        except CosmosResourceNotFoundError:
+            conversation_item = _authorize_personal_conversation_read(user_id, conversation_id)
+        except LookupError:
+            # Orchestrate's backing record shares its shared conversation's id; the summary is
+            # the shared conversation's.
             try:
                 conversation_item = get_collaboration_conversation(conversation_id)
                 assert_user_can_view_collaboration_conversation(
@@ -2090,6 +3003,8 @@ def register_route_backend_conversations(bp):
             except Exception as e:
                 debug_print(f"Error reading collaborative conversation for summary: {e}")
                 return jsonify({'error': 'Failed to read conversation'}), 500
+        except PermissionError:
+            return jsonify({'error': 'Forbidden'}), 403
         except Exception as e:
             debug_print(f"Error reading conversation for summary: {e}")
             return jsonify({'error': 'Failed to read conversation'}), 500
@@ -2113,6 +3028,7 @@ def register_route_backend_conversations(bp):
                     enable_cross_partition_query=True
                 ))
             raw_messages = filter_assistant_artifact_items(raw_messages)
+            raw_messages = exclude_soft_deleted_messages(raw_messages)
         except Exception as e:
             debug_print(f"Error querying messages for summary: {e}")
             return jsonify({'error': 'Failed to query messages'}), 500
@@ -2299,6 +3215,9 @@ def register_route_backend_conversations(bp):
                 'page': page,
                 'per_page': per_page,
                 'access': access_parameters,
+                'analysis_result_policy_version': 1,
+                # Results cached before soft-deleted messages were excluded must not be served.
+                'soft_deleted_message_policy_version': 1,
             }
             search_cache_key = None
             if cache_settings.get('enabled') and access_parameters is not None:
@@ -2415,6 +3334,24 @@ def register_route_backend_conversations(bp):
             ))
             
             debug_print(f"Found {len(all_matching_messages)} total messages across all conversations")
+
+            accessible_matches = [
+                message for message in all_matching_messages
+                if message.get('conversation_id') in conversation_ids
+            ]
+            if any(
+                any((message.get('metadata') or {}).get(field) for field in (
+                    'saved_analysis', 'saved_analyses', 'analysis_result_contexts',
+                ))
+                or message_uses_workflow_result(message)
+                for message in accessible_matches
+            ):
+                # Source-bound snippets must recheck access rather than outlive it in a cache.
+                search_cache_key = None
+            all_matching_messages = [
+                message for message in sanitize_saved_analysis_messages(accessible_matches, user_id)
+                if not is_saved_analysis_unavailable(message)
+            ]
             
             # Group messages by conversation and filter
             messages_by_conversation = {}
@@ -2595,6 +3532,8 @@ def register_route_backend_conversations(bp):
                 return jsonify({'error': 'Message not found'}), 404
             
             message_doc = message_results[0]
+            if is_soft_deleted_message(message_doc):
+                return jsonify({'error': 'Message not found'}), 404
             conversation_id = message_doc.get('conversation_id')
             
             # Verify ownership - only the message author can delete their message
@@ -2664,7 +3603,7 @@ def register_route_backend_conversations(bp):
                         subsequent_msg['metadata']['thread_info']['previous_thread_id'] = thread_previous_id
                         
                         # Upsert the updated message
-                        cosmos_messages_container.upsert_item(subsequent_msg)
+                        patch_chat_message_metadata(cosmos_messages_container, subsequent_msg)
                         print(f"Repaired thread chain: Message {subsequent_msg['id']} now points to thread {thread_previous_id}")
                 else:
                     messages_to_delete = [message_doc]
@@ -2679,55 +3618,32 @@ def register_route_backend_conversations(bp):
             if child_message_docs:
                 messages_to_delete.extend(child_message_docs)
             
-            # THREAD ATTEMPT PROMOTION: If deleting an active thread attempt, promote next attempt
+            # THREAD ATTEMPT PROMOTION: if the delete removes the active attempt's question,
+            # another attempt takes its place. Deleting only an answer promotes nothing.
             if messages_to_delete:
                 first_msg = messages_to_delete[0]
-                thread_id = first_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-                is_active = first_msg.get('metadata', {}).get('thread_info', {}).get('active_thread', True)
+                first_thread_info = first_msg.get('metadata', {}).get('thread_info', {})
+                thread_id = first_thread_info.get('thread_id')
+                is_active = first_thread_info.get('active_thread', True)
                 
                 if thread_id and is_active:
-                    # Find all other attempts for this thread_id
-                    other_attempts_query = f"""
-                        SELECT * FROM c 
-                        WHERE c.conversation_id = '{conversation_id}' 
-                        AND c.metadata.thread_info.thread_id = '{thread_id}'
-                        AND c.id NOT IN ({','.join([f"'{m['id']}'" for m in messages_to_delete])})
-                        AND c.role = 'user'
-                    """
-                    other_attempts = list(cosmos_messages_container.query_items(
-                        query=other_attempts_query,
-                        partition_key=conversation_id
-                    ))
-                    
-                    # If there are other attempts, promote the next one (lowest thread_attempt)
-                    if other_attempts:
-                        # Sort by thread_attempt to find the next one
-                        other_attempts.sort(key=lambda m: m.get('metadata', {}).get('thread_info', {}).get('thread_attempt', 0))
-                        next_attempt_number = other_attempts[0].get('metadata', {}).get('thread_info', {}).get('thread_attempt', 0)
-                        
-                        # Activate all messages with this thread_attempt
-                        activate_query = f"""
-                            SELECT * FROM c 
-                            WHERE c.conversation_id = '{conversation_id}' 
-                            AND c.metadata.thread_info.thread_id = '{thread_id}'
-                            AND c.metadata.thread_info.thread_attempt = {next_attempt_number}
-                        """
-                        messages_to_activate = list(cosmos_messages_container.query_items(
-                            query=activate_query,
-                            partition_key=conversation_id
-                        ))
-                        
-                        for msg_to_activate in messages_to_activate:
-                            if 'metadata' not in msg_to_activate:
-                                msg_to_activate['metadata'] = {}
-                            if 'thread_info' not in msg_to_activate['metadata']:
-                                msg_to_activate['metadata']['thread_info'] = {}
-                            msg_to_activate['metadata']['thread_info']['active_thread'] = True
-                            cosmos_messages_container.upsert_item(msg_to_activate)
-                        
-                        print(f"Promoted thread_attempt {next_attempt_number} to active after deleting active thread {thread_id}")
+                    promoted_attempt = _promote_remaining_thread_attempt(
+                        conversation_id,
+                        thread_id,
+                        _thread_attempt_number(first_msg),
+                        {message.get('id') for message in messages_to_delete},
+                    )
+                    if promoted_attempt is not None:
+                        debug_print(
+                            f"[THREAD] Promoted thread_attempt {promoted_attempt} to active "
+                            f"after deleting the active attempt of thread {thread_id}"
+                        )
             
             deleted_message_ids = []
+
+            cleanup_chat_analysis_messages(
+                messages_to_delete, conversation_id=conversation_id, owner_user_id=user_id,
+            )
             
             for msg in messages_to_delete:
                 msg_id = msg['id']
@@ -2744,13 +3660,14 @@ def register_route_backend_conversations(bp):
                     msg['metadata']['masked_by_user_id'] = user_id
                     msg['metadata']['masked_timestamp'] = datetime.utcnow().isoformat()
                     
-                    # Archive the message
+                    msg = patch_chat_message_metadata(cosmos_messages_container, msg, fields=(
+                        "is_deleted", "deleted_by_user_id", "deleted_timestamp",
+                        "masked", "masked_by_user_id", "masked_timestamp",
+                    ))
                     archived_msg = dict(msg)
                     archived_msg['archived_at'] = datetime.utcnow().isoformat()
                     cosmos_archived_messages_container.upsert_item(archived_msg)
                     
-                    # Update the message in the main container (for conversation history exclusion)
-                    cosmos_messages_container.upsert_item(msg)
                 else:
                     # Permanently delete the message
                     cosmos_messages_container.delete_item(msg_id, partition_key=conversation_id)
@@ -2782,446 +3699,16 @@ def register_route_backend_conversations(bp):
     @login_required
     @user_required
     def retry_message(message_id):
-        """
-        Retry/regenerate a message by creating new user+system+assistant messages 
-        with incremented thread_attempt and same thread_id.
-        Only the message author can retry their messages.
-        """
-        user_id = get_current_user_id()
-        if not user_id:
-            return jsonify({'error': 'User not authenticated'}), 401
-        
-        try:
-            data = request.get_json() or {}
-            reasoning_effort = data.get('reasoning_effort')
-            agent_info = data.get('agent_info')  # Get agent info if provided
-            
-            # Find the original message
-            query = "SELECT * FROM c WHERE c.id = @message_id"
-            params = [{"name": "@message_id", "value": message_id}]
-            message_results = list(cosmos_messages_container.query_items(
-                query=query,
-                parameters=params,
-                enable_cross_partition_query=True
-            ))
-            
-            if not message_results:
-                return jsonify({'error': 'Message not found'}), 404
-            
-            original_msg = message_results[0]
-            conversation_id = original_msg.get('conversation_id')
-            original_role = original_msg.get('role')
-            
-            # Verify ownership
-            message_user_id = original_msg.get('metadata', {}).get('user_info', {}).get('user_id')
-            if not message_user_id:
-                # Fallback to conversation ownership
-                try:
-                    conversation = cosmos_conversations_container.read_item(
-                        item=conversation_id,
-                        partition_key=conversation_id
-                    )
-                    if conversation.get('user_id') != user_id:
-                        return jsonify({'error': 'You can only retry messages from your own conversations'}), 403
-                except Exception as ex:
-                    return jsonify({'error': 'Conversation not found'}), 404
-            elif message_user_id != user_id:
-                return jsonify({'error': 'You can only retry your own messages'}), 403
-            
-            # Get thread info from original message
-            thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-            previous_thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
-            
-            if not thread_id:
-                return jsonify({'error': 'Message has no thread_id'}), 400
-            
-            # Find current max thread_attempt for this thread_id
-            attempt_query = f"""
-                SELECT VALUE MAX(c.metadata.thread_info.thread_attempt) 
-                FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-            """
-            attempt_results = list(cosmos_messages_container.query_items(
-                query=attempt_query,
-                partition_key=conversation_id
-            ))
-            
-            current_max_attempt = attempt_results[0] if attempt_results and attempt_results[0] is not None else 0
-            new_attempt = current_max_attempt + 1
-            
-            # Set all existing attempts for this thread to active_thread=false
-            deactivate_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-            """
-            existing_messages = list(cosmos_messages_container.query_items(
-                query=deactivate_query,
-                partition_key=conversation_id
-            ))
-            
-            print(f"🔍 Retry - Found {len(existing_messages)} existing messages to deactivate")
-            
-            for msg in existing_messages:
-                msg_id = msg.get('id', 'unknown')
-                msg_role = msg.get('role', 'unknown')
-                old_active = msg.get('metadata', {}).get('thread_info', {}).get('active_thread', None)
-                
-                if 'metadata' not in msg:
-                    msg['metadata'] = {}
-                if 'thread_info' not in msg['metadata']:
-                    msg['metadata']['thread_info'] = {}
-                msg['metadata']['thread_info']['active_thread'] = False
-                cosmos_messages_container.upsert_item(msg)
-                
-                print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
-            
-            # Find the original user message in this thread to get the content
-            # Get the FIRST user message in this thread (attempt=1) to ensure we get the original content
-            user_msg_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-                AND c.role = 'user'
-                ORDER BY c.metadata.thread_info.thread_attempt ASC
-            """
-            user_msg_results = list(cosmos_messages_container.query_items(
-                query=user_msg_query,
-                partition_key=conversation_id
-            ))
-            
-            if not user_msg_results:
-                return jsonify({'error': 'User message not found in thread'}), 404
-            
-            # Get the first user message (attempt 1) to get original content and metadata
-            original_user_msg = user_msg_results[0]
-            user_content = original_user_msg.get('content', '')
-            original_metadata = original_user_msg.get('metadata', {})
-            original_thread_info = original_metadata.get('thread_info', {})
-            
-            print(f"🔍 Retry - Original user message: {original_user_msg.get('id')}")
-            print(f"🔍 Retry - Original thread_id: {original_thread_info.get('thread_id')}")
-            print(f"🔍 Retry - Original previous_thread_id: {original_thread_info.get('previous_thread_id')}")
-            print(f"🔍 Retry - Original attempt: {original_thread_info.get('thread_attempt')}")
-            print(f"🔍 Retry - New attempt will be: {new_attempt}")
-            
-            # Create new user message with same content but new attempt number
-            import uuid
-            import time
-            import random
-            
-            new_user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
-            
-            # Copy metadata but update thread_attempt and keep same thread_id and previous_thread_id from original
-            new_metadata = dict(original_metadata)
-            new_metadata['retried'] = True  # Mark as retried
-            new_metadata['thread_info'] = {
-                'thread_id': thread_id,  # Keep same thread_id
-                'previous_thread_id': original_thread_info.get('previous_thread_id'),  # Preserve original previous_thread_id
-                'active_thread': True,
-                'thread_attempt': new_attempt
-            }
-            
-            print(f"🔍 Retry - New user message ID: {new_user_message_id}")
-            print(f"🔍 Retry - New thread_info: {new_metadata['thread_info']}")
-            
-            # Create new user message
-            new_user_message = {
-                'id': new_user_message_id,
-                'conversation_id': conversation_id,
-                'role': 'user',
-                'content': user_content,
-                'timestamp': datetime.utcnow().isoformat(),
-                'model_deployment_name': None,
-                'metadata': new_metadata
-            }
-            cosmos_messages_container.upsert_item(new_user_message)
-
-            _rebuild_authorized_personal_conversation_used_documents(
-                user_id,
-                conversation_id,
-            )
-            _invalidate_conversation_cache_after_message_mutation(
-                conversation_id,
-                user_id,
-                "message_retry_created",
-            )
-            # Build chat request parameters from original message metadata
-            replayed_document_context = _build_replayed_document_context(original_metadata)
-            replayed_model_context = _build_replayed_model_context(original_metadata, data)
-            chat_request = {
-                'message': user_content,
-                'conversation_id': conversation_id,
-                **replayed_model_context,
-                'reasoning_effort': reasoning_effort or original_metadata.get('reasoning_effort'),
-                **replayed_document_context,
-                'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
-                'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
-                'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
-                'chat_type': original_metadata.get('chat_context', {}).get('type', 'user'),
-                'retry_user_message_id': new_user_message_id,  # Pass this to skip user message creation
-                'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
-                'retry_thread_attempt': new_attempt  # Pass attempt number
-            }
-            
-            # Add agent_info to chat request if provided (for agent-based retry)
-            if agent_info:
-                chat_request['agent_info'] = agent_info
-                print(f"🤖 Retry - Using agent: {agent_info.get('display_name')} ({agent_info.get('name')})")
-            elif original_metadata.get('agent_selection'):
-                # Use original agent selection if no new agent specified
-                chat_request['agent_info'] = original_metadata.get('agent_selection')
-                print(f"🤖 Retry - Using original agent from metadata")
-            
-            print(f"🔍 Retry - Chat request params: retry_user_message_id={new_user_message_id}, retry_thread_id={thread_id}, retry_thread_attempt={new_attempt}")
-            
-            # Make internal request to chat API
-            from flask import g
-            g.conversation_id = conversation_id
-            
-            # Import and call chat function directly
-            # We'll need to modify the chat_api to handle retry requests
-            return jsonify({
-                'success': True,
-                'message': 'Retry initiated',
-                'thread_id': thread_id,
-                'new_attempt': new_attempt,
-                'user_message_id': new_user_message_id,
-                'chat_request': chat_request
-            }), 200
-            
-        except Exception as e:
-            print(f"Error retrying message: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'error': 'Failed to retry message'}), 500
+        """Prepare a new attempt using the viewed question's authorized input settings."""
+        return _prepare_message_attempt_response(message_id)
 
     @bp.route('/api/message/<message_id>/edit', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
     @user_required
     def edit_message(message_id):
-        """
-        Edit a user message and regenerate the response with the edited content.
-        Creates a new attempt with edited content while preserving original model/settings.
-        Only the message author can edit their messages.
-        """
-        user_id = get_current_user_id()
-        if not user_id:
-            return jsonify({'error': 'User not authenticated'}), 401
-        
-        try:
-            data = request.get_json() or {}
-            edited_content = data.get('content', '').strip()
-            
-            if not edited_content:
-                return jsonify({'error': 'Message content cannot be empty'}), 400
-            
-            # Find the original message
-            query = "SELECT * FROM c WHERE c.id = @message_id"
-            params = [{"name": "@message_id", "value": message_id}]
-            message_results = list(cosmos_messages_container.query_items(
-                query=query,
-                parameters=params,
-                enable_cross_partition_query=True
-            ))
-            
-            if not message_results:
-                return jsonify({'error': 'Message not found'}), 404
-            
-            original_msg = message_results[0]
-            conversation_id = original_msg.get('conversation_id')
-            original_role = original_msg.get('role')
-            
-            # Only allow editing user messages
-            if original_role != 'user':
-                return jsonify({'error': 'Only user messages can be edited'}), 400
-            
-            # Verify ownership
-            message_user_id = original_msg.get('metadata', {}).get('user_info', {}).get('user_id')
-            if not message_user_id:
-                # Fallback to conversation ownership
-                try:
-                    conversation = cosmos_conversations_container.read_item(
-                        item=conversation_id,
-                        partition_key=conversation_id
-                    )
-                    if conversation.get('user_id') != user_id:
-                        return jsonify({'error': 'You can only edit messages from your own conversations'}), 403
-                except Exception as ex:
-                    return jsonify({'error': 'Conversation not found'}), 404
-            elif message_user_id != user_id:
-                return jsonify({'error': 'You can only edit your own messages'}), 403
-            
-            # Get thread info from original message
-            thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('thread_id')
-            previous_thread_id = original_msg.get('metadata', {}).get('thread_info', {}).get('previous_thread_id')
-            
-            if not thread_id:
-                return jsonify({'error': 'Message has no thread_id'}), 400
-            
-            # Find current max thread_attempt for this thread_id
-            attempt_query = f"""
-                SELECT VALUE MAX(c.metadata.thread_info.thread_attempt) 
-                FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-            """
-            attempt_results = list(cosmos_messages_container.query_items(
-                query=attempt_query,
-                partition_key=conversation_id
-            ))
-            
-            current_max_attempt = attempt_results[0] if attempt_results and attempt_results[0] is not None else 0
-            new_attempt = current_max_attempt + 1
-            
-            # Set all existing attempts for this thread to active_thread=false
-            deactivate_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-            """
-            existing_messages = list(cosmos_messages_container.query_items(
-                query=deactivate_query,
-                partition_key=conversation_id
-            ))
-            
-            print(f"🔍 Edit - Found {len(existing_messages)} existing messages to deactivate")
-            
-            for msg in existing_messages:
-                msg_id = msg.get('id', 'unknown')
-                msg_role = msg.get('role', 'unknown')
-                old_active = msg.get('metadata', {}).get('thread_info', {}).get('active_thread', None)
-                
-                if 'metadata' not in msg:
-                    msg['metadata'] = {}
-                if 'thread_info' not in msg['metadata']:
-                    msg['metadata']['thread_info'] = {}
-                msg['metadata']['thread_info']['active_thread'] = False
-                cosmos_messages_container.upsert_item(msg)
-                
-                print(f"  ✏️ Deactivated: {msg_id} (role={msg_role}, was_active={old_active}, now_active=False)")
-            
-            # Get the FIRST user message in this thread (attempt=1) to get original metadata
-            user_msg_query = f"""
-                SELECT * FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-                AND c.role = 'user'
-                ORDER BY c.metadata.thread_info.thread_attempt ASC
-            """
-            user_msg_results = list(cosmos_messages_container.query_items(
-                query=user_msg_query,
-                partition_key=conversation_id
-            ))
-            
-            if not user_msg_results:
-                return jsonify({'error': 'User message not found in thread'}), 404
-            
-            # Get the first user message (attempt 1) to get original metadata
-            original_user_msg = user_msg_results[0]
-            original_metadata = original_user_msg.get('metadata', {})
-            original_thread_info = original_metadata.get('thread_info', {})
-            
-            print(f"🔍 Edit - Original user message: {original_user_msg.get('id')}")
-            print(f"🔍 Edit - Original thread_id: {original_thread_info.get('thread_id')}")
-            print(f"🔍 Edit - Original previous_thread_id: {original_thread_info.get('previous_thread_id')}")
-            print(f"🔍 Edit - Original attempt: {original_thread_info.get('thread_attempt')}")
-            print(f"🔍 Edit - New attempt will be: {new_attempt}")
-            
-            # Create new user message with edited content
-            import time
-            import random
-            
-            new_user_message_id = f"{conversation_id}_user_{int(time.time())}_{random.randint(1000,9999)}"
-            
-            # Copy metadata but update thread_attempt, add edited flag, and keep same thread_id
-            new_metadata = dict(original_metadata)
-            new_metadata['edited'] = True  # Mark as edited
-            new_metadata['thread_info'] = {
-                'thread_id': thread_id,  # Keep same thread_id
-                'previous_thread_id': original_thread_info.get('previous_thread_id'),  # Preserve original
-                'active_thread': True,
-                'thread_attempt': new_attempt
-            }
-            
-            print(f"🔍 Edit - New user message ID: {new_user_message_id}")
-            print(f"🔍 Edit - New thread_info: {new_metadata['thread_info']}")
-            print(f"🔍 Edit - Edited flag set: {new_metadata.get('edited')}")
-            
-            # Create new user message with edited content
-            new_user_message = {
-                'id': new_user_message_id,
-                'conversation_id': conversation_id,
-                'role': 'user',
-                'content': edited_content,  # Use edited content
-                'timestamp': datetime.utcnow().isoformat(),
-                'model_deployment_name': None,
-                'metadata': new_metadata
-            }
-            cosmos_messages_container.upsert_item(new_user_message)
-
-            _rebuild_authorized_personal_conversation_used_documents(
-                user_id,
-                conversation_id,
-            )
-            _invalidate_conversation_cache_after_message_mutation(
-                conversation_id,
-                user_id,
-                "message_edit_created",
-            )
-            # Build chat request parameters from original message metadata
-            # Keep all original settings (model, reasoning, doc search, etc.)
-            replayed_document_context = _build_replayed_document_context(original_metadata)
-            replayed_model_context = _build_replayed_model_context(original_metadata)
-            chat_request = {
-                'message': edited_content,  # Use edited content
-                'conversation_id': conversation_id,
-                **replayed_model_context,
-                'reasoning_effort': original_metadata.get('reasoning_effort'),
-                **replayed_document_context,
-                'image_generation': original_metadata.get('image_generation', {}).get('enabled', False),
-                'active_group_id': original_metadata.get('chat_context', {}).get('group_id'),
-                'active_public_workspace_id': original_metadata.get('chat_context', {}).get('public_workspace_id'),
-                'chat_type': original_metadata.get('chat_context', {}).get('type', 'user'),
-                'edited_user_message_id': new_user_message_id,  # Pass this to skip user message creation
-                'retry_thread_id': thread_id,  # Pass thread_id to maintain same thread
-                'retry_thread_attempt': new_attempt  # Pass attempt number
-            }
-            
-            # Include agent_info from original metadata if present (for agent-based edits)
-            if original_metadata.get('agent_selection'):
-                agent_selection = original_metadata.get('agent_selection')
-                chat_request['agent_info'] = {
-                    'name': agent_selection.get('selected_agent'),
-                    'display_name': agent_selection.get('agent_display_name'),
-                    'id': agent_selection.get('agent_id'),
-                    'is_global': agent_selection.get('is_global', False),
-                    'is_group': agent_selection.get('is_group', False),
-                    'group_id': agent_selection.get('group_id'),
-                    'group_name': agent_selection.get('group_name')
-                }
-                print(f"🤖 Edit - Using agent: {chat_request['agent_info'].get('display_name')} ({chat_request['agent_info'].get('name')})")
-            
-            print(f"🔍 Edit - Chat request params: edited_user_message_id={new_user_message_id}, retry_thread_id={thread_id}, retry_thread_attempt={new_attempt}")
-            
-            # Return success with chat_request for frontend to call chat API
-            return jsonify({
-                'success': True,
-                'message': 'Edit initiated',
-                'thread_id': thread_id,
-                'new_attempt': new_attempt,
-                'user_message_id': new_user_message_id,
-                'edited': True,
-                'chat_request': chat_request
-            }), 200
-            
-        except Exception as e:
-            print(f"Error editing message: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'error': 'Failed to edit message'}), 500
+        """Prepare an edited attempt without changing the viewed attempt's routing."""
+        return _prepare_message_attempt_response(message_id, edited=True)
 
     @bp.route('/api/message/<message_id>/switch-attempt', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -3253,6 +3740,8 @@ def register_route_backend_conversations(bp):
                 return jsonify({'error': 'Message not found'}), 404
             
             current_msg = message_results[0]
+            if is_soft_deleted_message(current_msg):
+                return jsonify({'error': 'Message not found'}), 404
             conversation_id = current_msg.get('conversation_id')
             
             # Verify ownership
@@ -3277,21 +3766,24 @@ def register_route_backend_conversations(bp):
             if not thread_id:
                 return jsonify({'error': 'Message has no thread_id'}), 400
             
-            # Get all attempts for this thread_id, ordered by thread_attempt
-            attempts_query = f"""
-                SELECT DISTINCT c.metadata.thread_info.thread_attempt 
-                FROM c 
-                WHERE c.conversation_id = '{conversation_id}' 
-                AND c.metadata.thread_info.thread_id = '{thread_id}'
-                AND c.role = 'user'
-                ORDER BY c.metadata.thread_info.thread_attempt ASC
-            """
+            # Get the attempts for this thread_id whose question still exists. An attempt whose
+            # question was deleted is not offered: switching to it would show a deleted turn.
             attempts_results = list(cosmos_messages_container.query_items(
-                query=attempts_query,
-                partition_key=conversation_id
+                query=(
+                    'SELECT c.metadata FROM c WHERE c.conversation_id = @conversation_id '
+                    "AND c.metadata.thread_info.thread_id = @thread_id AND c.role = 'user'"
+                ),
+                parameters=[
+                    {'name': '@conversation_id', 'value': conversation_id},
+                    {'name': '@thread_id', 'value': thread_id},
+                ],
+                partition_key=conversation_id,
             ))
             
-            available_attempts = sorted([r.get('thread_attempt', 0) for r in attempts_results])
+            available_attempts = sorted({
+                _thread_attempt_number(result)
+                for result in exclude_soft_deleted_messages(attempts_results)
+            })
             
             if not available_attempts:
                 return jsonify({'error': 'No attempts found'}), 404
@@ -3329,7 +3821,7 @@ def register_route_backend_conversations(bp):
                 
                 msg_attempt = msg['metadata']['thread_info'].get('thread_attempt', 0)
                 msg['metadata']['thread_info']['active_thread'] = (msg_attempt == target_attempt)
-                cosmos_messages_container.upsert_item(msg)
+                patch_chat_message_metadata(cosmos_messages_container, msg)
 
             _rebuild_authorized_personal_conversation_used_documents(
                 user_id,

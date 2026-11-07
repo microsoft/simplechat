@@ -1,0 +1,1244 @@
+# test_v2_orchestration_recovery.py
+"""
+Real-component browser coverage for orchestration failure and checkpoint recovery.
+Version: 0.261.417
+Implemented in: 0.261.105
+Earlier-version run refusals covered in: 0.261.139
+Settled runs whose stored plan still reads running covered in: 0.261.141
+Configurable step failure, reused by Microsoft 365 recovery coverage, in: 0.261.238
+Ended runs show unfinished steps and retry them; files that cannot be retried alone offer
+Retry from failed step, in: 0.261.303
+Empty pending-credential polling fixture updated in: 0.261.341
+Delayed detail, list and reconciliation reads fenced in: 0.261.356
+Available-information completion and explicit output-only continuation covered in: 0.261.399
+
+The production controller, SSE reader, stores, message list, and Run drawer execute
+in the existing local/Azure Playwright harness. Only API responses are deterministic.
+The companion backend test forwards those requests to the actual Flask routes.
+"""
+
+import copy
+import json
+from pathlib import Path
+from urllib.parse import urlsplit
+
+import pytest
+from playwright.sync_api import expect
+
+import test_v2_orchestration_plan_editor as editor_tests
+from test_v2_orchestration_plan_editor import (  # noqa: F401
+    connect_options,
+    editor_assets,
+    editor_browser,
+)
+from v2_pending_action_stubs import is_pending_actions_list, pending_actions_payload  # noqa: E402
+
+
+pytestmark = pytest.mark.ui
+CONVERSATION = "recovery-chat"
+TURN = "recovery-turn"
+FAILURE = "The selected agent did not finish before this step's time limit."
+LEGACY_PLAN_MESSAGE = (
+    "This plan was created by an earlier orchestration version and can't be opened or rerun. "
+    "Start a new request."
+)
+AVAILABLE_ANSWER = (
+    "The reports describe the available results. The requested forecast was not included "
+    "in the provided data, so I cannot determine it from these reports."
+)
+
+
+class RecoveryApi:
+    """Saved attempts plus explicit gates for stream loss and concurrent requests."""
+
+    def __init__(self, assets):
+        self.assets = assets
+        self.plan = editor_tests.make_plan(CONVERSATION, TURN)
+        self.plan["steps"][1].update(capability_id="agent", title="Ask the selected agent")
+        self.records = {}
+        self.steps = {}
+        self.messages = [{
+            "id": "user-original", "conversation_id": CONVERSATION, "role": "user",
+            "content": "Compare quarterly reports.", "metadata": {"orchestration_turn_id": TURN},
+        }]
+        self.requests = []
+        self.errors = []
+        self.preparations = {}
+        self.prepare_mode = "success"
+        self.stream_mode = "failure"
+        self.status_reads_fail = False
+        self.waiting = []
+        # The failed step's failure; Microsoft 365 recovery tests replace it.
+        self.failure = {"code": "step_timeout", "message": FAILURE}
+        self.available_information = False
+        self.normal_information_limits = False
+        # Runs the server refuses as an earlier orchestration version: every by-id request
+        # answers 409 legacy_plan and the run list leaves them out.
+        self.legacy = set()
+        self.add_record(self.plan)
+
+    def add_record(self, plan, attempt=1, retry_of=None):
+        record = {
+            "run_id": plan["run_id"], "conversation_id": CONVERSATION, "turn_id": TURN,
+            "status": plan["status"], "plan": copy.deepcopy(plan), "turn_index": 0,
+            "created_at": f"2026-09-08T12:00:0{attempt}Z", "started_at": None, "completed_at": None,
+            "user_message_id": "user-original", "user_message": "Compare quarterly reports.",
+            "assistant_message_id": None, "attempt_index": attempt, "retry_of_run_id": retry_of,
+            "plan_summary": {
+                "plan_id": plan["plan_id"], "turn_id": TURN, "step_count": 3,
+                "intent_summary": plan["intent"]["summary"], "status": plan["status"],
+            }, "capabilities_used": [], "artifact_count": 0, "approval": plan["approval"], "revision": 0,
+        }
+        self.records[plan["run_id"]] = record
+        self.steps[plan["run_id"]] = []
+        return record
+
+    def recovery(self, run_id):
+        recovery = {
+            "eligible": True, "reason_code": None, "message": "Completed steps were saved.",
+            "expected_version": "recovery-v1", "source_run_id": run_id,
+            "retry_step_ids": ["research", "answer"], "reused_step_ids": ["read"],
+            "requires_confirmation": True,
+        }
+        if self.available_information and not self.records[run_id].get("retry_of_run_id"):
+            recovery.update(
+                eligible=False, reason_code="input_partial_not_recoverable",
+                message="The saved findings do not establish every requested conclusion.",
+                requires_confirmation=False, can_use_available_information=True,
+            )
+        return recovery
+
+    def finish(self, run_id, status="failed"):
+        record = self.records[run_id]
+        record.update(
+            status=status, outcome=status, completed_at="2026-09-08T12:01:00Z",
+            finalization_status="saved", message_saved=True,
+        )
+        record["plan"]["status"] = status
+        record["plan_summary"]["status"] = status
+        failure = {**copy.deepcopy(self.failure), "step_id": "research"}
+        record["failure"] = failure if status == "failed" else None
+        record["failures"] = [failure] if status == "failed" else []
+        record["recovery"] = self.recovery(run_id)
+        if status == "completed":
+            record["recovery"].update(
+                eligible=False, reason_code="already_completed", message="This request is already complete.",
+            )
+        self.steps[run_id] = [
+            {"step_id": "read", "step_index": 0, "status": "completed", "summary": "Read saved reports",
+             "reused": bool(record["retry_of_run_id"]), "checkpoint_available": True},
+            {"step_id": "research", "step_index": 1, "status": status, "summary": "",
+             "failure": record["failure"]},
+            {"step_id": "answer", "step_index": 2,
+             "status": "completed" if status == "completed" else "skipped", "summary": ""},
+        ]
+        if status == "completed" and self.normal_information_limits:
+            for step in (self.steps[run_id][0], self.steps[run_id][2]):
+                step.update(status="partial", summary="Available results retained; missing information explained.")
+        content = "Comparison from saved reports and the recovered agent." if status == "completed" else (
+            "This run was stopped. Available partial results were kept." if status == "cancelled" else failure["message"])
+        if status == "completed" and (self.normal_information_limits or self.available_information):
+            content = AVAILABLE_ANSWER
+        metadata = {"orchestration": {
+            key: record[key] for key in ("run_id", "turn_id", "attempt_index", "retry_of_run_id",
+                                        "outcome", "failure", "failures", "recovery",
+                                        "finalization_status", "message_saved") if key in record
+        }}
+        message_id = f"assistant-{run_id}"
+        record["assistant_message_id"] = message_id
+        message = {
+            "id": message_id, "conversation_id": CONVERSATION, "role": "assistant", "content": content,
+            "metadata": metadata, "model_deployment_name": "original-model",
+            "hybrid_citations": [{"document_id": "doc-a", "title": "Saved Report A"}],
+        }
+        self.messages = [message for message in self.messages if message["id"] != message_id] + [message]
+        return {
+            **metadata["orchestration"], "status": status, "done": True, "type": "orchestration_done",
+            "message_id": message_id, "user_message_id": "user-original", "full_content": content,
+            "metadata": metadata, "model_deployment_name": "original-model",
+            "hybrid_citations": message["hybrid_citations"],
+        }
+
+    def begin_finalization(self, run_id, status):
+        self.finish(run_id, status)
+        record = self.records[run_id]
+        self.messages = [message for message in self.messages if message["id"] != record["assistant_message_id"]]
+        record.update(assistant_message_id=None, finalization_status="pending")
+        record.pop("message_saved", None)
+        record["recovery"].update(
+            eligible=False, reason_code="execution_live",
+            message="This attempt is still running. Wait for it to finish or stop it.",
+        )
+
+    def legacy_run(self, path, body):
+        """The run a request addresses, when the server refuses it as an earlier version."""
+        if path == editor_tests.RUN:
+            run_id = (body or {}).get("run_id")
+        elif path.startswith("/api/v2/orchestration/cancel/"):
+            run_id = path.rsplit("/", 1)[-1]
+        elif path.startswith(editor_tests.RUNS + "/"):
+            run_id = path.split("/")[5]
+        else:
+            return None
+        return run_id if run_id in self.legacy else None
+
+    @staticmethod
+    def stream(route, events):
+        route.fulfill(content_type="text/event-stream",
+                      body="".join(f"data: {json.dumps(event)}\n\n" for event in events))
+
+    def handle(self, route):
+        request = route.request
+        path = urlsplit(request.url).path
+        if is_pending_actions_list(request.method, path):
+            route.fulfill(json=pending_actions_payload())
+            return
+        if request.method == "GET" and path in {"/api/v2/user-input/pending", "/api/action-credentials/pending"}:
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-token"})
+            return
+        if path == "/api/action-credentials/pending" and request.method == "GET":
+            route.fulfill(json={"requests": []})
+            return
+        body = request.post_data_json if request.post_data else None
+        self.requests.append({"path": path, "method": request.method, "body": body})
+        if request.method == "GET" and path in self.assets:
+            route.fulfill(path=str(self.assets[path]))
+            return
+        if path == "/favicon.ico":
+            route.fulfill(status=204)
+            return
+        if self.legacy_run(path, body):
+            route.fulfill(status=409, json={"error": LEGACY_PLAN_MESSAGE, "code": "legacy_plan"})
+            return
+        if path == editor_tests.RUN:
+            record = self.records[body["run_id"]]
+            if record["retry_of_run_id"]:
+                assert "edits" not in body, "Recovery must execute the immutable saved plan."
+                assert body.get("expected_version") == record["plan"]["edit_version"], (
+                    "Recovery must use the new child's approval version, not the source recovery token."
+                )
+            if self.stream_mode == "reject" and record["retry_of_run_id"]:
+                route.fulfill(status=409, json={"code": "recovery_unavailable"})
+                return
+            record.update(status="running", started_at="2026-09-08T12:00:30Z")
+            if self.stream_mode == "transport":
+                self.stream(route, [{"type": "content", "content": "Partial result before disconnect."}])
+            else:
+                status = "completed" if record["retry_of_run_id"] or self.normal_information_limits else "failed"
+                event = self.finish(body["run_id"], status)
+                events = [{"type": "orchestration_step", **step} for step in self.steps[body["run_id"]]]
+                self.stream(route, events + [event])
+            return
+        if path.endswith("/retry"):
+            run_id = path.split("/")[-2]
+            if self.prepare_mode == "confirmation":
+                self.records[run_id]["recovery"]["requires_confirmation"] = True
+                route.fulfill(status=409, json={
+                    "code": "confirmation_required", "recovery": self.records[run_id]["recovery"],
+                })
+                return
+            if self.prepare_mode == "conflict":
+                self.records[run_id]["recovery"].update(eligible=False, current_run_id="other-attempt")
+                route.fulfill(status=409, json={"code": "recovery_changed", "current_run_id": "other-attempt"})
+                return
+            if body["submission_id"] in self.preparations:
+                assert self.preparations[body["submission_id"]][0] == body
+                route.fulfill(json={"run": self.preparations[body["submission_id"]][1]})
+                return
+            if body.get("use_available_information"):
+                assert self.records[run_id]["recovery"].get("can_use_available_information") is True
+                assert body["confirm_external_effects"] is False
+            else:
+                assert body["confirm_external_effects"], "Uncertain effects require explicit consent."
+            child_plan = copy.deepcopy(self.records[run_id]["plan"])
+            child_plan.update(
+                run_id="retry-attempt", plan_id="retry-plan", status="awaiting_approval",
+                edit_version="retry-plan-version",
+            )
+            child_plan["approval"] = {"mode": "manual", "timeout_seconds": 0, "state": "pending"}
+            child = self.add_record(child_plan, 2, run_id)
+            self.preparations[body["submission_id"]] = (body, copy.deepcopy(child))
+            self.records[run_id].update(latest_attempt_run_id=child["run_id"])
+            self.records[run_id]["recovery"].update(eligible=False, current_run_id=child["run_id"])
+            if self.prepare_mode == "lost":
+                route.abort()
+            elif self.prepare_mode == "delayed":
+                self.waiting.append(lambda: route.fulfill(json={"run": child}))
+            else:
+                route.fulfill(json={"run": child})
+            return
+        if path.startswith("/api/v2/orchestration/cancel/"):
+            self.finish(path.rsplit("/", 1)[-1], "cancelled")
+            route.fulfill(json={"cancelled": True})
+            return
+        if path == editor_tests.RUNS:
+            route.fulfill(json={"runs": [
+                record for run_id, record in self.records.items() if run_id not in self.legacy
+            ]})
+            return
+        if path.startswith(editor_tests.RUNS + "/"):
+            if self.status_reads_fail:
+                route.fulfill(status=503, json={"error": "Progress temporarily unavailable."})
+                return
+            run_id = path.split("/")[5]
+            if path.endswith("/steps"):
+                route.fulfill(json={"steps": self.steps.get(run_id, [])})
+            elif run_id in self.records:
+                route.fulfill(json={"run": self.records[run_id]})
+            else:
+                route.fulfill(status=404, json={"code": "not_found"})
+            return
+        if path in ("/api/get_messages", "/api/v2/chat/messages"):
+            route.fulfill(json={"messages": self.messages})
+            return
+        self.errors.append(f"{request.method} {path}")
+        route.fulfill(status=404, json={"error": "Unexpected test request"})
+
+    def calls(self, suffix):
+        return [request for request in self.requests if request["path"].endswith(suffix)]
+
+    def release(self):
+        waiting, self.waiting = self.waiting, []
+        for callback in waiting:
+            callback()
+
+
+@pytest.fixture
+def recovery_ui(editor_browser, editor_assets):
+    context = editor_browser.new_context(viewport={"width": 1440, "height": 900})
+    page = context.new_page()
+    api = RecoveryApi(editor_assets)
+    page.route("**/*", api.handle)
+    page.on("pageerror", lambda error: api.errors.append(str(error)))
+    try:
+        yield page, api
+    finally:
+        api.release()
+        context.close()
+        assert not api.errors, api.errors
+
+
+def mount_recovery(page, api, *, saved=False, resume_saved=True):
+    """Mount real components, optionally deferring saved-run recovery to test hydration order."""
+    page.goto(editor_tests.ORIGIN + editor_tests.HARNESS)
+    page.wait_for_function("() => Boolean(window.OrchHarness)")
+    for url in api.assets:
+        if url.endswith(".css"):
+            page.add_style_tag(url=editor_tests.ORIGIN + url)
+    page.evaluate(
+        """(spec) => {
+            const H = window.OrchHarness;
+            H.reset();
+            H.stores.bootstrap.useBootstrapStore.setState({ data: {
+                version: '0.261.105', settings: {}, branding: { app_title: 'SimpleChat' },
+                features: { enable_chat_orchestration: true },
+                user: { id: 'editor-tester', display_name: 'Tester' },
+                scope: { groups: [], public_workspaces: [] },
+                orchestration: { enabled: true, capabilities: [] },
+                catalogs: { models: [], agents: [], prompts: [] },
+            } });
+            H.stores.chat.useChatStore.setState({
+                activeConversationId: spec.conversation, activeConversationKind: 'personal',
+                messagesLoading: false, streaming: false, streamingContent: '', thoughts: [],
+                streamError: null, messages: spec.messages, conversations: [],
+            });
+            if (!spec.saved) {
+                const S = H.stores.orchestration.useOrchestrationStore.getState();
+                S.setPlan(spec.conversation, spec.turn, spec.plan);
+                S.setActiveTurn(spec.conversation, spec.turn);
+            }
+            H.mount('mount-a', 'PlanEditorExperience', {}, { strictMode: true });
+        }""",
+        {"plan": api.plan, "messages": api.messages, "conversation": api.plan["conversation_id"],
+         "turn": api.plan["turn_id"], "saved": saved},
+    )
+    if saved and resume_saved:
+        page.evaluate("(id) => window.OrchHarness.resume.resumeOrchestrationForConversation(id)", api.plan["conversation_id"])
+
+
+def start_failure(page, api):
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_text(FAILURE, exact=True).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+
+def open_recovery_details(scope):
+    """Advanced controls are explicit disclosures, never default diagnostic panels."""
+    activity = scope.locator('[data-testid="quiet-activity"] > details')
+    if activity.count() and not activity.first.get_attribute("open"):
+        activity.first.locator("summary").first.click()
+    details = scope.locator('section[aria-label="Orchestration recovery"] > details')
+    for index in range(details.count()):
+        item = details.nth(index)
+        if not item.get_attribute("open"):
+            item.locator("summary").first.click()
+
+
+def review_saved_attempt(page):
+    open_recovery_details(page)
+    page.get_by_role("button", name="Review saved attempt").first.click()
+
+
+def check_saved_status(page):
+    open_recovery_details(page)
+    page.get_by_role("button", name="Check saved status").first.click()
+
+
+def stop_from_composer(page):
+    page.evaluate("() => window.OrchHarness.mount('mount-b', 'Composer')")
+    page.get_by_role("button", name="Stop generating").click()
+
+
+def main_state(page):
+    return page.evaluate("""() => {
+        const H = window.OrchHarness;
+        return { messages: H.stores.chat.useChatStore.getState().messages,
+            history: H.stores.orchestration.useOrchestrationStore.getState().history,
+            inFlight: H.stores.orchestration.useOrchestrationStore.getState().inFlight };
+    }""")
+
+
+@pytest.mark.parametrize("edit_version", [None, "saved-plan-edit"])
+def test_failure_persists_in_main_and_drawer_and_confirmed_retry_reuses_progress(recovery_ui, edit_version):
+    page, api = recovery_ui
+    start_failure(page, api)
+    if edit_version:
+        api.records[api.plan["run_id"]]["plan"]["edit_version"] = edit_version
+    assert main_state(page)["history"][CONVERSATION][0]["status"] == "failed"
+    failed_message = main_state(page)["messages"][-1]
+    assert failed_message["metadata"]["orchestration"]["outcome"] == "failed"
+    assert failed_message["hybrid_citations"][0]["document_id"] == "doc-a"
+    review_saved_attempt(page)
+    drawer = page.get_by_role("complementary", name="Review drawer")
+    open_recovery_details(drawer)
+    expect(drawer.get_by_text(FAILURE, exact=True)).to_be_visible()
+    expect(drawer.locator("p").filter(has_text="Reuse saved results:")).to_contain_text("Read quarterly reports")
+    drawer.get_by_role("button", name="Retry from failed step").click()
+    dialog = page.get_by_role("dialog", name="Retry this failed step?")
+    expect(dialog).to_be_visible()
+    expect(dialog.get_by_text("Previously completed plan steps", exact=False)).to_be_visible()
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    assert not api.calls("/retry")
+    drawer.get_by_role("button", name="Retry from failed step").click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    expect(page.get_by_text("Comparison from saved reports and the recovered agent.", exact=True)).to_be_visible()
+    expect(drawer.get_by_text("Reused saved result", exact=True)).to_be_visible()
+    assert len(api.calls("/retry")) == 1
+    assert [entry["body"]["run_id"] for entry in api.calls("/run")] == [api.plan["run_id"], "retry-attempt"]
+    assert api.calls("/run")[1]["body"]["expected_version"] == "retry-plan-version"
+    state = main_state(page)
+    assert len([message for message in state["messages"] if message["role"] == "user"]) == 1
+    assert len([message for message in state["messages"] if message["role"] == "assistant"]) == 2
+    assert state["messages"][-1]["model_deployment_name"] == "original-model"
+
+
+def test_reload_keeps_failure_without_automatic_retry_and_recovery_is_explicit(recovery_ui):
+    page, api = recovery_ui
+    api.finish(api.plan["run_id"])
+    api.plan["approval"]["mode"] = "auto"
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    assert not api.calls("/run") and not api.calls("/retry")
+    expect(page.get_by_role("button", name="Retry", exact=True).first).to_be_enabled()
+    expect(page.get_by_role("button", name="Review orchestration recovery")).to_have_count(0)
+    review_saved_attempt(page)
+    expect(page.get_by_role("complementary", name="Review drawer")).to_be_visible()
+    assert not any("/api/message/" in request["path"] for request in api.requests)
+
+
+# The server records a run's outcome on the run alone; the plan saved inside it still reads
+# running, so a reopened conversation must take the settled status from the run.
+@pytest.mark.parametrize("status", ["failed", "cancelled"])
+def test_reload_of_settled_run_with_running_stored_plan_never_offers_approval(recovery_ui, status):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id, status)
+    api.records[run_id]["plan"]["status"] = "running"
+    api.records[run_id]["plan_summary"]["status"] = "running"
+    mount_recovery(page, api, saved=True)
+    page.wait_for_function(
+        """(spec) => Object.values(window.OrchHarness.stores.orchestration.useOrchestrationStore
+            .getState().plans).some(plan => plan && plan.run_id === spec.runId && plan.status === spec.status)""",
+        arg={"runId": run_id, "status": status},
+    )
+    if status == "failed":
+        expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    else:
+        expect(page.get_by_text("This run was stopped. Available partial results were kept.", exact=True).first).to_be_visible()
+    for name in ("Approve and run the plan", "Run the saved plan", "Cancel this plan", "Edit the plan"):
+        expect(page.get_by_role("button", name=name, exact=True)).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_duplicate_confirmation_click_and_context_change_never_run_wrong_turn(recovery_ui):
+    page, api = recovery_ui
+    start_failure(page, api)
+    api.prepare_mode = "delayed"
+    page.get_by_role("button", name="Retry from failed step").click()
+    dialog = page.get_by_role("dialog")
+    with page.expect_request("**/retry"):
+        dialog.get_by_role("button", name="Confirm retry").dblclick()
+    expect(dialog.get_by_role("button", name="Confirm retry")).to_be_disabled()
+    page.evaluate("""() => window.OrchHarness.stores.chat.useChatStore.setState({
+        activeConversationId: 'different-conversation'
+    })""")
+    api.release()
+    page.wait_for_function("""() => !window.OrchHarness.stores.orchestration.useOrchestrationStore
+        .getState().runRecovery['recovery-chat-run-0'].busy""")
+    assert len(api.calls("/retry")) == 1
+    assert len(api.calls("/run")) == 1
+    assert len([message for message in main_state(page)["messages"] if message["role"] == "user"]) == 1
+
+
+@pytest.mark.parametrize("mode", ["conflict", "lost"])
+def test_recovery_conflict_and_lost_preparation_keep_previous_failure(recovery_ui, mode):
+    page, api = recovery_ui
+    start_failure(page, api)
+    api.prepare_mode = mode
+    page.get_by_role("button", name="Retry from failed step").click()
+    with page.expect_request("**/retry"):
+        page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    open_recovery_details(page)
+    expect(page.get_by_role("alert").filter(has_text="Recovery").first).to_be_visible()
+    assert len(api.calls("/run")) == 1
+    assert main_state(page)["messages"][-1]["content"] == FAILURE
+    if mode == "conflict":
+        expect(page.get_by_role("button", name="View current attempt").first).to_be_visible()
+    else:
+        api.prepare_mode = "success"
+        page.get_by_role("button", name="Retry from failed step").click()
+        expect(page.get_by_text("Comparison from saved reports and the recovered agent.", exact=True)).to_be_visible()
+        assert api.calls("/retry")[0]["body"] == api.calls("/retry")[1]["body"]
+        assert len(api.preparations) == 1
+
+
+def test_transport_loss_is_unknown_until_explicit_stop_calls_backend(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    assert not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+    assert not main_state(page)["history"].get(CONVERSATION)
+    stop_from_composer(page)
+    expect(page.get_by_text("Stopped. Your progress is saved.", exact=True).first).to_be_visible()
+    assert len([request for request in api.requests if "/cancel/" in request["path"]]) == 1
+    assert main_state(page)["history"][CONVERSATION][0]["status"] == "cancelled"
+
+
+@pytest.mark.parametrize("disconnected", [False, True])
+def test_successful_running_poll_restores_confirmed_task_without_replay(recovery_ui, disconnected):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    api.status_reads_fail = disconnected
+    run_id = api.plan["run_id"]
+    api.steps[run_id] = [{"step_id": "read", "status": "running", "summary": "Reading workbook comments"}]
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    activity = page.get_by_test_id("quiet-activity")
+    if disconnected:
+        expect(activity.get_by_role("status")).to_contain_text("Reconnecting to progress")
+        api.status_reads_fail = False
+        page.evaluate("""({conversation, run}) => window.OrchHarness.controller
+            .reconcileOrchestrationRun(conversation, run)""", {"conversation": CONVERSATION, "run": run_id})
+    expect(activity.get_by_role("status")).to_have_text("Gathering: Read quarterly reports")
+    assert page.evaluate("""(id) => window.OrchHarness.stores.orchestration.useOrchestrationStore
+        .getState().runRecovery[id].transportUnknown""", run_id) is False
+    expect(page.get_by_text("Execution status not confirmed")).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    assert len(api.calls("/run")) == 1 and not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+def test_fresh_scoped_step_clears_disconnect_and_fences_delayed_running_poll(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    run_id = api.plan["run_id"]
+    held = []
+
+    def delay_steps(route):
+        if urlsplit(route.request.url).path.endswith("/steps"):
+            held.append(route)
+        else:
+            route.fallback()
+
+    page.route("**/api/v2/orchestration/runs/**", delay_steps)
+    with page.expect_request(lambda request: urlsplit(request.url).path.endswith("/steps")):
+        page.evaluate("""({conversation, run}) => {
+            window.pollFinished = false;
+            void window.OrchHarness.controller.reconcileOrchestrationRun(conversation, run)
+                .then(() => window.pollFinished = true);
+        }""", {"conversation": CONVERSATION, "run": run_id})
+    page.evaluate("""({conversation, turn, run}) => {
+        const S = window.OrchHarness.stores.orchestration.useOrchestrationStore.getState();
+        S.updateRunRecovery(run, { transportUnknown: true });
+        S.applyStepEvent(conversation, turn, {run_id: run, step_id: 'answer', status: 'running'});
+    }""", {"conversation": CONVERSATION, "turn": TURN, "run": run_id})
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    for route in held:
+        route.fulfill(json={"steps": [{"step_id": "read", "status": "running"}]})
+    page.wait_for_function("() => window.pollFinished")
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    assert len(api.calls("/run")) == 1
+
+
+def test_legacy_history_explains_cannot_resume_without_inventing_reason(recovery_ui):
+    page, api = recovery_ui
+    api.finish(api.plan["run_id"], "cancelled")
+    record = api.records[api.plan["run_id"]]
+    for key in ("recovery", "outcome", "failure", "failures"):
+        record.pop(key, None)
+    api.messages = api.messages[:1]
+    mount_recovery(page, api, saved=True)
+    open_recovery_details(page)
+    expect(page.get_by_text("No verified retry checkpoint is available.", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_server_confirmation_required_is_a_gate_not_an_automatic_retry(recovery_ui):
+    page, api = recovery_ui
+    api.finish(api.plan["run_id"])
+    api.records[api.plan["run_id"]]["recovery"]["requires_confirmation"] = False
+    api.prepare_mode = "confirmation"
+    mount_recovery(page, api, saved=True)
+    page.get_by_role("button", name="Retry from failed step").click()
+    dialog = page.get_by_role("dialog", name="Retry this failed step?")
+    expect(dialog).to_be_visible()
+    assert len(api.calls("/retry")) == 1
+    assert api.calls("/retry")[0]["body"]["confirm_external_effects"] is False
+    assert not api.preparations and not api.calls("/run")
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    assert not api.preparations
+
+
+def test_transport_terminal_reconciliation_keeps_saved_failure_and_no_stop(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+    page.wait_for_function("""() => {
+        const recovery = window.OrchHarness.stores.orchestration.useOrchestrationStore
+            .getState().runRecovery['recovery-chat-run-0'];
+        return recovery?.detailLoaded && !recovery.checking;
+    }""")
+    api.finish(api.plan["run_id"])
+    page.clock.run_for(5000)
+    expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    assert main_state(page)["history"][CONVERSATION][0]["status"] == "failed"
+    assert main_state(page)["messages"][-1]["id"] == f"assistant-{api.plan['run_id']}"
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+    assert not api.calls("/retry")
+
+
+@pytest.mark.parametrize("status", ["failed", "completed", "cancelled"])
+@pytest.mark.parametrize("reader", ["detail", "reconcile", "resume", "map", "steps"])
+def test_delayed_recovery_reads_cannot_replace_newer_terminal_events(recovery_ui, status, reader):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    stream_routes = []
+    read_routes = []
+    snapshots = []
+    page.clock.install()
+    mount_recovery(page, api)
+
+    def hold(route):
+        request = route.request
+        path = urlsplit(request.url).path
+        if path == editor_tests.RUN and request.method == "POST":
+            api.requests.append({"path": path, "method": request.method, "body": request.post_data_json})
+            api.begin_finalization(run_id, status)
+            stream_routes.append(route)
+            return
+        expected = editor_tests.RUNS if reader in ("resume", "map") else (
+            f"{editor_tests.RUNS}/{run_id}/steps" if reader == "steps" else f"{editor_tests.RUNS}/{run_id}")
+        if path == expected and request.method == "GET" and not read_routes:
+            read_routes.append(route)
+            snapshots.append(copy.deepcopy(
+                {"runs": list(api.records.values())} if reader in ("resume", "map") else
+                {"steps": api.steps[run_id]} if reader == "steps" else {"run": api.records[run_id]}))
+            page.evaluate("window.recoveryReadHeld = true")
+            return
+        route.fallback()
+
+    page.route("**/*", hold)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    page.wait_for_function("""(id) => Boolean(window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().inFlight[id])""", arg=run_id)
+    assert len(stream_routes) == 1
+    page.evaluate("""({conversation, run, reader}) => {
+        const H = window.OrchHarness;
+        let pending;
+        if (reader === 'resume') pending = H.resume.resumeOrchestrationForConversation(conversation);
+        else if (reader === 'map') {
+            H.mount('mount-b', 'OrchestrationMapView', { conversationId: conversation });
+            return;
+        } else if (reader === 'detail') pending = H.controller.loadOrchestrationRecovery(conversation, run);
+        else pending = H.controller.reconcileOrchestrationRun(conversation, run);
+        pending.then(result => { window.recoveryReadResult = result; window.recoveryReadFinished = true; });
+    }""", {"conversation": CONVERSATION, "run": run_id, "reader": reader})
+    page.wait_for_function("() => window.recoveryReadHeld === true")
+
+    event = api.finish(run_id, status)
+    api.stream(stream_routes[0], [
+        *[{"type": "orchestration_step", **step} for step in api.steps[run_id]], event,
+    ])
+    page.wait_for_function("""(id) => window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().runRecovery[id]?.finalization_status === 'saved'""", arg=run_id)
+    read_routes[0].fulfill(json=snapshots[0])
+    page.wait_for_function("""({conversation, reader}) => reader === 'map'
+        ? window.OrchHarness.stores.orchestration.useOrchestrationStore.getState().hydration[conversation] === 'loaded'
+        : window.recoveryReadFinished === true""", arg={"conversation": CONVERSATION, "reader": reader})
+    recovery = page.evaluate("""(id) => window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().runRecovery[id]""", run_id)
+    assert recovery["status"] == status and recovery["outcome"] == status
+    assert recovery["finalization_status"] == "saved" and recovery["message_saved"] is True
+    assert recovery["recovery"]["reason_code"] != "execution_live"
+    assert not recovery.get("checking")
+    assert not main_state(page)["inFlight"]
+    assert main_state(page)["history"][CONVERSATION][0]["status"] == status
+    expect(page.get_by_text("The server is saving the final response.", exact=False)).to_have_count(0)
+    if status == "failed":
+        expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    assert len(api.calls("/run")) == 1 and not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+    # A later request remains authoritative; the fence is not a permanent terminal-state lock.
+    api.records[run_id]["latest_attempt_run_id"] = "newer-attempt"
+    api.records[run_id]["recovery"].update(eligible=False, reason_code="already_retried", current_run_id="newer-attempt")
+    result = page.evaluate("""async ({conversation, run}) => {
+        const H = window.OrchHarness;
+        const result = await H.controller.loadOrchestrationRecovery(conversation, run);
+        return { admitted: Boolean(result), recovery: H.stores.orchestration.useOrchestrationStore.getState().runRecovery[run] };
+    }""", {"conversation": CONVERSATION, "run": run_id})
+    assert result["admitted"] and result["recovery"]["latest_attempt_run_id"] == "newer-attempt"
+    assert result["recovery"]["recovery"]["eligible"] is False
+
+
+def test_recovery_read_ignores_incidental_ui_and_other_run_updates(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id)
+    mount_recovery(page, api, saved=True)
+    pending = []
+
+    def hold(route):
+        pending.append(route)
+        page.evaluate("window.freshRecoveryReadHeld = true")
+
+    page.route(f"**{editor_tests.RUNS}/{run_id}?*", hold, times=1)
+    page.evaluate("""({conversation, run}) => {
+        const H = window.OrchHarness;
+        H.controller.loadOrchestrationRecovery(conversation, run).then(result => {
+            window.freshRecoveryReadAdmitted = Boolean(result);
+        });
+    }""", {"conversation": CONVERSATION, "run": run_id})
+    page.wait_for_function("() => window.freshRecoveryReadHeld === true")
+    page.evaluate("""(id) => {
+        const S = window.OrchHarness.stores.orchestration.useOrchestrationStore.getState();
+        S.updateRunRecovery(id, { outputChecking: true, busy: true });
+        S.updateRunRecovery('another-run', { status: 'running', finalization_status: 'pending' });
+    }""", run_id)
+    pending[0].fulfill(json={"run": api.records[run_id]})
+    page.wait_for_function("() => window.freshRecoveryReadAdmitted === true")
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_fresh_recovery_authorization_failure_is_not_hidden_by_the_fence(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id)
+    mount_recovery(page, api, saved=True)
+    page.route(f"**{editor_tests.RUNS}/{run_id}?*",
+               lambda route: route.fulfill(status=403, json={"error": "Access denied."}))
+    page.evaluate("""({conversation, run}) => {
+        window.OrchHarness.controller.openOrchestrationRecovery(conversation, run);
+    }""", {"conversation": CONVERSATION, "run": run_id})
+    expect(page.get_by_text(
+        "The saved attempt could not be loaded. Your previous failure and progress have been kept.", exact=True,
+    ).first).to_be_visible()
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+@pytest.mark.parametrize("pending_contract", ["explicit", "lease-only"])
+@pytest.mark.parametrize("status", ["failed", "completed", "cancelled"])
+def test_terminal_status_waits_for_final_publication_after_transport_loss(recovery_ui, status, pending_contract):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+
+    run_id = api.plan["run_id"]
+    api.begin_finalization(run_id, status)
+    if pending_contract == "lease-only":
+        api.records[run_id].pop("finalization_status")
+    check_saved_status(page)
+    try:
+        expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Saving final response")
+    except AssertionError as error:
+        raise AssertionError({
+            "state": main_state(page),
+            "recovery": page.evaluate("""() => window.OrchHarness.stores.orchestration
+                .useOrchestrationStore.getState().runRecovery"""),
+            "visible": page.locator("body").inner_text(),
+        }) from error
+    expect(page.get_by_text("The server is saving the final response.", exact=False).first).to_be_visible()
+    assert run_id in main_state(page)["inFlight"]
+    assert not main_state(page)["history"].get(CONVERSATION)
+    expect(page.get_by_text("message was not saved", exact=False)).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    page.evaluate("""(record) => {
+        const S = window.OrchHarness.stores.orchestration.useOrchestrationStore;
+        S.setState({ inFlight: { ...S.getState().inFlight,
+            [record.run_id]: { ...S.getState().inFlight[record.run_id], resumed: true } } });
+        S.getState().hydrateConversationRuns(record.conversation_id, [record]);
+    }""", api.records[run_id])
+    assert run_id in main_state(page)["inFlight"]
+
+    api.finish(run_id, status)
+    page.clock.fast_forward(5001)
+    page.wait_for_function("""(id) => window.OrchHarness.stores.chat.useChatStore
+        .getState().messages.some(message => message.id === id)""", arg=f"assistant-{run_id}")
+    assert not main_state(page)["inFlight"]
+    assert main_state(page)["history"][CONVERSATION][0]["status"] == status
+    if status == "failed":
+        expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    assert len(api.calls("/run")) == 1
+    assert not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+@pytest.mark.parametrize("status", ["failed", "completed", "cancelled"])
+def test_reload_keeps_polling_until_terminal_publication_is_saved(recovery_ui, status):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.records[run_id]["started_at"] = "2026-09-08T12:00:30Z"
+    api.begin_finalization(run_id, status)
+    page.clock.install()
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+    assert run_id in main_state(page)["inFlight"]
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+
+    api.finish(run_id, status)
+    page.clock.fast_forward(5001)
+    page.wait_for_function("""(id) => window.OrchHarness.stores.chat.useChatStore
+        .getState().messages.some(message => message.id === id)""", arg=f"assistant-{run_id}")
+    assert not main_state(page)["inFlight"]
+    assert not api.calls("/run") and not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+def test_expired_publication_reports_uncertainty_instead_of_an_unsaved_claim(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+    run_id = api.plan["run_id"]
+    api.begin_finalization(run_id, "failed")
+    api.records[run_id]["finalization_status"] = "interrupted"
+    api.records[run_id]["recovery"] = api.recovery(run_id)
+    check_saved_status(page)
+    expect(page.get_by_text("before a final conversation message could be confirmed", exact=False).first).to_be_visible()
+    expect(page.get_by_text("message was not saved", exact=False)).to_have_count(0)
+    assert not main_state(page)["inFlight"]
+    assert not api.calls("/retry")
+
+
+def test_failure_text_is_inert_and_confirmation_is_keyboard_accessible_on_mobile(recovery_ui):
+    page, api = recovery_ui
+    api.finish(api.plan["run_id"])
+    sentinel = '<img src=x onerror="window.recoveryExecuted=true">'
+    api.records[api.plan["run_id"]]["failure"]["message"] = sentinel
+    page.set_viewport_size({"width": 390, "height": 844})
+    mount_recovery(page, api, saved=True)
+    open_recovery_details(page)
+    expect(page.get_by_text(sentinel, exact=True)).to_be_visible()
+    expect(page.locator('[onerror]')).to_have_count(0)
+    assert page.evaluate("window.recoveryExecuted") is None
+    retry = page.get_by_role("button", name="Retry from failed step")
+    retry.focus()
+    page.keyboard.press("Enter")
+    dialog = page.get_by_role("dialog", name="Retry this failed step?")
+    expect(dialog).to_be_visible()
+    assert dialog.evaluate("(node) => node.contains(document.activeElement)")
+    page.keyboard.press("Escape")
+    expect(dialog).to_have_count(0)
+    assert not api.calls("/retry")
+
+
+@pytest.mark.parametrize("edit_version", [None, "saved-plan-edit"])
+def test_prepared_child_after_navigation_requires_manual_run_even_after_reload(recovery_ui, edit_version):
+    page, api = recovery_ui
+    start_failure(page, api)
+    if edit_version:
+        api.records[api.plan["run_id"]]["plan"]["edit_version"] = edit_version
+    api.prepare_mode = "delayed"
+    page.get_by_role("button", name="Retry from failed step").click()
+    with page.expect_request("**/retry"):
+        page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    page.evaluate("""() => window.OrchHarness.stores.chat.useChatStore.setState({
+        activeConversationId: 'different-conversation'
+    })""")
+    api.release()
+    page.wait_for_function("""() => !window.OrchHarness.stores.orchestration.useOrchestrationStore
+        .getState().runRecovery['recovery-chat-run-0'].busy""")
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_role("button", name="View current attempt").first).to_be_visible()
+    assert len(api.calls("/run")) == 1
+    page.get_by_role("button", name="View current attempt").first.click()
+    drawer = page.get_by_role("complementary", name="Review drawer")
+    drawer.get_by_role("button", name="Run prepared retry").click()
+    expect(page.get_by_text("Comparison from saved reports and the recovered agent.", exact=True)).to_be_visible()
+    assert len(api.calls("/retry")) == 1
+    assert len(api.calls("/run")) == 2
+    assert api.calls("/run")[-1]["body"]["expected_version"] == "retry-plan-version"
+
+
+def test_prepared_run_rejection_reports_error_without_false_success_or_polling(recovery_ui):
+    page, api = recovery_ui
+    start_failure(page, api)
+    api.stream_mode = "reject"
+    page.get_by_role("button", name="Retry from failed step").click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    expect(page.get_by_text("The saved attempt was not started.", exact=False).first).to_be_visible()
+    state = main_state(page)
+    assert not state["inFlight"]
+    assert state["history"][CONVERSATION][0]["status"] == "failed"
+    assert state["messages"][-1]["content"] == FAILURE
+
+
+def has_active_orchestration(page):
+    return page.evaluate(
+        "(id) => window.OrchHarness.controller.hasActiveOrchestration(id)", CONVERSATION,
+    )
+
+
+def detail_reads(api, run_id):
+    return [request for request in api.requests if request["path"] == f"{editor_tests.RUNS}/{run_id}"]
+
+
+def test_legacy_message_notice_shows_the_server_text_without_actions(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id)
+    api.legacy.add(run_id)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
+    expect(page.get_by_text("Recovery details could not be loaded", exact=False)).to_have_count(0)
+    expect(page.get_by_text("no verified recovery checkpoint", exact=False)).to_have_count(0)
+    for name in ("Check saved status", "Review saved attempt", "Retry from failed step"):
+        expect(page.get_by_role("button", name=name)).to_have_count(0)
+    reads = len(detail_reads(api, run_id))
+    page.wait_for_timeout(300)
+    assert len(detail_reads(api, run_id)) == reads, "A refused run must not be fetched again."
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_transport_loss_then_legacy_refusal_ends_the_tracked_run(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+    run_id = api.plan["run_id"]
+    assert run_id in main_state(page)["inFlight"]
+    api.legacy.add(run_id)
+    page.clock.run_for(5000)
+    expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
+    state = main_state(page)
+    assert run_id not in state["inFlight"]
+    assert state["history"][CONVERSATION][0]["status"] == "failed"
+    assert not has_active_orchestration(page)
+    for name in ("Stop execution", "Check saved status", "Retry from failed step"):
+        expect(page.get_by_role("button", name=name)).to_have_count(0)
+    reads = len(detail_reads(api, run_id))
+    page.clock.fast_forward(15001)
+    assert len(detail_reads(api, run_id)) == reads, "A refused run must not keep being polled."
+    assert not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+def test_stop_on_a_legacy_run_releases_it_with_the_server_message(recovery_ui):
+    page, api = recovery_ui
+    api.stream_mode = "transport"
+    page.clock.install()
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_be_visible()
+    run_id = api.plan["run_id"]
+    api.legacy.add(run_id)
+    stop_from_composer(page)
+    expect(page.get_by_text(LEGACY_PLAN_MESSAGE, exact=True).first).to_be_visible()
+    assert run_id not in main_state(page)["inFlight"]
+    assert not has_active_orchestration(page)
+    expect(page.get_by_role("button", name="Stop execution")).to_have_count(0)
+    assert len([request for request in api.requests if "/cancel/" in request["path"]]) == 1
+
+
+def restore_tracked_run(page, api):
+    page.evaluate("""(spec) => {
+        const S = window.OrchHarness.stores.orchestration.useOrchestrationStore;
+        S.getState().restoreRuns([{ conversationId: spec.conversation, turnId: spec.turn,
+            runId: spec.run, planId: spec.plan, startedAt: Date.now() - 60000, resumed: true }]);
+    }""", {"conversation": CONVERSATION, "turn": TURN, "run": api.plan["run_id"],
+           "plan": api.plan["plan_id"]})
+
+
+def test_restored_legacy_run_is_released_when_the_conversation_opens(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.legacy.add(run_id)
+    page.clock.install()
+    mount_recovery(page, api, saved=True, resume_saved=False)
+    restore_tracked_run(page, api)
+    assert main_state(page)["inFlight"][run_id]["resumed"] is True
+    assert has_active_orchestration(page)
+    page.evaluate("(id) => window.OrchHarness.resume.resumeOrchestrationForConversation(id)", CONVERSATION)
+    page.wait_for_function("""(id) => !(id in window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().inFlight)""", arg=run_id)
+    state = main_state(page)
+    assert not state["history"].get(CONVERSATION), "An unlisted earlier-version run stays out of the history."
+    assert not has_active_orchestration(page)
+    assert page.evaluate("() => window.sessionStorage.getItem('simplechat.v2.orchestrationRuns.v1')") is None
+    assert len(detail_reads(api, run_id)) == 1
+    page.clock.fast_forward(15001)
+    assert len(detail_reads(api, run_id)) == 1
+    assert not api.calls("/run") and not api.calls("/retry")
+    assert not any("/cancel/" in request["path"] for request in api.requests)
+
+
+def test_restored_listed_run_is_still_settled_by_hydration_without_an_extra_read(recovery_ui):
+    page, api = recovery_ui
+    run_id = api.plan["run_id"]
+    api.finish(run_id, "completed")
+    mount_recovery(page, api, saved=True, resume_saved=False)
+    restore_tracked_run(page, api)
+    page.evaluate("(id) => window.OrchHarness.resume.resumeOrchestrationForConversation(id)", CONVERSATION)
+    page.wait_for_function("""(id) => !(id in window.OrchHarness.stores.orchestration
+        .useOrchestrationStore.getState().inFlight)""", arg=run_id)
+    assert not has_active_orchestration(page)
+    assert not detail_reads(api, run_id)
+
+
+def test_legacy_refusal_at_run_start_puts_the_plan_away_with_the_server_message(recovery_ui):
+    page, api = recovery_ui
+    api.legacy.add(api.plan["run_id"])
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_role("alert").filter(has_text=LEGACY_PLAN_MESSAGE).first).to_be_visible()
+    for name in ("Approve and run the plan", "Run the saved plan", "Edit the plan"):
+        expect(page.get_by_role("button", name=name)).to_have_count(0)
+    expect(page.get_by_text("Approval paused in this tab", exact=False)).to_have_count(0)
+    state = page.evaluate("""() => {
+        const H = window.OrchHarness;
+        const orchestration = H.stores.orchestration.useOrchestrationStore.getState();
+        const chat = H.stores.chat.useChatStore.getState();
+        return { plans: Object.keys(orchestration.plans), activeTurns: orchestration.activeTurns,
+            inFlight: orchestration.inFlight, streaming: chat.streaming, streamError: chat.streamError };
+    }""")
+    assert state["plans"] == [] and CONVERSATION not in state["activeTurns"]
+    assert state["inFlight"] == {} and state["streaming"] is False
+    assert state["streamError"] == LEGACY_PLAN_MESSAGE
+    assert not has_active_orchestration(page)
+    assert len(api.calls("/run")) == 1
+
+
+# A run can fail as a whole while a step still waits on a long computation: the continuation
+# that would have finished it ended the attempt instead. Nothing will finish those steps now.
+WAIT_FAILURE = {
+    "code": "recovery_changed",
+    "message": "Saved step inputs changed. Previously completed work will not be repeated.",
+}
+SIGN_IN_FILE_MESSAGE = (
+    "This file could not be created because the results it uses can only be checked with your "
+    "sign-in, which wasn't available where the file was prepared. Retry from this chat to create it."
+)
+
+
+def interrupt_waiting_run(api):
+    """Save a failed run whose research step and answer were still waiting when it ended."""
+    run_id = api.plan["run_id"]
+    api.failure = dict(WAIT_FAILURE)
+    api.finish(run_id, "failed")
+    api.steps[run_id] = [
+        {"step_id": "read", "step_index": 0, "status": "completed", "summary": "Read saved reports",
+         "checkpoint_available": True},
+        {"step_id": "research", "step_index": 1, "status": "waiting",
+         "summary": "Native computation is pending; no result is ready to consume."},
+        {"step_id": "answer", "step_index": 2, "status": "waiting", "summary": "Waiting for required results."},
+    ]
+    return run_id
+
+
+def fail_file(api, *, can_retry):
+    """Save a partial run whose Word file failed, retryable on its own or not."""
+    run_id = api.plan["run_id"]
+    api.finish(run_id, "failed")
+    record = api.records[run_id]
+    output = {
+        "output_id": "orender_" + "a" * 64, "step_id": "answer", "file_name": "bank_analysis.docx",
+        "output_format": "docx", "profile": "prepared_report_v1", "state": "failed", "available": True,
+        "attempt_count": 1, "automatic_attempts": 1, "max_automatic_attempts": 3, "next_retry_at": None,
+        "can_retry": can_retry,
+        "error_code": "output_storage_unavailable" if can_retry else "output_sign_in_required",
+        "message": "This file could not be created." if can_retry else SIGN_IN_FILE_MESSAGE,
+        "artifact_message_id": None, "row_count": None, "character_count": None, "size_bytes": None,
+    }
+    record.update(outcome="partial", outputs=[output])
+    for message in api.messages:
+        if message["id"] == record["assistant_message_id"]:
+            message["metadata"]["orchestration"].update(outcome="partial", outputs=[copy.deepcopy(output)])
+    return output
+
+
+def test_ended_run_shows_unfinished_steps_as_not_finished_and_offers_retry(recovery_ui):
+    page, api = recovery_ui
+    interrupt_waiting_run(api)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(WAIT_FAILURE["message"], exact=True).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    review_saved_attempt(page)
+    drawer = page.get_by_role("complementary", name="Review drawer")
+    open_recovery_details(drawer)
+    research = drawer.locator('[data-step-id="research"]')
+    expect(research.locator('[data-step-status="unfinished"]')).to_have_text("Not finished")
+    expect(research.get_by_text("The run ended before this step finished.", exact=True)).to_be_visible()
+    expect(drawer.locator('[data-step-id="answer"] [data-step-status="unfinished"]')).to_have_text("Not finished")
+    expect(drawer.locator('[data-step-id="read"] [data-step-status="completed"]')).to_be_visible()
+    expect(drawer.get_by_text("Waiting for results", exact=True)).to_have_count(0)
+    expect(drawer.get_by_text("Native computation is pending; no result is ready to consume.", exact=True)).to_have_count(0)
+    answer = drawer.locator('[data-deliverable-id="answer"]')
+    expect(answer).to_have_attribute("data-deliverable-state", "not_delivered")
+    expect(answer).to_contain_text("The run ended before this was finished.")
+    expect(drawer.get_by_role("button", name="Retry from failed step")).to_be_enabled()
+    expect(drawer.locator("p").filter(has_text="Execute on retry:")).to_contain_text("Ask the selected agent")
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_file_that_cannot_be_retried_alone_offers_retry_from_failed_step(recovery_ui):
+    page, api = recovery_ui
+    fail_file(api, can_retry=False)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(SIGN_IN_FILE_MESSAGE, exact=True).first).to_be_visible()
+    expect(page.get_by_text("Some work could not finish. Your completed results are saved.", exact=True).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step").first).to_be_enabled()
+    expect(page.get_by_text("Review each file separately.", exact=False)).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry file bank_analysis.docx")).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
+    page.get_by_role("button", name="Retry from failed step").first.click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    expect(page.get_by_text("Comparison from saved reports and the recovered agent.", exact=True)).to_be_visible()
+    assert len(api.calls("/retry")) == len(api.calls("/run")) == 1
+
+
+def test_file_that_can_be_retried_alone_keeps_only_the_file_retry(recovery_ui):
+    page, api = recovery_ui
+    fail_file(api, can_retry=True)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_role("button", name="Retry file bank_analysis.docx").first).to_be_visible()
+    expect(page.get_by_text("A file needs attention. Review its file controls below.", exact=True).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+@pytest.mark.parametrize("viewport", [(1440, 900), (390, 844)])
+def test_information_gaps_are_a_normal_answer_live_and_after_reload(recovery_ui, viewport):
+    page, api = recovery_ui
+    page.set_viewport_size({"width": viewport[0], "height": viewport[1]})
+    api.normal_information_limits = True
+    api.plan["steps"][-1]["arguments"]["response_policy"] = "available_information"
+    api.plan["steps"][-1]["inputs"]["findings"]["allow_partial"] = True
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    expect(page.locator('section[aria-label="Orchestration recovery"]')).to_have_count(0)
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    state = main_state(page)
+    assert state["history"][CONVERSATION][0]["status"] == "completed"
+    assert state["messages"][-1]["metadata"]["orchestration"]["outcome"] == "completed"
+    page.evaluate(
+        "([conversation, run]) => window.OrchHarness.controller.openOrchestrationRecovery(conversation, run)",
+        [CONVERSATION, api.plan["run_id"]],
+    )
+    drawer = page.get_by_role("complementary", name="Review drawer")
+    expect(drawer.get_by_text("Results with limits", exact=True).first).to_be_visible()
+    expect(drawer.locator('[data-deliverable-id="answer"]')).to_have_attribute("data-deliverable-state", "delivered")
+    expect(drawer.get_by_text("Partially completed", exact=True)).to_have_count(0)
+    if viewport[0] < 640:
+        # This component harness has a fixed side-by-side drawer, unlike the mobile AppShell overlay.
+        page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().setDrawerMode(null)")
+        expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    screenshot = Path(__file__).resolve().parent / "artifacts" / "available-information" / f"normal-{viewport[0]}.png"
+    screenshot.parent.mkdir(parents=True, exist_ok=True)
+    page.screenshot(path=str(screenshot), full_page=True)
+    mount_recovery(page, api, saved=True)
+    expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    expect(page.locator('section[aria-label="Orchestration recovery"]')).to_have_count(0)
+    assert len(api.calls("/run")) == 1 and not api.calls("/retry")
+
+
+def test_blocked_old_answer_offers_output_only_available_information(recovery_ui):
+    page, api = recovery_ui
+    api.available_information = True
+    api.failure = {
+        "code": "input_partial_not_accepted",
+        "message": "An earlier step returned only a partial result, and this step requires complete results, so it did not run.",
+    }
+    mount_recovery(page, api)
+    page.get_by_role("button", name="Approve and run the plan").click()
+    expect(page.get_by_text(api.failure["message"], exact=True).first).to_be_visible()
+    expect(page.get_by_role("button", name="Retry from failed step")).to_have_count(0)
+    page.get_by_role("button", name="Use available information", exact=True).first.click()
+    expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
+    expect(page.get_by_role("dialog", name="Retry this failed step?")).to_have_count(0)
+    assert len(api.calls("/retry")) == 1
+    request = api.calls("/retry")[0]["body"]
+    assert request["use_available_information"] is True
+    assert request["confirm_external_effects"] is False
+    assert [entry["body"]["run_id"] for entry in api.calls("/run")] == [api.plan["run_id"], "retry-attempt"]
+    state = main_state(page)
+    assert len([message for message in state["messages"] if message["role"] == "user"]) == 1
+    assert state["messages"][-1]["metadata"]["orchestration"]["outcome"] == "completed"
+
+
+@pytest.mark.parametrize("flag", [None, False, "true", 1])
+def test_unverified_available_information_flags_never_offer_continuation(recovery_ui, flag):
+    page, api = recovery_ui
+    api.available_information = True
+    original = api.recovery
+    api.recovery = lambda run_id: {**original(run_id), "can_use_available_information": flag}
+    api.finish(api.plan["run_id"])
+    mount_recovery(page, api, saved=True)
+    open_recovery_details(page)
+    expect(page.get_by_role("button", name="Review saved attempt").first).to_be_visible()
+    expect(page.get_by_role("button", name="Use available information", exact=True)).to_have_count(0)
+    assert not api.calls("/run") and not api.calls("/retry")
+
+
+def test_an_unresolved_retry_cannot_silently_change_to_another_recovery_action(recovery_ui):
+    page, api = recovery_ui
+    api.prepare_mode = "lost"
+    start_failure(page, api)
+    page.get_by_role("button", name="Retry from failed step").first.click()
+    page.get_by_role("dialog").get_by_role("button", name="Confirm retry").click()
+    expect(page.get_by_text("Preparing retry...", exact=True)).to_have_count(0)
+    page.evaluate(
+        "([conversation, run]) => window.OrchHarness.controller.retryOrchestrationRun(conversation, run, undefined, true)",
+        [CONVERSATION, api.plan["run_id"]],
+    )
+    expect(page.get_by_text("A different recovery request is still unresolved.", exact=False).first).to_be_visible()
+    assert len(api.calls("/retry")) == 1
+    assert len(api.calls("/run")) == 1

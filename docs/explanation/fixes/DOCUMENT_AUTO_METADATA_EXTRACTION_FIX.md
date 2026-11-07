@@ -2,6 +2,16 @@
 
 Fixed in version: **0.241.110**
 
+## Metadata outcome follow-up
+
+Fixed/Implemented in version: **0.261.347** (`application/single_app/config.py`).
+The shared manual and final-upload passes now record metadata analysis separately
+from indexed-content readiness. Public-only deployments use their own workspace
+feature flag for metadata search, and provider or malformed-response failures no
+longer masquerade as successful extraction of previously saved fields.
+See [Workspace document discovery and metadata outcomes](WORKSPACE_DOCUMENT_DISCOVERY_AND_METADATA_FIX.md)
+for the current status contract, regression coverage, and live-verification limits.
+
 ## Issue Description
 
 Automatic document metadata extraction was inconsistent across upload file types when `enable_extract_meta_data` was enabled. Plain text and several text-like formats could finish chunking without the final AI metadata extraction pass, while other processors ran their own local metadata extraction and then had the final status overwritten by the shared upload dispatcher.

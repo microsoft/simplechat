@@ -2,9 +2,11 @@
 
 import re
 import logging
+import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from functions_appinsights import log_event
+from functions_keyvault_errors import KeyVaultSecretStorageError
 from config import *
 from functions_authentication import *
 from functions_settings import *
@@ -58,9 +60,15 @@ SQL_PLUGIN_TYPES = {"sql_query", "sql_schema"}
 SQL_PLUGIN_SENSITIVE_ADDITIONAL_FIELDS = {"connection_string", "password"}
 SQL_PLUGIN_SENSITIVE_AUTH_FIELDS = {"client_secret"}
 MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS = {
-    "api_key": {"api_key"},
-    "client_secret": {"service_principal"},
+    "api_key": {"api_key", "key"},
+    "client_secret": {"service_principal", "oauth2_client_credentials"},
+    "bearer_token": {"bearer"},
 }
+# Group and user model endpoint secret names are keyed by the endpoint id alone
+# (``{endpoint_id}--model-endpoint--{scope}--...``), so two workspaces can hold
+# endpoints with the same id. In these scopes a stored reference is accepted only
+# when it is the endpoint's own, and a new value always gets a fresh name.
+MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES = frozenset({"group", "user"})
 AGENT_SENSITIVE_SECRET_FIELDS = [
     {
         "path": ("azure_openai_gpt_key",),
@@ -694,25 +702,26 @@ def retrieve_secret_from_key_vault(secret_name, scope_value, scope="global", sou
     full_secret_name = build_full_secret_name(secret_name, scope_value, source, scope)
     return retrieve_secret_from_key_vault_by_full_name(full_secret_name)
 
-def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
+def retrieve_secret_from_key_vault_by_full_name(full_secret_name, *, strict=False):
     """
     Retrieve a secret from Key Vault using a preformatted full secret name.
 
     Args:
         full_secret_name (str): The full secret name (already formatted).
+        strict (bool): Reject recognized references that cannot resolve to a
+            nonempty secret value. Plaintext inputs are still returned unchanged.
 
     Returns:
         str: The value of the retrieved secret.
     Raises:
-        Exception: If retrieval fails or configuration is invalid.
+        ValueError: If strict retrieval cannot resolve a recognized reference.
     """
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
-    if not enable_key_vault_secret_storage:
-        return full_secret_name
-
     key_vault_name = settings.get("key_vault_name", None)
-    if not key_vault_name:
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        if strict and validate_secret_name_dynamic(full_secret_name):
+            raise ValueError("Unable to resolve the stored Key Vault credential.")
         return full_secret_name
 
     if not validate_secret_name_dynamic(full_secret_name):
@@ -723,10 +732,19 @@ def retrieve_secret_from_key_vault_by_full_name(full_secret_name):
         secret_client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
 
         retrieved_secret = secret_client.get_secret(full_secret_name)
-        log_event(f"Secret '{full_secret_name}' retrieved successfully from Key Vault.", level=logging.INFO)
-        return retrieved_secret.value
-    except Exception as e:
-        log_event(f"Failed to retrieve secret '{full_secret_name}' from Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
+        value = retrieved_secret.value
+        if strict and (
+            not isinstance(value, str) or not value.strip()
+            or validate_secret_name_dynamic(value)
+            or value in (ui_trigger_word, REDACTED_SECRET_VALUE)
+        ):
+            raise ValueError("Unable to resolve the stored Key Vault credential.")
+        log_event("[KEY_VAULT] Stored credential retrieved successfully.", level=logging.INFO, debug_only=True)
+        return value
+    except Exception:
+        log_event("[KEY_VAULT] Unable to retrieve a stored credential.", level=logging.ERROR, debug_only=True)
+        if strict:
+            raise ValueError("Unable to resolve the stored Key Vault credential.") from None
         return full_secret_name
 
 
@@ -883,8 +901,17 @@ def store_secret_in_key_vault(secret_name, secret_value, scope_value, source="gl
         log_event(f"Secret '{full_secret_name}' stored successfully in Key Vault.", level=logging.INFO)
         return full_secret_name
     except Exception as e:
-        log_event(f"Failed to store secret '{full_secret_name}' in Key Vault: {str(e)}", level=logging.ERROR, exceptionTraceback=True)
-        raise RuntimeError(f"Failed to store secret '{full_secret_name}' in Key Vault.") from e
+        log_event(
+            "[KEY_VAULT] Secret write failed.",
+            extra={
+                "scope": scope,
+                "source": source,
+                "error_type": type(e).__name__,
+                "status_code": getattr(e, "status_code", None),
+            },
+            level=logging.ERROR,
+        )
+        raise KeyVaultSecretStorageError(e) from e
 
 def build_full_secret_name(secret_name, scope_value, source, scope):
     """
@@ -1287,11 +1314,49 @@ def keyvault_plugin_get_helper(plugin_dict, scope_value, scope="global", return_
     return updated
 
 
-def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="global", existing_endpoint=None):
-    """Store model endpoint auth secrets in Key Vault and replace them with references."""
+def _refuse_foreign_model_endpoint_references(endpoint_dict, existing_endpoint, scope):
+    """In the endpoint-keyed scopes, accept only the endpoint's own stored references.
+
+    Group and user secret names carry the endpoint id but no workspace, so a
+    reference that passes ``secret_reference_matches_context`` may still name the
+    credential of another group's or user's endpoint with the same id. A
+    reference-shaped value is therefore accepted only when it equals this
+    endpoint's existing stored reference for that field. The check runs even with
+    Key Vault storage off, so a borrowed name can never be stored inline and become
+    resolvable once storage is turned on.
+    """
+    auth = (endpoint_dict or {}).get("auth") if isinstance(endpoint_dict, dict) else None
+    if scope not in MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES or not isinstance(auth, dict):
+        return
+    for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
+        value = auth.get(auth_field)
+        if not isinstance(value, str) or not validate_secret_name_dynamic(value):
+            continue
+        if value == _get_existing_secret_reference(existing_endpoint, ("auth", auth_field)):
+            continue
+        log_event(
+            "[KEY_VAULT] Rejected a model endpoint secret reference that is not the endpoint's stored credential.",
+            extra={"scope": scope, "auth_field": auth_field},
+            level=logging.WARNING,
+        )
+        raise ValueError(
+            f"Stored Key Vault reference for model endpoint '{auth_field}' is not this endpoint's stored credential. Re-enter the secret value."
+        )
+
+
+def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="global", existing_endpoint=None, *, stage_new_secrets=False):
+    """Store model endpoint auth secrets in Key Vault and replace them with references.
+
+    In the group and user scopes (``MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES``) a
+    reference is accepted only when it is the endpoint's own stored one, and a new
+    value is always stored under a fresh staged name, never the deterministic name
+    another workspace's endpoint with the same id could hold. Global callers are
+    unchanged. A refused value raises ``ValueError``.
+    """
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+    _refuse_foreign_model_endpoint_references(endpoint_dict, existing_endpoint, scope)
 
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
@@ -1354,6 +1419,16 @@ def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="globa
             continue
 
         secret_name = _build_model_endpoint_secret_name(auth_field)
+        if stage_new_secrets or scope in MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES:
+            # A losing import must not overwrite the secret used by another
+            # worker's committed connection, and in the endpoint-keyed scopes a
+            # deterministic name could belong to another workspace's endpoint with
+            # the same id. The owner/scope remain unchanged.
+            prefix = f"{clean_name_for_keyvault(str(scope_value))}--{source}--{scope}--"
+            available = 127 - len(prefix)
+            if available < 18:
+                raise ValueError("The model endpoint identifier is too long to stage credentials safely.")
+            secret_name = f"s-{uuid.uuid4().hex[:available - 2]}"
         updated_auth[auth_field] = store_secret_in_key_vault(
             secret_name,
             value,
@@ -1365,16 +1440,37 @@ def keyvault_model_endpoint_save_helper(endpoint_dict, scope_value, scope="globa
     return updated
 
 
-def keyvault_model_endpoint_get_helper(endpoint_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
-    """Resolve model endpoint auth secrets from Key Vault for backend or frontend use."""
+def keyvault_model_endpoint_get_helper(
+    endpoint_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER, *, strict=False,
+):
+    """Resolve endpoint secrets, with optional fail-closed backend hydration.
+
+    ``strict`` only affects VALUE retrieval. NAME/TRIGGER and plaintext values
+    keep their legacy behavior, including when Key Vault storage is disabled.
+
+    VALUE hydration is the step every consumer of a stored endpoint takes before
+    calling it, so for group and user endpoints it also applies the application
+    identity rule (``functions_model_endpoint_app_identity``): an endpoint that would
+    send the application's token to a disallowed host or audience fails closed with
+    ``ApplicationIdentityPolicyError``, whether or not Key Vault storage is on.
+    """
     if scope not in supported_scopes:
         log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.ERROR)
         raise ValueError(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}")
+    if return_type == SecretReturnType.VALUE and scope in MODEL_ENDPOINT_ENDPOINT_KEYED_SCOPES:
+        # Deferred so the rule, and the settings helpers it reads, load only when a
+        # group or user endpoint is hydrated for use; this helper's importers and its
+        # import-time dependencies are otherwise unchanged.
+        from functions_model_endpoint_app_identity import resolve_application_identity_for_use
+
+        endpoint_dict = resolve_application_identity_for_use(endpoint_dict, scope)
 
     settings = app_settings_cache.get_settings_cache()
     enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
     key_vault_name = settings.get("key_vault_name", None)
-    if not enable_key_vault_secret_storage or not key_vault_name:
+    if not (strict and return_type == SecretReturnType.VALUE) and (
+        not enable_key_vault_secret_storage or not key_vault_name
+    ):
         return endpoint_dict
 
     updated = dict(endpoint_dict)
@@ -1386,10 +1482,14 @@ def keyvault_model_endpoint_get_helper(endpoint_dict, scope_value, scope="global
     auth_updated = False
     for auth_field in MODEL_ENDPOINT_SENSITIVE_AUTH_FIELDS:
         value = updated_auth.get(auth_field)
+        if strict and return_type == SecretReturnType.VALUE and value in (ui_trigger_word, REDACTED_SECRET_VALUE):
+            raise ValueError("Unable to resolve the stored Key Vault credential.")
         if not value or not validate_secret_name_dynamic(value):
             continue
         if return_type == SecretReturnType.VALUE:
-            updated_auth[auth_field] = retrieve_secret_from_key_vault_by_full_name(value)
+            updated_auth[auth_field] = retrieve_secret_from_key_vault_by_full_name(
+                value, **({"strict": True} if strict else {}),
+            )
         elif return_type == SecretReturnType.NAME:
             updated_auth[auth_field] = value
         else:
@@ -1435,7 +1535,7 @@ def keyvault_model_endpoint_delete_helper(endpoint_dict, scope_value, scope="glo
                 level=logging.ERROR,
                 exceptionTraceback=True,
             )
-            raise Exception(f"Error deleting model endpoint auth secret '{auth_field}' for '{scope}' '{scope_value}': {e}")
+            raise RuntimeError("Unable to remove the model endpoint credential from Key Vault.") from e
 
     return endpoint_dict
 
@@ -1458,6 +1558,273 @@ def keyvault_model_endpoint_cleanup_helper(previous_endpoint, current_endpoint, 
         keyvault_model_endpoint_delete_helper({"auth": obsolete_auth}, scope_value, scope=scope)
 
     return current_endpoint
+
+
+# The two secret-reference fields a workspace identity's auth block can carry.
+WORKSPACE_IDENTITY_SENSITIVE_AUTH_FIELDS = ("password_secret_name", "secret_secret_name")
+
+
+def keyvault_identity_delete_helper(auth_dict, scope_value, scope="group"):
+    """Best-effort delete of Key Vault-backed workspace identity auth secrets.
+
+    A workspace identity delete or auth-type change removes the stored secret, but
+    a Key Vault failure must never fail the Cosmos write that already committed, so
+    each delete is logged and swallowed rather than raised (unlike the model
+    endpoint helper). Only values that are valid Key Vault references are deleted;
+    inline plaintext (Key Vault storage off) is left alone.
+
+    Args:
+        auth_dict (dict): The identity ``auth`` block whose secret references to delete.
+        scope_value (str): The scope value the secret was stored under (the scope id).
+        scope (str): The Key Vault scope (e.g. ``group``).
+
+    Returns:
+        dict: The original ``auth_dict``.
+    """
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
+        return auth_dict
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return auth_dict
+
+    auth = auth_dict if isinstance(auth_dict, dict) else {}
+    for auth_field in WORKSPACE_IDENTITY_SENSITIVE_AUTH_FIELDS:
+        secret_name = auth.get(auth_field)
+        if not secret_name or not validate_secret_name_dynamic(secret_name):
+            continue
+        try:
+            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+            client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+            client.begin_delete_secret(secret_name)
+            log_event(
+                f"Deleting workspace identity secret '{auth_field}' for '{scope}' '{scope_value}'",
+                level=logging.INFO,
+            )
+        except Exception as e:
+            log_event(
+                "[KEY_VAULT] Unable to remove a workspace identity secret.",
+                extra={
+                    "scope": scope,
+                    "auth_field": auth_field,
+                    "error_type": type(e).__name__,
+                    "status_code": getattr(e, "status_code", None),
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+    return auth_dict
+
+
+def keyvault_identity_cleanup_helper(previous_auth, current_auth, scope_value, scope="group"):
+    """Delete obsolete workspace identity secrets no longer referenced after a write.
+
+    Only a reference that changed (an auth-type switch supersedes the previous
+    field) is deleted. A same-field update mints a new version under the same
+    conventional name, so its reference is unchanged and kept.
+    """
+    previous_auth = previous_auth if isinstance(previous_auth, dict) else {}
+    current_auth = current_auth if isinstance(current_auth, dict) else {}
+
+    obsolete_auth = {}
+    for auth_field in WORKSPACE_IDENTITY_SENSITIVE_AUTH_FIELDS:
+        previous_secret = previous_auth.get(auth_field)
+        current_secret = current_auth.get(auth_field)
+        if previous_secret and validate_secret_name_dynamic(previous_secret) and previous_secret != current_secret:
+            obsolete_auth[auth_field] = previous_secret
+
+    if obsolete_auth:
+        keyvault_identity_delete_helper(obsolete_auth, scope_value, scope=scope)
+
+    return current_auth
+
+
+def keyvault_identity_discard_staged_helper(secret_names, scope_value, scope="group"):
+    """Best-effort delete of freshly staged workspace identity secrets.
+
+    A native conditional create or update stages each new secret value under a
+    fresh name before the Cosmos write, so that a refused write (an etag conflict
+    or a record deleted mid-flight) never changes the credential the stored
+    reference still points at. When the write is refused the staged names are
+    orphans, so delete them. Like the delete/cleanup helpers this is best effort:
+    every delete, and even building the client, is logged and swallowed so cleanup
+    can never turn a refusal into a 500.
+
+    Args:
+        secret_names (Iterable[str]): Full Key Vault names staged this call.
+        scope_value (str): The scope value the secrets were stored under.
+        scope (str): The Key Vault scope (e.g. ``group``).
+    """
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
+        return
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return
+
+    for secret_name in secret_names or []:
+        if not secret_name or not validate_secret_name_dynamic(secret_name):
+            continue
+        try:
+            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+            client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+            client.begin_delete_secret(secret_name)
+            log_event(
+                f"Discarding a staged workspace identity secret for '{scope}' '{scope_value}'",
+                level=logging.INFO,
+            )
+        except Exception as e:
+            log_event(
+                "[KEY_VAULT] Unable to discard a staged workspace identity secret.",
+                extra={
+                    "scope": scope,
+                    "error_type": type(e).__name__,
+                    "status_code": getattr(e, "status_code", None),
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+
+# The two secret-reference fields a File Sync source's auth block can carry.
+FILE_SYNC_SENSITIVE_AUTH_FIELDS = ("password_secret_name", "secret_secret_name")
+
+
+def keyvault_file_sync_delete_helper(auth_dict, scope_value, scope="group"):
+    """Best-effort delete of Key Vault-backed File Sync source auth secrets.
+
+    Used by the cleanup helper to drop a superseded secret reference after a native
+    conditional write commits. A Key Vault failure must never fail the Cosmos write
+    that already committed, so each delete is logged and swallowed. Only values that
+    are valid Key Vault references are deleted; inline plaintext (Key Vault storage
+    off) is left alone.
+
+    Args:
+        auth_dict (dict): The source ``auth`` block whose secret references to delete.
+        scope_value (str): The scope value the secret was stored under (the scope id).
+        scope (str): The Key Vault scope (e.g. ``group``).
+
+    Returns:
+        dict: The original ``auth_dict``.
+    """
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
+        return auth_dict
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return auth_dict
+
+    auth = auth_dict if isinstance(auth_dict, dict) else {}
+    for auth_field in FILE_SYNC_SENSITIVE_AUTH_FIELDS:
+        secret_name = auth.get(auth_field)
+        if not secret_name or not validate_secret_name_dynamic(secret_name):
+            continue
+        try:
+            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+            client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+            client.begin_delete_secret(secret_name)
+            log_event(
+                f"Deleting File Sync source secret '{auth_field}' for '{scope}' '{scope_value}'",
+                level=logging.INFO,
+            )
+        except Exception as e:
+            log_event(
+                "[KEY_VAULT] Unable to remove a File Sync source secret.",
+                extra={
+                    "scope": scope,
+                    "auth_field": auth_field,
+                    "error_type": type(e).__name__,
+                    "status_code": getattr(e, "status_code", None),
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+
+    return auth_dict
+
+
+def keyvault_file_sync_cleanup_helper(previous_auth, current_auth, scope_value, scope="group"):
+    """Delete obsolete File Sync source secrets no longer referenced after a write.
+
+    A native write stages new values under fresh names, so after it commits the
+    previous field's reference is superseded whenever it changed. Only a reference
+    that changed is deleted; an unchanged reference (a field the write did not
+    touch) is kept.
+    """
+    previous_auth = previous_auth if isinstance(previous_auth, dict) else {}
+    current_auth = current_auth if isinstance(current_auth, dict) else {}
+
+    obsolete_auth = {}
+    for auth_field in FILE_SYNC_SENSITIVE_AUTH_FIELDS:
+        previous_secret = previous_auth.get(auth_field)
+        current_secret = current_auth.get(auth_field)
+        if previous_secret and validate_secret_name_dynamic(previous_secret) and previous_secret != current_secret:
+            obsolete_auth[auth_field] = previous_secret
+
+    if obsolete_auth:
+        keyvault_file_sync_delete_helper(obsolete_auth, scope_value, scope=scope)
+
+    return current_auth
+
+
+def keyvault_file_sync_discard_staged_helper(secret_names, scope_value, scope="group"):
+    """Best-effort delete of freshly staged File Sync source secrets.
+
+    A native conditional create or update stages each new secret under a fresh name
+    before the Cosmos write, so a refused write (an etag or config conflict, or a
+    record deleted mid-flight) never rotates the credential the stored reference
+    still points at. When the write is refused the staged names are orphans, so
+    delete them. Like the delete/cleanup helpers this is best effort: every delete,
+    and even building the client, is logged and swallowed so cleanup can never turn
+    a refusal into a 500.
+
+    Args:
+        secret_names (Iterable[str]): Full Key Vault names staged this call.
+        scope_value (str): The scope value the secrets were stored under.
+        scope (str): The Key Vault scope (e.g. ``group``).
+    """
+    if scope not in supported_scopes:
+        log_event(f"Scope '{scope}' is not supported. Supported scopes: {supported_scopes}", level=logging.WARNING)
+        return
+
+    settings = app_settings_cache.get_settings_cache()
+    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
+    key_vault_name = settings.get("key_vault_name", None)
+    if not enable_key_vault_secret_storage or not key_vault_name:
+        return
+
+    for secret_name in secret_names or []:
+        if not secret_name or not validate_secret_name_dynamic(secret_name):
+            continue
+        try:
+            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
+            client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
+            client.begin_delete_secret(secret_name)
+            log_event(
+                f"Discarding a staged File Sync source secret for '{scope}' '{scope_value}'",
+                level=logging.INFO,
+            )
+        except Exception as e:
+            log_event(
+                "[KEY_VAULT] Unable to discard a staged File Sync source secret.",
+                extra={
+                    "scope": scope,
+                    "error_type": type(e).__name__,
+                    "status_code": getattr(e, "status_code", None),
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
 
 
 # Helper to delete plugin secrets from Key Vault
@@ -1624,7 +1991,7 @@ def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
             raise Exception(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}")
     return agent_dict
 
-def get_keyvault_credential(settings=None):
+def get_keyvault_credential(settings=None, **credential_options):
     """
     Get the Key Vault credential using DefaultAzureCredential, optionally with a managed identity client ID.
 
@@ -1632,6 +1999,7 @@ def get_keyvault_credential(settings=None):
         settings (dict, optional): Settings dict to use directly. If None, falls back to
             app_settings_cache.get_settings_cache(). Pass settings explicitly when calling
             before the cache is initialised (e.g. during configure_app_cache bootstrap).
+        credential_options: Optional SDK timeouts/retry limits for bounded diagnostics.
 
     Returns:
         DefaultAzureCredential: The credential object for Key Vault access.
@@ -1639,12 +2007,10 @@ def get_keyvault_credential(settings=None):
     if settings is None:
         settings = app_settings_cache.get_settings_cache()
 
-    key_vault_identity = settings.get("key_vault_identity", None)
-    if key_vault_identity is not None:
-        credential = DefaultAzureCredential(managed_identity_client_id=key_vault_identity)
-    else:
-        credential = DefaultAzureCredential()
-    return credential
+    return DefaultAzureCredential(
+        managed_identity_client_id=settings.get("key_vault_identity") or None,
+        **credential_options,
+    )
 
 def clean_name_for_keyvault(name):
     """

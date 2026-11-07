@@ -8,6 +8,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 SOURCE_PATH = Path("docs") / "explanation" / "release_notes.md"
@@ -27,6 +28,9 @@ GENERATED_BANNER = (
     "scripts/build_release_notes_pages.py. Regenerate with: "
     "python scripts/build_release_notes_pages.py -->"
 )
+MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+FENCED_CODE_RE = re.compile(r"(?ms)^(```|~~~)[^\n]*\n.*?^\1[^\n]*(?:\n|$)")
+INLINE_CODE_RE = re.compile(r"(`+)[^\n]*?\1")
 
 
 @dataclass(frozen=True)
@@ -65,7 +69,34 @@ class GeneratedPage:
 
 def read_source(repo_root: Path) -> str:
     source_file = repo_root / SOURCE_PATH
-    return source_file.read_text(encoding="utf-8")
+    source = source_file.read_text(encoding="utf-8")
+    validate_source_links(source)
+    return source
+
+
+def validate_source_links(source_text: str) -> None:
+    """Reject source-relative reader URLs that break on split public pages."""
+    masked = FENCED_CODE_RE.sub(lambda match: " " * len(match.group(0)), source_text)
+    code_spans = [(match.start(), match.end()) for match in INLINE_CODE_RE.finditer(masked)]
+    invalid = []
+    for match in MARKDOWN_LINK_RE.finditer(masked):
+        if any(start <= match.start() < end for start, end in code_spans):
+            continue
+        target = match.group(1)
+        address = urlsplit(target)
+        if (
+            not address.scheme
+            and not address.netloc
+            and address.path
+            and not address.path.startswith("/")
+        ):
+            invalid.append(target)
+    if invalid:
+        examples = ", ".join(sorted(set(invalid))[:8])
+        raise ValueError(
+            "Release-note links must use published documentation URLs or verified "
+            f"repository-source permalinks, not source-relative paths: {examples}"
+        )
 
 
 def parse_release_notes(source_text: str) -> tuple[str, list[ReleaseSection]]:

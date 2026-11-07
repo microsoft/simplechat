@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from background_tasks import acquire_distributed_task_lock, release_distributed_task_lock
-from collaboration_models import MEMBERSHIP_STATUS_ACCEPTED
+from collaboration_models import MEMBERSHIP_STATUS_ACCEPTED, is_shared_conversation_backing
 from config import (
     cosmos_conversations_container,
     cosmos_messages_container,
@@ -31,6 +31,7 @@ from functions_documents import (
     sort_documents,
 )
 from functions_message_artifacts import filter_assistant_artifact_items
+from functions_message_deletion import is_soft_deleted_message
 from functions_personal_workflows import (
     compute_next_run_at,
     get_personal_workflow,
@@ -41,6 +42,7 @@ from functions_personal_workflows import (
 from functions_search_service import search_documents as run_document_search
 from functions_settings import get_settings, is_user_workflows_enabled_for_user
 from functions_workflow_runner import run_personal_workflow
+from functions_workflow_schedules import workflow_schedule_label, workflow_schedule_summary
 
 
 INBOUND_MCP_TOOL_RESULT_LIMIT_DEFAULT = 100
@@ -255,6 +257,9 @@ def _authorize_personal_conversation_read(delegated_user_id, conversation_id):
         )
     except CosmosResourceNotFoundError:
         conversation_item = None
+    # Orchestrate's backing record shares its shared conversation's id and is part of it.
+    if is_shared_conversation_backing(conversation_item):
+        conversation_item = None
 
     if conversation_item is not None:
         if str(conversation_item.get("user_id") or "").strip() != delegated_user_id:
@@ -284,6 +289,8 @@ def _legacy_message_is_visible(message_item):
         return False
     metadata = message_item.get("metadata", {}) if isinstance(message_item.get("metadata"), dict) else {}
     if metadata.get("is_generated_chat_artifact", False):
+        return False
+    if is_soft_deleted_message(message_item):
         return False
     thread_info = metadata.get("thread_info", {}) if isinstance(metadata.get("thread_info"), dict) else {}
     active_thread = thread_info.get("active_thread")
@@ -648,6 +655,8 @@ def _serialize_personal_workflow_summary(workflow):
         "description_truncated": description_truncated,
         "runner_type": str(workflow.get("runner_type") or "").strip(),
         "trigger_type": str(workflow.get("trigger_type") or "").strip(),
+        "schedule": workflow_schedule_summary(workflow.get("trigger_type"), workflow.get("schedule")),
+        "schedule_label": workflow_schedule_label(workflow.get("trigger_type"), workflow.get("schedule")),
         "is_enabled": bool(workflow.get("is_enabled", False)),
         "status": str(workflow.get("status") or "").strip(),
         "created_at": str(workflow.get("created_at") or "").strip(),
@@ -767,6 +776,19 @@ def execute_workflow(auth_context, arguments=None):
             "Workflow not found. Use list_personal_workflows to find the generated workflow id; "
             "workflow display names are not accepted."
         )
+    if workflow.get("durable_execution") is True:
+        # Resolve lazily to avoid the queue/runner/plugin-loader import cycle.
+        from functions_workflow_runtime import queue_durable_workflow_run
+
+        result = queue_durable_workflow_run(
+            workflow, actor_user_id=delegated_user_id, trigger_source="inbound_mcp",
+            invocation_metadata=_build_mcp_workflow_invocation_metadata(auth_context),
+        )
+        return {
+            **_serialize_workflow_execution_result(workflow, result["run"], result["run"].get("success", False)),
+            "accepted": True,
+            "durable_execution": True,
+        }
 
     lock_document = acquire_distributed_task_lock(
         f"workflow_run_{workflow_id}",

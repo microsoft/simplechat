@@ -445,7 +445,110 @@ def build_docx_image_word_offsets(archive):
     return image_word_offsets, word_count
 
 
-def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25):
+def _build_office_media_accessibility_map(archive):
+    """Map ``word/media/*`` and ``ppt/media/*`` entries to their native OOXML accessibility properties."""
+    media_a11y_map = {}
+
+    def _inspect_containers(root_elem, rel_targets):
+        if not rel_targets:
+            return
+        for elem in root_elem.iter():
+            local = _xml_local_name(elem.tag)
+            if local not in ('inline', 'anchor', 'pic', 'shape'):
+                continue
+            placement = 'floating' if local == 'anchor' else 'inline'
+            allow_overlap = _xml_attr_by_local_name(elem, 'allowOverlap') in ('1', 'true')
+            behind_doc = _xml_attr_by_local_name(elem, 'behindDoc') in ('1', 'true')
+
+            descr = ''
+            title = ''
+            is_decorative = False
+            rel_id = ''
+
+            if local == 'shape':
+                descr = _xml_attr_by_local_name(elem, 'alt').strip()
+                title = _xml_attr_by_local_name(elem, 'title').strip()
+
+            for sub in elem.iter():
+                s_local = _xml_local_name(sub.tag)
+                if s_local in ('docPr', 'cNvPr') and not (descr or title):
+                    descr = _xml_attr_by_local_name(sub, 'descr').strip()
+                    title = _xml_attr_by_local_name(sub, 'title').strip()
+                elif s_local == 'decorative':
+                    val = _xml_attr_by_local_name(sub, 'val').lower()
+                    if val in ('1', 'true', ''):
+                        is_decorative = True
+                elif s_local == 'blip' and not rel_id:
+                    rel_id = _xml_attr_by_local_name(sub, 'embed')
+                elif s_local == 'imagedata' and not rel_id:
+                    rel_id = _xml_attr_by_local_name(sub, 'id')
+                    if not descr:
+                        descr = _xml_attr_by_local_name(sub, 'title').strip()
+
+            media_name = rel_targets.get(rel_id) if rel_id else ''
+            if not media_name:
+                continue
+
+            media_a11y_map.setdefault(
+                media_name,
+                {
+                    'alt_text': descr,
+                    'title_text': title,
+                    'is_decorative': is_decorative,
+                    'placement': placement,
+                    'allow_overlap': allow_overlap,
+                    'behind_doc': behind_doc,
+                },
+            )
+
+    # 1. Word main document part
+    docx_rels = _build_docx_relationship_targets(archive)
+    if docx_rels:
+        doc_bytes = _read_zip_entry_bounded(
+            archive, DOCX_MAIN_DOCUMENT_PART, OFFICE_DOCUMENT_PART_MAX_BYTES
+        )
+        if doc_bytes is not None:
+            try:
+                doc_root = defused_fromstring(doc_bytes)
+                _inspect_containers(doc_root, docx_rels)
+            except (DefusedParseError, ValueError):
+                # Ignore malformed document.xml and continue inspecting slide parts.
+                pass
+
+    # 2. PowerPoint slide parts
+    inspected_slides = 0
+    for entry_name in archive.namelist():
+        if inspected_slides >= OFFICE_ZIP_MAX_RELS_ENTRIES:
+            break
+        slide_match = _PPTX_SLIDE_RELS_PATTERN.match(entry_name)
+        if not slide_match:
+            continue
+        inspected_slides += 1
+        slide_num = int(slide_match.group(1))
+        slide_xml_path = f"ppt/slides/slide{slide_num}.xml"
+
+        rels_bytes = _read_zip_entry_bounded(archive, entry_name, OFFICE_EMBEDDED_RELS_MAX_BYTES)
+        slide_bytes = _read_zip_entry_bounded(archive, slide_xml_path, OFFICE_DOCUMENT_PART_MAX_BYTES)
+        if rels_bytes is None or slide_bytes is None:
+            continue
+        try:
+            rels_root = defused_fromstring(rels_bytes)
+            slide_root = defused_fromstring(slide_bytes)
+        except (DefusedParseError, ValueError):
+            continue
+
+        slide_rels = {}
+        for rel in rels_root:
+            r_id = str(rel.attrib.get('Id') or '').strip()
+            media_name = _normalize_office_media_target(rel.attrib.get('Target'), 'ppt/media/')
+            if r_id and media_name:
+                slide_rels[r_id] = media_name
+        _inspect_containers(slide_root, slide_rels)
+
+    return media_a11y_map
+
+
+def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_pixels=150, max_images=25, native_media_metadata=None):
     """Extract embedded images and report what was skipped and why.
 
     Without the diagnostics a document containing only unsupported figures is indistinguishable
@@ -482,6 +585,10 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
 
             media_slide_map = _build_pptx_media_slide_map(archive)
             media_word_offsets, total_body_words = build_docx_image_word_offsets(archive)
+            media_a11y_map = _build_office_media_accessibility_map(archive)
+            if native_media_metadata is not None:
+                media_a11y_map.update(native_media_metadata)
+            native_seen_images = {}
             diagnostics['total_body_words'] = total_body_words
 
             candidate_names = [
@@ -522,6 +629,9 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
 
                 digest = hashlib.sha256(image_bytes).hexdigest()
                 if digest in seen_digests:
+                    if native_media_metadata is not None and digest in native_seen_images:
+                        placements = (media_a11y_map.get(media_name) or {}).get('placements') or []
+                        native_seen_images[digest]['placements'].extend(placements)
                     _record_skip(diagnostics, 'duplicate_image')
                     continue
 
@@ -566,6 +676,7 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
                     continue
 
                 diagnostics['analyzed'] += 1
+                a11y_info = media_a11y_map.get(media_name) or {}
                 extracted_images.append({
                     'name': base_name,
                     'path': output_path,
@@ -573,12 +684,411 @@ def extract_office_embedded_images_with_diagnostics(file_path, output_dir, min_p
                     'height': height,
                     'slide_number': media_slide_map.get(media_name),
                     'word_offset': media_word_offsets.get(media_name),
-                    'position_known': media_name in media_word_offsets or media_name in media_slide_map,
+                    'position_known': media_name in media_word_offsets or media_name in media_slide_map or bool(a11y_info.get('sheet_name')),
                     'source_format': source_extension.lstrip('.'),
                     'rasterized': is_vector,
                     'embedded_text': embedded_text,
+                    'alt_text': a11y_info.get('alt_text', ''),
+                    'title_text': a11y_info.get('title_text', ''),
+                    'is_decorative': a11y_info.get('is_decorative') if a11y_info.get('sheet_name') else bool(a11y_info.get('is_decorative', False)),
+                    'placement': a11y_info.get('placement', 'inline'),
+                    'allow_overlap': bool(a11y_info.get('allow_overlap', False)),
+                    'behind_doc': bool(a11y_info.get('behind_doc', False)),
+                    **({
+                        'sheet_name': a11y_info.get('sheet_name'), 'cell': a11y_info.get('cell'),
+                        'object_id': a11y_info.get('object_id'), 'media_part': media_name,
+                        'placements': list(a11y_info.get('placements') or []),
+                    } if native_media_metadata is not None else {}),
                 })
+                if native_media_metadata is not None:
+                    native_seen_images[digest] = extracted_images[-1]
     except (zipfile.BadZipFile, FileNotFoundError, OSError):
         return [], diagnostics
 
     return extracted_images, diagnostics
+
+
+DOCX_COMMENTS_PART = 'word/comments.xml'
+DOCX_COMMENTS_EXTENDED_PART = 'word/commentsExtended.xml'
+OFFICE_COMMENTS_PART_MAX_BYTES = 16 * 1024 * 1024
+OFFICE_COMMENTS_MAX_COUNT = 2000
+OFFICE_COMMENT_ANCHOR_MAX_CHARS = 300
+WORD_COMMENTS_SECTION_HEADING = '### Document Comments'
+
+
+def _xml_local_name(tag):
+    """Return the namespace-free local name of an ElementTree tag."""
+    if not isinstance(tag, str):
+        return ''
+    return tag.rsplit('}', 1)[-1]
+
+
+def _xml_attr_by_local_name(element, *local_names):
+    """Return the first matching attribute value by local name regardless of XML namespace."""
+    if element is None or not getattr(element, 'attrib', None):
+        return ''
+    wanted = set(local_names)
+    for name in local_names:
+        if name in element.attrib:
+            return str(element.attrib.get(name) or '')
+    for attr_key, attr_value in element.attrib.items():
+        if _xml_local_name(attr_key) in wanted:
+            return str(attr_value or '')
+    return ''
+
+
+def _extract_docx_comment_paragraph_text(paragraph_elem):
+    """Extract normalized plain text from a single OOXML comment paragraph."""
+    fragments = []
+    for node in paragraph_elem.iter():
+        local_name = _xml_local_name(node.tag)
+        if local_name in ('t', 'delText') and node.text:
+            fragments.append(str(node.text))
+        elif local_name == 'tab':
+            fragments.append('\t')
+        elif local_name in ('br', 'cr'):
+            fragments.append('\n')
+
+    raw_text = ''.join(fragments)
+    lines = [re.sub(r'[ \t]+', ' ', line).strip() for line in raw_text.splitlines()]
+    return '\n'.join(line for line in lines if line).strip()
+
+
+def build_docx_comment_anchors_and_offsets(archive):
+    """Return ``(comment_word_offsets, comment_anchors, total_body_words)`` from ``word/document.xml``.
+
+    Walking ``word/document.xml`` in document order captures both the reading-order word offset
+    where each comment is anchored and the highlighted text between ``w:commentRangeStart`` and
+    ``w:commentRangeEnd``.
+    """
+    comment_word_offsets = {}
+    completed_anchors = {}
+
+    document_bytes = _read_zip_entry_bounded(
+        archive, DOCX_MAIN_DOCUMENT_PART, OFFICE_DOCUMENT_PART_MAX_BYTES
+    )
+    if document_bytes is None:
+        return comment_word_offsets, completed_anchors, 0
+
+    try:
+        document_root = defused_fromstring(document_bytes)
+    except (DefusedParseError, ValueError):
+        return comment_word_offsets, completed_anchors, 0
+
+    word_count = 0
+    active_ranges = {}
+    active_range_lengths = {}
+
+    for element in document_root.iter():
+        local_name = _xml_local_name(element.tag)
+        if local_name == 'commentRangeStart':
+            comment_id = _xml_attr_by_local_name(element, 'id').strip()
+            if comment_id:
+                comment_word_offsets.setdefault(comment_id, word_count)
+                if comment_id not in completed_anchors and comment_id not in active_ranges:
+                    active_ranges[comment_id] = []
+                    active_range_lengths[comment_id] = 0
+            continue
+
+        if local_name == 'commentRangeEnd':
+            comment_id = _xml_attr_by_local_name(element, 'id').strip()
+            if comment_id and comment_id in active_ranges:
+                anchor_text = re.sub(r'\s+', ' ', ''.join(active_ranges.pop(comment_id))).strip()
+                active_range_lengths.pop(comment_id, None)
+                if anchor_text:
+                    completed_anchors.setdefault(
+                        comment_id, anchor_text[:OFFICE_COMMENT_ANCHOR_MAX_CHARS]
+                    )
+            continue
+
+        if local_name == 'commentReference':
+            comment_id = _xml_attr_by_local_name(element, 'id').strip()
+            if comment_id:
+                comment_word_offsets.setdefault(comment_id, word_count)
+            continue
+
+        if local_name in ('t', 'delText'):
+            text_value = str(element.text or '')
+            word_count += len(text_value.split())
+            if active_ranges and text_value:
+                for comment_id, parts in active_ranges.items():
+                    current_len = active_range_lengths.get(comment_id, 0)
+                    remaining = OFFICE_COMMENT_ANCHOR_MAX_CHARS - current_len
+                    if remaining > 0:
+                        snippet = text_value[:remaining]
+                        parts.append(snippet)
+                        active_range_lengths[comment_id] = current_len + len(snippet)
+            continue
+
+        if local_name in ('tab', 'br', 'cr') and active_ranges:
+            for comment_id, parts in active_ranges.items():
+                current_len = active_range_lengths.get(comment_id, 0)
+                if current_len < OFFICE_COMMENT_ANCHOR_MAX_CHARS:
+                    parts.append(' ')
+                    active_range_lengths[comment_id] = current_len + 1
+
+    for comment_id, parts in active_ranges.items():
+        anchor_text = re.sub(r'\s+', ' ', ''.join(parts)).strip()
+        if anchor_text:
+            completed_anchors.setdefault(comment_id, anchor_text[:OFFICE_COMMENT_ANCHOR_MAX_CHARS])
+
+    return comment_word_offsets, completed_anchors, word_count
+
+
+def _parse_docx_comments_extended(archive):
+    """Parse ``word/commentsExtended.xml`` for reply parent links and resolved state."""
+    extended_by_para_id = {}
+    extended_bytes = _read_zip_entry_bounded(
+        archive, DOCX_COMMENTS_EXTENDED_PART, OFFICE_COMMENTS_PART_MAX_BYTES
+    )
+    if extended_bytes is None:
+        return extended_by_para_id
+
+    try:
+        extended_root = defused_fromstring(extended_bytes)
+    except (DefusedParseError, ValueError):
+        return extended_by_para_id
+
+    for elem in extended_root.iter():
+        if _xml_local_name(elem.tag) != 'commentEx':
+            continue
+        para_id = _xml_attr_by_local_name(elem, 'paraId').strip()
+        if not para_id:
+            continue
+        parent_para_id = _xml_attr_by_local_name(elem, 'paraIdParent').strip()
+        done_raw = _xml_attr_by_local_name(elem, 'done').strip().lower()
+        extended_by_para_id[para_id] = {
+            'parent_para_id': parent_para_id or None,
+            'done': done_raw in ('1', 'true', 'on'),
+        }
+
+    return extended_by_para_id
+
+
+def extract_docx_comments(file_path):
+    """Extract structured review comments from an OOXML Word package (``.docx``, ``.docm``, ``.dotx``).
+
+    Returns ``(comments, total_body_words)`` where ``comments`` is a list of top-level comment
+    dicts (with nested ``replies`` when ``word/commentsExtended.xml`` links reply threads).
+    """
+    if not file_path or not zipfile.is_zipfile(file_path):
+        return [], 0
+
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            entry_names = archive.namelist()
+            if len(entry_names) > OFFICE_ZIP_MAX_ENTRIES:
+                return [], 0
+
+            comment_word_offsets, comment_anchors, total_body_words = (
+                build_docx_comment_anchors_and_offsets(archive)
+            )
+            if DOCX_COMMENTS_PART not in entry_names:
+                return [], total_body_words
+
+            comments_bytes = _read_zip_entry_bounded(
+                archive, DOCX_COMMENTS_PART, OFFICE_COMMENTS_PART_MAX_BYTES
+            )
+            if comments_bytes is None:
+                return [], total_body_words
+
+            try:
+                comments_root = defused_fromstring(comments_bytes)
+            except (DefusedParseError, ValueError):
+                return [], total_body_words
+
+            extended_by_para_id = _parse_docx_comments_extended(archive)
+
+            raw_comments = []
+            comments_by_id = {}
+            para_id_to_comment_id = {}
+
+            for element in comments_root:
+                if _xml_local_name(element.tag) != 'comment':
+                    continue
+                if len(raw_comments) >= OFFICE_COMMENTS_MAX_COUNT:
+                    break
+
+                comment_id = _xml_attr_by_local_name(element, 'id').strip()
+                if not comment_id:
+                    comment_id = str(len(raw_comments) + 1)
+
+                author = _xml_attr_by_local_name(element, 'author').strip()
+                initials = _xml_attr_by_local_name(element, 'initials').strip()
+                date_str = _xml_attr_by_local_name(element, 'date').strip()
+
+                paragraph_texts = []
+                para_ids = []
+                for child in element:
+                    if _xml_local_name(child.tag) != 'p':
+                        continue
+                    para_id = _xml_attr_by_local_name(child, 'paraId').strip()
+                    if para_id:
+                        para_ids.append(para_id)
+                        para_id_to_comment_id[para_id] = comment_id
+                    paragraph_text = _extract_docx_comment_paragraph_text(child)
+                    if paragraph_text:
+                        paragraph_texts.append(paragraph_text)
+
+                if not paragraph_texts:
+                    fallback_text = _extract_docx_comment_paragraph_text(element)
+                    if fallback_text:
+                        paragraph_texts.append(fallback_text)
+
+                comment_text = '\n'.join(paragraph_texts).strip()
+                if not comment_text:
+                    continue
+
+                word_offset = comment_word_offsets.get(comment_id)
+                comment_record = {
+                    'id': comment_id,
+                    'author': author,
+                    'initials': initials,
+                    'date': date_str,
+                    'text': comment_text,
+                    'anchor_text': comment_anchors.get(comment_id, ''),
+                    'word_offset': word_offset,
+                    'position_known': word_offset is not None,
+                    'parent_id': None,
+                    'done': False,
+                    'replies': [],
+                    '_para_ids': para_ids,
+                }
+                raw_comments.append(comment_record)
+                comments_by_id[comment_id] = comment_record
+
+            for comment_record in raw_comments:
+                for para_id in comment_record.pop('_para_ids', []):
+                    ext_info = extended_by_para_id.get(para_id)
+                    if not ext_info:
+                        continue
+                    if ext_info.get('done'):
+                        comment_record['done'] = True
+                    parent_para_id = ext_info.get('parent_para_id')
+                    if parent_para_id:
+                        parent_comment_id = para_id_to_comment_id.get(parent_para_id)
+                        if parent_comment_id and parent_comment_id != comment_record['id']:
+                            comment_record['parent_id'] = parent_comment_id
+
+            def _resolve_root_comment(record):
+                visited = {record['id']}
+                current = record
+                while current.get('parent_id') and current['parent_id'] in comments_by_id:
+                    parent_id = current['parent_id']
+                    if parent_id in visited:
+                        break
+                    visited.add(parent_id)
+                    current = comments_by_id[parent_id]
+                return current
+
+            top_level_comments = []
+            for comment_record in raw_comments:
+                root_comment = _resolve_root_comment(comment_record)
+                if root_comment is comment_record:
+                    top_level_comments.append(comment_record)
+                else:
+                    root_comment['replies'].append({
+                        'id': comment_record['id'],
+                        'author': comment_record['author'],
+                        'initials': comment_record['initials'],
+                        'date': comment_record['date'],
+                        'text': comment_record['text'],
+                        'done': comment_record['done'],
+                    })
+                    if root_comment.get('word_offset') is None and comment_record.get('word_offset') is not None:
+                        root_comment['word_offset'] = comment_record['word_offset']
+                        root_comment['position_known'] = True
+                    if not root_comment.get('anchor_text') and comment_record.get('anchor_text'):
+                        root_comment['anchor_text'] = comment_record['anchor_text']
+
+            return top_level_comments, total_body_words
+    except (zipfile.BadZipFile, FileNotFoundError, OSError):
+        return [], 0
+
+
+def _format_comment_author_header(comment):
+    """Build a readable ``by Author (Initials) [Date]`` suffix for a comment or reply."""
+    author = str(comment.get('author') or '').strip()
+    initials = str(comment.get('initials') or '').strip()
+    date_str = str(comment.get('date') or '').strip()
+    done = bool(comment.get('done'))
+
+    author_part = ''
+    if author and initials and initials.lower() != author.lower():
+        author_part = f"by {author} ({initials})"
+    elif author:
+        author_part = f"by {author}"
+    elif initials:
+        author_part = f"by {initials}"
+
+    meta_parts = []
+    if author_part:
+        meta_parts.append(author_part)
+    if date_str:
+        meta_parts.append(f"[{date_str}]")
+    if done:
+        meta_parts.append("(Resolved)")
+
+    return (' ' + ' '.join(meta_parts)) if meta_parts else ''
+
+
+def format_word_comment_block(comment, index=None, total=None):
+    """Format a single Word comment (and any replies) as a self-contained Markdown block."""
+    if not isinstance(comment, dict):
+        return ''
+    comment_text = str(comment.get('text') or '').strip()
+    if not comment_text:
+        return ''
+
+    if index is not None and total is not None:
+        number_label = f" {index} of {total}"
+    elif index is not None:
+        number_label = f" {index}"
+    else:
+        comment_id = str(comment.get('id') or '').strip()
+        number_label = f" {comment_id}" if comment_id else ''
+
+    author_suffix = _format_comment_author_header(comment)
+    anchor_text = str(comment.get('anchor_text') or '').strip()
+    anchor_suffix = f' on "{anchor_text}"' if anchor_text else ''
+
+    lines = [
+        f"### Document comment{number_label}{author_suffix}{anchor_suffix}",
+        comment_text,
+    ]
+
+    for reply in comment.get('replies') or []:
+        reply_text = str(reply.get('text') or '').strip()
+        if not reply_text:
+            continue
+        reply_meta = _format_comment_author_header(reply)
+        lines.append(f"- Reply{reply_meta}: {reply_text}")
+
+    return '\n'.join(lines)
+
+
+def format_word_comments_section(comments):
+    """Format a list of Word comments into a trailing document section."""
+    if not comments:
+        return ''
+    total = len(comments)
+    blocks = []
+    for idx, comment in enumerate(comments, start=1):
+        block = format_word_comment_block(comment, index=idx, total=total)
+        if block:
+            blocks.append(block)
+    if not blocks:
+        return ''
+    return f"{WORD_COMMENTS_SECTION_HEADING}\n\n" + "\n\n".join(blocks)
+
+
+def strip_appended_word_comments(text):
+    """Remove a trailing ``WORD_COMMENTS_SECTION_HEADING`` section when chunking separately."""
+    if not text:
+        return ''
+    marker = f"\n\n{WORD_COMMENTS_SECTION_HEADING}\n\n"
+    if marker in text:
+        return text.split(marker, 1)[0].rstrip()
+    if text.startswith(f"{WORD_COMMENTS_SECTION_HEADING}\n\n"):
+        return ''
+    return text

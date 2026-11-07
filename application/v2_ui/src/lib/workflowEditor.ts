@@ -1,0 +1,2997 @@
+// workflowEditor.ts
+// Native V2 workflow editor contracts and safe client-side normalization.
+
+import { api, ApiError } from './apiClient';
+import {
+    buildDocumentListParams,
+    DEFAULT_DOCUMENT_QUERY,
+} from './documentExplorer';
+import type { DocumentListResponse, DocumentQuery, WorkspaceDocument } from './types';
+import { isRecord, sameEditorValue } from './workspaceAuthoring';
+import { WORKFLOW_ALERT_FIELDS, workflowAlertDraftErrors, workflowAlertsForSave } from './workflowAlerts';
+import {
+    WORKFLOW_FILE_SYNC_CONTINUE_MODES,
+    WORKFLOW_FILE_SYNC_MAX_SOURCES,
+    WORKFLOW_FILE_SYNC_SCOPE_TYPES,
+    WORKFLOW_FILE_SYNC_WAIT_MODES,
+    workflowScheduleForEditor,
+    workflowScheduleSupported,
+    workflowSettingsErrors,
+    type WorkflowSchedule,
+} from './workflowSettings';
+import {
+    analyzeWorkflowFlow,
+    DEFAULT_FLOW_LIMITS,
+    enclosingFlowLoopControls,
+    flowLoops,
+    flowRepeats,
+    flowSourceOutput,
+    flowTaskNodeId,
+    flowUnsupportedReason,
+    FLOW_ALIAS_PATTERN,
+    FLOW_MAX_DEPTH,
+    MAX_LOOP_ITEMS,
+    MAX_REPEAT_ITERATIONS,
+    isFlowBinding,
+    isFlowRegion,
+    isLegacyWorkflowBinding,
+    loopSelectionErrors,
+    repeatIterationErrors,
+    workflowLoopLimit,
+    workflowRepeatLimit,
+    type WorkflowFlowBinding,
+    type WorkflowLoopIterable,
+} from './workflowFlow';
+import { documentSelectionErrors, isTaskDocumentSelection } from './workflowDocumentSelection';
+
+export type WorkflowScope = { type: 'personal' } | { type: 'group'; groupId: string };
+export type WorkflowRunnerType = 'model' | 'agent';
+export type WorkflowTriggerType = 'manual' | 'interval' | 'file_sync';
+export type WorkflowOutputKind = 'any' | 'text' | 'records' | 'json' | 'document_results';
+export type WorkflowTaskRunnerType = 'inherit' | 'agent' | 'model';
+export type WorkflowInputProcessing = 'full' | 'saved_record_report';
+export type WorkflowInputOutput = WorkflowOutputKind | 'authoritative' | 'documents';
+export type WorkflowReferenceScope = 'personal' | 'group' | 'public';
+export type WorkflowChatExecutionMode = 'orchestration' | 'selected' | 'off';
+export type WorkflowVisualRequirement = 'chart' | 'diagram' | 'image_proposal';
+export interface WorkflowChatExecution {
+    version: 1;
+    mode: WorkflowChatExecutionMode;
+    required_capabilities: string[];
+    visual_requirements: WorkflowVisualRequirement[];
+}
+export interface WorkflowResultsDelivery {
+    version: 1;
+    mode: 'history' | 'conversation' | 'task';
+    conversation_type: 'personal' | 'shared' | 'group' | 'group_shared';
+    recipient_ids: string[];
+    all_group_members: boolean;
+}
+export interface WorkflowConfigurationOption {
+    id: string;
+    label: string;
+    available?: boolean;
+    reason?: string;
+}
+export const WORKFLOW_CAPABILITY_IDS = [
+    'document_search', 'document_analyze', 'document_compare', 'tabular_analyze',
+    'tabular_inspect', 'tabular_merge', 'document_merge', 'document_inspect',
+    'document_create_from_reference', 'document_refresh', 'web_search', 'url_fetch',
+    'deep_research', 'agent_invoke', 'action_invoke', 'compose', 'generate_image',
+    'render_file',
+] as const;
+export const WORKFLOW_VISUAL_REQUIREMENTS = ['chart', 'diagram', 'image_proposal'] as const;
+
+export function normalizeWorkflowChatExecution(value: unknown): WorkflowChatExecution {
+    if (!isRecord(value) || Object.keys(value).some((key) =>
+        !['version', 'mode', 'required_capabilities', 'visual_requirements'].includes(key)) || value.version !== 1) {
+        throw new Error('Chat execution must be an object with supported fields and version 1.');
+    }
+    if (!['orchestration', 'selected', 'off'].includes(String(value.mode)) || typeof value.mode !== 'string') {
+        throw new Error('Chat execution mode must be orchestration, selected, or off.');
+    }
+    const capabilities = Object.hasOwn(value, 'required_capabilities') ? value.required_capabilities : [];
+    const visuals = Object.hasOwn(value, 'visual_requirements') ? value.visual_requirements : [];
+    if (!Array.isArray(capabilities) || capabilities.length > WORKFLOW_CAPABILITY_IDS.length ||
+        capabilities.some((id) => typeof id !== 'string' || !(WORKFLOW_CAPABILITY_IDS as readonly string[]).includes(id))) {
+        throw new Error('Required capabilities contains an unsupported selection.');
+    }
+    if (!Array.isArray(visuals) || visuals.length > WORKFLOW_VISUAL_REQUIREMENTS.length ||
+        visuals.some((id) => typeof id !== 'string' || !(WORKFLOW_VISUAL_REQUIREMENTS as readonly string[]).includes(id))) {
+        throw new Error('Visual requirements contains an unsupported selection.');
+    }
+    if (value.mode !== 'selected' && (capabilities.length || visuals.length)) {
+        throw new Error('Only selected mode accepts capability or visual requirements.');
+    }
+    if (value.mode === 'selected' && !capabilities.length && !visuals.length) {
+        throw new Error('Selected mode requires at least one capability or visual requirement.');
+    }
+    return {
+        version: 1, mode: value.mode as WorkflowChatExecutionMode,
+        required_capabilities: [...new Set(capabilities)],
+        visual_requirements: [...new Set(visuals)] as WorkflowVisualRequirement[],
+    };
+}
+
+export function resolveWorkflowChatExecution(
+    workflow: Pick<WorkflowDefinition, 'chat_execution'>,
+    task?: Pick<WorkflowTask, 'chat_execution'>,
+): WorkflowChatExecution | undefined {
+    return task && Object.hasOwn(task, 'chat_execution') && task.chat_execution !== undefined
+        ? normalizeWorkflowChatExecution(task.chat_execution)
+        : workflow.chat_execution === undefined ? undefined : normalizeWorkflowChatExecution(workflow.chat_execution);
+}
+
+export function normalizeWorkflowResultsDelivery(value: unknown, scope: WorkflowScope): WorkflowResultsDelivery {
+    if (!isRecord(value) || Object.keys(value).some((key) =>
+        !['version', 'mode', 'conversation_type', 'recipient_ids', 'all_group_members'].includes(key)) || value.version !== 1) {
+        throw new Error('Results delivery must be an object with supported fields and version 1.');
+    }
+    if (typeof value.mode !== 'string' || !['history', 'conversation', 'task'].includes(value.mode)) {
+        throw new Error('Results delivery mode must be history, conversation, or task.');
+    }
+    const allowedTypes = scope.type === 'group' ? ['group', 'group_shared'] : ['personal', 'shared'];
+    const conversationType = Object.hasOwn(value, 'conversation_type') ? value.conversation_type : allowedTypes[0];
+    if (typeof conversationType !== 'string' || !allowedTypes.includes(conversationType)) {
+        throw new Error("Results conversations must stay in the workflow's own scope.");
+    }
+    const rawRecipients = Object.hasOwn(value, 'recipient_ids') ? value.recipient_ids : [];
+    if (!Array.isArray(rawRecipients) || rawRecipients.length > 100 || rawRecipients.some((id) =>
+        typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))) {
+        throw new Error('Results recipients must be a list of at most 100 canonical user ids.');
+    }
+    const recipients = [...new Set<string>(rawRecipients.map((id: string) => id.toLowerCase()))];
+    const allMembers = Object.hasOwn(value, 'all_group_members') ? value.all_group_members : false;
+    if (typeof allMembers !== 'boolean') throw new Error('All group members must be a boolean.');
+    if (allMembers && (conversationType !== 'group_shared' || value.mode !== 'conversation')) {
+        throw new Error('All group members is supported only for shared group results.');
+    }
+    const shared = ['shared', 'group_shared'].includes(conversationType);
+    if ((recipients.length || allMembers) && (value.mode !== 'conversation' || !shared)) {
+        throw new Error('Only shared results conversations accept recipients.');
+    }
+    if (allMembers && recipients.length) throw new Error('Choose named recipients or all current group members, not both.');
+    if (value.mode === 'conversation' && shared && !recipients.length && !allMembers) {
+        throw new Error('Shared results require named recipients or all current group members.');
+    }
+    return {
+        version: 1, mode: value.mode as WorkflowResultsDelivery['mode'],
+        conversation_type: conversationType as WorkflowResultsDelivery['conversation_type'],
+        recipient_ids: recipients, all_group_members: allMembers,
+    };
+}
+export type WorkflowDocumentActionType = 'none' | 'search' | 'analyze' | 'comparison' | 'merge' | 'choose';
+export type WorkflowMergeKind = 'tabular' | 'workbook' | 'pdf' | 'docx' | 'pptx';
+export type WorkflowMergeTargetMode = 'selected' | 'all' | 'recent' | 'changed';
+export type WorkflowMergeOutputFormat = 'csv' | 'xlsx' | 'pdf' | 'docx' | 'pptx';
+export type WorkflowTabularSchemaPolicy = 'by_name' | 'exact_order' | 'union' | 'mapped';
+export type WorkflowMergeSheetsMode = 'first' | 'all';
+export type WorkflowMergeDedupe = 'none' | 'exact_rows' | 'key_columns';
+export type WorkflowMergeSortValueType = 'text' | 'number' | 'date';
+export type WorkflowRuntimeState =
+    'queued' | 'running' | 'waiting_approval' | 'waiting_output' | 'waiting_recovery' |
+    'awaiting_approval' | 'awaiting_sharing_approval' | 'awaiting_analysis_approval' |
+    'awaiting_run_as_approval' | 'awaiting_sign_in' |
+    'paused' | 'cancelling' | 'cancelled' | 'failed' | 'invalid' | 'incomplete' |
+    'completed' | 'completed_partial' | 'skipped';
+export type WorkflowRuntimeGateKind = 'approval' | 'output' | 'recovery' | 'pause';
+export type WorkflowRuntimeDecisionChoice = 'approve' | 'reject' | 'retry' | 'cancel' | 'resume' | 'continue_repeat';
+
+export interface WorkflowAgentOption {
+    id: string;
+    name: string;
+    display_name?: string;
+    is_global?: boolean;
+    is_group?: boolean;
+    group_id?: string;
+    loop_eligible?: boolean;
+}
+
+export type WorkflowAgentReference = WorkflowAgentOption;
+
+export interface WorkflowModelOption {
+    endpoint_id: string;
+    model_id: string;
+    label: string;
+    provider: string;
+    loop_eligible?: boolean;
+}
+
+export interface WorkflowEditorOptions {
+    workflow_assist_available?: boolean;
+    chat_execution?: {
+        modes: WorkflowConfigurationOption[];
+        capabilities: WorkflowConfigurationOption[];
+        visual_requirements: WorkflowConfigurationOption[];
+        default?: WorkflowChatExecution | null;
+    };
+    results_delivery?: {
+        modes: WorkflowConfigurationOption[];
+        conversation_types: WorkflowConfigurationOption[];
+        recipient_choices: WorkflowConfigurationOption[];
+        allow_all_group_members: boolean;
+        default: WorkflowResultsDelivery;
+    };
+    document_workspaces?: (import('./workflowDocumentSelection').DocumentScope & { name: string })[];
+    definition_version: 2;
+    supported_definition_versions?: number[];
+    supported_node_kinds?: string[];
+    supported_iterable_kinds?: string[];
+    supported_query_modes?: string[];
+    supported_binding_sources?: string[];
+    supported_input_processing_modes?: string[];
+    supported_publication_completion_policies?: string[];
+    publication_source_capabilities?: WorkflowPublicationSourceCapability[];
+    flow_limits?: {
+        max_nodes: number;
+        max_depth: number;
+        max_predicate_nodes: number;
+        max_predicate_depth: number;
+        max_executions: number;
+        deadline_seconds: number;
+        max_loop_items?: number;
+        max_repeat_iterations?: number;
+        hard_repeat_iterations?: number;
+    };
+    can_manage: boolean;
+    max_tasks: number;
+    agents: WorkflowAgentOption[];
+    models: WorkflowModelOption[];
+    default_model?: {
+        label?: string;
+        valid?: boolean;
+        loop_eligible?: boolean;
+    };
+    scope: { type: 'personal' | 'group'; id?: string };
+    /** Schedule choices, the time zone list and the administrator's minimum interval; absent from older servers. */
+    schedule?: WorkflowScheduleOptions;
+    document_action_limits?: {
+        merge?: {
+            max_documents?: number;
+        };
+        max_documents_by_type?: {
+            merge?: number;
+        };
+        [key: string]: unknown;
+    };
+    document_actions?: {
+        merge?: {
+            /** False when an administrator has turned Merge off; a merge task then can't be saved. */
+            enabled?: boolean;
+            workflow_max_documents?: number;
+            max_documents?: number;
+            [key: string]: unknown;
+        };
+        [key: string]: unknown;
+    };
+}
+
+/** Whether the server lets workflow tasks merge files; older servers don't say, so Merge stays offered. */
+export function workflowMergeEnabled(options: Pick<WorkflowEditorOptions, 'document_actions'>): boolean {
+    return options.document_actions?.merge?.enabled !== false;
+}
+
+export const WORKFLOW_MERGE_KINDS_AVAILABLE: readonly WorkflowMergeKind[] = ['tabular', 'workbook', 'pdf', 'docx', 'pptx'];
+export const WORKFLOW_MERGE_KINDS: readonly WorkflowMergeKind[] = ['tabular', 'workbook', 'pdf', 'docx', 'pptx'];
+
+export const WORKFLOW_MERGE_KIND_LABELS: Readonly<Record<WorkflowMergeKind, string>> = {
+    tabular: 'Combine rows (CSV/Excel)',
+    workbook: 'One workbook, a sheet per file',
+    pdf: 'Combine PDFs',
+    docx: 'Combine Word documents',
+    pptx: 'Combine PowerPoint decks',
+};
+
+export const WORKFLOW_MERGE_KIND_INPUTS: Readonly<Record<WorkflowMergeKind, string>> = {
+    tabular: '.csv, .xlsx, .xlsm, .xls',
+    workbook: '.csv, .xlsx, .xlsm, .xls',
+    pdf: '.pdf',
+    docx: '.docx',
+    pptx: '.pptx',
+};
+
+const WORKFLOW_MERGE_DEFAULT_OUTPUT_FORMAT: Readonly<Record<WorkflowMergeKind, WorkflowMergeOutputFormat>> = {
+    tabular: 'csv',
+    workbook: 'xlsx',
+    pdf: 'pdf',
+    docx: 'docx',
+    pptx: 'pptx',
+};
+
+const WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS: Readonly<Record<WorkflowMergeKind, readonly WorkflowMergeOutputFormat[]>> = {
+    tabular: ['csv', 'xlsx'],
+    workbook: ['xlsx'],
+    pdf: ['pdf'],
+    docx: ['docx'],
+    pptx: ['pptx'],
+};
+
+const WORKFLOW_MERGE_TARGET_MODES: readonly WorkflowMergeTargetMode[] = ['selected', 'all', 'recent', 'changed'];
+const WORKFLOW_TABULAR_SCHEMA_POLICIES: readonly WorkflowTabularSchemaPolicy[] = ['by_name', 'exact_order', 'union', 'mapped'];
+const WORKFLOW_MERGE_SHEETS_MODES: readonly WorkflowMergeSheetsMode[] = ['first', 'all'];
+const WORKFLOW_MERGE_DEDUPES: readonly WorkflowMergeDedupe[] = ['none', 'exact_rows', 'key_columns'];
+const WORKFLOW_MERGE_SORT_VALUE_TYPES: readonly WorkflowMergeSortValueType[] = ['text', 'number', 'date'];
+const WORKFLOW_MERGE_BAD_OUTPUT_NAME = /[\/\\:*?"<>|]/;
+
+export interface WorkflowMergeSortRule {
+    column: string;
+    descending?: boolean;
+    value_type?: WorkflowMergeSortValueType;
+}
+
+export interface WorkflowMergeOptions {
+    schema_policy?: WorkflowTabularSchemaPolicy;
+    columns?: string[];
+    column_aliases?: Record<string, string[]>;
+    sheet?: string;
+    sheets?: WorkflowMergeSheetsMode;
+    header_row?: number;
+    include_source_column?: boolean;
+    source_column_name?: string;
+    on_incompatible?: 'fail' | 'exclude';
+    dedupe?: WorkflowMergeDedupe;
+    dedupe_columns?: string[];
+    dedupe_keep?: 'first' | 'last';
+    sort_by?: WorkflowMergeSortRule[];
+    bookmarks?: boolean;
+    formatting?: 'keep_source' | 'use_first';
+    page_breaks?: boolean;
+    source_headings?: boolean;
+    sections?: boolean;
+    [key: string]: unknown;
+}
+
+export interface WorkflowMergeActionOptions {
+    mergeKind?: WorkflowMergeKind;
+    targetMode?: WorkflowMergeTargetMode;
+    docScope?: WorkflowReferenceScope | 'all';
+    activeGroupIds?: string[];
+    activePublicWorkspaceIds?: string[];
+    recentWindowMinutes?: number;
+    outputFormat?: WorkflowMergeOutputFormat;
+    outputFileName?: string;
+    mergeOptions?: WorkflowMergeOptions;
+}
+
+export interface WorkflowMergeAliasParseResult {
+    aliases: Record<string, string[]>;
+    errors: string[];
+}
+
+export interface WorkflowMergeValidationContext {
+    isFileSyncWorkflow?: boolean;
+    maxSelectedDocuments?: number;
+    availableKinds?: readonly WorkflowMergeKind[];
+}
+
+export interface WorkflowScheduleOptions {
+    kinds: string[];
+    units: string[];
+    frequencies: string[];
+    days_of_week: string[];
+    /** IANA names a calendar schedule may use, sorted. */
+    timezones: string[];
+    /** The shortest new or changed interval, in seconds. */
+    min_interval_seconds: number;
+}
+
+export {
+    formatWorkflowScheduleDuration,
+    isWorkflowCalendarSchedule,
+    workflowScheduleForEditor,
+    workflowScheduleLabel,
+    workflowScheduleSupported,
+    WORKFLOW_SCHEDULE_DAYS,
+    WORKFLOW_SCHEDULE_FREQUENCIES,
+} from './workflowSettings';
+export type {
+    WorkflowCalendarSchedule,
+    WorkflowIntervalSchedule,
+    WorkflowSchedule,
+    WorkflowScheduleDay,
+    WorkflowScheduleFrequency,
+    WorkflowScheduleUnit,
+} from './workflowSettings';
+
+const scheduleTimezoneSets = new WeakMap<readonly string[], ReadonlySet<string>>();
+
+/** The options' time zone names as a set, built once per options response; null when not offered. */
+export function workflowScheduleTimezones(options: Pick<WorkflowEditorOptions, 'schedule'>): ReadonlySet<string> | null {
+    const zones = options.schedule?.timezones;
+    if (!zones) return null;
+    let set = scheduleTimezoneSets.get(zones);
+    if (!set) {
+        set = new Set(zones);
+        scheduleTimezoneSets.set(zones, set);
+    }
+    return set;
+}
+
+/** Whether the server offers calendar schedules to this editor. */
+export function workflowCalendarSchedulesOffered(options: Pick<WorkflowEditorOptions, 'schedule'>): boolean {
+    return Boolean(options.schedule?.kinds.includes('calendar'));
+}
+
+export interface WorkflowInputBinding {
+    name: string;
+    task_id: string;
+    output: WorkflowInputOutput;
+    required: boolean;
+    expected_kind: WorkflowOutputKind;
+}
+
+export interface WorkflowOutputContract {
+    kind: WorkflowOutputKind;
+    schema?: Record<string, unknown>;
+    expected_count?: number;
+    identity_field?: string;
+    require_complete_coverage: boolean;
+    allow_partial: boolean;
+}
+
+export interface WorkflowTaskRunner {
+    type: WorkflowTaskRunnerType;
+    selected_agent?: WorkflowAgentReference;
+    model_endpoint_id?: string;
+    model_id?: string;
+}
+
+export interface WorkflowTaskApproval {
+    required: boolean;
+    message?: string;
+}
+
+export type WorkflowPublicationSourceKind = 'native_analysis' | 'saved_output';
+
+export interface WorkflowPublicationSourceCapability {
+    source_kind: string;
+    output_kinds: string[];
+    artifact_formats: string[];
+}
+
+export interface WorkflowPublication {
+    source_kind?: WorkflowPublicationSourceKind;
+    artifact_format: 'md' | 'csv' | 'json';
+    workspace_scope: 'personal' | 'group' | 'public';
+    group_id?: string;
+    public_workspace_id?: string;
+    completion_policy?: WorkflowPublicationCompletionPolicy;
+}
+
+export function isWorkflowPublicationSourceKind(value: unknown): value is WorkflowPublicationSourceKind {
+    return value === 'native_analysis' || value === 'saved_output';
+}
+
+export function savedOutputPublicationFormats(options: WorkflowEditorOptions): 'json'[] {
+    const capability = options.publication_source_capabilities?.find((item) => item.source_kind === 'saved_output');
+    return capability?.output_kinds.includes('records')
+        ? [...new Set(capability.artifact_formats.filter((format): format is 'json' => format === 'json'))]
+        : [];
+}
+
+export const WORKFLOW_PUBLICATION_COMPLETION_LABELS = {
+    submitted: 'Submitted',
+    approved: 'Approved',
+    indexed_ready: 'Indexed and ready',
+} as const;
+
+export type WorkflowPublicationCompletionPolicy = keyof typeof WORKFLOW_PUBLICATION_COMPLETION_LABELS;
+
+export function isWorkflowPublicationCompletionPolicy(value: unknown): value is WorkflowPublicationCompletionPolicy {
+    return typeof value === 'string' && Object.hasOwn(WORKFLOW_PUBLICATION_COMPLETION_LABELS, value);
+}
+
+const PUBLICATION_FACT_VALUES = {
+    state: [
+        'submitted', 'approved', 'indexed_ready', 'waiting_approval', 'waiting_processing',
+        'waiting_screening', 'waiting_index', 'uncertain', 'rejected', 'cancelled',
+        'approval_failed', 'processing_failed', 'unavailable', 'content_changed',
+    ],
+    submission: ['pending', 'confirmed', 'uncertain'],
+    approval: ['not_required', 'pending', 'approved', 'rejected', 'cancelled', 'failed'],
+    processing: ['not_started', 'queued', 'running', 'complete', 'failed', 'unavailable'],
+    screening: ['not_required', 'pending', 'held', 'available', 'rejected', 'changed', 'unavailable'],
+    index: ['pending', 'ready', 'unavailable'],
+} as const;
+
+export interface WorkflowPublicationStatus {
+    version: 1;
+    id: string;
+    document_id: string;
+    document_version: number | null;
+    destination: {
+        workspace_scope: WorkflowReferenceScope;
+        group_id?: string;
+        public_workspace_id?: string;
+    };
+    completion_policy: WorkflowPublicationCompletionPolicy;
+    policy_satisfied: boolean;
+    state: typeof PUBLICATION_FACT_VALUES.state[number];
+    submission: typeof PUBLICATION_FACT_VALUES.submission[number];
+    approval: typeof PUBLICATION_FACT_VALUES.approval[number];
+    processing: typeof PUBLICATION_FACT_VALUES.processing[number];
+    screening: typeof PUBLICATION_FACT_VALUES.screening[number];
+    index: typeof PUBLICATION_FACT_VALUES.index[number];
+    reason_code: string;
+    retryable: boolean;
+    unresolved_stages: string[];
+}
+
+export function isWorkflowPublicationStatus(value: unknown): value is WorkflowPublicationStatus {
+    const identity = (item: unknown): item is string =>
+        typeof item === 'string' && item.length > 0 && item.length <= 256 && item === item.trim();
+    const code = (item: unknown): item is string =>
+        typeof item === 'string' && /^[a-z][a-z0-9_]{0,127}$/.test(item);
+    if (!isRecord(value) || value.version !== 1 ||
+        Object.keys(value).some((key) => ![
+            'version', 'id', 'document_id', 'document_version', 'destination', 'completion_policy',
+            'policy_satisfied', 'state', 'submission', 'approval', 'processing', 'screening',
+            'index', 'reason_code', 'retryable', 'unresolved_stages',
+        ].includes(key)) ||
+        typeof value.id !== 'string' || !/^[a-f0-9]{64}$/.test(value.id) ||
+        !identity(value.document_id) ||
+        value.document_version !== null && (typeof value.document_version !== 'number' ||
+            !Number.isSafeInteger(value.document_version) || value.document_version < 1) ||
+        !isWorkflowPublicationCompletionPolicy(value.completion_policy) ||
+        typeof value.policy_satisfied !== 'boolean' || typeof value.retryable !== 'boolean' ||
+        value.reason_code !== '' && !code(value.reason_code) ||
+        !Array.isArray(value.unresolved_stages) || value.unresolved_stages.length > 32 ||
+        !value.unresolved_stages.every(code) ||
+        Object.entries(PUBLICATION_FACT_VALUES).some(([key, allowed]) => {
+            const fact = value[key];
+            return typeof fact !== 'string' || !(allowed as readonly string[]).includes(fact);
+        }) ||
+        !isRecord(value.destination)) return false;
+    const destination = value.destination;
+    const scope = destination.workspace_scope;
+    return (scope === 'personal' || scope === 'group' || scope === 'public') &&
+        Object.keys(destination).every((key) =>
+            key === 'workspace_scope' || scope === 'group' && key === 'group_id' ||
+            scope === 'public' && key === 'public_workspace_id') &&
+        (scope !== 'group' || identity(destination.group_id)) &&
+        (scope !== 'public' || identity(destination.public_workspace_id));
+}
+
+export interface WorkflowTask {
+    id: string;
+    type: 'instructions' | 'plan_replay';
+    name: string;
+    instructions: string;
+    order: number;
+    runner: WorkflowTaskRunner;
+    chat_execution?: WorkflowChatExecution;
+    document_action?: WorkflowDocumentAction;
+    inputs?: (WorkflowInputBinding | WorkflowFlowBinding)[];
+    input_processing?: WorkflowInputProcessing;
+    reference_ids?: string[];
+    conversation_reference_ids?: string[];
+    conversation_send?: {
+        destination_conversation_id: string;
+        instruction: string;
+        conversation_references?: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
+    };
+    output_contract?: WorkflowOutputContract;
+    approval?: WorkflowTaskApproval;
+    publication?: WorkflowPublication;
+    [key: string]: unknown;
+}
+
+export interface WorkflowDocumentAction {
+    type: WorkflowDocumentActionType;
+    doc_scope?: WorkflowReferenceScope | 'all';
+    active_group_ids?: string[];
+    active_public_workspace_id?: string[];
+    document_ids?: string[];
+    target_mode?: 'selected' | 'current_item' | WorkflowMergeTargetMode;
+    loop_id?: string;
+    analysis_mode?: 'combined' | 'per_document';
+    search_mode?: 'selected' | 'relevance';
+    left_document_id?: string;
+    right_document_ids?: string[];
+    merge_kind?: WorkflowMergeKind;
+    recent_window_minutes?: number;
+    document_selection?: import('./workflowDocumentSelection').TaskDocumentSelection;
+    document_sources?: (import('./workflowDocumentSelection').DocumentScope & { document_id: string })[];
+    relevance_scopes?: import('./workflowDocumentSelection').DocumentScope[];
+    output_format?: WorkflowMergeOutputFormat;
+    output_file_name?: string;
+    merge_options?: WorkflowMergeOptions;
+    [key: string]: unknown;
+}
+
+export interface WorkflowReferenceInput {
+    id: string;
+    name: string;
+    document_id: string;
+    scope_type: WorkflowReferenceScope;
+    scope_id: string;
+}
+
+export interface WorkflowConversationReferenceInput {
+    reference_id: string;
+    name: string;
+    conversation_references: Array<{ kind: 'conversation'; id: string; message_ids?: string[] }>;
+}
+
+export interface WorkflowDefinition {
+    id?: string;
+    definition_version: number;
+    definition_revision?: string;
+    name: string;
+    description: string;
+    runner_type: WorkflowRunnerType;
+    selected_agent?: WorkflowAgentReference;
+    model_endpoint_id?: string;
+    model_id?: string;
+    m365_run_as_user_id?: string;
+    chat_capabilities_enabled: boolean;
+    chat_execution?: WorkflowChatExecution;
+    results_delivery?: WorkflowResultsDelivery;
+    trigger_type: WorkflowTriggerType;
+    schedule: WorkflowSchedule;
+    is_enabled: boolean;
+    error_handling: {
+        strategy: 'halt' | 'continue';
+        retry_count: number;
+    };
+    tasks: WorkflowTask[];
+    reference_inputs: WorkflowReferenceInput[];
+    conversation_reference_inputs?: WorkflowConversationReferenceInput[];
+    durable_execution?: boolean;
+    editor_readonly_reason?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkflowRuntimeGate {
+    id: string;
+    kind: WorkflowRuntimeGateKind;
+    unit_id?: string;
+    input_digest?: string;
+    reason?: string;
+    reason_code?: string;
+    choices: string[];
+    execution_id?: string;
+    node_id?: string;
+    attempt?: number;
+    iteration_path?: WorkflowIterationFrame[];
+    publication?: WorkflowPublicationStatus;
+    repeat?: WorkflowRepeatProgress;
+}
+
+export interface WorkflowForEachFrame {
+    loop_id: string;
+    item_id: string;
+    index: number;
+}
+
+export interface WorkflowRepeatFrame {
+    loop_id: string;
+    iteration: number;
+}
+
+export type WorkflowIterationFrame = WorkflowForEachFrame | WorkflowRepeatFrame;
+
+export function validWorkflowIterationPath(value: unknown): value is WorkflowIterationFrame[] {
+    return Array.isArray(value) && value.length < FLOW_MAX_DEPTH && value.every((frame) =>
+        isRecord(frame) &&
+        typeof frame.loop_id === 'string' && frame.loop_id === frame.loop_id.trim() &&
+        /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(frame.loop_id) &&
+        ('iteration' in frame
+            ? Object.keys(frame).length === 2 && typeof frame.iteration === 'number' &&
+                Number.isSafeInteger(frame.iteration) && frame.iteration >= 0 && frame.iteration < DEFAULT_FLOW_LIMITS.max_executions
+            : Object.keys(frame).every((key) => ['loop_id', 'item_id', 'index'].includes(key)) &&
+                typeof frame.item_id === 'string' && /^[a-f0-9]{64}$/.test(frame.item_id) &&
+                typeof frame.index === 'number' && Number.isSafeInteger(frame.index) && frame.index >= 0 && frame.index < MAX_LOOP_ITEMS)) &&
+        new Set(value.map((frame) => frame.loop_id)).size === value.length;
+}
+
+export function formatWorkflowIterationPath(path?: WorkflowIterationFrame[]): string {
+    return (path ?? []).map((frame) => 'iteration' in frame
+        ? `${frame.loop_id} (round ${frame.iteration + 1})`
+        : `${frame.loop_id} (item ${frame.item_id}, index ${frame.index})`).join(' / ');
+}
+
+export interface WorkflowRepeatProgress {
+    execution_id: string;
+    node_id: string;
+    completed_iteration: number;
+    next_iteration: number;
+    batch_number: number;
+    batch_size: number;
+    batch_usage: number;
+    completed_count: number;
+    exhaustion_count: number;
+    continuation_count: number;
+    state: 'running' | 'waiting_manual_continue' | 'completed' | 'cancelled';
+    partial: boolean;
+}
+
+export function isWorkflowRepeatProgress(value: unknown): value is WorkflowRepeatProgress {
+    const counts = ['next_iteration', 'batch_number', 'batch_size', 'batch_usage', 'completed_count',
+        'exhaustion_count', 'continuation_count'];
+    if (!isRecord(value) || Object.keys(value).some((key) => ![
+        'execution_id', 'node_id', 'completed_iteration', 'state', 'partial', ...counts,
+    ].includes(key)) || typeof value.execution_id !== 'string' || !value.execution_id.trim() || value.execution_id.length > 256 ||
+        typeof value.node_id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/.test(value.node_id) ||
+        !['running', 'waiting_manual_continue', 'completed', 'cancelled'].includes(String(value.state)) ||
+        typeof value.partial !== 'boolean' || counts.some((key) =>
+            typeof value[key] !== 'number' || !Number.isSafeInteger(value[key]) || Number(value[key]) < 0 ||
+            Number(value[key]) > DEFAULT_FLOW_LIMITS.max_executions) ||
+        typeof value.completed_iteration !== 'number' || !Number.isSafeInteger(value.completed_iteration)) return false;
+    const admittedRounds = Number(value.batch_number) * Number(value.batch_size) + Number(value.batch_usage);
+    const completedRounds = Number(value.completed_count);
+    return Number(value.batch_size) >= 1 && Number(value.batch_size) <= MAX_REPEAT_ITERATIONS &&
+        Number(value.batch_usage) <= Number(value.batch_size) &&
+        admittedRounds >= completedRounds && admittedRounds <= completedRounds + 1 &&
+        (!['completed', 'waiting_manual_continue'].includes(String(value.state)) || admittedRounds === completedRounds) &&
+        value.next_iteration === value.completed_count && value.completed_iteration === Number(value.completed_count) - 1 &&
+        value.batch_number === value.continuation_count &&
+        (value.state !== 'waiting_manual_continue' || value.batch_usage === value.batch_size && Number(value.completed_count) > 0);
+}
+
+export interface WorkflowLoopProgress {
+    loop_id: string;
+    loop_execution_id: string;
+    total: number;
+    current_index: number | null;
+    completed: number;
+    completed_empty?: number;
+    skipped: number;
+    failed: number;
+    pending: number;
+    limit: number;
+}
+
+export interface WorkflowRuntimeDecision {
+    unit_id: string;
+    choice: string;
+    actor_user_id: string;
+    decided_at?: string;
+    input_digest?: string;
+    attempt?: number;
+    execution_id?: string;
+    node_id?: string;
+    iteration_path?: WorkflowIterationFrame[];
+}
+
+export interface WorkflowRuntimeUnitMemory {
+    unit_id: string;
+    state: string;
+    attempt: number;
+    replay_safe?: boolean;
+    output_available?: boolean;
+}
+
+export interface WorkflowRuntimeMemory {
+    decisions?: WorkflowRuntimeDecision[];
+    units?: WorkflowRuntimeUnitMemory[];
+    [key: string]: unknown;
+}
+
+export interface WorkflowRuntimeProjection {
+    schema_version?: number;
+    version: number;
+    state: WorkflowRuntimeState;
+    phase?: string;
+    progress?: {
+        completed: number;
+        total: number;
+    };
+    gate?: WorkflowRuntimeGate;
+    memory?: WorkflowRuntimeMemory;
+    can_resume?: boolean;
+    loop_progress?: WorkflowLoopProgress;
+    repeat_progress?: WorkflowRepeatProgress;
+    repeat_counts?: { exhaustion_count?: number; continuation_count?: number };
+    limits?: {
+        max_executions: number;
+        admitted_count: number;
+        deadline_at: string;
+        deadline_seconds: number;
+        waits_count: boolean;
+        max_loop_items?: number;
+        max_repeat_iterations?: number;
+    };
+}
+
+export interface WorkflowRuntimeResponse {
+    runtime: WorkflowRuntimeProjection;
+    can_decide: boolean;
+}
+
+export interface WorkflowRuntimeDecisionRequest {
+    expected_version: number;
+    gate_id: string;
+    choice: WorkflowRuntimeDecisionChoice;
+    request_id: string;
+}
+
+export interface WorkflowRuntimeResumeRequest {
+    expected_version: number;
+    request_id: string;
+}
+
+export interface WorkflowRunSummary {
+    id?: string;
+    run_id?: string;
+    workflow_id?: string;
+    definition_version?: number;
+    status?: string;
+    durable_execution?: boolean;
+    started_at?: string;
+    completed_at?: string;
+    workflow_validation?: WorkflowValidationResult;
+    [key: string]: unknown;
+}
+
+export interface WorkflowRunStartResponse {
+    success?: boolean;
+    run?: WorkflowRunSummary;
+    workflow?: WorkflowDefinition;
+    runtime?: WorkflowRuntimeProjection;
+    id?: string;
+    workflow_id?: string;
+    status?: string;
+    durable_execution?: boolean;
+}
+
+export interface WorkflowRunItem {
+    id?: string;
+    item_type?: string;
+    task_id?: string;
+    label?: string;
+    task_name?: string;
+    status?: string;
+    workflow_validation?: WorkflowValidationResult;
+    workflow_result?: {
+        result_ref?: WorkflowResultReference;
+        outputs?: Record<string, unknown>;
+        authoritative_output?: string;
+        consumed_inputs?: WorkflowConsumedInput[];
+        document_action_choice?: unknown;
+        task_completeness?: unknown;
+    };
+    consumed_inputs?: WorkflowConsumedInput[];
+    context_budget?: Record<string, unknown>;
+    started_at?: string;
+    completed_at?: string;
+    [key: string]: unknown;
+}
+
+export interface WorkflowResultReference {
+    storage?: string;
+    schema_version?: number;
+    sha256?: string;
+    size_bytes?: number;
+    chunk_count?: number;
+}
+
+export interface WorkflowConsumedInput {
+    producer?: {
+        workflow_id?: string;
+        node_id?: string;
+        execution_id?: string;
+        iteration_path?: WorkflowIterationFrame[];
+        task_id?: string;
+        run_id?: string;
+        attempt?: number;
+    };
+    output_name?: string;
+    result_ref?: WorkflowResultReference;
+    output_ref?: WorkflowResultReference | string;
+    input_name?: string;
+}
+
+export interface WorkflowValidationResult {
+    version: 1;
+    status: 'valid' | 'invalid' | 'incomplete' | 'accepted_partial' | 'not_requested';
+    eligible?: boolean;
+    reason_codes?: string[];
+    counts?: Record<string, number>;
+}
+
+export interface WorkflowRunResultPage {
+    content: string;
+    output_name?: string;
+    offset?: number;
+    next_offset?: number | null;
+    total_bytes?: number;
+    complete?: boolean;
+    sha256?: string;
+    integrity?: {
+        full_sha256_verified: boolean;
+        chunk_sha256_verified: boolean;
+        page_sha256: string;
+    };
+    [key: string]: unknown;
+}
+
+export const WORKFLOW_TASK_INSTRUCTIONS_LIMIT = 12000;
+export const WORKFLOW_SCHEMA_LIMIT = 32768;
+export const WORKFLOW_ALIAS_PATTERN = FLOW_ALIAS_PATTERN;
+export const WORKFLOW_SCHEMA_ALLOWED_KEYS = new Set([
+    'type',
+    'properties',
+    'required',
+    'additionalProperties',
+    'items',
+    'minItems',
+    'maxItems',
+    'minLength',
+    'maxLength',
+    'minimum',
+    'maximum',
+    'enum',
+    'title',
+    'description',
+]);
+export const WORKFLOW_COUNT_KINDS = new Set<WorkflowOutputKind>(['records', 'json', 'document_results']);
+export const DEFAULT_WORKFLOW_SCOPE: WorkflowScope = { type: 'personal' };
+export const WORKFLOW_OUTPUT_KINDS: WorkflowOutputKind[] = [
+    'any',
+    'text',
+    'records',
+    'json',
+    'document_results',
+];
+export const WORKFLOW_INPUT_OUTPUTS: WorkflowInputOutput[] = [
+    'authoritative',
+    'text',
+    'records',
+    'json',
+    'documents',
+];
+export const WORKFLOW_APPROVAL_MESSAGE_LIMIT = 1000;
+export const WORKFLOW_RUNTIME_TERMINAL_STATES = new Set<WorkflowRuntimeState>([
+    'cancelled',
+    'failed',
+    'invalid',
+    'incomplete',
+    'completed',
+    'completed_partial',
+    'skipped',
+]);
+
+export function workflowRuntimeGateAllowsDecision(
+    gate: WorkflowRuntimeGate | undefined,
+    choice: WorkflowRuntimeDecisionChoice,
+): boolean {
+    return Boolean(gate?.choices.includes(choice) &&
+        (gate.reason_code !== 'm365_authorization' || choice === 'cancel') &&
+        (gate.reason_code !== 'repeat_iteration_limit' || choice === 'continue_repeat' || choice === 'cancel') &&
+        (!gate.publication || !['approve', 'reject', 'retry'].includes(choice)));
+}
+
+export function workflowRuntimeCanResume(runtime: WorkflowRuntimeProjection | null): boolean {
+    return Boolean(runtime?.can_resume === true &&
+        ['failed', 'incomplete', 'invalid'].includes(runtime.state) &&
+        !['m365_authorization', 'repeat_iteration_limit'].includes(runtime.gate?.reason_code ?? ''));
+}
+
+export function workflowRuntimeGateNotice(gate: WorkflowRuntimeGate): string {
+    if (gate.reason_code === 'm365_authorization') {
+        return 'Cancel only. Complete Microsoft 365 authorization through Approvals or Microsoft 365 connection settings, not workflow Resume or Approve task.';
+    }
+    return gate.choices.length === 1 && gate.choices[0] === 'cancel'
+        ? 'Cancel only. Retained Repeat progress does not permit another batch.'
+        : 'Decisions remain in the separate runtime panel.';
+}
+
+function outputKindMatches(actual: WorkflowOutputKind, expected: WorkflowOutputKind): boolean {
+    return expected === 'any' || actual === expected ||
+        (expected === 'json' && (actual === 'records' || actual === 'document_results'));
+}
+
+export function workflowScopeKey(scope: WorkflowScope): string {
+    return scope.type === 'group' ? `group:${scope.groupId}` : 'personal';
+}
+
+function workflowRoot(scope: WorkflowScope): string {
+    return scope.type === 'group' ? '/api/group/workflows' : '/api/user/workflows';
+}
+
+function scopeQuery(scope: WorkflowScope): string {
+    if (scope.type !== 'group') {
+        return '';
+    }
+    return new URLSearchParams({ group_id: scope.groupId }).toString();
+}
+
+function withScopeQuery(path: string, scope: WorkflowScope, extra?: URLSearchParams): string {
+    const params = new URLSearchParams(scopeQuery(scope));
+    extra?.forEach((value, key) => params.append(key, value));
+    const query = params.toString();
+    return query ? `${path}?${query}` : path;
+}
+
+export function workflowUrl(scope: WorkflowScope, workflowId?: string, suffix = '', extra?: URLSearchParams): string {
+    const path = `${workflowRoot(scope)}${workflowId ? `/${encodeURIComponent(workflowId)}` : ''}${suffix}`;
+    return withScopeQuery(path, scope, extra);
+}
+
+function asArray<T>(value: unknown, key?: string): T[] {
+    if (Array.isArray(value)) {
+        return value as T[];
+    }
+    if (key && isRecord(value)) {
+        const nested = value[key];
+        if (Array.isArray(nested)) {
+            return nested as T[];
+        }
+    }
+    return [];
+}
+
+function text(value: unknown): string {
+    return typeof value === 'string' ? value : '';
+}
+
+function numberInRange(value: unknown, fallback: number, min: number, max: number): number {
+    const parsed = Math.trunc(Number(value));
+    if (!Number.isFinite(parsed)) {
+        return fallback;
+    }
+    return Math.min(max, Math.max(min, parsed));
+}
+
+function outputKind(value: unknown, fallback: WorkflowOutputKind): WorkflowOutputKind {
+    return WORKFLOW_OUTPUT_KINDS.includes(value as WorkflowOutputKind)
+        ? value as WorkflowOutputKind
+        : fallback;
+}
+
+function agentReference(value: unknown): WorkflowAgentReference | undefined {
+    if (!isRecord(value) || typeof value.id !== 'string' || !value.id) {
+        return undefined;
+    }
+    return {
+        id: value.id,
+        name: text(value.name),
+        display_name: text(value.display_name) || undefined,
+        is_global: value.is_global === true,
+        is_group: value.is_group === true,
+        group_id: text(value.group_id) || undefined,
+    };
+}
+
+export function workflowAgentKey(value: WorkflowAgentReference | undefined): string {
+    if (!value) {
+        return '';
+    }
+    return JSON.stringify([
+        value.id,
+        value.is_global === true,
+        value.is_group === true,
+        value.group_id ?? '',
+    ]);
+}
+
+export function findWorkflowAgent(
+    options: WorkflowEditorOptions,
+    key: string,
+): WorkflowAgentReference | undefined {
+    return options.agents.find((agent) => workflowAgentKey(agent) === key);
+}
+
+export function safeWorkflowAlias(value: unknown, fallback = 'input'): string {
+    const cleaned = text(value)
+        .trim()
+        .replace(/^[^A-Za-z]+/, '')
+        .replace(/[^A-Za-z0-9_-]+/g, '_')
+        .slice(0, 64);
+    if (WORKFLOW_ALIAS_PATTERN.test(cleaned)) {
+        return cleaned;
+    }
+    const fallbackCleaned = fallback
+        .replace(/^[^A-Za-z]+/, '')
+        .replace(/[^A-Za-z0-9_-]+/g, '_')
+        .slice(0, 64);
+    return WORKFLOW_ALIAS_PATTERN.test(fallbackCleaned) ? fallbackCleaned : 'input';
+}
+
+function taskIdFallback(): string {
+    const cryptoApi = globalThis.crypto;
+    if (cryptoApi?.randomUUID) {
+        return cryptoApi.randomUUID();
+    }
+    if (!cryptoApi?.getRandomValues) {
+        throw new Error('Secure random values are required to create workflow task IDs.');
+    }
+    const bytes = new Uint8Array(16);
+    cryptoApi.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0'));
+    return `${hex.slice(0, 4).join('')}-${hex.slice(4, 6).join('')}-${hex.slice(6, 8).join('')}-${hex.slice(8, 10).join('')}-${hex.slice(10).join('')}`;
+}
+
+// A fresh UUID for one runtime request. Each attempt gets its own, so a retry is never mistaken
+// for a replay of an earlier one.
+export function newWorkflowRequestId(): string {
+    return taskIdFallback();
+}
+
+export function createWorkflowTask(index: number): WorkflowTask {
+    return {
+        id: taskIdFallback(),
+        type: 'instructions',
+        name: `Task ${index + 1}`,
+        instructions: '',
+        order: index + 1,
+        runner: { type: 'inherit' },
+    };
+}
+
+export function newWorkflowDefinition(scope: WorkflowScope, options?: WorkflowEditorOptions | null): WorkflowDefinition {
+    return {
+        definition_version: 2,
+        durable_execution: true,
+        name: '',
+        description: '',
+        runner_type: 'model',
+        model_endpoint_id: '',
+        model_id: '',
+        m365_run_as_user_id: '',
+        chat_capabilities_enabled: true,
+        ...(options?.chat_execution?.default ? { chat_execution: structuredClone(options.chat_execution.default) } : {}),
+        results_delivery: structuredClone(options?.results_delivery?.default ?? {
+            version: 1,
+            mode: 'conversation',
+            conversation_type: scope.type === 'group' ? 'group' : 'personal',
+            recipient_ids: [],
+            all_group_members: false,
+        }),
+        trigger_type: 'manual',
+        schedule: { unit: 'minutes', value: 15 },
+        is_enabled: true,
+        error_handling: { strategy: 'halt', retry_count: 0 },
+        tasks: [createWorkflowTask(0)],
+        reference_inputs: [],
+        ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
+    };
+}
+
+export const WORKFLOW_UNSUPPORTED_SCHEDULE_REASON =
+    'This workflow uses a schedule this editor does not support. Its original schedule has been retained and editing is disabled.';
+
+/**
+ * A stored or drafted schedule in the editor's shape, read as `workflowScheduleForEditor` reads it.
+ * An interval schedule stays `{unit, value}`. A calendar schedule keeps its time and time zone text
+ * as stored, so validation can name a bad value instead of replacing it, and carries days only when
+ * weekly and a day of the month only when monthly, which is the shape the server stores. Only a
+ * schedule the editor can't show exactly falls back to the new-draft default; a scheduled workflow
+ * never reaches it, because `normalizeWorkflowDefinition` keeps such a schedule verbatim, read-only.
+ */
+export function normalizeWorkflowSchedule(value: unknown): WorkflowSchedule {
+    return workflowScheduleForEditor(value) ?? { unit: 'minutes', value: 15 };
+}
+
+function normalizeRunner(value: unknown, structured = false): WorkflowTaskRunner {
+    if (!isRecord(value)) {
+        return { type: 'inherit' };
+    }
+    const type = ['inherit', 'agent', 'model'].includes(String(value.type))
+        ? value.type as WorkflowTaskRunnerType
+        : 'inherit';
+    return {
+        ...(structured ? value : {}),
+        type,
+        selected_agent: agentReference(value.selected_agent),
+        model_endpoint_id: text(value.model_endpoint_id),
+        model_id: text(value.model_id),
+    };
+}
+
+function normalizeOutputContract(value: unknown): WorkflowOutputContract | undefined {
+    if (value === null || value === undefined || !isRecord(value)) {
+        return undefined;
+    }
+    const record = value;
+    const schema = isRecord(record.schema) ? record.schema : undefined;
+    const expected = record.expected_count === null || record.expected_count === undefined || record.expected_count === ''
+        ? undefined : Number(record.expected_count);
+    const identityField = text(record.identity_field).trim();
+    return {
+        kind: outputKind(record.kind, 'any'),
+        ...(schema ? { schema } : {}),
+        ...(expected !== undefined ? { expected_count: expected } : {}),
+        ...(identityField ? { identity_field: identityField } : {}),
+        require_complete_coverage: record.require_complete_coverage === true,
+        allow_partial: record.allow_partial === true,
+    };
+}
+
+function normalizeInputs(value: unknown, structured = false): (WorkflowInputBinding | WorkflowFlowBinding)[] | undefined {
+    if (structured) {
+        if (value === undefined) return [];
+        if (!Array.isArray(value) || !value.every(isFlowBinding)) {
+            throw new Error('This structured workflow contains unsupported input bindings. Its saved definition was not changed.');
+        }
+        return structuredClone(value);
+    }
+    if (value === null || value === undefined) {
+        return undefined;
+    }
+    if (!Array.isArray(value)) {
+        return undefined;
+    }
+    return value.filter(isRecord).map((entry) => ({
+        name: safeWorkflowAlias(entry.name, 'input'),
+        task_id: text(entry.task_id),
+        output: WORKFLOW_INPUT_OUTPUTS.includes(entry.output as WorkflowInputOutput)
+            ? entry.output as WorkflowInputOutput
+            : 'text',
+        required: entry.required !== false,
+        expected_kind: outputKind(entry.expected_kind, 'any'),
+    }));
+}
+
+function normalizeApproval(value: unknown): WorkflowTaskApproval | undefined {
+    if (value === null || value === undefined || !isRecord(value)) {
+        return undefined;
+    }
+    const message = text(value.message);
+    return {
+        required: value.required === true,
+        ...(message ? { message } : {}),
+    };
+}
+
+function normalizeTask(value: unknown, index: number, structured = false): WorkflowTask {
+    const record = isRecord(value) ? value : {};
+    const unsupportedInputs = structured && record.inputs !== undefined &&
+        (!Array.isArray(record.inputs) || !record.inputs.every(isFlowBinding));
+    const unsupportedConfiguration = structured && (
+        record.type !== undefined && record.type !== 'instructions' ||
+        record.runner !== undefined && (!isRecord(record.runner) || !['inherit', 'model', 'agent'].includes(String(record.runner.type))) ||
+        record.output_contract !== undefined && record.output_contract !== null &&
+            (!isRecord(record.output_contract) || !WORKFLOW_OUTPUT_KINDS.includes(record.output_contract.kind as WorkflowOutputKind))
+    );
+    const inputs = structured || (Object.hasOwn(record, 'inputs') && record.inputs !== null)
+        ? unsupportedInputs ? [] : normalizeInputs(record.inputs, structured) ?? []
+        : undefined;
+    const referenceIds = Array.isArray(record.reference_ids)
+        ? record.reference_ids.filter((item): item is string => typeof item === 'string')
+        : undefined;
+    const outputContract = normalizeOutputContract(record.output_contract);
+    const approval = Object.hasOwn(record, 'approval') ? normalizeApproval(record.approval) : undefined;
+    const replayTask = record.type === 'plan_replay' && isRecord(record.plan_replay);
+    return {
+        ...record,
+        id: text(record.id) || taskIdFallback(),
+        type: replayTask ? 'plan_replay' : 'instructions',
+        name: text(record.name) || `Task ${index + 1}`,
+        instructions: text(record.instructions),
+        order: index + 1,
+        runner: normalizeRunner(record.runner, structured),
+        ...(unsupportedInputs ? { unrecognized_inputs: structuredClone(record.inputs) } : {}),
+        ...(unsupportedConfiguration ? { unrecognized_configuration: structuredClone(record) } : {}),
+        document_action: isRecord(record.document_action) ? record.document_action as WorkflowDocumentAction : undefined,
+        ...(inputs !== undefined ? { inputs } : {}),
+        ...(referenceIds !== undefined ? { reference_ids: referenceIds } : {}),
+        ...(outputContract ? { output_contract: structured && isRecord(record.output_contract)
+            ? { ...record.output_contract, ...outputContract } : outputContract } : {}),
+        ...(approval ? { approval } : {}),
+    };
+}
+
+export function workflowPlanReplayTask(definition: Pick<WorkflowDefinition, 'tasks'> | null | undefined): WorkflowTask | null {
+    return definition?.tasks.find((task) => task.type === 'plan_replay' && isRecord(task.plan_replay)) ?? null;
+}
+
+function legacyWorkflowTask(record: Record<string, unknown>): WorkflowTask | null {
+    const prompt = text(record.task_prompt);
+    if (!prompt) {
+        return null;
+    }
+    return {
+        id: text(record.task_id) || taskIdFallback(),
+        type: 'instructions',
+        name: text(record.task_name) || 'Task 1',
+        instructions: prompt,
+        order: 1,
+        runner: { type: 'inherit' },
+        ...(isRecord(record.document_action) ? { document_action: record.document_action as WorkflowDocumentAction } : {}),
+    };
+}
+
+export function documentActionFromSelection(
+    type: 'analyze' | 'search',
+    documents: WorkflowReferenceInput[],
+    options: { mode?: 'selected' | 'relevance'; analysisMode?: 'combined' | 'per_document' } = {},
+): WorkflowDocumentAction {
+    if (type === 'search' && options.mode === 'relevance') {
+        return {
+            type: 'search',
+            doc_scope: 'all',
+            active_group_ids: [],
+            active_public_workspace_id: [],
+            document_ids: [],
+            target_mode: 'selected',
+            analysis_mode: options.analysisMode ?? 'combined',
+        };
+    }
+    const scope = documentActionScope(documents);
+    return {
+        type,
+        doc_scope: scope.docScope,
+        active_group_ids: scope.groupIds,
+        active_public_workspace_id: scope.publicWorkspaceIds,
+        document_ids: documents.map((document) => document.document_id),
+        target_mode: 'selected',
+        analysis_mode: options.analysisMode ?? 'combined',
+        ...(type === 'search' ? { search_mode: 'selected' as const } : {}),
+    };
+}
+
+function textList(values: unknown): string[] {
+    return Array.isArray(values)
+        ? values.filter((value): value is string => typeof value === 'string').map((value) => value.trim()).filter(Boolean)
+        : [];
+}
+
+function stringRecordList(value: unknown): Record<string, string[]> | undefined {
+    if (!isRecord(value)) {
+        return undefined;
+    }
+    const aliases = Object.entries(value).reduce<Record<string, string[]>>((current, [key, entries]) => {
+        const name = key.trim();
+        const list = textList(entries);
+        if (name && list.length) {
+            current[name] = [...new Set(list)];
+        }
+        return current;
+    }, {});
+    return Object.keys(aliases).length ? aliases : undefined;
+}
+
+function cleanSortRules(value: unknown): WorkflowMergeSortRule[] | undefined {
+    if (!Array.isArray(value)) {
+        return undefined;
+    }
+    const rules = value.slice(0, 3).filter(isRecord).map((entry) => {
+        const column = text(entry.column).trim();
+        if (!column) {
+            return null;
+        }
+        return {
+            column,
+            ...(entry.descending === true ? { descending: true } : {}),
+            ...(WORKFLOW_MERGE_SORT_VALUE_TYPES.includes(entry.value_type as WorkflowMergeSortValueType)
+                ? { value_type: entry.value_type as WorkflowMergeSortValueType } : {}),
+        };
+    }).filter((entry): entry is WorkflowMergeSortRule => Boolean(entry));
+    return rules.length ? rules : undefined;
+}
+
+function compactMergeOptions(options: Record<string, unknown>): WorkflowMergeOptions | undefined {
+    return Object.keys(options).length ? options as WorkflowMergeOptions : undefined;
+}
+
+export function cleanupWorkflowMergeOptions(kind: WorkflowMergeKind, options: WorkflowMergeOptions | undefined): WorkflowMergeOptions | undefined {
+    if (!isRecord(options)) {
+        return undefined;
+    }
+    if (kind === 'tabular') {
+        const schemaPolicy = WORKFLOW_TABULAR_SCHEMA_POLICIES.includes(options.schema_policy as WorkflowTabularSchemaPolicy)
+            ? options.schema_policy as WorkflowTabularSchemaPolicy : 'by_name';
+        const dedupe = WORKFLOW_MERGE_DEDUPES.includes(options.dedupe as WorkflowMergeDedupe)
+            ? options.dedupe as WorkflowMergeDedupe : 'none';
+        const cleaned: Record<string, unknown> = {};
+        if (schemaPolicy !== 'by_name') cleaned.schema_policy = schemaPolicy;
+        // Columns and key columns apply only to the policy that uses them; the server refuses them otherwise.
+        const columns = textList(options.columns);
+        if (schemaPolicy === 'mapped' && columns.length) cleaned.columns = [...new Set(columns)];
+        const aliases = stringRecordList(options.column_aliases);
+        if (aliases) cleaned.column_aliases = aliases;
+        const sheet = text(options.sheet).trim();
+        if (sheet) cleaned.sheet = sheet.slice(0, 31);
+        else if (options.sheets === 'all') cleaned.sheets = 'all';
+        if (Number.isInteger(options.header_row) && Number(options.header_row) >= 1 && Number(options.header_row) <= 1000) {
+            cleaned.header_row = options.header_row;
+        }
+        if (options.include_source_column === false) cleaned.include_source_column = false;
+        const sourceColumnName = text(options.source_column_name).trim();
+        if (sourceColumnName && sourceColumnName !== 'Source File') cleaned.source_column_name = sourceColumnName.slice(0, 128);
+        if (options.on_incompatible === 'exclude') cleaned.on_incompatible = 'exclude';
+        if (dedupe !== 'none') cleaned.dedupe = dedupe;
+        const dedupeColumns = textList(options.dedupe_columns).slice(0, 16);
+        if (dedupe === 'key_columns' && dedupeColumns.length) cleaned.dedupe_columns = [...new Set(dedupeColumns)];
+        if (dedupe !== 'none' && options.dedupe_keep === 'last') cleaned.dedupe_keep = 'last';
+        const sortBy = cleanSortRules(options.sort_by);
+        if (sortBy) cleaned.sort_by = sortBy;
+        return compactMergeOptions(cleaned);
+    }
+    if (kind === 'workbook') {
+        const cleaned: Record<string, unknown> = {};
+        const sheet = text(options.sheet).trim();
+        if (sheet) cleaned.sheet = sheet.slice(0, 31);
+        else if (options.sheets === 'all') cleaned.sheets = 'all';
+        return compactMergeOptions(cleaned);
+    }
+    if (kind === 'pdf') {
+        return options.bookmarks === false ? { bookmarks: false } : undefined;
+    }
+    if (kind === 'docx') {
+        const cleaned: Record<string, unknown> = {};
+        if (options.formatting === 'use_first') cleaned.formatting = 'use_first';
+        if (options.page_breaks === false) cleaned.page_breaks = false;
+        if (options.source_headings === true) cleaned.source_headings = true;
+        return compactMergeOptions(cleaned);
+    }
+    const cleaned: Record<string, unknown> = {};
+    if (options.formatting === 'use_first') cleaned.formatting = 'use_first';
+    if (options.sections === false) cleaned.sections = false;
+    return compactMergeOptions(cleaned);
+}
+
+export function parseWorkflowMergeColumnAliases(value: string): WorkflowMergeAliasParseResult {
+    const aliases: Record<string, string[]> = {};
+    const errors: string[] = [];
+    value.split(/\r?\n/).forEach((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            return;
+        }
+        const separator = trimmed.indexOf('=');
+        if (separator < 0) {
+            errors.push(`Line ${index + 1}: use "Column = alias, alias".`);
+            return;
+        }
+        const column = trimmed.slice(0, separator).trim();
+        const entries = trimmed.slice(separator + 1).split(',').map((entry) => entry.trim()).filter(Boolean);
+        if (!column) {
+            errors.push(`Line ${index + 1}: enter a column name before "=".`);
+            return;
+        }
+        if (!entries.length) {
+            errors.push(`Line ${index + 1}: enter at least one alias after "=".`);
+            return;
+        }
+        aliases[column] = [...new Set([...(aliases[column] ?? []), ...entries])];
+    });
+    return { aliases, errors };
+}
+
+export function formatWorkflowMergeColumnAliases(value: unknown): string {
+    const aliases = stringRecordList(value);
+    if (!aliases) {
+        return '';
+    }
+    return Object.entries(aliases)
+        .map(([column, entries]) => `${column} = ${entries.join(', ')}`)
+        .join('\n');
+}
+
+export function workflowMergeActionFromSelection(
+    documents: WorkflowReferenceInput[],
+    options: WorkflowMergeActionOptions = {},
+): WorkflowDocumentAction {
+    const mergeKind = WORKFLOW_MERGE_KINDS.includes(options.mergeKind as WorkflowMergeKind)
+        ? options.mergeKind as WorkflowMergeKind : 'tabular';
+    const targetMode = WORKFLOW_MERGE_TARGET_MODES.includes(options.targetMode as WorkflowMergeTargetMode)
+        ? options.targetMode as WorkflowMergeTargetMode : 'selected';
+    const selectedScope = targetMode === 'selected' ? documentActionScope(documents) : null;
+    const docScope = selectedScope?.docScope ?? options.docScope ?? 'all';
+    const outputFormat = WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS[mergeKind].includes(options.outputFormat as WorkflowMergeOutputFormat)
+        ? options.outputFormat as WorkflowMergeOutputFormat
+        : WORKFLOW_MERGE_DEFAULT_OUTPUT_FORMAT[mergeKind];
+    const outputFileName = text(options.outputFileName).trim();
+    const recentWindowMinutes = options.recentWindowMinutes ?? 60;
+    const action: WorkflowDocumentAction = {
+        type: 'merge',
+        merge_kind: mergeKind,
+        target_mode: targetMode,
+        doc_scope: docScope,
+        active_group_ids: selectedScope?.groupIds ?? options.activeGroupIds ?? [],
+        active_public_workspace_id: selectedScope?.publicWorkspaceIds ?? options.activePublicWorkspaceIds ?? [],
+        document_ids: targetMode === 'selected' ? documents.map((document) => document.document_id) : [],
+        ...(targetMode === 'recent' ? { recent_window_minutes: recentWindowMinutes } : {}),
+        output_format: outputFormat,
+        ...(outputFileName ? { output_file_name: outputFileName } : {}),
+    };
+    const cleanedOptions = cleanupWorkflowMergeOptions(mergeKind, options.mergeOptions);
+    if (cleanedOptions) {
+        action.merge_options = cleanedOptions;
+    }
+    return action;
+}
+
+export function comparisonActionFromSelection(
+    left: WorkflowReferenceInput | null,
+    right: WorkflowReferenceInput[],
+): WorkflowDocumentAction {
+    const documents = [...(left ? [left] : []), ...right];
+    const scope = documentActionScope(documents);
+    return {
+        type: 'comparison',
+        doc_scope: scope.docScope,
+        active_group_ids: scope.groupIds,
+        active_public_workspace_id: scope.publicWorkspaceIds,
+        document_ids: documents.map((document) => document.document_id),
+        target_mode: 'selected',
+        analysis_mode: 'combined',
+        left_document_id: left?.document_id ?? '',
+        right_document_ids: right.map((document) => document.document_id),
+    };
+}
+
+function documentActionScope(documents: WorkflowReferenceInput[]): {
+    docScope: WorkflowReferenceScope | 'all';
+    groupIds: string[];
+    publicWorkspaceIds: string[];
+} {
+    const scopeTypes = new Set(documents.map((document) => document.scope_type));
+    const groupIds = [...new Set(documents.filter((document) => document.scope_type === 'group').map((document) => document.scope_id).filter(Boolean))];
+    const publicWorkspaceIds = [...new Set(documents.filter((document) => document.scope_type === 'public').map((document) => document.scope_id).filter(Boolean))];
+    return {
+        docScope: scopeTypes.size === 1 ? documents[0]?.scope_type ?? 'all' : 'all',
+        groupIds,
+        publicWorkspaceIds,
+    };
+}
+
+function validateStringList(
+    values: unknown,
+    label: string,
+    errors: string[],
+    options: { min?: number; max?: number } = {},
+): string[] {
+    if (!Array.isArray(values) || values.some((value) => typeof value !== 'string' || !value.trim())) {
+        errors.push(options.min !== undefined
+            ? `${label} needs at least ${options.min} item${options.min === 1 ? '' : 's'}.`
+            : `${label} must be a list of names.`);
+        return [];
+    }
+    const names = values.map((value) => value.trim());
+    if (options.min !== undefined && names.length < options.min) {
+        errors.push(`${label} needs at least ${options.min} item${options.min === 1 ? '' : 's'}.`);
+    }
+    if (options.max !== undefined && names.length > options.max) {
+        errors.push(`${label} supports at most ${options.max} items.`);
+    }
+    return names;
+}
+
+function mergeSheetErrors(options: WorkflowMergeOptions, label: string, errors: string[]): void {
+    const hasSheet = typeof options.sheet === 'string' && options.sheet.trim().length > 0;
+    const hasSheets = options.sheets !== undefined;
+    if (hasSheet && options.sheet && options.sheet.length > 31) {
+        errors.push(`${label} sheet name must be 31 characters or fewer.`);
+    }
+    if (hasSheets && !WORKFLOW_MERGE_SHEETS_MODES.includes(options.sheets as WorkflowMergeSheetsMode)) {
+        errors.push(`${label} sheets must be first or all.`);
+    }
+    if (hasSheet && hasSheets) {
+        errors.push(`${label} can use either one named sheet or every sheet, not both.`);
+    }
+}
+
+function tabularMergeOptionErrors(options: WorkflowMergeOptions, errors: string[]): void {
+    const policy = options.schema_policy ?? 'by_name';
+    if (!WORKFLOW_TABULAR_SCHEMA_POLICIES.includes(policy as WorkflowTabularSchemaPolicy)) {
+        errors.push('Merge schema policy must be by_name, exact_order, union, or mapped.');
+    }
+    if (policy === 'mapped') {
+        validateStringList(options.columns, 'Mapped columns', errors, { min: 1 });
+    } else if (options.columns !== undefined) {
+        validateStringList(options.columns, 'Merge columns', errors);
+    }
+    if (options.column_aliases !== undefined && (
+        !isRecord(options.column_aliases) || Object.entries(options.column_aliases).some(([column, aliases]) =>
+            !column.trim() || !Array.isArray(aliases) ||
+            aliases.some((alias) => typeof alias !== 'string' || !alias.trim()))
+    )) {
+        errors.push('Column aliases must map each column to one or more header aliases.');
+    }
+    mergeSheetErrors(options, 'Tabular merge', errors);
+    if (options.header_row !== undefined &&
+        (!Number.isInteger(options.header_row) || Number(options.header_row) < 1 || Number(options.header_row) > 1000)) {
+        errors.push('Header row must be a whole number from 1 to 1,000.');
+    }
+    if (options.include_source_column !== undefined && typeof options.include_source_column !== 'boolean') {
+        errors.push('Include source column must be on or off.');
+    }
+    if (options.source_column_name !== undefined &&
+        (typeof options.source_column_name !== 'string' || options.source_column_name.length > 128)) {
+        errors.push('Source column name must be 128 characters or fewer.');
+    }
+    if (options.on_incompatible !== undefined && options.on_incompatible !== 'fail' && options.on_incompatible !== 'exclude') {
+        errors.push('Incompatible files must either fail the merge or be left out.');
+    }
+    const dedupe = options.dedupe ?? 'none';
+    if (!WORKFLOW_MERGE_DEDUPES.includes(dedupe as WorkflowMergeDedupe)) {
+        errors.push('Duplicate handling must be none, exact rows, or key columns.');
+    }
+    if (dedupe === 'key_columns') {
+        validateStringList(options.dedupe_columns, 'Duplicate key columns', errors, { min: 1, max: 16 });
+    } else if (options.dedupe_columns !== undefined) {
+        validateStringList(options.dedupe_columns, 'Duplicate key columns', errors, { max: 16 });
+    }
+    if (options.dedupe_keep !== undefined && options.dedupe_keep !== 'first' && options.dedupe_keep !== 'last') {
+        errors.push('Duplicate rows can keep either the first or last match.');
+    }
+    if (options.sort_by !== undefined) {
+        if (!Array.isArray(options.sort_by) || options.sort_by.length > 3) {
+            errors.push('Sort by supports up to 3 columns.');
+        } else {
+            options.sort_by.forEach((rule, index) => {
+                if (!isRecord(rule) || typeof rule.column !== 'string' || !rule.column.trim()) {
+                    errors.push(`Sort rule ${index + 1} needs a column name.`);
+                }
+                if (isRecord(rule) && rule.descending !== undefined && typeof rule.descending !== 'boolean') {
+                    errors.push(`Sort rule ${index + 1} descending must be on or off.`);
+                }
+                if (isRecord(rule) && rule.value_type !== undefined &&
+                    !WORKFLOW_MERGE_SORT_VALUE_TYPES.includes(rule.value_type as WorkflowMergeSortValueType)) {
+                    errors.push(`Sort rule ${index + 1} value type must be text, number, or date.`);
+                }
+            });
+        }
+    }
+}
+
+function workflowMergeOptionsErrors(kind: WorkflowMergeKind, value: unknown): string[] {
+    if (value === undefined) {
+        return [];
+    }
+    if (!isRecord(value)) {
+        return ['Merge options must be an object.'];
+    }
+    const options = value as WorkflowMergeOptions;
+    const errors: string[] = [];
+    if (kind === 'tabular') {
+        tabularMergeOptionErrors(options, errors);
+    } else if (kind === 'workbook') {
+        mergeSheetErrors(options, 'Workbook merge', errors);
+    } else if (kind === 'pdf') {
+        if (options.bookmarks !== undefined && typeof options.bookmarks !== 'boolean') {
+            errors.push('PDF bookmarks must be on or off.');
+        }
+    } else if (kind === 'docx') {
+        if (options.formatting !== undefined && options.formatting !== 'keep_source' && options.formatting !== 'use_first') {
+            errors.push('Word formatting must keep source formatting or use the first document.');
+        }
+        if (options.page_breaks !== undefined && typeof options.page_breaks !== 'boolean') {
+            errors.push('Word page breaks must be on or off.');
+        }
+        if (options.source_headings !== undefined && typeof options.source_headings !== 'boolean') {
+            errors.push('Word source headings must be on or off.');
+        }
+    } else {
+        if (options.formatting !== undefined && options.formatting !== 'keep_source' && options.formatting !== 'use_first') {
+            errors.push('PowerPoint formatting must keep source formatting or use the first deck.');
+        }
+        if (options.sections !== undefined && typeof options.sections !== 'boolean') {
+            errors.push('PowerPoint sections must be on or off.');
+        }
+    }
+    return errors;
+}
+
+export function workflowMergeValidationErrors(
+    action: WorkflowDocumentAction | undefined,
+    context: WorkflowMergeValidationContext = {},
+): string[] {
+    if (!action || action.type !== 'merge') {
+        return [];
+    }
+    const errors: string[] = [];
+    const availableKinds = context.availableKinds ?? WORKFLOW_MERGE_KINDS_AVAILABLE;
+    const kind = WORKFLOW_MERGE_KINDS.includes(action.merge_kind as WorkflowMergeKind)
+        ? action.merge_kind as WorkflowMergeKind : undefined;
+    if (!kind) {
+        errors.push('Merge files needs a supported merge type.');
+    } else if (!availableKinds.includes(kind)) {
+        errors.push(`${WORKFLOW_MERGE_KIND_LABELS[kind]} is not enabled in this editor yet.`);
+    }
+    const targetMode = WORKFLOW_MERGE_TARGET_MODES.includes(action.target_mode as WorkflowMergeTargetMode)
+        ? action.target_mode as WorkflowMergeTargetMode : undefined;
+    if (!targetMode) {
+        errors.push('Merge files needs a supported target mode.');
+    } else if (targetMode === 'selected') {
+        const count = Array.isArray(action.document_ids) ? action.document_ids.filter((item) => typeof item === 'string' && item).length : 0;
+        if (count < 2) {
+            errors.push('Merge files needs at least 2 selected files.');
+        }
+        if (context.maxSelectedDocuments !== undefined && count > context.maxSelectedDocuments) {
+            errors.push(`Merge files can include at most ${context.maxSelectedDocuments.toLocaleString()} selected files in this workspace.`);
+        }
+    } else if (Array.isArray(action.document_ids) && action.document_ids.length > 0) {
+        errors.push('Merge files should only send document IDs when Selected files is chosen.');
+    }
+    if (targetMode === 'changed' && context.isFileSyncWorkflow !== true) {
+        errors.push('Changed files is available only for File Sync workflows.');
+    }
+    if (targetMode === 'recent' &&
+        (!Number.isInteger(action.recent_window_minutes) || Number(action.recent_window_minutes) < 1 || Number(action.recent_window_minutes) > 525600)) {
+        errors.push('Recent files window must be a whole number from 1 minute to 365 days.');
+    }
+    if (action.doc_scope !== undefined && !['all', 'personal', 'group', 'public'].includes(String(action.doc_scope))) {
+        errors.push('Merge files needs a supported workspace scope.');
+    }
+    if (!Array.isArray(action.active_group_ids) || action.active_group_ids.some((id) => typeof id !== 'string')) {
+        errors.push('Merge files group scopes must be a list of group IDs.');
+    }
+    if (!Array.isArray(action.active_public_workspace_id) || action.active_public_workspace_id.some((id) => typeof id !== 'string')) {
+        errors.push('Merge files public scopes must be a list of public workspace IDs.');
+    }
+    if (kind && !WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS[kind].includes(action.output_format as WorkflowMergeOutputFormat)) {
+        errors.push(`${WORKFLOW_MERGE_KIND_LABELS[kind]} must output ${WORKFLOW_MERGE_ALLOWED_OUTPUT_FORMATS[kind].join(' or ')}.`);
+    }
+    if (action.output_file_name !== undefined) {
+        const name = text(action.output_file_name).trim();
+        if (!name || name.length > 100 || WORKFLOW_MERGE_BAD_OUTPUT_NAME.test(name) || name.includes('.')) {
+            errors.push('Output file name must be 1 to 100 characters with no extension or / \\ : * ? " < > | characters.');
+        }
+    }
+    if (kind) {
+        errors.push(...workflowMergeOptionsErrors(kind, action.merge_options));
+    }
+    return errors;
+}
+
+export function workflowMergeDocumentLimit(options: Pick<WorkflowEditorOptions, 'document_action_limits' | 'document_actions'>): number | undefined {
+    const values = [
+        options.document_action_limits?.merge?.max_documents,
+        options.document_action_limits?.max_documents_by_type?.merge,
+        options.document_actions?.merge?.workflow_max_documents,
+        options.document_actions?.merge?.max_documents,
+    ];
+    return values.find((value): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 2 && value <= 1000);
+}
+
+export function normalizeWorkflowDefinition(
+    value: unknown,
+    scope: WorkflowScope = DEFAULT_WORKFLOW_SCOPE,
+): WorkflowDefinition {
+    const record = isRecord(value) ? value : {};
+    const revision = text(record.definition_revision);
+    const errorHandling = isRecord(record.error_handling) ? record.error_handling : {};
+    const trigger = ['manual', 'interval', 'file_sync'].includes(String(record.trigger_type))
+        ? record.trigger_type as WorkflowTriggerType
+        : 'manual';
+    const normalizedTasks = Array.isArray(record.tasks) ? record.tasks : [];
+    const tasks = normalizedTasks
+        .map((task, index) => normalizeTask(task, index, record.definition_version === 3))
+        .sort((left, right) => left.order - right.order)
+        .map((task, index) => ({ ...task, order: index + 1 }));
+    const references = (Array.isArray(record.reference_inputs) ? record.reference_inputs : [])
+        .filter(isRecord)
+        .map((entry) => ({
+            id: text(entry.id) || taskIdFallback(),
+            name: safeWorkflowAlias(entry.name, `ref_${text(entry.document_id) || 'document'}`),
+            document_id: text(entry.document_id),
+            scope_type: ['personal', 'group', 'public'].includes(String(entry.scope_type))
+                ? entry.scope_type as WorkflowReferenceScope
+                : scope.type,
+            scope_id: text(entry.scope_id) || (scope.type === 'group' && entry.scope_type === 'group' ? scope.groupId : ''),
+        }))
+        .filter((entry) => entry.document_id);
+    // A scheduled workflow whose stored schedule this editor can't show exactly (a kind, unit,
+    // frequency or weekly day it doesn't define, a seconds or minutes unit stored other than
+    // exactly, or an interval value that isn't a whole number) keeps that schedule exactly as
+    // stored and opens read-only, so no save can replace it. A manual workflow does not use its
+    // schedule, and the server stores none for it.
+    const unsupportedSchedule = trigger !== 'manual' && !workflowScheduleSupported(record.schedule);
+    const readonlyReason = record.definition_version === 3 && tasks.some((task) =>
+        Object.hasOwn(task, 'unrecognized_inputs') || Object.hasOwn(task, 'unrecognized_configuration'))
+        ? 'This workflow contains task configuration or bindings from an unsupported schema. Its original configuration has been retained and editing is disabled.'
+        : unsupportedSchedule
+            ? WORKFLOW_UNSUPPORTED_SCHEDULE_REASON
+            : '';
+    return {
+        ...record,
+        definition_version: numberInRange(record.definition_version, 2, 1, 999),
+        ...(revision ? { definition_revision: revision } : {}),
+        id: text(record.id) || undefined,
+        name: text(record.name),
+        description: text(record.description),
+        runner_type: record.runner_type === 'agent' ? 'agent' : 'model',
+        selected_agent: agentReference(record.selected_agent),
+        model_endpoint_id: text(record.model_endpoint_id),
+        model_id: text(record.model_id),
+        m365_run_as_user_id: text(record.m365_run_as_user_id),
+        chat_capabilities_enabled: record.chat_capabilities_enabled === true,
+        trigger_type: trigger,
+        schedule: unsupportedSchedule
+            ? structuredClone(record.schedule) as unknown as WorkflowSchedule
+            : normalizeWorkflowSchedule(record.schedule),
+        is_enabled: record.is_enabled !== false,
+        error_handling: {
+            strategy: errorHandling.strategy === 'continue' ? 'continue' : 'halt',
+            retry_count: numberInRange(errorHandling.retry_count, 0, 0, 5),
+        },
+        tasks: tasks.length ? tasks : [legacyWorkflowTask(record) ?? createWorkflowTask(0)],
+        reference_inputs: references,
+        ...(readonlyReason ? { editor_readonly_reason: readonlyReason } : {}),
+        ...(Object.hasOwn(record, 'durable_execution') ? { durable_execution: record.durable_execution === true } : {}),
+        ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
+    };
+}
+
+export function workflowForSave(
+    draft: WorkflowDefinition,
+    original: WorkflowDefinition | null,
+    scope: WorkflowScope,
+): WorkflowDefinition {
+    if (draft.editor_readonly_reason || flowUnsupportedReason(draft)) {
+        throw new Error('This workflow contains unsupported executable fields and cannot be saved by this editor.');
+    }
+    if (original && original.definition_version >= 3 && draft.definition_version < original.definition_version) {
+        throw new Error('This workflow cannot be downgraded without losing executable fields.');
+    }
+    const base = original ? structuredClone(original) : newWorkflowDefinition(scope);
+    const originalHasDurable = original ? Object.hasOwn(original, 'durable_execution') : false;
+    const includeDurable = !original || originalHasDurable || draft.durable_execution === true;
+    const next = {
+        ...base,
+        id: original?.id ?? draft.id,
+        definition_version: draft.definition_version === 3 ? 3 : 2,
+        definition_revision: original?.definition_revision,
+        name: draft.name.trim(),
+        description: draft.description.trim(),
+        runner_type: draft.runner_type,
+        ...(draft.runner_type === 'agent' && draft.selected_agent ? { selected_agent: draft.selected_agent } : { selected_agent: undefined }),
+        model_endpoint_id: draft.runner_type === 'model' ? draft.model_endpoint_id || '' : '',
+        model_id: draft.runner_type === 'model' ? draft.model_id || '' : '',
+        m365_run_as_user_id: text(draft.m365_run_as_user_id ?? original?.m365_run_as_user_id),
+        chat_capabilities_enabled: draft.chat_capabilities_enabled,
+        chat_execution: draft.chat_execution === undefined ? undefined : normalizeWorkflowChatExecution(draft.chat_execution),
+        results_delivery: draft.results_delivery === undefined ? undefined : normalizeWorkflowResultsDelivery(draft.results_delivery, scope),
+        trigger_type: draft.trigger_type,
+        schedule: draft.schedule,
+        is_enabled: draft.is_enabled,
+        error_handling: draft.error_handling,
+        tasks: draft.tasks.map((task, index) => ({
+            ...task, order: index + 1,
+            ...(task.chat_execution !== undefined ? { chat_execution: normalizeWorkflowChatExecution(task.chat_execution) } : {}),
+        })),
+        task_prompt: draft.tasks[0]?.instructions.trim() || '',
+        reference_inputs: draft.reference_inputs,
+        ...((draft.conversation_reference_inputs?.length ?? 0) > 0
+            || Object.hasOwn(draft, 'conversation_reference_inputs')
+            || (original && Object.hasOwn(original, 'conversation_reference_inputs'))
+            ? { conversation_reference_inputs: structuredClone(draft.conversation_reference_inputs ?? []) }
+            : {}),
+        ...(draft.definition_version === 3 ? { flow: structuredClone(draft.flow), limits: structuredClone(draft.limits) } : {}),
+        ...(includeDurable ? { durable_execution: !original || original.durable_execution === true || draft.durable_execution === true } : {}),
+        ...(scope.type === 'group' ? { group_id: scope.groupId } : {}),
+        ...workflowFileSyncForSave(draft, original),
+        ...workflowAlertsForSave(draft, original),
+    };
+    if (!includeDurable) {
+        delete next.durable_execution;
+    }
+    return normalizeWorkflowDefinition(next, scope);
+}
+
+// Mirrors the server's authored revision fields; the compiler contract test checks parity.
+export const WORKFLOW_DEFINITION_FIELDS = [
+    'name', 'description', 'task_prompt', 'tasks', 'runner_type', 'chat_capabilities_enabled',
+    'chat_execution', 'results_delivery',
+    'trigger_type', 'is_enabled', 'schedule', 'error_handling', 'document_action', 'analyze',
+    'file_sync', 'selected_agent', 'model_endpoint_id', 'model_id', 'model_provider', 'm365_run_as_user_id',
+    'url_access_enabled', 'alert_priority', 'alert_mode', 'alert_rules', 'alert_evaluation',
+    'definition_version', 'reference_inputs', 'conversation_reference_inputs', 'durable_execution', 'flow', 'limits',
+    'public_source_policy',
+] as const;
+
+const flowPreviewFields = new Set<string>([
+    ...WORKFLOW_DEFINITION_FIELDS, 'id', 'definition_revision', 'user_id', 'group_id',
+]);
+
+export function workflowForFlowPreview(definition: WorkflowDefinition): WorkflowDefinition {
+    const preview = { ...definition };
+    for (const key of Object.keys(preview)) {
+        if (!flowPreviewFields.has(key)) delete preview[key];
+    }
+    return preview;
+}
+
+export function preservedWorkflowFieldLabels(original: WorkflowDefinition | null): string[] {
+    if (!original) {
+        return [];
+    }
+    const edited = new Set([
+        'definition_version',
+        'definition_revision',
+        'id',
+        'name',
+        'description',
+        'runner_type',
+        'selected_agent',
+        'model_endpoint_id',
+        'model_id',
+        'm365_run_as_user_id',
+        'chat_capabilities_enabled',
+        'chat_execution',
+        'results_delivery',
+        'trigger_type',
+        'schedule',
+        'is_enabled',
+        'error_handling',
+        'tasks',
+        'task_prompt',
+        'reference_inputs',
+        'conversation_reference_inputs',
+        'durable_execution',
+        'flow',
+        'limits',
+        'group_id',
+        // Alerts and File Sync have their own sections in both scopes.
+        ...WORKFLOW_ALERT_FIELDS,
+        'file_sync',
+    ]);
+    const labels: Record<string, string> = {
+        alerts: 'alert settings',
+        alert_settings: 'alert settings',
+        document_actions: 'document action settings',
+        publication: 'publication settings',
+        publication_options: 'publication options',
+        metadata: 'metadata',
+    };
+    return Object.keys(original)
+        .filter((key) => !edited.has(key))
+        .map((key) => labels[key] ?? key.replace(/_/g, ' '))
+        .sort((left, right) => left.localeCompare(right));
+}
+
+// ---------------------------------------------------------------------------------------------
+// File Sync triggers. Personal and group workflows author them here. The File Sync, trigger and
+// schedule rules for both scopes live in workflowSettings.ts, which mirrors the save path and
+// returns the server's reviewed messages; the names below are re-exported so importers keep one
+// entry point.
+// ---------------------------------------------------------------------------------------------
+
+export {
+    WORKFLOW_FILE_SYNC_CONTINUE_MODES,
+    WORKFLOW_FILE_SYNC_MAX_SOURCES,
+    WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_CODE,
+    WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_MESSAGE,
+    WORKFLOW_FILE_SYNC_WAIT_MODES,
+} from './workflowSettings';
+export type WorkflowFileSyncWaitMode = typeof WORKFLOW_FILE_SYNC_WAIT_MODES[number];
+export type WorkflowFileSyncContinueMode = typeof WORKFLOW_FILE_SYNC_CONTINUE_MODES[number];
+export type WorkflowFileSyncScopeType = typeof WORKFLOW_FILE_SYNC_SCOPE_TYPES[number];
+
+/**
+ * One File Sync source the server offers to this scope's workflows. A group lists only its own
+ * sources. A personal workflow lists the user's own sources, and those of the active group and
+ * public workspace the user manages.
+ */
+export interface WorkflowFileSyncSource {
+    scope_type: WorkflowFileSyncScopeType;
+    scope_id: string;
+    source_id: string;
+    name: string;
+    source_type: string;
+    enabled: boolean;
+    label: string;
+}
+
+/** A source selected by a workflow; saved records also carry the name and type the server stored. */
+export interface WorkflowFileSyncSourceRef {
+    scope_type: string;
+    scope_id: string;
+    source_id: string;
+    name?: string;
+    source_type?: string;
+}
+
+export interface WorkflowFileSyncConfig {
+    enabled: boolean;
+    wait_mode: WorkflowFileSyncWaitMode;
+    continue_mode: WorkflowFileSyncContinueMode;
+    use_changed_documents: boolean;
+    sources: WorkflowFileSyncSourceRef[];
+}
+
+export function workflowFileSyncSourceKey(source: Pick<WorkflowFileSyncSourceRef, 'scope_type' | 'scope_id' | 'source_id'>): string {
+    return [source.scope_type, source.scope_id, source.source_id].map((value) => text(value).trim()).join(':');
+}
+
+/** Read a stored or drafted `file_sync` value with the server's defaults. */
+export function workflowFileSyncConfig(value: unknown): WorkflowFileSyncConfig {
+    const record = isRecord(value) ? value : {};
+    const wait = text(record.wait_mode).trim().toLowerCase();
+    const proceed = text(record.continue_mode).trim().toLowerCase();
+    return {
+        enabled: record.enabled === true,
+        wait_mode: (WORKFLOW_FILE_SYNC_WAIT_MODES as readonly string[]).includes(wait) ? wait as WorkflowFileSyncWaitMode : 'complete',
+        continue_mode: (WORKFLOW_FILE_SYNC_CONTINUE_MODES as readonly string[]).includes(proceed)
+            ? proceed as WorkflowFileSyncContinueMode : 'always',
+        use_changed_documents: record.use_changed_documents !== false,
+        sources: (Array.isArray(record.sources) ? record.sources : [])
+            .filter(isRecord)
+            .map((source) => ({
+                scope_type: text(source.scope_type).trim() || 'group',
+                scope_id: text(source.scope_id).trim(),
+                source_id: text(source.source_id).trim() || text(source.id).trim(),
+                ...(text(source.name) ? { name: text(source.name) } : {}),
+                ...(text(source.source_type) ? { source_type: text(source.source_type) } : {}),
+            }))
+            .filter((source) => source.source_id),
+    };
+}
+
+/** The Monitor File Sync changes trigger always syncs first, waits, and continues only on changes. */
+export function workflowMonitorFileSyncConfig(value: unknown): WorkflowFileSyncConfig {
+    return { ...workflowFileSyncConfig(value), enabled: true, wait_mode: 'complete', continue_mode: 'changed' };
+}
+
+function workflowFileSyncActive(draft: WorkflowDefinition): boolean {
+    return draft.trigger_type === 'file_sync' || workflowFileSyncConfig(draft.file_sync).enabled;
+}
+
+/**
+ * The server lets Analyze run without selected documents when File Sync supplies the changed
+ * files: `allow_empty_file_sync_targets` in both `save_personal_workflow` and `save_group_workflow`
+ * is `file_sync.enabled and file_sync.use_changed_documents`.
+ */
+export function workflowFileSyncProvidesAnalyzeTargets(draft: WorkflowDefinition): boolean {
+    const config = workflowFileSyncConfig(draft.file_sync);
+    return config.enabled && config.use_changed_documents;
+}
+
+/** The `file_sync` a save sends: the loaded value when untouched, else the edited configuration. */
+function workflowFileSyncForSave(
+    draft: WorkflowDefinition,
+    original: WorkflowDefinition | null,
+): { file_sync?: unknown } {
+    if (!Object.hasOwn(draft, 'file_sync') || original && sameEditorValue(draft.file_sync, original.file_sync)) {
+        return {};
+    }
+    const config = workflowFileSyncConfig(draft.file_sync);
+    return {
+        file_sync: {
+            enabled: config.enabled,
+            wait_mode: config.wait_mode,
+            continue_mode: config.continue_mode,
+            use_changed_documents: config.use_changed_documents,
+            // Classic sends no sources when File Sync is off; the server re-authorizes every one sent.
+            sources: config.enabled || draft.trigger_type === 'file_sync'
+                ? config.sources.map(({ scope_type, scope_id, source_id }) => ({ scope_type, scope_id, source_id }))
+                : [],
+        },
+    };
+}
+
+/** A scope's File Sync source list, as its sources route returns it. */
+export interface WorkflowFileSyncSourceListing {
+    /**
+     * Group: the File Sync gate a group workflow save applies for this caller. Personal: whether
+     * File Sync is on for the user's own workspace, and so whether every personal source is listed.
+     */
+    fileSyncEnabled: boolean;
+    sources: WorkflowFileSyncSource[];
+}
+
+/**
+ * The File Sync, trigger and schedule problems in the payload this draft would save, in the
+ * server's order and words, for either scope. `listing` is the group's loaded source list, or
+ * null when it is not loaded; with it the editor also applies the group File Sync gate and checks
+ * each sent source, as the save will. A personal save has no File Sync gate and resolves sources
+ * the list may not show, such as another group's, so the server alone reports a missing one.
+ */
+export function workflowSettingsDraftErrors(
+    draft: WorkflowDefinition,
+    options: WorkflowEditorOptions,
+    original: WorkflowDefinition | null,
+    listing: WorkflowFileSyncSourceListing | null,
+): string[] {
+    const group = options.scope.type === 'group';
+    const scope: WorkflowScope = group ? { type: 'group', groupId: options.scope.id ?? '' } : { type: 'personal' };
+    let payload: WorkflowDefinition;
+    try {
+        payload = workflowForSave(draft, original, scope);
+    } catch {
+        // A draft that cannot be serialized already reports why.
+        return [];
+    }
+    const errors = workflowSettingsErrors(payload, original, {
+        scope,
+        fileSyncEnabled: group && listing ? listing.fileSyncEnabled : null,
+        // A group whose File Sync is off lists no sources, which says nothing about the selected ones.
+        availableSourceKeys: group && listing?.fileSyncEnabled
+            ? new Set(listing.sources.map(workflowFileSyncSourceKey)) : null,
+        scheduleTimezones: workflowScheduleTimezones(options),
+        minScheduleIntervalSeconds: options.schedule?.min_interval_seconds ?? null,
+    });
+    const sent = isRecord(payload.file_sync) && Array.isArray(payload.file_sync.sources) ? payload.file_sync.sources : [];
+    // The one deliberate difference: the server keeps the first 10 sources without saying so.
+    if (sent.length > WORKFLOW_FILE_SYNC_MAX_SOURCES) {
+        errors.push(`Choose at most ${WORKFLOW_FILE_SYNC_MAX_SOURCES} File Sync sources.`);
+    }
+    return errors;
+}
+
+/**
+ * Selected sources the current source list no longer offers; a save would fail on each one.
+ * `scopeTypes` limits the check to sources the list covers in full: a personal workflow's list
+ * shows only the active group and public workspace, so only its personal sources are checked.
+ */
+export function workflowUnavailableFileSyncSources(
+    draft: WorkflowDefinition,
+    available: WorkflowFileSyncSource[],
+    scopeTypes?: readonly string[],
+): WorkflowFileSyncSourceRef[] {
+    if (!workflowFileSyncActive(draft)) {
+        return [];
+    }
+    const offered = new Set(available.map(workflowFileSyncSourceKey));
+    return workflowFileSyncConfig(draft.file_sync).sources
+        .filter((source) => !scopeTypes || scopeTypes.includes(source.scope_type))
+        .filter((source) => !offered.has(workflowFileSyncSourceKey(source)));
+}
+
+/**
+ * The File Sync sources this scope's workflows can use. A group lists its own sources, with the
+ * page's explicit group. A personal workflow lists the user's own sources and those of the active
+ * group and public workspace the user manages.
+ */
+export async function fetchWorkflowFileSyncSources(
+    scope: WorkflowScope,
+    signal?: AbortSignal,
+): Promise<WorkflowFileSyncSourceListing> {
+    const response = await api.get<unknown>(scope.type === 'group'
+        ? withScopeQuery('/api/group/workflows/file-sync-sources', scope)
+        : '/api/user/workflows/file-sync-sources', signal);
+    const invalid = 'The File Sync source list returned an invalid response.';
+    if (!isRecord(response) || !Array.isArray(response.sources) || typeof response.file_sync_enabled !== 'boolean') {
+        throw new Error(invalid);
+    }
+    const sources = new Map<string, WorkflowFileSyncSource>();
+    for (const entry of response.sources) {
+        if (!isRecord(entry) || typeof entry.scope_type !== 'string' ||
+            !(WORKFLOW_FILE_SYNC_SCOPE_TYPES as readonly string[]).includes(entry.scope_type) ||
+            typeof entry.scope_id !== 'string' || !entry.scope_id.trim() ||
+            scope.type === 'group' && (entry.scope_type !== 'group' || entry.scope_id !== scope.groupId) ||
+            typeof entry.source_id !== 'string' || !entry.source_id.trim() ||
+            typeof entry.name !== 'string' || typeof entry.label !== 'string' ||
+            typeof entry.source_type !== 'string' || typeof entry.enabled !== 'boolean') {
+            throw new Error(invalid);
+        }
+        const source: WorkflowFileSyncSource = {
+            scope_type: entry.scope_type as WorkflowFileSyncScopeType,
+            scope_id: entry.scope_id,
+            source_id: entry.source_id,
+            name: entry.name,
+            source_type: entry.source_type,
+            enabled: entry.enabled,
+            label: entry.label || entry.name || entry.source_id,
+        };
+        sources.set(workflowFileSyncSourceKey(source), source);
+    }
+    return { fileSyncEnabled: response.file_sync_enabled, sources: [...sources.values()] };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Stored alerts live in workflowAlerts.ts, which mirrors the server's alert normalizer. The
+// names below are re-exported so existing importers keep one entry point.
+// ---------------------------------------------------------------------------------------------
+
+export {
+    WORKFLOW_ALERT_FIELDS,
+    WORKFLOW_ALERT_MODES,
+    WORKFLOW_ALERT_PRIORITIES,
+    workflowAlertSummary,
+    type WorkflowAlertMode,
+    type WorkflowAlertPriority,
+    type WorkflowAlertSummary,
+} from './workflowAlerts';
+
+export function workflowTaskHasLocalRunner(
+    workflow: WorkflowDefinition,
+    task: WorkflowTask,
+    options: WorkflowEditorOptions,
+): boolean {
+    const runner = task.runner.type === 'inherit' ? {
+        type: workflow.runner_type, selected_agent: workflow.selected_agent,
+        model_endpoint_id: workflow.model_endpoint_id, model_id: workflow.model_id,
+    } : task.runner;
+    if (runner.type === 'agent') {
+        return options.agents.find((agent) => workflowAgentKey(agent) === workflowAgentKey(runner.selected_agent))?.loop_eligible === true;
+    }
+    const eligible = runner.model_endpoint_id || runner.model_id
+        ? options.models.find((model) => model.endpoint_id === runner.model_endpoint_id && model.model_id === runner.model_id)?.loop_eligible
+        : options.default_model?.loop_eligible;
+    return eligible !== false;
+}
+
+export function workflowInputProcessingErrors(
+    workflow: WorkflowDefinition,
+    task: WorkflowTask,
+    options: WorkflowEditorOptions,
+): string[] {
+    const mode = task.input_processing;
+    if (mode === undefined) return [];
+    const label = task.name || 'Task';
+    if (!['full', 'saved_record_report'].includes(mode)) return [`${label}: this large-input processing mode is not supported.`];
+    const errors: string[] = [];
+    if (workflow.definition_version !== 3) errors.push(`${label}: large saved input processing choices require structured definition v3.`);
+    if (!options.supported_input_processing_modes?.includes(mode)) errors.push(`${label}: this server does not support the selected large-input processing mode.`);
+    if (mode === 'full') return errors;
+    if (task.document_action?.type !== 'none') errors.push(`${label}: saved-record reports require No document action; they explain saved data rather than reanalyzing sources.`);
+    if (task.publication) errors.push(`${label}: saved-record reports cannot publish artifacts. Use a separate publication task.`);
+    if (task.output_contract?.kind !== 'text') errors.push(`${label}: saved-record reports require a text output contract.`);
+    const hasCollection = (task.inputs ?? []).some((binding) => {
+        if (!isFlowBinding(binding)) return false;
+        const output = flowSourceOutput(workflow, binding.source);
+        return output && (output.kinds ?? [output.kind]).every((kind) => ['records', 'document_results'].includes(kind));
+    });
+    if (!hasCollection) errors.push(`${label}: saved-record reports require at least one saved records or document-results node-output input or current Repeat state.`);
+    if (!workflowTaskHasLocalRunner(workflow, task, options)) {
+        errors.push(`${label}: saved-record reports require a locally metered model or local agent; hosted runners are not supported.`);
+    }
+    return errors;
+}
+
+export function workflowValidationErrors(
+    draft: WorkflowDefinition,
+    options: WorkflowEditorOptions,
+    /** The loaded record (null when creating). Alerts are validated only when it is supplied. */
+    original?: WorkflowDefinition | null,
+    /** The group's loaded File Sync source list, when the editor has one. */
+    fileSyncListing: WorkflowFileSyncSourceListing | null = null,
+): string[] {
+    const errors: string[] = [];
+    const replayTask = workflowPlanReplayTask(draft);
+    if (!draft.name.trim()) {
+        errors.push('Workflow name is required.');
+    }
+    if (!options.can_manage) {
+        errors.push('You do not have permission to save workflows in this scope.');
+    }
+    if (!(options.supported_definition_versions ?? [1, 2]).includes(draft.definition_version)) {
+        errors.push('This workflow was created by a newer editor and is read-only here.');
+    }
+    if (draft.definition_version === 3) {
+        errors.push(...analyzeWorkflowFlow(draft).errors);
+        flowLoops(draft).forEach(({ node }) => {
+            errors.push(...loopSelectionErrors(node, workflowLoopLimit(options)));
+            const sources = node.iterable.kind === 'documents' ? node.iterable.documents
+                : node.iterable.kind === 'workspace_query' ? node.iterable.scopes : [];
+            if (options.scope.type === 'group' && sources.some((source) =>
+                source.scope_type !== 'group' || source.scope_id !== options.scope.id)) {
+                errors.push('Group workflow loops can select only documents in this explicit group workspace.');
+            }
+        });
+        flowRepeats(draft).forEach(({ node }) => {
+            errors.push(...repeatIterationErrors(node, workflowRepeatLimit(options)));
+            node.state.forEach((slot) => {
+                const contract = slot.output_contract;
+                if (contract.schema) errors.push(...workflowSchemaErrors(contract.schema).map((error) =>
+                    `Repeat ${node.id} state ${slot.name}: ${error}`));
+                if (contract.expected_count !== undefined &&
+                    (!Number.isSafeInteger(contract.expected_count) || contract.expected_count < 0 || contract.kind === 'text')) {
+                    errors.push(`Repeat ${node.id} state ${slot.name}: expected count needs a nonnegative whole number for structured data.`);
+                }
+                if (contract.identity_field && contract.kind !== 'records') {
+                    errors.push(`Repeat ${node.id} state ${slot.name}: identity fields apply only to records.`);
+                }
+            });
+        });
+        const checkCollects = (region: typeof draft.flow) => {
+            if (!isFlowRegion(region)) return;
+            region.nodes.forEach((node) => {
+                if (node.kind === 'collect') {
+                    const contract = node.output_contract;
+                    if (contract.schema) errors.push(...workflowSchemaErrors(contract.schema).map((error) => `Collect ${node.id}: ${error}`));
+                    if (contract.expected_count !== undefined && (!Number.isSafeInteger(contract.expected_count) || contract.expected_count < 0)) {
+                        errors.push('Collect expected count must be a nonnegative whole number.');
+                    }
+                    if (contract.identity_field && contract.kind !== 'records') errors.push('Collect business-key uniqueness is available only for records.');
+                } else if (node.kind === 'for_each' || node.kind === 'repeat_until') checkCollects(node.body);
+                else if (node.kind === 'if') {
+                    checkCollects(node.then);
+                    checkCollects(node.else);
+                }
+            });
+        };
+        checkCollects(draft.flow);
+    }
+    const unsupported = flowUnsupportedReason(draft, options);
+    if (unsupported) errors.push(unsupported);
+    const checkChatExecution = (value: unknown, label: string) => {
+        try {
+            const configuration = normalizeWorkflowChatExecution(value);
+            const catalog = options.chat_execution;
+            const mode = catalog?.modes.find((entry) => entry.id === configuration.mode);
+            if (catalog && (!mode || mode.available === false)) {
+                errors.push(`${label}: ${mode?.reason || 'This execution mode is unavailable.'}`);
+            }
+            if (configuration.mode === 'selected' && catalog) {
+                for (const [ids, choices] of [
+                    [configuration.required_capabilities, catalog.capabilities],
+                    [configuration.visual_requirements, catalog.visual_requirements],
+                ] as const) {
+                    for (const id of ids) {
+                        const choice = choices.find((entry) => entry.id === id);
+                        if (!choice || choice.available === false) {
+                            errors.push(`${label}: ${choice?.label || id} is unavailable${choice?.reason ? `: ${choice.reason}` : '.'}`);
+                        }
+                    }
+                }
+            }
+        } catch (error) {
+            errors.push(`${label}: ${error instanceof Error ? error.message : 'Invalid chat execution settings.'}`);
+        }
+    };
+    if (draft.chat_execution !== undefined) checkChatExecution(draft.chat_execution, 'Workflow chat capabilities');
+    draft.tasks.forEach((task, index) => {
+        if (task.chat_execution !== undefined) checkChatExecution(task.chat_execution, `Task ${index + 1} chat capabilities`);
+    });
+    if (draft.results_delivery !== undefined) {
+        try {
+            normalizeWorkflowResultsDelivery(draft.results_delivery, draft.group_id
+                ? { type: 'group', groupId: String(draft.group_id) } : { type: 'personal' });
+        } catch (error) {
+            errors.push(error instanceof Error ? error.message : 'Invalid results delivery settings.');
+        }
+    }
+    errors.push(...workflowSettingsDraftErrors(draft, options, original ?? null, fileSyncListing));
+    if (replayTask) {
+        return errors;
+    }
+    if (draft.runner_type === 'agent' && !draft.selected_agent) {
+        errors.push('Choose an agent or switch the workflow runner to model.');
+    }
+    if (draft.runner_type === 'agent' && draft.selected_agent &&
+        !options.agents.some((agent) => workflowAgentKey(agent) === workflowAgentKey(draft.selected_agent))) {
+        errors.push('Choose an authorized agent for this workflow scope.');
+    }
+    if (draft.runner_type === 'model' && options.models.length > 0 &&
+        (draft.model_endpoint_id || draft.model_id) &&
+        !options.models.some((model) => model.endpoint_id === draft.model_endpoint_id && model.model_id === draft.model_id)) {
+        errors.push('Choose an authorized model option, or leave the model blank to use the app default.');
+    }
+    if (draft.runner_type === 'model' && !draft.model_endpoint_id && !draft.model_id &&
+        options.default_model?.valid === false) {
+        errors.push('Choose an explicit model because the app default model is not valid for this workflow scope.');
+    }
+    if (draft.tasks.length > options.max_tasks) {
+        errors.push(`This workspace allows at most ${options.max_tasks} tasks per workflow.`);
+    }
+    if (draft.tasks.some((task) => task.approval?.required === true) && draft.durable_execution !== true) {
+        errors.push('Enable durable execution before requiring task approval.');
+    }
+    const taskIds = new Map(draft.tasks.map((task, index) => [task.id, index]));
+    const changedFileTargets = workflowFileSyncProvidesAnalyzeTargets(draft);
+    draft.tasks.forEach((task, index) => {
+        errors.push(...workflowInputProcessingErrors(draft, task, options));
+        if (!task.name.trim()) {
+            errors.push(`Task ${index + 1} needs a name.`);
+        }
+        if (!task.instructions.trim()) {
+            errors.push(`${task.name || `Task ${index + 1}`} needs instructions.`);
+        }
+        if (task.instructions.length > WORKFLOW_TASK_INSTRUCTIONS_LIMIT) {
+            errors.push(`${task.name || `Task ${index + 1}`} exceeds the ${WORKFLOW_TASK_INSTRUCTIONS_LIMIT.toLocaleString()} character instruction limit.`);
+        }
+        if (task.approval?.message && task.approval.message.length > WORKFLOW_APPROVAL_MESSAGE_LIMIT) {
+            errors.push(`${task.name || `Task ${index + 1}`} approval message must be ${WORKFLOW_APPROVAL_MESSAGE_LIMIT.toLocaleString()} characters or fewer.`);
+        }
+        if (task.runner.type === 'agent' && !task.runner.selected_agent) {
+            errors.push(`${task.name || `Task ${index + 1}`} uses an agent runner but no agent is selected.`);
+        }
+        if (task.runner.type === 'agent' && task.runner.selected_agent &&
+            !options.agents.some((agent) => workflowAgentKey(agent) === workflowAgentKey(task.runner.selected_agent))) {
+            errors.push(`${task.name || `Task ${index + 1}`} uses an agent that is not available in this scope.`);
+        }
+        const contract = task.output_contract;
+        if (contract?.expected_count !== undefined &&
+            (!Number.isInteger(contract.expected_count) || contract.expected_count < 0)) {
+            errors.push(`${task.name || `Task ${index + 1}`} needs a nonnegative whole-number expected count.`);
+        }
+        const action = task.document_action;
+        if (action?.relevance_scopes) {
+            errors.push(...documentSelectionErrors({
+                scopes: action.relevance_scopes, filters: { operator: 'and', conditions: [] }, on_empty: 'report',
+            }, 60).map((message) => `${task.name}: ${message}`));
+        }
+        if (action?.document_selection) {
+            errors.push(...documentSelectionErrors(action.document_selection, action.recent_window_minutes ?? 0)
+                .map((message) => `${task.name || `Task ${index + 1}`}: ${message}`));
+            if (action.target_mode !== 'recent') errors.push('Document filters require Recent documents.');
+            if (options.scope.type === 'group' && isTaskDocumentSelection(action.document_selection) && action.document_selection.scopes.some((source) =>
+                source.scope_type !== 'group' || source.scope_id !== options.scope.id)) {
+                errors.push('Group tasks can select only documents in this group workspace.');
+            }
+        }
+        if (action && !['none', 'search', 'analyze', 'comparison', 'merge', 'choose'].includes(String(action.type))) {
+            errors.push(`${task.name || `Task ${index + 1}`} has an unsupported document action type.`);
+        }
+        if (action?.type === 'choose') {
+            if (action.target_mode !== 'recent' && action.target_mode !== 'selected' ||
+                action.target_mode === 'recent' && !action.document_selection) {
+                errors.push(`${task.name}: runtime choice requires selected documents or guided recent criteria.`);
+            }
+            if (action.target_mode === 'selected' && (!action.document_sources?.length ||
+                action.document_sources.length > 50 || action.document_sources.some((source, position) =>
+                    source.document_id !== action.document_ids?.[position]) ||
+                action.document_sources.length !== action.document_ids?.length)) {
+                errors.push(`${task.name}: select between 1 and 50 documents with explicit workspaces for runtime choice.`);
+            }
+        }
+        if (action?.type === 'merge') {
+            if (!workflowMergeEnabled(options)) {
+                errors.push(`${task.name || `Task ${index + 1}`}: File merging is turned off by an administrator.`);
+            }
+            errors.push(...workflowMergeValidationErrors(action, {
+                isFileSyncWorkflow: changedFileTargets,
+                maxSelectedDocuments: workflowMergeDocumentLimit(options),
+            }).map((message) => `${task.name || `Task ${index + 1}`}: ${message}`));
+        }
+        if (action?.type === 'analyze' && action.target_mode !== 'all' && action.target_mode !== 'current_item' && action.target_mode !== 'recent' && !changedFileTargets &&
+            (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
+            errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for Analyze.`);
+        }
+        if (action?.target_mode === 'current_item' && draft.definition_version !== 3) {
+            errors.push('Current-document Analyze requires structured control flow.');
+        }
+        if (draft.definition_version === 3 && enclosingFlowLoopControls(draft, flowTaskNodeId(draft, task.id)).length && !task.publication) {
+            if (!workflowTaskHasLocalRunner(draft, task, options)) {
+                errors.push(`${task.name}: choose a loop-eligible local agent or model. Hosted runners are not supported inside For each or Repeat.`);
+            }
+        }
+        if (action?.type === 'search' && !action.relevance_scopes &&
+            (action.search_mode === 'selected' || action.doc_scope !== 'all') && action.target_mode !== 'recent' &&
+            (!Array.isArray(action.document_ids) || action.document_ids.length === 0)) {
+            errors.push(`${task.name || `Task ${index + 1}`} needs selected evidence for selected Search.`);
+        }
+        if (action?.type === 'comparison' && action.target_mode !== 'recent' &&
+            (!action.left_document_id || !Array.isArray(action.right_document_ids) || action.right_document_ids.length === 0)) {
+            errors.push(`${task.name || `Task ${index + 1}`} needs one source and at least one target document for comparison.`);
+        }
+        if (contract?.expected_count !== undefined && !WORKFLOW_COUNT_KINDS.has(contract.kind)) {
+            errors.push(`${task.name || `Task ${index + 1}`} can set expected count only for records, JSON, or document results.`);
+        }
+        if (contract?.identity_field && contract.kind !== 'records') {
+            errors.push(`${task.name || `Task ${index + 1}`} can set an identity field only for records output.`);
+        }
+        if (contract?.schema) {
+            errors.push(...workflowSchemaErrors(contract.schema).map((message) =>
+                `${task.name || `Task ${index + 1}`} output schema: ${message}`));
+        }
+        if (task.runner.type === 'model' && options.models.length > 0 &&
+            (task.runner.model_endpoint_id || task.runner.model_id) &&
+            !options.models.some((model) => model.endpoint_id === task.runner.model_endpoint_id && model.model_id === task.runner.model_id)) {
+            errors.push(`${task.name || `Task ${index + 1}`} uses a model that is not available in this scope.`);
+        }
+        if (task.runner.type === 'model' && !task.runner.model_endpoint_id && !task.runner.model_id &&
+            options.default_model?.valid === false) {
+            errors.push(`${task.name || `Task ${index + 1}`} must choose an explicit model because the app default model is not valid for this workflow scope.`);
+        }
+        for (const input of task.inputs ?? []) {
+            if (draft.definition_version === 3) continue;
+            if (!isLegacyWorkflowBinding(input)) {
+                errors.push('Structured input bindings require definition version 3.');
+                continue;
+            }
+            if (!WORKFLOW_ALIAS_PATTERN.test(input.name)) {
+                errors.push(`${task.name || `Task ${index + 1}`} has an input alias that must start with a letter and use only letters, numbers, underscores, or dashes, up to 64 characters.`);
+            }
+            const producerIndex = taskIds.get(input.task_id);
+            if (producerIndex === undefined) {
+                errors.push(`${task.name || `Task ${index + 1}`} has an input named ${input.name || 'Input'} that points to a missing task.`);
+            } else if (producerIndex >= index) {
+                errors.push(`${task.name || `Task ${index + 1}`} has an input named ${input.name || 'Input'} that points to a later task. Reorder the producer above it or change the binding.`);
+            } else if (input.output === 'authoritative') {
+                const producer = draft.tasks[producerIndex];
+                const producerKind = producer.output_contract?.kind ?? 'any';
+                if (producerKind !== 'any' && !outputKindMatches(producerKind, input.expected_kind)) {
+                    errors.push(`${task.name || `Task ${index + 1}`} has an authoritative input whose expected kind does not match ${producer.name || 'the producer'}’s declared output kind.`);
+                }
+            }
+        }
+        for (const referenceId of task.reference_ids ?? []) {
+            if (!draft.reference_inputs.some((reference) => reference.id === referenceId)) {
+                errors.push(`${task.name || `Task ${index + 1}`} references a removed shared document.`);
+            }
+        }
+    });
+    draft.reference_inputs.forEach((reference) => {
+        if (!WORKFLOW_ALIAS_PATTERN.test(reference.name)) {
+            errors.push(`Shared reference ${reference.document_id} has an alias that must start with a letter and use only letters, numbers, underscores, or dashes, up to 64 characters.`);
+        }
+    });
+    if (original !== undefined) {
+        // The editor passes the loaded record so alerts are checked exactly as the server will see them.
+        errors.push(...workflowAlertDraftErrors(draft, original, options.scope.type));
+    }
+    return [...new Set(errors)];
+}
+
+export function workflowSchemaErrors(schema: unknown): string[] {
+    if (!isRecord(schema)) {
+        return ['schema must be a JSON object.'];
+    }
+    const serialized = JSON.stringify(schema);
+    if (serialized.length > WORKFLOW_SCHEMA_LIMIT) {
+        return [`schema must be ${WORKFLOW_SCHEMA_LIMIT / 1024} KiB or smaller.`];
+    }
+    const errors: string[] = [];
+    const walk = (value: unknown, path: string) => {
+        if (Array.isArray(value)) {
+            value.forEach((item, index) => walk(item, `${path}[${index}]`));
+            return;
+        }
+        if (!isRecord(value)) {
+            return;
+        }
+        for (const [key, nested] of Object.entries(value)) {
+            if (!WORKFLOW_SCHEMA_ALLOWED_KEYS.has(key)) {
+                errors.push(`${path || 'schema'} uses unsupported keyword ${key}.`);
+                continue;
+            }
+            if (key === 'properties' && isRecord(nested)) {
+                Object.entries(nested).forEach(([property, propertySchema]) =>
+                    walk(propertySchema, `${path || 'schema'}.properties.${property}`));
+            } else if (key === 'items') {
+                walk(nested, `${path || 'schema'}.items`);
+            }
+        }
+    };
+    walk(schema, 'schema');
+    return errors.slice(0, 8);
+}
+
+export function sameWorkflowDefinition(
+    left: WorkflowDefinition,
+    right: WorkflowDefinition,
+): boolean {
+    return sameEditorValue(left, right);
+}
+
+export const WORKFLOW_DELETED_CODE = 'workflow_deleted';
+export const WORKFLOW_DELETED_MESSAGE = 'This workflow was deleted after it was opened, so your changes were not saved.';
+
+/** The machine-readable `code` a workflow route returned beside its error, or '' when there is none. */
+export function workflowErrorCode(cause: unknown): string {
+    return cause instanceof ApiError && isRecord(cause.payload) && typeof cause.payload.code === 'string'
+        ? cause.payload.code : '';
+}
+
+export function workflowErrorMessage(cause: unknown, fallback: string): string {
+    if (cause instanceof ApiError && cause.status === 409 && workflowErrorCode(cause) === WORKFLOW_DELETED_CODE) {
+        // Reloading cannot help: the workflow is gone, and the draft holds the only copy of these edits.
+        return `${cause.message || WORKFLOW_DELETED_MESSAGE} Your draft has been retained. Copy anything you need, then close this editor.`;
+    }
+    if (cause instanceof ApiError && cause.status === 409) {
+        return `${cause.message || 'This workflow could not be updated.'} Your draft has been retained; reload the saved workflow before retrying.`;
+    }
+    return cause instanceof Error ? cause.message : fallback;
+}
+
+export interface WorkflowM365RunAsUser {
+    id: string;
+    display_name: string;
+}
+
+export async function fetchWorkflowM365RunAsUsers(
+    scope: WorkflowScope,
+    signal?: AbortSignal,
+): Promise<WorkflowM365RunAsUser[]> {
+    const path = withScopeQuery(
+        '/api/workflows/m365-run-as-users',
+        scope,
+        new URLSearchParams({ scope: scope.type }),
+    );
+    const response = await api.get<unknown>(path, signal);
+    if (!isRecord(response) || !Array.isArray(response.users)) {
+        throw new Error('The Microsoft 365 account list returned an invalid response.');
+    }
+    const users = new Map<string, WorkflowM365RunAsUser>();
+    for (const entry of response.users) {
+        if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id.trim() ||
+            entry.display_name !== undefined && typeof entry.display_name !== 'string') {
+            throw new Error('The Microsoft 365 account list returned an invalid response.');
+        }
+        users.set(entry.id, {
+            id: entry.id,
+            display_name: typeof entry.display_name === 'string' && entry.display_name.trim()
+                ? entry.display_name
+                : entry.id,
+        });
+    }
+    return [...users.values()];
+}
+
+export async function fetchWorkflowEditorOptions(
+    scope: WorkflowScope,
+    signal?: AbortSignal,
+): Promise<WorkflowEditorOptions> {
+    const path = scope.type === 'group'
+        ? withScopeQuery('/api/group/workflows/editor-options', scope)
+        : '/api/user/workflows/editor-options';
+    const response = await api.get<WorkflowEditorOptions>(path, signal);
+    if (response?.definition_version !== 2 || typeof response.can_manage !== 'boolean' ||
+        !Array.isArray(response.agents) || !Array.isArray(response.models) ||
+        !response.scope || !['personal', 'group'].includes(String(response.scope.type))) {
+        throw new Error('The workflow editor options returned an invalid response.');
+    }
+    const ceiling = response.flow_limits?.max_loop_items;
+    const repeatCeiling = response.flow_limits?.max_repeat_iterations;
+    const repeatHardCeiling = response.flow_limits?.hard_repeat_iterations;
+    if (ceiling !== undefined && (!Number.isInteger(ceiling) || ceiling < 1 || ceiling > 5000) ||
+        repeatCeiling !== undefined && (!Number.isInteger(repeatCeiling) || repeatCeiling < 1 || repeatCeiling > MAX_REPEAT_ITERATIONS) ||
+        repeatHardCeiling !== undefined && repeatHardCeiling !== MAX_REPEAT_ITERATIONS ||
+        [response.supported_node_kinds, response.supported_iterable_kinds, response.supported_query_modes, response.supported_binding_sources,
+            response.supported_input_processing_modes, response.supported_publication_completion_policies]
+            .some((values) => values !== undefined && (!Array.isArray(values) || values.some((value) => typeof value !== 'string'))) ||
+        [...response.agents, ...response.models, response.default_model ?? {}]
+            .some((runner) => !isRecord(runner) || runner.loop_eligible !== undefined && typeof runner.loop_eligible !== 'boolean')) {
+        throw new Error('The workflow editor returned invalid loop capabilities or limits.');
+    }
+    const publicationSources = response.publication_source_capabilities;
+    if (publicationSources !== undefined && (
+        !Array.isArray(publicationSources) || publicationSources.some((capability) =>
+            !isRecord(capability) || typeof capability.source_kind !== 'string' || !capability.source_kind.trim() ||
+            !Array.isArray(capability.output_kinds) || capability.output_kinds.some((kind) => typeof kind !== 'string') ||
+            !Array.isArray(capability.artifact_formats) || capability.artifact_formats.some((format) => typeof format !== 'string')) ||
+        new Set(publicationSources.map((capability) => capability.source_kind)).size !== publicationSources.length
+    )) {
+        throw new Error('The workflow editor returned invalid publication source capabilities.');
+    }
+    const schedule = response.schedule;
+    const textList = (values: unknown) => Array.isArray(values) && values.every((value) => typeof value === 'string');
+    if (schedule !== undefined && (
+        !isRecord(schedule) || !textList(schedule.kinds) || !textList(schedule.units) ||
+        !textList(schedule.frequencies) || !textList(schedule.days_of_week) || !textList(schedule.timezones) ||
+        !Number.isInteger(schedule.min_interval_seconds) || schedule.min_interval_seconds < 1 ||
+        schedule.min_interval_seconds > 86400
+    )) {
+        throw new Error('The workflow editor returned invalid schedule options.');
+    }
+    const merge = response.document_actions?.merge;
+    if (response.document_actions !== undefined && (
+        !isRecord(response.document_actions) || merge !== undefined && (
+            !isRecord(merge) || typeof merge.enabled !== 'boolean' || !Number.isInteger(merge.workflow_max_documents)
+            || Number(merge.workflow_max_documents) < 2 || Number(merge.workflow_max_documents) > 1000
+        )
+    )) {
+        throw new Error('The workflow editor returned invalid document action options.');
+    }
+    return response;
+}
+
+export interface WorkflowLoopSelection {
+    query_mode?: string;
+    exhaustive?: boolean;
+    ranking?: string;
+    candidate_limitations?: string[];
+    candidate_window?: number;
+    semantic_rerank_window?: number;
+    candidate_expansion?: string;
+    candidate_expansion_rounds?: number;
+}
+
+export function workflowLoopSelection(value: unknown): WorkflowLoopSelection | undefined {
+    if (value === undefined || value === null) return undefined;
+    if (!isRecord(value)) throw new Error('The loop selection details returned an unsupported response.');
+    const selection: WorkflowLoopSelection = {};
+    for (const name of ['query_mode', 'ranking', 'candidate_expansion'] as const) {
+        if (value[name] === undefined) continue;
+        if (typeof value[name] !== 'string' || !value[name].trim() || value[name].length > 128) {
+            throw new Error('The loop selection details returned an unsupported response.');
+        }
+        selection[name] = value[name] as string;
+    }
+    for (const name of ['candidate_window', 'semantic_rerank_window', 'candidate_expansion_rounds'] as const) {
+        if (value[name] === undefined) continue;
+        if (typeof value[name] !== 'number' || !Number.isSafeInteger(value[name]) || Number(value[name]) < 0) {
+            throw new Error('The loop selection details returned an unsupported response.');
+        }
+        selection[name] = value[name] as number;
+    }
+    if (value.exhaustive !== undefined) {
+        if (typeof value.exhaustive !== 'boolean') throw new Error('The loop selection details returned an unsupported response.');
+        selection.exhaustive = value.exhaustive;
+    }
+    if (value.candidate_limitations !== undefined) {
+        if (!Array.isArray(value.candidate_limitations) || value.candidate_limitations.length > 100 ||
+            !value.candidate_limitations.every((item) => typeof item === 'string' && item.length <= 2000)) {
+            throw new Error('The loop selection details returned unsupported candidate limitations.');
+        }
+        selection.candidate_limitations = value.candidate_limitations as string[];
+    }
+    return selection;
+}
+
+export interface WorkflowLoopPreview {
+    count: number;
+    count_exact: boolean;
+    limit: number;
+    within_limit: boolean;
+    items: Record<string, unknown>[];
+    error_message?: string;
+    error_code?: string;
+    selection?: WorkflowLoopSelection;
+}
+
+function isWorkflowLoopPreview(response: unknown, maxItems: number): response is WorkflowLoopPreview {
+    return isRecord(response) && typeof response.count === 'number' && Number.isSafeInteger(response.count) && response.count >= 0 &&
+        typeof response.limit === 'number' && Number.isInteger(response.limit) && response.limit >= 1 && response.limit <= MAX_LOOP_ITEMS &&
+        response.limit <= maxItems && typeof response.count_exact === 'boolean' && typeof response.within_limit === 'boolean' &&
+        (!response.within_limit || response.count_exact && response.count <= response.limit) &&
+        (!response.count_exact || response.within_limit === (response.count <= response.limit)) &&
+        Array.isArray(response.items) && response.items.length <= 50 && response.items.every(isRecord);
+}
+
+export async function previewWorkflowLoopInput(
+    scope: WorkflowScope,
+    iterable: WorkflowLoopIterable,
+    maxItems: number,
+    signal?: AbortSignal,
+): Promise<WorkflowLoopPreview> {
+    if (iterable.kind === 'input') throw new Error('Saved collection counts are known only when the loop starts.');
+    try {
+        const response = await api.post<unknown>(workflowUrl(scope, undefined, '/loop-inputs/preview'), {
+            iterable, max_items: maxItems,
+        }, signal);
+        if (!isWorkflowLoopPreview(response, maxItems)) {
+            throw new Error('The loop preview returned an invalid count or item page. No items have been admitted.');
+        }
+        return {
+            count: response.count, count_exact: response.count_exact, limit: response.limit,
+            within_limit: response.within_limit, items: response.items,
+            selection: workflowLoopSelection(response.selection),
+        };
+    } catch (cause: unknown) {
+        if (cause instanceof ApiError && cause.status === 422 && isRecord(cause.payload)) {
+            const payload = cause.payload;
+            const rejected = {
+                count: payload.count, count_exact: payload.count_exact, limit: payload.limit,
+                within_limit: payload.within_limit, items: [],
+            };
+            if (isWorkflowLoopPreview(rejected, maxItems) && !rejected.within_limit && rejected.count > rejected.limit) {
+                return {
+                    ...rejected, error_message: cause.message,
+                    ...(typeof payload.code === 'string' ? { error_code: payload.code } : {}),
+                    selection: workflowLoopSelection(payload.selection),
+                };
+            }
+        }
+        throw cause;
+    }
+}
+
+export async function fetchScopedWorkflows(
+    scope: WorkflowScope,
+    signal?: AbortSignal,
+): Promise<WorkflowDefinition[]> {
+    const response = await api.get<unknown>(workflowUrl(scope), signal);
+    return asArray<unknown>(response, 'workflows')
+        .map((workflow) => normalizeWorkflowDefinition(workflow, scope));
+}
+
+export async function fetchScopedWorkflowCount(scope: WorkflowScope, signal?: AbortSignal): Promise<number> {
+    const response = await api.get<unknown>(workflowUrl(scope), signal);
+    const workflows = Array.isArray(response) ? response : isRecord(response) ? response.workflows : undefined;
+    if (!Array.isArray(workflows) || !workflows.every((workflow) =>
+        isRecord(workflow) && typeof workflow.id === 'string' && workflow.id)) {
+        throw new Error('The workspace returned an invalid workflow list.');
+    }
+    return workflows.length;
+}
+
+export function saveWorkflowDefinition(
+    scope: WorkflowScope,
+    draft: WorkflowDefinition,
+    original: WorkflowDefinition | null,
+) {
+    const payload = workflowForSave(draft, original, scope);
+    return api.post<{ success?: boolean; workflow?: WorkflowDefinition }>(
+        workflowUrl(scope),
+        payload,
+    );
+}
+
+export const startScopedWorkflowRun = (scope: WorkflowScope, workflowId: string) =>
+    api.post<WorkflowRunStartResponse>(workflowUrl(scope, workflowId, '/run'));
+
+export const cancelScopedWorkflow = (scope: WorkflowScope, workflowId: string) =>
+    api.post<unknown>(workflowUrl(scope, workflowId, '/cancel'));
+
+// Asks one run to stop. The workflow-level cancel above stops whichever run is active instead.
+export const cancelScopedWorkflowRun = (scope: WorkflowScope, workflowId: string, runId: string) =>
+    api.post<unknown>(workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/cancel`));
+
+export const deleteScopedWorkflow = (scope: WorkflowScope, workflowId: string) =>
+    api.delete<{ success?: boolean }>(workflowUrl(scope, workflowId));
+
+export async function fetchScopedWorkflowRuns(
+    scope: WorkflowScope,
+    workflowId: string,
+    signal?: AbortSignal,
+) {
+    const response = await api.get<unknown>(workflowUrl(scope, workflowId, '/runs'), signal);
+    return asArray<WorkflowRunSummary>(response, 'runs');
+}
+
+export async function fetchScopedWorkflowRunItems(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    signal?: AbortSignal,
+): Promise<WorkflowRunItem[]> {
+    const response = await api.get<unknown>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/items`),
+        signal,
+    );
+    return asArray<WorkflowRunItem>(response, 'items');
+}
+
+export function fetchWorkflowTaskResult(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    taskId: string,
+    output: WorkflowInputOutput,
+    offset: number,
+    limit: number,
+    signal?: AbortSignal,
+) {
+    const params = new URLSearchParams({
+        output,
+        offset: String(offset),
+        limit: String(limit),
+    });
+    const path = `${workflowRoot(scope)}/${encodeURIComponent(workflowId)}/runs/${encodeURIComponent(runId)}/tasks/${encodeURIComponent(taskId)}/result`;
+    return api.get<WorkflowRunResultPage>(withScopeQuery(path, scope, params), signal);
+}
+
+function checkedRuntimeResponse(response: WorkflowRuntimeResponse): WorkflowRuntimeResponse {
+    const paths = [
+        response?.runtime?.gate?.iteration_path,
+        ...(response?.runtime?.memory?.decisions ?? []).map((decision) => decision.iteration_path),
+    ];
+    if (!response?.runtime || paths.some((path) => path !== undefined && !validWorkflowIterationPath(path))) {
+        throw new Error('The workflow runtime contains an unsupported iteration identity. Reload before making a decision.');
+    }
+    const publication = response.runtime.gate?.publication;
+    if (publication !== undefined && !isWorkflowPublicationStatus(publication)) {
+        throw new Error('The workflow runtime returned an unsupported publication status. Reload before making a decision.');
+    }
+    const gate = response.runtime.gate;
+    const repeat = response.runtime.repeat_progress;
+    const repeatGate = gate?.reason_code === 'repeat_iteration_limit';
+    if (repeat !== undefined && !isWorkflowRepeatProgress(repeat) ||
+        gate?.repeat !== undefined && (!repeatGate || !isWorkflowRepeatProgress(gate.repeat)) ||
+        repeatGate && (response.runtime.state !== 'paused' || gate?.kind !== 'pause' ||
+            typeof gate.id !== 'string' || !gate.id.trim() || gate.id.length > 256 ||
+            !Number.isSafeInteger(gate.attempt) || Number(gate.attempt) < 1 ||
+            !validWorkflowIterationPath(gate.iteration_path) ||
+            !gate.repeat || gate.repeat.state !== 'waiting_manual_continue' ||
+            gate.execution_id !== gate.repeat.execution_id || gate.node_id !== gate.repeat.node_id ||
+            !sameEditorValue(gate.choices, ['continue_repeat', 'cancel'])) ||
+        !repeatGate && gate?.choices.includes('continue_repeat')) {
+        throw new Error('The workflow runtime returned an unsupported Repeat continuation gate or progress. Reload before making a decision.');
+    }
+    if (repeat !== undefined || repeatGate) {
+        const limits = response.runtime.limits;
+        if (!Number.isSafeInteger(response.runtime.version) || response.runtime.version < 0 ||
+            !limits || !Number.isSafeInteger(limits.max_executions) || limits.max_executions < 1 ||
+            limits.max_executions > DEFAULT_FLOW_LIMITS.max_executions ||
+            !Number.isSafeInteger(limits.admitted_count) || limits.admitted_count < 0 ||
+            !Number.isSafeInteger(limits.deadline_seconds) || limits.deadline_seconds < 1 ||
+            limits.deadline_seconds > DEFAULT_FLOW_LIMITS.deadline_seconds || limits.waits_count !== true ||
+            typeof limits.deadline_at !== 'string' || !Number.isFinite(Date.parse(limits.deadline_at)) ||
+            typeof limits.max_repeat_iterations !== 'number' || !Number.isInteger(limits.max_repeat_iterations) ||
+            limits.max_repeat_iterations < 1 || limits.max_repeat_iterations > MAX_REPEAT_ITERATIONS ||
+            repeat && repeat.batch_size > limits.max_repeat_iterations ||
+            gate?.repeat && gate.repeat.batch_size > limits.max_repeat_iterations) {
+            throw new Error('The workflow runtime returned invalid frozen Repeat limits. Reload before making a decision.');
+        }
+    }
+    const repeatCounts = response.runtime.repeat_counts;
+    if (repeatCounts !== undefined && (!isRecord(repeatCounts) || Object.entries(repeatCounts).some(([key, value]) =>
+        !['exhaustion_count', 'continuation_count'].includes(key) || typeof value !== 'number' ||
+        !Number.isSafeInteger(value) || value < 0 || value > DEFAULT_FLOW_LIMITS.max_executions))) {
+        throw new Error('The workflow runtime returned invalid Repeat audit counters.');
+    }
+    const progress = response.runtime.loop_progress;
+    if (progress && (
+        typeof progress.loop_id !== 'string' || !progress.loop_id.trim() ||
+        typeof progress.loop_execution_id !== 'string' || !progress.loop_execution_id.trim() ||
+        ['total', 'completed', 'skipped', 'failed', 'pending', 'limit',
+            ...(progress.completed_empty !== undefined ? ['completed_empty'] : [])].some((key) => {
+            const value = progress[key as keyof WorkflowLoopProgress];
+            return typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0;
+        }) || progress.limit < 1 || progress.limit > 5000 ||
+        progress.current_index !== null && (!Number.isSafeInteger(progress.current_index) || progress.current_index < 0))) {
+        throw new Error('The workflow runtime returned invalid frozen loop progress.');
+    }
+    return response;
+}
+
+export async function fetchWorkflowRuntime(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    signal?: AbortSignal,
+) {
+    return checkedRuntimeResponse(await api.get<WorkflowRuntimeResponse>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime`),
+        signal,
+    ));
+}
+
+export async function decideWorkflowRuntime(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    request: WorkflowRuntimeDecisionRequest,
+    signal?: AbortSignal,
+) {
+    return checkedRuntimeResponse(await api.post<WorkflowRuntimeResponse>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime/decision`),
+        request,
+        signal,
+    ));
+}
+
+export async function resumeWorkflowRuntime(
+    scope: WorkflowScope,
+    workflowId: string,
+    runId: string,
+    request: WorkflowRuntimeResumeRequest,
+    signal?: AbortSignal,
+) {
+    return checkedRuntimeResponse(await api.post<WorkflowRuntimeResponse>(
+        workflowUrl(scope, workflowId, `/runs/${encodeURIComponent(runId)}/runtime/resume`),
+        request,
+        signal,
+    ));
+}
+
+export function documentId(document: WorkspaceDocument): string {
+    return text(document.document_id) || text(document.id);
+}
+
+export function documentTitle(document: WorkspaceDocument): string {
+    return text(document.title) || text(document.file_name) || documentId(document) || 'Untitled document';
+}
+
+export function workflowDocumentScopeId(
+    document: WorkspaceDocument,
+    scopeType: WorkflowReferenceScope,
+    fallback: string,
+): string {
+    const keys = scopeType === 'group'
+        ? ['scope_id', 'group_id']
+        : scopeType === 'public'
+            ? ['scope_id', 'public_workspace_id', 'workspace_id']
+            : ['scope_id', 'user_id', 'owner_id'];
+    for (const key of keys) {
+        const value = document[key];
+        if (typeof value === 'string' && value) {
+            return value;
+        }
+    }
+    return fallback;
+}
+
+export function normalizeDocumentPage(response: DocumentListResponse): {
+    documents: WorkspaceDocument[];
+    totalCount: number;
+} {
+    return {
+        documents: response.documents ?? response.items ?? [],
+        totalCount: response.total_count ?? (response.documents ?? response.items ?? []).length,
+    };
+}
+
+export function scopedDocumentQuery(query: string, page: number): Partial<DocumentQuery> {
+    return {
+        ...DEFAULT_DOCUMENT_QUERY,
+        search: query,
+        page,
+        pageSize: 10,
+    };
+}
+
+export function documentQueryString(query: string, page: number): string {
+    return buildDocumentListParams(scopedDocumentQuery(query, page));
+}

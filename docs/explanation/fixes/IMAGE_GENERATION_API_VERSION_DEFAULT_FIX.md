@@ -1,6 +1,31 @@
 # Image Generation API Version Default Fix (v0.261.047)
 
-Fixed in version: **0.261.047**
+Fixed in version: **0.261.047** (Development) and **0.261.210** (React V2)
+
+## React V2
+
+React V2 manages image generation through AI Connections, so the same change reaches three more
+places in **0.261.210**:
+
+- `normalize_image_connection_api_version_settings()` in `functions_settings.py` runs on every
+  settings load. It upgrades a connection's image operation profile
+  (`connection.operation_settings.image_generation.api_version`) that is exactly
+  `2024-12-01-preview`, which the legacy image import copied from the old default. APIM
+  profiles, other versions and blank versions are left alone. A blank version already falls back
+  to `2025-04-01-preview` at request time.
+- `LEGACY_DEFAULT_IMAGES_API_VERSION` in `functions_image_api_route.py`, the fallback for
+  unmigrated legacy direct Images settings with no version, now equals
+  `DEFAULT_IMAGES_API_VERSION` (`2025-04-01-preview`). An unmigrated legacy APIM route with no
+  version keeps its `2024-12-01-preview` fallback, now named
+  `LEGACY_APIM_DEFAULT_IMAGES_API_VERSION`, because the gateway decides which versions it
+  accepts.
+- The V2 admin field for `azure_openai_image_gen_api_version` in `admin_settings_fields.py`
+  shows the new default, and `docs/admin/ai-models.md` and
+  `docs/explanation/features/IMAGE_GENERATION_RESPONSES_MODELS.md` describe the upgrade.
+
+`functional_tests/test_image_generation_api_version_default.py` covers the connection profile
+migration, including a real settings load that persists it, and
+`functional_tests/test_image_generation_sdk_http.py` expects the new fallback on the wire.
 
 ## Issue Description
 

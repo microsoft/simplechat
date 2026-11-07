@@ -11,16 +11,23 @@ import time
 import logging
 import functools
 import inspect
+import math
 import re
 import threading
 import uuid
+import asyncio
+from contextlib import contextmanager
+from contextvars import ContextVar
+from agent_execution_context import current_agent_execution
 from typing import Any, Dict, List, Optional, Callable
 from datetime import datetime
 from dataclasses import dataclass, asdict
+from decimal import Decimal
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from functions_debug import debug_print
+from functions_m365_citations import captured_m365_records
 
 
 REDACTED_INVOCATION_VALUE = "***REDACTED***"
@@ -62,7 +69,11 @@ SECRET_ASSIGNMENT_RE = re.compile(
     r"(?i)\b(api[-_]?key|access[-_]?token|client[-_]?secret|connection[-_]?string|password|secret|subscription[-_]?key|token)=([^&\s,;]+)"
 )
 AUTHORIZATION_VALUE_RE = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+")
-# Azure Maps tile templates carry an encrypted, expiring proxy token the browser needs for tiles.
+# The root-relative tile template the Azure Maps action returns starts with this
+# (AZURE_MAPS_TILE_PROXY_ROUTE in functions_azure_maps.py). Its token is not a credential:
+# it is encrypted with the app's secret key, expires, only works on SimpleChat's own
+# signed-in tile proxy, and the browser needs it to load map tiles. Redacting it left every
+# stored map without tiles, so only that token, in that position, is kept.
 AZURE_MAPS_TILE_PROXY_QUERY_PREFIX = "/api/azure-maps/tile?"
 
 
@@ -73,6 +84,57 @@ class PluginInvocationResult(str):
         instance = super().__new__(cls, value)
         instance.internal_metadata = dict(internal_metadata or {})
         return instance
+
+
+@dataclass
+class _PluginInvocationOutcome:
+    error_message: Optional[str] = None
+
+
+_plugin_invocation_outcome: ContextVar[Optional[_PluginInvocationOutcome]] = ContextVar(
+    "plugin_invocation_outcome", default=None,
+)
+
+
+@contextmanager
+def _capture_plugin_invocation_outcome(outcome=None):
+    outcome = outcome if outcome is not None else _PluginInvocationOutcome()
+    token = _plugin_invocation_outcome.set(outcome)
+    try:
+        yield outcome
+    finally:
+        _plugin_invocation_outcome.reset(token)
+
+
+def report_plugin_invocation_failure(error_message: str) -> None:
+    """Report a connector-declared failure without changing its returned value or raising.
+
+    Only the current decorated invocation is affected. Direct helper callers without a
+    logger scope retain their existing behavior; result dictionaries are never classified.
+    """
+    if not isinstance(error_message, str) or not error_message.strip():
+        raise ValueError("A plugin failure requires an error message.")
+    outcome = _plugin_invocation_outcome.get()
+    if outcome is not None and outcome.error_message is None:
+        outcome.error_message = error_message
+
+
+def _validate_numeric_plugin_result(value: Any) -> None:
+    """Reject raw non-finite numbers, without interpreting strings or business fields."""
+    pending = [value]
+    visited = set()
+    while pending:
+        item = pending.pop()
+        if (
+            isinstance(item, float) and not math.isfinite(item)
+            or isinstance(item, Decimal) and not item.is_finite()
+        ):
+            raise ValueError("Tool returned an invalid non-finite numeric result. No valid numeric result was produced.")
+        if isinstance(item, (dict, list, tuple, set, frozenset)):
+            identity = id(item)
+            if identity not in visited:
+                visited.add(identity)
+                pending.extend(item.values() if isinstance(item, dict) else item)
 
 
 def _normalize_sensitive_key(key: Any) -> str:
@@ -182,6 +244,7 @@ class PluginInvocationStart:
     timestamp: str
     conversation_id: Optional[str] = None
     invocation_id: Optional[str] = None
+    provenance: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -210,6 +273,10 @@ class PluginInvocation:
     conversation_id: Optional[str] = None
     invocation_id: Optional[str] = None
     error_message: Optional[str] = None
+    provenance: Optional[Dict[str, Any]] = None
+    # Citation records a Microsoft 365 plugin attached to its own result, kept before any
+    # serialization or truncation; None for every other tool.
+    m365_items: Optional[List[Dict[str, Any]]] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for logging."""
@@ -364,6 +431,9 @@ class PluginInvocationLogger:
         
     def log_invocation(self, invocation: PluginInvocation):
         """Log a plugin invocation to Application Insights and local history."""
+        frame = current_agent_execution()
+        if frame is not None:
+            frame.budget.record_tool_invocation(invocation)
         # Add to local history
         self.invocations.append(invocation)
 
@@ -651,6 +721,9 @@ class PluginInvocationLogger:
         key = f"{invocation_start.user_id}:{invocation_start.conversation_id}"
         with self._callback_lock:
             callbacks = list(self._start_callbacks.get(key, []))
+            root_id = (getattr(invocation_start, 'provenance', None) or {}).get('root_id')
+            if root_id:
+                callbacks.extend(self._start_callbacks.get(f'{key}:{root_id}', []))
         for cb in callbacks:
             try:
                 cb(invocation_start)
@@ -662,6 +735,9 @@ class PluginInvocationLogger:
         key = f"{invocation.user_id}:{invocation.conversation_id}"
         with self._callback_lock:
             callbacks = list(self._callbacks.get(key, []))
+            root_id = (getattr(invocation, 'provenance', None) or {}).get('root_id')
+            if root_id:
+                callbacks.extend(self._callbacks.get(f'{key}:{root_id}', []))
         for cb in callbacks:
             try:
                 cb(invocation)
@@ -680,6 +756,9 @@ def get_plugin_logger() -> PluginInvocationLogger:
 
 def _resolve_invocation_context(conversation_id: Optional[str] = None):
     """Resolve user and conversation context for plugin invocation logging."""
+    frame = current_agent_execution()
+    if frame is not None:
+        return frame.identity.user_id, frame.identity.conversation_id
     try:
         user_id = get_current_user_id()
     except Exception:
@@ -701,6 +780,7 @@ def log_plugin_invocation_started(
     parameters: Dict[str, Any],
     conversation_id: Optional[str] = None,
     invocation_id: Optional[str] = None,
+    provenance: Optional[Dict[str, Any]] = None,
 ):
     """Convenience function to log the start of a plugin invocation."""
     user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
@@ -713,9 +793,28 @@ def log_plugin_invocation_started(
         conversation_id=resolved_conversation_id,
         timestamp=datetime.utcnow().isoformat(),
         invocation_id=invocation_id or str(uuid.uuid4()),
+        provenance=provenance or _execution_provenance(),
     )
 
     _plugin_logger.log_invocation_start(invocation_start)
+
+
+def _capture_m365_items(result: Any) -> Optional[List[Dict[str, Any]]]:
+    """Keep the citation records a Microsoft 365 plugin attached to its own result.
+
+    Records come only from the result object the plugin built from Microsoft Graph data. Nothing
+    is read back out of a result's shape, which any other tool could imitate. Never fails the call.
+    """
+    try:
+        items = captured_m365_records(result)
+    except Exception as exc:
+        log_event(
+            "[PLUGIN_INVOCATION] Microsoft 365 citation records could not be captured",
+            extra={"error_type": type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return None
+    return items or None
 
 
 def log_plugin_invocation(plugin_name: str, function_name: str, 
@@ -723,7 +822,8 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
                          start_time: float, end_time: float, 
                          success: bool = True, error_message: Optional[str] = None,
                          conversation_id: Optional[str] = None,
-                         invocation_id: Optional[str] = None):
+                         invocation_id: Optional[str] = None,
+                         provenance: Optional[Dict[str, Any]] = None):
     """Convenience function to log a plugin invocation."""
     user_id, resolved_conversation_id = _resolve_invocation_context(conversation_id)
     
@@ -740,10 +840,23 @@ def log_plugin_invocation(plugin_name: str, function_name: str,
         invocation_id=invocation_id or str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat(),
         success=success,
-        error_message=error_message
+        error_message=error_message,
+        provenance=provenance or _execution_provenance(),
+        m365_items=_capture_m365_items(result) if success else None,
     )
     
     _plugin_logger.log_invocation(invocation)
+
+
+def _execution_provenance():
+    frame = current_agent_execution()
+    if frame is None:
+        return None
+    return {
+        "root_id": frame.budget.root_id,
+        "parent_invocation_id": frame.invocation_id,
+        "depth": frame.depth,
+    }
 
 
 def plugin_function_logger(plugin_name: str):
@@ -832,7 +945,7 @@ def plugin_function_logger(plugin_name: str):
                 level=logging.INFO
             )
 
-        def _log_failure(function_name: str, error: Exception, duration_ms: float):
+        def _log_failure(function_name: str, error: Any, duration_ms: float):
             log_event(
                 f"[PLUGIN_FUNCTION_LOGGER] Function failed with error",
                 extra={
@@ -852,6 +965,27 @@ def plugin_function_logger(plugin_name: str):
                 or getattr(func, '__name__', 'unknown')
             )
 
+        def _log_completion(function_name, result, parameters, start_time, invocation_id, outcome):
+            _validate_numeric_plugin_result(result)
+            end_time = time.time()
+            duration_ms = (end_time - start_time) * 1000
+            error_message = sanitize_plugin_invocation_value(outcome.error_message)
+            if error_message is None:
+                _log_success(function_name, result, duration_ms)
+            else:
+                _log_failure(function_name, error_message, duration_ms)
+            log_plugin_invocation(
+                plugin_name=plugin_name,
+                function_name=function_name,
+                parameters=parameters,
+                result=result,
+                start_time=start_time,
+                end_time=end_time,
+                success=error_message is None,
+                error_message=error_message,
+                invocation_id=invocation_id,
+            )
+
         if is_async_callable:
             @functools.wraps(func)
             async def wrapper(*args, **kwargs):
@@ -869,25 +1003,13 @@ def plugin_function_logger(plugin_name: str):
                 )
 
                 try:
-                    result = await func(*args, **kwargs)
-                    end_time = time.time()
-                    duration_ms = (end_time - start_time) * 1000
-                    _log_success(function_name, result, duration_ms)
-
-                    log_plugin_invocation(
-                        plugin_name=plugin_name,
-                        function_name=function_name,
-                        parameters=parameters,
-                        result=result,
-                        start_time=start_time,
-                        end_time=end_time,
-                        success=True,
-                        invocation_id=invocation_id,
-                    )
+                    with _capture_plugin_invocation_outcome() as outcome:
+                        result = await func(*args, **kwargs)
+                    _log_completion(function_name, result, parameters, start_time, invocation_id, outcome)
 
                     return result
 
-                except Exception as e:
+                except (Exception, asyncio.CancelledError) as e:
                     end_time = time.time()
                     duration_ms = (end_time - start_time) * 1000
                     _log_failure(function_name, e, duration_ms)
@@ -900,7 +1022,7 @@ def plugin_function_logger(plugin_name: str):
                         start_time=start_time,
                         end_time=end_time,
                         success=False,
-                        error_message=str(e),
+                        error_message="Agent execution was cancelled." if isinstance(e, asyncio.CancelledError) else str(e),
                         invocation_id=invocation_id,
                     )
 
@@ -922,7 +1044,8 @@ def plugin_function_logger(plugin_name: str):
                 )
 
                 try:
-                    result = func(*args, **kwargs)
+                    with _capture_plugin_invocation_outcome() as outcome:
+                        result = func(*args, **kwargs)
                     if inspect.isawaitable(result):
                         log_event(
                             "[PLUGIN_FUNCTION_LOGGER] Awaitable returned from sync wrapper; deferring completion logging",
@@ -936,22 +1059,13 @@ def plugin_function_logger(plugin_name: str):
 
                         async def _await_and_log(awaitable_result):
                             try:
-                                awaited_value = await awaitable_result
-                                end_time = time.time()
-                                duration_ms = (end_time - start_time) * 1000
-                                _log_success(function_name, awaited_value, duration_ms)
-                                log_plugin_invocation(
-                                    plugin_name=plugin_name,
-                                    function_name=function_name,
-                                    parameters=parameters,
-                                    result=awaited_value,
-                                    start_time=start_time,
-                                    end_time=end_time,
-                                    success=True,
-                                    invocation_id=invocation_id,
+                                with _capture_plugin_invocation_outcome(outcome):
+                                    awaited_value = await awaitable_result
+                                _log_completion(
+                                    function_name, awaited_value, parameters, start_time, invocation_id, outcome,
                                 )
                                 return awaited_value
-                            except Exception as await_error:
+                            except (Exception, asyncio.CancelledError) as await_error:
                                 end_time = time.time()
                                 duration_ms = (end_time - start_time) * 1000
                                 _log_failure(function_name, await_error, duration_ms)
@@ -963,27 +1077,14 @@ def plugin_function_logger(plugin_name: str):
                                     start_time=start_time,
                                     end_time=end_time,
                                     success=False,
-                                    error_message=str(await_error),
+                                    error_message="Agent execution was cancelled." if isinstance(await_error, asyncio.CancelledError) else str(await_error),
                                     invocation_id=invocation_id,
                                 )
                                 raise
 
                         return _await_and_log(result)
 
-                    end_time = time.time()
-                    duration_ms = (end_time - start_time) * 1000
-                    _log_success(function_name, result, duration_ms)
-
-                    log_plugin_invocation(
-                        plugin_name=plugin_name,
-                        function_name=function_name,
-                        parameters=parameters,
-                        result=result,
-                        start_time=start_time,
-                        end_time=end_time,
-                        success=True,
-                        invocation_id=invocation_id,
-                    )
+                    _log_completion(function_name, result, parameters, start_time, invocation_id, outcome)
 
                     return result
 

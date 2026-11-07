@@ -22,6 +22,7 @@ from functions_workspace_identities import (
     validate_action_identity_reference,
 )
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
+from functions_agent_delegation import validate_agent_action_for_scope
 from json_schema_validation import is_legacy_msgraph_type, normalize_m365_action_payload, validate_legacy_action_update
 from functions_legacy_action_management import (
     authorize_scoped_mcp_secret_read,
@@ -30,6 +31,7 @@ from functions_legacy_action_management import (
     validate_scoped_mcp_action,
 )
 from functions_settings import get_settings
+from functions_mcp_tool_pinning import validate_mcp_tool_pinning_for_save
 
 
 def _clean_action(action, return_type, action_id=None):
@@ -141,6 +143,10 @@ def save_global_action(action_data, user_id=None):
         if not user_id:
             user_id = "system"
 
+        action_data = validate_agent_action_for_scope(
+            action_data, user_id=user_id, scope_type="global", scope_id="global",
+        )
+
         # Ensure required fields
         if not action_data.get('id'):
             action_data['id'] = str(uuid.uuid4())
@@ -160,6 +166,7 @@ def save_global_action(action_data, user_id=None):
             existing_action = None
 
         validate_legacy_action_update(submitted_action, existing_action)
+        validate_mcp_tool_pinning_for_save(action_data, existing_action)
         legacy_type = is_legacy_msgraph_type(action_data.get('type'))
         if legacy_type:
             action_data['type'] = 'msgraph'

@@ -1,0 +1,651 @@
+# functions_workflow_definitions.py
+"""Versioned, server-owned workflow data-flow definitions."""
+
+import hashlib
+import json
+import re
+from collections.abc import Mapping
+from datetime import datetime
+
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
+
+from functions_workflow_configuration import (
+    WorkflowConfigurationError, normalize_chat_execution, workflow_configuration_for_save,
+)
+from functions_conversation_references import ConversationReferenceError, normalize_conversation_references
+from functions_orchestration_conversation_capabilities import normalize_conversation_send
+from public_source_policy import ALL_AVAILABLE, current_public_source_policy, normalize_public_source_policy
+
+WORKFLOW_DEFINITION_VERSION = 2
+WORKFLOW_BINDABLE_OUTPUTS = frozenset({"authoritative", "text", "records", "json", "documents"})
+WORKFLOW_OUTPUT_KINDS = frozenset({"any", "text", "records", "json", "document_results"})
+WORKFLOW_INPUT_PROCESSING_MODES = frozenset({"full", "saved_record_report"})
+WORKFLOW_PUBLICATION_COMPLETION_POLICIES = ("submitted", "approved", "indexed_ready")
+WORKFLOW_PUBLICATION_SOURCE_KINDS = ("native_analysis", "saved_output")
+WORKFLOW_FLOW_TASK_FIELDS = frozenset({"inputs", "reference_ids", "conversation_reference_ids", "conversation_send", "output_contract", "approval", "input_processing"})
+WORKFLOW_DEFINITION_FIELDS = (
+    "name", "description", "task_prompt", "tasks", "runner_type", "chat_capabilities_enabled",
+    "chat_execution", "results_delivery",
+    "trigger_type", "is_enabled", "schedule", "error_handling", "document_action", "analyze",
+    "file_sync", "selected_agent", "model_endpoint_id", "model_id", "model_provider",
+    "url_access_enabled", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation",
+    "definition_version", "reference_inputs", "conversation_reference_inputs", "durable_execution", "flow", "limits",
+    "m365_run_as_user_id", "public_source_policy",
+)
+SCHEMA_KEYWORDS = frozenset({
+    "type", "properties", "required", "additionalProperties", "items",
+    "minItems", "maxItems", "minLength", "maxLength", "minimum", "maximum",
+    "enum", "title", "description",
+})
+MAX_SCHEMA_BYTES = 32768
+MAX_DEFINITION_REFERENCES = 100
+MAX_TASK_BINDINGS = 100
+_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
+
+
+class WorkflowDefinitionError(ValueError):
+    """A safe, actionable definition error which can be shown in the editor."""
+
+    code = "invalid_workflow_definition"
+
+    def __init__(self, public_message):
+        self.public_message = public_message
+        super().__init__(public_message)
+
+
+class WorkflowDefinitionConflict(WorkflowDefinitionError):
+    """The editor is stale or cannot preserve the stored definition."""
+
+    code = "workflow_definition_conflict"
+
+
+WORKFLOW_DELETED_MESSAGE = "This workflow was deleted after it was opened, so your changes were not saved."
+
+
+class WorkflowDeletedConflict(WorkflowDefinitionConflict):
+    """A save names a workflow that was deleted after the editor opened it, so it must not recreate it."""
+
+    code = "workflow_deleted"
+
+    def __init__(self, public_message=WORKFLOW_DELETED_MESSAGE):
+        super().__init__(public_message)
+
+
+class WorkflowPublicValidationError(ValueError):
+    """A reviewed, data-free workflow settings error which a save route may return as written.
+
+    Its message names only positions and fixed limits, never caller-supplied text. It remains a
+    ``ValueError`` so every existing caller that handles ``ValueError`` behaves as before. The save
+    routes return ``code`` beside the message, so clients can tell the rule families apart.
+    """
+
+    code = "invalid_workflow_settings"
+
+    def __init__(self, public_message):
+        self.public_message = public_message
+        super().__init__(public_message)
+
+
+class WorkflowAlertValidationError(WorkflowPublicValidationError):
+    """A reviewed alert settings error, raised by the alert normalizer."""
+
+    code = "invalid_workflow_alerts"
+
+
+WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_MESSAGE = (
+    "A selected File Sync source is no longer available. Remove it and save again."
+)
+
+
+class WorkflowSourceUnavailableError(WorkflowPublicValidationError):
+    """A selected File Sync source, or the workspace that owned it, was deleted after it was chosen.
+
+    Its own code lets an editor refresh its source list and mark the source, without matching text.
+    """
+
+    code = "file_sync_source_unavailable"
+
+    def __init__(self, public_message=WORKFLOW_FILE_SYNC_SOURCE_UNAVAILABLE_MESSAGE):
+        super().__init__(public_message)
+
+
+class WorkflowCadenceError(WorkflowPublicValidationError):
+    """A proposed workflow would run more often than the shared administrator minimum allows."""
+
+    code = "cadence_below_minimum"
+
+
+# Server-owned provenance. Only a server create path sets ``origin``; no save or update payload can.
+WORKFLOW_ORIGIN_SOURCES = ("orchestration",)
+WORKFLOW_ORIGIN_FIELDS = ("source", "conversation_id", "orchestration_run_id", "proposal_id", "created_at", "edited")
+# Written only by the hand-off create path, and only as ``True``: the workflow was created for a single
+# run. A client value is always dropped, and an editor save keeps the stored one.
+WORKFLOW_ORIGIN_HANDOFF_FIELDS = ("one_time",)
+WORKFLOW_ORIGIN_ID_MAX_LENGTH = 128
+WORKFLOW_ORIGIN_TIMESTAMP_MAX_LENGTH = 64
+# The authored fields whose change means the owner edited what orchestration created: the name and
+# description, the alert settings, error handling and every execution fingerprint input except the
+# record's own ids. Enabling or pausing the workflow is not an edit, and neither is runtime progress.
+WORKFLOW_ORIGIN_MATERIAL_FIELDS = (
+    "name", "description", "alert_priority", "alert_mode", "alert_rules", "alert_evaluation", "error_handling",
+    "task_prompt", "tasks", "runner_type", "selected_agent", "schedule", "trigger_type", "document_action",
+    "file_sync", "chat_capabilities_enabled", "chat_execution", "results_delivery", "url_access_enabled", "model_endpoint_id", "model_id",
+    "definition_version", "reference_inputs", "conversation_reference_inputs", "durable_execution", "flow", "limits", "m365_run_as_user_id",
+)
+
+
+def normalize_publication_completion_policy(value):
+    if not isinstance(value, str) or value not in WORKFLOW_PUBLICATION_COMPLETION_POLICIES:
+        raise WorkflowDefinitionError("Publication completion must be submitted, approved, or indexed_ready.")
+    return value
+
+
+def normalize_publication_source_kind(value):
+    if not isinstance(value, str) or value not in WORKFLOW_PUBLICATION_SOURCE_KINDS:
+        raise WorkflowDefinitionError("Publication source must be native_analysis or saved_output.")
+    return value
+
+
+def validate_workflow_publication_completion(workflow):
+    for task in workflow.get("tasks") or []:
+        if not isinstance(task, dict):
+            raise WorkflowDefinitionError("A workflow task must be an object.")
+        publication = task.get("publication")
+        if not isinstance(publication, dict):
+            continue
+        if "source_kind" in publication:
+            normalize_publication_source_kind(publication["source_kind"])
+        if publication.get("source_kind") == "saved_output":
+            if workflow.get("definition_version") != 3 or workflow.get("durable_execution") is not True:
+                raise WorkflowDefinitionError("Saved-output publication requires a version-3 durable workflow.")
+            if publication.get("artifact_format") != "json":
+                raise WorkflowDefinitionError("Saved-output publication currently supports exact JSON records only.")
+        if "completion_policy" in publication:
+            normalize_publication_completion_policy(publication["completion_policy"])
+            if workflow.get("definition_version") != 3 or workflow.get("durable_execution") is not True:
+                raise WorkflowDefinitionError("Publication completion policies require a version-3 durable workflow.")
+
+
+def workflow_output_kind_matches(actual, expected):
+    return expected == "any" or actual == expected or (
+        expected == "json" and actual in {"records", "document_results"}
+    )
+
+
+def workflow_definition_revision(workflow):
+    """An authored-content revision unaffected by runtime progress updates."""
+    document = {field: workflow[field] for field in WORKFLOW_DEFINITION_FIELDS if field in workflow}
+    encoded = json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False)
+    return hashlib.sha256(encoded.encode("ascii")).hexdigest()
+
+
+def workflow_definition_for_editor(workflow):
+    if not isinstance(workflow, Mapping):
+        return workflow
+    return {**workflow, "definition_revision": workflow_definition_revision(workflow)}
+
+
+def _text(value, label, max_length=128):
+    if not isinstance(value, str) or not value.strip() or len(value) > max_length:
+        raise WorkflowDefinitionError(f"{label} must be nonempty text of at most {max_length} characters.")
+    return value.strip()
+
+
+def _name(value, label):
+    name = _text(value, label, 64)
+    if not _NAME.fullmatch(name):
+        raise WorkflowDefinitionError(f"{label} must start with a letter and use letters, numbers, underscores or hyphens.")
+    return name
+
+
+def _boolean(value, label):
+    if not isinstance(value, bool):
+        raise WorkflowDefinitionError(f"{label} must be true or false.")
+    return value
+
+
+def _object(value, allowed_fields, label):
+    if not isinstance(value, dict):
+        raise WorkflowDefinitionError(f"{label} must be an object.")
+    if value.keys() - allowed_fields:
+        raise WorkflowDefinitionError(f"{label} contains unsupported fields.")
+    return value
+
+
+def _unique_identifiers(values, label):
+    if not isinstance(values, list):
+        raise WorkflowDefinitionError(f"{label} must be a list.")
+    identifiers = [_text(value, label) for value in values]
+    if len(set(identifiers)) != len(identifiers):
+        raise WorkflowDefinitionError(f"{label} must not contain duplicates.")
+    return identifiers
+
+
+def _origin_timestamp(value):
+    message = "Workflow origin created_at must be an ISO 8601 timestamp."
+    if not isinstance(value, str) or not value.strip() or len(value) > WORKFLOW_ORIGIN_TIMESTAMP_MAX_LENGTH:
+        raise WorkflowDefinitionError(message)
+    try:
+        datetime.fromisoformat(value.strip())
+    except ValueError as exc:
+        raise WorkflowDefinitionError(message) from exc
+    return value.strip()
+
+
+def normalize_workflow_origin(value, *, one_time=False):
+    """Validate the provenance a server create path records. It is never read from a save payload.
+
+    A ``one_time`` key in ``value`` is always dropped; only the hand-off create path records it, by
+    passing ``one_time=True``.
+    """
+    if isinstance(value, dict) and "one_time" in value:
+        value = {key: item for key, item in value.items() if key != "one_time"}
+    origin = _object(value, set(WORKFLOW_ORIGIN_FIELDS), "Workflow origin")
+    if origin.get("source") not in WORKFLOW_ORIGIN_SOURCES:
+        raise WorkflowDefinitionError("Workflow origin source is not supported.")
+    normalized = {
+        "source": origin["source"],
+        "conversation_id": _text(
+            origin.get("conversation_id"), "Workflow origin conversation id", WORKFLOW_ORIGIN_ID_MAX_LENGTH,
+        ),
+        "orchestration_run_id": _text(
+            origin.get("orchestration_run_id"), "Workflow origin run id", WORKFLOW_ORIGIN_ID_MAX_LENGTH,
+        ),
+        "proposal_id": _text(origin.get("proposal_id"), "Workflow origin proposal id", WORKFLOW_ORIGIN_ID_MAX_LENGTH),
+        "created_at": _origin_timestamp(origin.get("created_at")),
+        "edited": _boolean(origin.get("edited", False), "Workflow origin edited flag"),
+    }
+    if one_time is True:
+        normalized["one_time"] = True
+    return normalized
+
+
+def _canonical_json(value):
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str)
+
+
+def workflow_origin_material_change(existing, workflow):
+    """Whether a save changes an authored field that marks a created-from-chat workflow as edited."""
+    existing = existing if isinstance(existing, Mapping) else {}
+    return any(
+        _canonical_json(workflow.get(field)) != _canonical_json(existing.get(field))
+        for field in WORKFLOW_ORIGIN_MATERIAL_FIELDS
+    )
+
+
+def apply_workflow_origin(workflow, existing=None, origin=None, *, one_time=False):
+    """Record server-owned provenance on a built workflow document.
+
+    A new workflow takes the ``origin`` its server create path supplies, ``edited`` included:
+    a proposal the user changed in the workflow editor before accepting it is recorded as
+    edited from the start. A save of an existing workflow leaves the stored origin to the store
+    merge, which preserves it, and writes it only once: to mark the owner's first material
+    change as ``edited``. The origin is outside the definition revision and the Microsoft 365
+    fingerprint, so recording it never invalidates an editor's revision or a Run as approval.
+    Only the hand-off create path passes ``one_time=True``.
+    """
+    if origin is not None:
+        if existing:
+            raise WorkflowDefinitionError("Only a new workflow can record where it came from.")
+        workflow["origin"] = normalize_workflow_origin(origin, one_time=one_time)
+        return workflow
+    stored = (existing or {}).get("origin")
+    if (
+        isinstance(stored, Mapping)
+        and stored.get("edited") is not True
+        and workflow_origin_material_change(existing, workflow)
+    ):
+        workflow["origin"] = {**stored, "edited": True}
+    return workflow
+
+
+def existing_server_created_workflow(record, proposal_id, *, one_time=False):
+    """Return the workflow a repeated server create found under its id, if the same proposal made it.
+
+    A server create path derives the workflow id from the proposal it accepts, so a record already
+    under that id normally means an earlier accept succeeded. A record from any other proposal, or
+    one being deleted, is a conflict: the create never adopts or revives it. A hand-off create
+    (``one_time=True``) adopts only a one-time record, and every other create only a record that
+    is not one.
+    """
+    record = record if isinstance(record, Mapping) else {}
+    if record.get("deleting"):
+        raise WorkflowDefinitionConflict("This workflow is being deleted. Your draft was not saved.")
+    stored_origin = record.get("origin") if isinstance(record.get("origin"), Mapping) else {}
+    proposal_id = str(proposal_id or "").strip()
+    if not proposal_id or stored_origin.get("proposal_id") != proposal_id:
+        raise WorkflowDefinitionConflict("A different workflow already uses this id.")
+    if (stored_origin.get("one_time") is True) is not (one_time is True):
+        raise WorkflowDefinitionConflict("A different workflow already uses this id.")
+    return record
+
+
+def normalize_workflow_input_processing(value):
+    """Validate an explicit task policy without supplying an authored default."""
+    if not isinstance(value, str) or value not in WORKFLOW_INPUT_PROCESSING_MODES:
+        raise WorkflowDefinitionError("Task input_processing must be full or saved_record_report.")
+    return value
+
+
+def normalize_workflow_output_schema(schema):
+    """A bounded JSON Schema subset without references, code, or regex evaluation."""
+    if not isinstance(schema, dict):
+        raise WorkflowDefinitionError("Output schema must be a JSON object.")
+    try:
+        serialized = json.dumps(schema, ensure_ascii=True, allow_nan=False)
+    except (TypeError, ValueError, RecursionError) as exc:
+        raise WorkflowDefinitionError("Output schema must contain finite JSON values.") from exc
+    if len(serialized.encode("ascii")) > MAX_SCHEMA_BYTES:
+        raise WorkflowDefinitionError(f"Output schema must be at most {MAX_SCHEMA_BYTES} bytes.")
+
+    def validate(node, depth=0):
+        if depth > 12 or not isinstance(node, (dict, bool)):
+            raise WorkflowDefinitionError("Output schema nesting is invalid or exceeds 12 levels.")
+        if isinstance(node, bool):
+            return
+        if node.keys() - SCHEMA_KEYWORDS:
+            raise WorkflowDefinitionError(
+                "Output schema supports types, properties, required fields, items, bounds and enums; "
+                "references, regular expressions and composition keywords are not supported."
+            )
+        properties = node.get("properties", {})
+        if not isinstance(properties, dict) or len(properties) > 200:
+            raise WorkflowDefinitionError("Output schema properties must be an object with at most 200 fields.")
+        for child in properties.values():
+            validate(child, depth + 1)
+        for field in ("items", "additionalProperties"):
+            if field in node:
+                validate(node[field], depth + 1)
+
+    validate(schema)
+    try:
+        Draft202012Validator.check_schema(schema)
+    except SchemaError as exc:
+        raise WorkflowDefinitionError("Output schema is not a valid supported JSON Schema.") from exc
+    return json.loads(serialized)
+
+
+def normalize_workflow_output_contract(value):
+    contract = _object(value, {
+        "kind", "schema", "expected_count", "identity_field", "require_complete_coverage", "allow_partial",
+    }, "Output contract")
+    kind = contract.get("kind", "any")
+    if not isinstance(kind, str) or kind not in WORKFLOW_OUTPUT_KINDS:
+        raise WorkflowDefinitionError("Choose a supported output kind.")
+    normalized = {
+        "kind": kind,
+        "require_complete_coverage": _boolean(contract.get("require_complete_coverage", False), "Complete coverage"),
+        "allow_partial": _boolean(contract.get("allow_partial", False), "Partial output policy"),
+    }
+    if "expected_count" in contract:
+        count = contract["expected_count"]
+        if type(count) is not int or count < 0 or kind not in {"records", "document_results", "json"}:
+            raise WorkflowDefinitionError("Expected count must be a nonnegative integer for a collection output.")
+        normalized["expected_count"] = count
+    if "identity_field" in contract:
+        if kind != "records":
+            raise WorkflowDefinitionError("An identity field applies only to a record collection.")
+        normalized["identity_field"] = _text(contract["identity_field"], "Identity field")
+    if "schema" in contract:
+        normalized["schema"] = normalize_workflow_output_schema(contract["schema"])
+    return normalized
+
+
+def normalize_workflow_references(values, *, user_id, group_id=""):
+    if not isinstance(values, list) or len(values) > MAX_DEFINITION_REFERENCES:
+        raise WorkflowDefinitionError(f"Shared references must be a list of at most {MAX_DEFINITION_REFERENCES} documents.")
+    result = []
+    seen_ids = set()
+    seen_names = set()
+    for value in values:
+        reference = _object(value, {"id", "name", "document_id", "scope_type", "scope_id"}, "Shared reference")
+        reference_id = _text(reference.get("id"), "Reference id")
+        name = _name(reference.get("name"), "Reference name")
+        document_id = _text(reference.get("document_id"), "Reference document id", 256)
+        scope_type = reference.get("scope_type")
+        if scope_type not in {"personal", "group", "public"}:
+            raise WorkflowDefinitionError("Shared references require a personal, group, or public source scope.")
+        if scope_type == "personal":
+            scope_id = str(user_id)
+            if reference.get("scope_id") not in (None, "", scope_id):
+                raise WorkflowDefinitionError("Personal shared references must belong to the workflow owner.")
+        else:
+            scope_id = _text(reference.get("scope_id"), "Reference scope id")
+        if group_id and (scope_type != "group" or scope_id != str(group_id)):
+            raise WorkflowDefinitionError("Group workflow references must belong to the workflow's group.")
+        if reference_id in seen_ids or name in seen_names:
+            raise WorkflowDefinitionError("Shared reference ids and names must be unique.")
+        seen_ids.add(reference_id)
+        seen_names.add(name)
+        result.append({
+            "id": reference_id, "name": name, "document_id": document_id,
+            "scope_type": scope_type, "scope_id": scope_id,
+        })
+    return result
+
+
+def normalize_workflow_conversation_references(values, *, user_id, group_id=""):
+    if not isinstance(values, list) or len(values) > 5:
+        raise WorkflowDefinitionError("Choose at most five conversation reference inputs.")
+    if values and (group_id or not user_id):
+        raise WorkflowDefinitionError("Conversation references are available only in private personal workflows.")
+    result, identifiers, names, conversations = [], set(), set(), set()
+    for value in values:
+        entry = _object(value, {"reference_id", "name", "conversation_references"}, "Conversation reference input")
+        identifier = _text(entry.get("reference_id"), "Conversation reference input id")
+        name = _name(entry.get("name"), "Conversation reference name")
+        try:
+            references = normalize_conversation_references(entry.get("conversation_references"))
+        except ConversationReferenceError as exc:
+            raise WorkflowDefinitionError(exc.public_message) from exc
+        if not references or identifier in identifiers or name in names:
+            raise WorkflowDefinitionError("Conversation inputs need unique ids and names and a selected conversation.")
+        identifiers.add(identifier)
+        names.add(name)
+        conversations.update(reference["id"] for reference in references)
+        result.append({"reference_id": identifier, "name": name, "conversation_references": references})
+    if len(conversations) > 5:
+        raise WorkflowDefinitionError("Choose at most five conversations across all inputs.")
+    return result
+
+
+def validate_private_workflow_conversations(workflow):
+    has_sources = bool(workflow.get("conversation_reference_inputs"))
+    has_sends = any(task.get("conversation_send") for task in workflow.get("tasks") or [])
+    if not (has_sources or has_sends):
+        return
+    delivery = workflow.get("results_delivery") or {}
+    if (workflow.get("group_id") or workflow.get("public_workspace_id")
+            or workflow.get("is_shared") or workflow.get("shared_with")
+            or delivery.get("conversation_type", "personal") != "personal"
+            or delivery.get("recipient_ids") or delivery.get("all_group_members")):
+        raise WorkflowDefinitionError("Private conversation evidence cannot be published by a shared workflow.")
+
+
+def _normalize_bindings(values, earlier_tasks):
+    if not isinstance(values, list) or len(values) > MAX_TASK_BINDINGS:
+        raise WorkflowDefinitionError(f"Task inputs must be a list of at most {MAX_TASK_BINDINGS} bindings.")
+    bindings = []
+    names = set()
+    for value in values:
+        binding = _object(value, {"name", "task_id", "output", "required", "expected_kind"}, "Task input")
+        name = _name(binding.get("name"), "Input name")
+        task_id = _text(binding.get("task_id"), "Input task id")
+        output = binding.get("output", "authoritative")
+        expected_kind = binding.get("expected_kind", "any")
+        if output not in WORKFLOW_BINDABLE_OUTPUTS or expected_kind not in WORKFLOW_OUTPUT_KINDS:
+            raise WorkflowDefinitionError("Task inputs must select a supported final output, not presentation or diagnostics.")
+        selector_kind = {"text": "text", "records": "records", "json": "json", "documents": "document_results"}.get(output)
+        if selector_kind and not workflow_output_kind_matches(selector_kind, expected_kind):
+            raise WorkflowDefinitionError("The expected input kind does not match the selected output representation.")
+        if name in names:
+            raise WorkflowDefinitionError("Input names must be unique within a task.")
+        if task_id not in earlier_tasks:
+            raise WorkflowDefinitionError("Task inputs can reference only earlier tasks in the saved order.")
+        producer_kind = (earlier_tasks[task_id].get("output_contract") or {}).get("kind", "any")
+        if output == "authoritative" and producer_kind != "any" and not workflow_output_kind_matches(producer_kind, expected_kind):
+            raise WorkflowDefinitionError("The input kind does not match its producer's declared output kind.")
+        if output == "records" and producer_kind not in {"any", "records"}:
+            raise WorkflowDefinitionError("A records input requires a producer that can return records.")
+        names.add(name)
+        bindings.append({
+            "name": name, "task_id": task_id, "output": output,
+            "required": _boolean(binding.get("required", True), "Required input"),
+            "expected_kind": expected_kind,
+        })
+    return bindings
+
+
+def normalize_workflow_definition(payload, existing, tasks, *, user_id, group_id="", settings=None, new_defaults=False):
+    """Normalize new flow fields after existing task/runner authorization."""
+    existing = existing or {}
+    policy = current_public_source_policy(user_id)
+    policy_fields = {}
+    if policy == ALL_AVAILABLE or "public_source_policy" in existing:
+        policy_fields["public_source_policy"] = normalize_public_source_policy(
+            policy if policy == ALL_AVAILABLE else existing["public_source_policy"],
+        )
+    version = payload.get("definition_version", 1)
+    stored_version = existing.get("definition_version", 1)
+    if type(version) is not int or version not in {1, 2, 3}:
+        raise WorkflowDefinitionConflict("This workflow definition version is not supported by this editor.")
+    if type(stored_version) is not int or stored_version not in {1, 2, 3}:
+        raise WorkflowDefinitionConflict("This saved workflow requires a newer editor. Its definition was not changed.")
+    if version == 3:
+        managed_fields = {
+            "id", "definition_revision", "conversation_id", "user_id", "group_id",
+            "url_access_authorized", "url_access_authorized_by", "url_access_authorized_at",
+            "deep_research_authorized", "deep_research_authorized_by", "deep_research_authorized_at",
+            "model_binding_summary", "created_at", "created_by", "modified_at", "modified_by",
+            "updated_at", "status", "last_run_started_at", "last_run_at", "last_run_status",
+            "last_run_error", "last_run_response_preview", "last_run_trigger_source", "run_count",
+            "active_run_id", "active_runtime_version", "last_run_id", "next_run_at",
+            "cancellation_requested_at", "cancellation_requested_by", "result_access", "origin",
+            "one_time_status",
+        }
+        extras = payload.keys() - set(WORKFLOW_DEFINITION_FIELDS) - managed_fields
+        if any(key not in existing or payload[key] != existing[key] for key in extras):
+            raise WorkflowDefinitionError("The structured workflow contains unsupported fields.")
+    if stored_version >= 2 and version < stored_version:
+        raise WorkflowDefinitionConflict("This workflow uses advanced data flow. Open it in V2 to edit without losing its configuration.")
+    if version == 1 and existing and (
+        "chat_execution" in existing or "results_delivery" in existing
+        or any("chat_execution" in task for task in existing.get("tasks", []))
+    ):
+        raise WorkflowDefinitionConflict("This workflow uses chat execution or results settings. Open it in V2 to edit without losing its configuration.")
+    if version >= 2 and existing:
+        if payload.get("definition_revision") != workflow_definition_revision(existing):
+            raise WorkflowDefinitionConflict("This workflow changed since it was opened. Reload it before saving.")
+        if existing.get("active_run_id"):
+            raise WorkflowDefinitionConflict("Wait for the active run to finish or cancel it before editing this workflow.")
+    raw_tasks = payload.get("tasks", existing.get("tasks", []))
+    validate_workflow_publication_completion({
+        **payload, "tasks": raw_tasks,
+        "durable_execution": payload.get("durable_execution", existing.get("durable_execution", False)),
+    })
+    if len(raw_tasks) != len(tasks):
+        raise WorkflowDefinitionError("Task data does not match the normalized task list.")
+    tasks = [dict(task) for task in tasks]
+    for task, raw in zip(tasks, raw_tasks):
+        if "chat_execution" in raw:
+            try:
+                task["chat_execution"] = normalize_chat_execution(raw["chat_execution"])
+            except WorkflowConfigurationError as exc:
+                raise WorkflowDefinitionError(exc.public_message) from exc
+        else:
+            task.pop("chat_execution", None)
+    try:
+        configuration = workflow_configuration_for_save(
+            payload, existing or None, settings=settings, workflow_scope="group" if group_id else "personal",
+            new_defaults=new_defaults,
+        )
+    except WorkflowConfigurationError as exc:
+        raise WorkflowDefinitionError(exc.public_message) from exc
+    if version != 3 and any("input_processing" in task for task in raw_tasks):
+        raise WorkflowDefinitionError("Task input_processing requires workflow definition version 3.")
+    actions = [payload.get("document_action"), *(task.get("document_action") for task in raw_tasks)]
+    if version != 3 and any(isinstance(action, dict) and action.get("target_mode") == "current_item" for action in actions):
+        raise WorkflowDefinitionError("Current-item Analyze requires workflow definition version 3.")
+    has_flow = "reference_inputs" in payload or "conversation_reference_inputs" in payload or "flow" in payload or payload.get("durable_execution") is True or any(
+        WORKFLOW_FLOW_TASK_FIELDS.intersection(task) for task in raw_tasks
+    )
+    if version == 1:
+        if has_flow:
+            raise WorkflowDefinitionError("Advanced inputs and output contracts require workflow definition version 2.")
+        return {"definition_version": 1, "tasks": tasks, **configuration, **policy_fields}
+
+    references = normalize_workflow_references(
+        payload.get("reference_inputs", existing.get("reference_inputs", [])), user_id=user_id, group_id=group_id,
+    )
+    conversation_references = normalize_workflow_conversation_references(
+        payload.get("conversation_reference_inputs", existing.get("conversation_reference_inputs", [])),
+        user_id=user_id, group_id=group_id,
+    )
+    conversation_ids = {reference["reference_id"] for reference in conversation_references}
+    reference_ids = {reference["id"] for reference in references}
+    durable = _boolean(payload.get("durable_execution", existing.get("durable_execution", False)), "Durable execution")
+    normalized_tasks = []
+    earlier = {}
+    for task, raw in zip(tasks, raw_tasks):
+        prepared = dict(task)
+        if "input_processing" in raw:
+            prepared["input_processing"] = normalize_workflow_input_processing(raw["input_processing"])
+        else:
+            prepared.pop("input_processing", None)
+        if "output_contract" in raw and raw["output_contract"] is not None:
+            prepared["output_contract"] = normalize_workflow_output_contract(raw["output_contract"])
+        if version == 3:
+            # The structured compiler owns node bindings; legacy predecessor rules do not apply.
+            prepared["inputs"] = raw.get("inputs", [])
+        elif "inputs" in raw and raw["inputs"] is not None:
+            prepared["inputs"] = _normalize_bindings(raw["inputs"], earlier)
+        if "reference_ids" in raw and raw["reference_ids"] is not None:
+            selected_ids = _unique_identifiers(raw["reference_ids"], "Task reference ids")
+            if set(selected_ids) - reference_ids:
+                raise WorkflowDefinitionError("A task references a shared document which is not in this workflow.")
+            prepared["reference_ids"] = selected_ids
+        if "conversation_reference_ids" in raw:
+            selected = _unique_identifiers(raw["conversation_reference_ids"], "Task conversation reference ids")
+            if set(selected) - conversation_ids:
+                raise WorkflowDefinitionError("A selected conversation input is missing from this workflow.")
+            prepared["conversation_reference_ids"] = selected
+        if raw.get("conversation_send") is not None:
+            if group_id or not durable:
+                raise WorkflowDefinitionError("Conversation sends require a durable personal workflow and task approval.")
+            try:
+                prepared["conversation_send"] = normalize_conversation_send(raw["conversation_send"])
+            except ConversationReferenceError as exc:
+                raise WorkflowDefinitionError(exc.public_message) from exc
+        if raw.get("approval") is not None:
+            approval = _object(raw["approval"], {"required", "message"}, "Task approval")
+            required = _boolean(approval.get("required", False), "Task approval requirement")
+            if required and not durable:
+                raise WorkflowDefinitionError("Task approval requires durable execution.")
+            message = approval.get("message", "")
+            if not isinstance(message, str) or len(message) > 1000:
+                raise WorkflowDefinitionError("Task approval message must be text of at most 1000 characters.")
+            prepared["approval"] = {"required": required, "message": message.strip()}
+        if prepared.get("conversation_send"):
+            prepared["approval"] = {"required": True, "message": "Approve starting AI work in the selected private conversation."}
+        normalized_tasks.append(prepared)
+        earlier[prepared["id"]] = prepared
+    result = {
+        **configuration,
+        **policy_fields,
+        "definition_version": version,
+        "reference_inputs": references,
+        **({"conversation_reference_inputs": conversation_references} if conversation_references or "conversation_reference_inputs" in payload or "conversation_reference_inputs" in existing else {}),
+        "durable_execution": durable,
+        "tasks": normalized_tasks,
+    }
+    validate_private_workflow_conversations({**payload, **result, "group_id": group_id})
+    if version == 3:
+        # The compiler shares definition helpers, so import at the normalization boundary.
+        from functions_workflow_flow import compile_workflow_flow
+
+        compiled = compile_workflow_flow({**payload, **result, "user_id": str(user_id), "group_id": str(group_id or "")})
+        result.update({key: compiled[key] for key in ("flow", "tasks", "limits")})
+    elif any(key in payload for key in ("flow", "limits", "max_executions", "deadline_seconds")):
+        raise WorkflowDefinitionError("Structured flow and run limits require definition version 3.")
+    return result

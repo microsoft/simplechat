@@ -387,6 +387,15 @@ azd deploy
 
 Recommended for routine container-based application upgrades when infrastructure is unchanged.
 
+The `predeploy` hook builds the application and React V2 bundle in Azure Container
+Registry using `application/single_app/Dockerfile`. The `web` service then deploys
+that remote image to App Service using `docker.imagePassthrough`; it does not ZIP
+deploy Python source or rebuild the image locally. This wiring requires an azd
+version that supports image passthrough (validated with azd 1.37.2). The existing
+hook stops the app during the ACR build, so this is not a zero-downtime rollout.
+See the [ACR image deployment fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/AZD_ACR_IMAGE_DEPLOYMENT_FIX.md)
+for the version and regression coverage.
+
 **Provision infrastructure changes:**
 ```bash
 azd provision

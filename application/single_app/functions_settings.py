@@ -1,9 +1,14 @@
 # functions_settings.py
 
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from functools import wraps
 import logging
+import re
 import threading
+from urllib.parse import urlparse
 
+import requests
 from flask import g, has_request_context, jsonify, request, session
 from azure.core import MatchConditions
 
@@ -15,7 +20,26 @@ from app_settings_store import (
     SettingsUnavailableError,
 )
 from config import *
+from content_screening.contracts import (
+    ScreeningCitationsRequiredError,
+    ScreeningConfigurationError,
+    ScreeningConflictError,
+    ScreeningError,
+    ScreeningValidationError,
+)
 from functions_appinsights import log_event
+from functions_web_iq import get_web_search_provider, get_web_iq_config, web_iq_policy
+from functions_ai_connections import (
+    AIConnectionError,
+    CAPABILITY_DEFINITIONS,
+    EMBEDDING_SELECTION_KEY,
+    IMAGE_GENERATION_CAPABILITY,
+    describe_model_capabilities,
+    embedding_settings_use_connections,
+    normalize_model_capability_fields,
+    supports_model_capability,
+)
+from functions_embedding_profile import normalize_embedding_operation, resolve_embedding_profile
 from functions_content_safety import (
     CONTENT_SAFETY_CATEGORY_KEYS,
     CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT,
@@ -23,15 +47,30 @@ from functions_content_safety import (
 )
 from functions_cosmos_throughput import get_default_cosmos_throughput_settings
 from functions_document_actions import get_default_document_action_capabilities
+# Re-exported so callers keep importing these from functions_settings. They live
+# in a leaf module because admin_settings_fields needs them and cannot import
+# this one, which builds a Cosmos client at import time through config.
+from functions_group_assignment_ids import (
+    GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT,
+    _iter_group_workflow_allowed_group_id_candidates,
+    normalize_group_workflow_allowed_group_id,
+    normalize_group_workflow_allowed_group_ids,
+)
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
-from functions_model_capabilities import normalize_model_budget_overrides
+from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
     normalize_model_endpoint_identity_header_name,
     normalize_model_endpoint_identity_header_override,
     normalize_model_endpoint_identity_header_value_type,
+)
+from functions_model_endpoint_providers import (
+    get_model_endpoint_provider,
+    normalize_api_type_value,
+    normalize_custom_endpoint_auth_type,
+    normalize_custom_endpoint_url_mode,
 )
 from functions_mcp_server_config import INBOUND_MCP_SETTINGS_DEFAULTS, normalize_inbound_mcp_settings
 from functions_model_endpoint_types import (
@@ -42,6 +81,10 @@ from functions_model_endpoint_types import (
     get_model_endpoint_api_type,
     normalize_model_endpoint_api_type,
 )
+from functions_model_endpoint_validation import (
+    endpoint_uses_mai_chat_completions,
+    normalize_model_inference_connection,
+)
 from functions_rate_limit import (
     RATE_LIMIT_MESSAGE_DEFAULT,
     build_rate_limit_error_payload,
@@ -49,6 +92,21 @@ from functions_rate_limit import (
 )
 from functions_service_health import get_default_service_health
 from json_schema_validation import validate_legacy_plugin_settings_update
+from functions_workflow_limits import (
+    CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
+    CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
+    CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
+    WORKFLOW_LOOP_ITEMS_DEFAULT,
+    WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
+    WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+    validate_chat_orchestration_max_workflow_handoffs_per_day,
+    validate_chat_orchestration_max_workflows_per_user,
+    validate_chat_orchestration_workflow_run_wait_max_seconds,
+    validate_workflow_max_loop_items,
+    validate_workflow_max_repeat_iterations,
+    validate_workflow_min_schedule_interval_seconds,
+)
+import admin_settings_secret_utils as _secret_utils
 import app_settings_cache
 import copy
 import os
@@ -80,6 +138,13 @@ CHAT_COMPLETION_AUDIO_SOUND_IDS = (
 )
 DEFAULT_CHAT_COMPLETION_AUDIO_SOUND = CHAT_COMPLETION_AUDIO_SOUND_IDS[0]
 DEFAULT_CHAT_COMPLETION_AUDIO_VOLUME = 5
+# Shared so the classic chat page and the V2 bootstrap payload cannot fall back to
+# different wording when an administrator blanks web_search_user_notice_text.
+WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
+    "Your current message will be sent to Microsoft Bing for web search. Conversation "
+    "history is not sent for web search, but any sensitive content you paste into this "
+    "message may be sent."
+)
 USER_UI_SETTINGS_KEYS = (
     "profileImage",
     "navLayout",
@@ -98,32 +163,10 @@ USER_UI_SETTINGS_KEYS = (
     "chatCompletionAudioSound",
     "chatCompletionAudioVolume",
 )
-ADMIN_SETTINGS_SECRET_REDACTED_VALUE = "***REDACTED***"
-ADMIN_SETTINGS_FORM_SECRET_FIELDS = (
-    "azure_openai_gpt_key",
-    "azure_apim_gpt_subscription_key",
-    "azure_openai_embedding_key",
-    "azure_apim_embedding_subscription_key",
-    "azure_openai_image_gen_key",
-    "azure_apim_image_gen_subscription_key",
-    "redis_key",
-    "office_docs_storage_account_url",
-    "office_docs_storage_account_blob_endpoint",
-    "video_files_storage_account_url",
-    "audio_files_storage_account_url",
-    "content_safety_key",
-    "azure_apim_content_safety_subscription_key",
-    "azure_ai_search_key",
-    "azure_apim_ai_search_subscription_key",
-    "azure_document_intelligence_key",
-    "azure_apim_document_intelligence_subscription_key",
-    "azure_content_understanding_key",
-    "speech_service_key",
-    "model_endpoint_identity_header_hmac_secret",
-)
-ADMIN_SETTINGS_NESTED_SECRET_FIELDS = (
-    "web_search_agent.other_settings.azure_ai_foundry.client_secret",
-)
+ADMIN_SETTINGS_SECRET_REDACTED_VALUE = _secret_utils.ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+ADMIN_SETTINGS_FORM_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_FORM_SECRET_FIELDS
+ADMIN_SETTINGS_NESTED_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_NESTED_SECRET_FIELDS
+ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS = _secret_utils.ADMIN_SETTINGS_API_ONLY_SECRET_FIELDS
 TABULAR_GENERATION_BACKEND_SETTING_KEYS = {
     'enable_analysis_deliverable_contract_telemetry',
     'analysis_deliverable_contract_mode',
@@ -166,33 +209,21 @@ PUBLIC_WORKSPACE_DISPLAY_NAME_MAX_LENGTH = 32
 
 
 def is_admin_settings_redacted_secret(value):
-    return str(value or '').strip() == ADMIN_SETTINGS_SECRET_REDACTED_VALUE
+    return _secret_utils.is_admin_settings_redacted_secret(value)
 
 
 def _get_nested_setting_value(settings, field_path):
-    current = settings if isinstance(settings, dict) else {}
-    for part in str(field_path or '').split('.'):
-        if not isinstance(current, dict):
-            return ''
-        current = current.get(part)
-    return current if current is not None else ''
+    return _secret_utils.get_nested_setting_value(settings, field_path)
 
 
 def _set_nested_setting_value(settings, field_path, value):
-    current = settings
-    parts = str(field_path or '').split('.')
-    for part in parts[:-1]:
-        if not isinstance(current.get(part), dict):
-            current[part] = {}
-        current = current[part]
-    current[parts[-1]] = value
+    _secret_utils.set_nested_setting_value(settings, field_path, value)
 
 
 def resolve_admin_settings_secret_value(field_name, submitted_value, existing_settings):
-    submitted_text = str(submitted_value or '').strip()
-    if not is_admin_settings_redacted_secret(submitted_text):
-        return submitted_text
-    return str(_get_nested_setting_value(existing_settings, field_name) or '').strip()
+    return _secret_utils.resolve_admin_settings_secret_value(
+        field_name, submitted_value, existing_settings
+    )
 
 
 def normalize_public_workspace_display_name(value):
@@ -239,6 +270,41 @@ def normalize_public_workspace_display_settings(settings):
     changed = changed or settings.get("public_workspace_display_name", "") != normalized_display_name
     settings["public_workspace_display_name"] = normalized_display_name
     return changed
+
+
+# Switches that no longer exist. A stored value is removed on load so it is not echoed to
+# the browser, and so the V2 admin page stops drawing a switch that changes nothing.
+RETIRED_SETTING_KEYS = (
+    "chat_orchestration_min_workflow_interval_seconds",
+    # Gather / Reason / Render became the only chat orchestration plan contract. Earlier
+    # releases already left it out of a saved run's settings fingerprint, so removing it
+    # does not change that fingerprint.
+    "enable_chat_orchestration_harness",
+    # Combined Analyze has always routed a mixed narrative and tabular selection natively
+    # since 0.250.071; nothing has read this switch since then. Unlike the harness toggle it
+    # was part of a saved run's settings fingerprint, so removing it changes that fingerprint
+    # once, exactly as any administrator save does.
+    "enable_mixed_source_analyze",
+    # Phase 1 shadow manifests: resolved in the background and discarded. Analyze, Compare and
+    # mixed-source Chat and Search all resolve their manifests for real now. Same one-time
+    # fingerprint change as above.
+    "enable_mixed_source_manifest",
+)
+
+
+def normalize_retired_orchestration_settings(settings):
+    """Drop retired settings in-place.
+
+    A saved capability allowlist is left exactly as stored: the orchestration registry reads
+    a retired capability id as its replacement, and rewriting the list would change the
+    settings fingerprint that saved runs are bound to. Returns whether anything changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+    removed = [key for key in RETIRED_SETTING_KEYS if key in settings]
+    for key in removed:
+        settings.pop(key, None)
+    return bool(removed)
 
 
 def attach_public_workspace_label_context(settings):
@@ -373,14 +439,15 @@ def normalize_model_endpoint_identity_header_settings(settings):
 
 
 def redact_admin_settings_secrets_for_form(settings):
-    redacted_settings = copy.deepcopy(settings or {})
-    for field_name in ADMIN_SETTINGS_FORM_SECRET_FIELDS:
-        if redacted_settings.get(field_name):
-            redacted_settings[field_name] = ADMIN_SETTINGS_SECRET_REDACTED_VALUE
-    for field_path in ADMIN_SETTINGS_NESTED_SECRET_FIELDS:
-        if _get_nested_setting_value(redacted_settings, field_path):
-            _set_nested_setting_value(redacted_settings, field_path, ADMIN_SETTINGS_SECRET_REDACTED_VALUE)
-    return redacted_settings
+    return _secret_utils.redact_admin_settings_secrets_for_form(settings)
+
+
+def get_admin_settings_api_secret_fields():
+    return _secret_utils.get_admin_settings_api_secret_fields()
+
+
+def redact_admin_settings_secrets_for_api(settings):
+    return _secret_utils.redact_admin_settings_secrets_for_api(settings)
 
 
 def _clone_user_settings_doc(doc):
@@ -513,23 +580,24 @@ def is_fact_memory_enabled(settings):
     return bool((settings or {}).get('enable_fact_memory_plugin', False))
 
 
-def is_mixed_source_manifest_enabled(settings):
-    """Return whether Phase 1 mixed-source manifest diagnostics are enabled."""
-    return bool((settings or {}).get('enable_mixed_source_manifest', False))
-
-
 def is_mixed_source_development_telemetry_enabled(settings):
     """Return whether aggregate-only mixed-source development telemetry is enabled."""
     return bool((settings or {}).get('enable_mixed_source_development_telemetry', False))
 
 
 def is_mixed_source_chat_search_enabled(settings):
-    """Return whether Phase 2 mixed-source Chat and Search behavior is enabled."""
+    """Return whether mixed-source Chat and Search behavior is active.
+
+    Derived from Enhanced Citations by normalize_mixed_source_derived_settings().
+    """
     return bool((settings or {}).get('enable_mixed_source_chat_search', False))
 
 
 def is_mixed_source_conversation_continuity_enabled(settings):
-    """Return whether Phase 5 reauthorized source-continuity metadata is enabled."""
+    """Return whether reauthorized source-continuity metadata is active.
+
+    Derived from Enhanced Citations, and effective only with mixed-source Chat and Search.
+    """
     return bool(
         (settings or {}).get('enable_mixed_source_chat_search', False)
         and (settings or {}).get('enable_mixed_source_conversation_continuity', False)
@@ -537,12 +605,18 @@ def is_mixed_source_conversation_continuity_enabled(settings):
 
 
 def is_cross_format_compare_enabled(settings):
-    """Return whether Phase 4 native mixed-source Compare behavior is enabled."""
+    """Return whether native mixed narrative and tabular Compare is active.
+
+    Derived from Enhanced Citations by normalize_mixed_source_derived_settings().
+    """
     return bool((settings or {}).get('enable_cross_format_compare', False))
 
 
 def is_cross_format_compare_one_to_many_enabled(settings):
-    """Return whether the separately staged one-to-many mixed-target rollout is enabled."""
+    """Return whether a mixed-format Compare may have more than one Target.
+
+    Derived from Enhanced Citations, and effective only with cross-format Compare.
+    """
     return bool(
         (settings or {}).get('enable_cross_format_compare', False)
         and (settings or {}).get('enable_cross_format_compare_one_to_many', False)
@@ -550,11 +624,91 @@ def is_cross_format_compare_one_to_many_enabled(settings):
 
 
 def is_mixed_source_relevance_candidates_enabled(settings):
-    """Return whether Phase 2 relevance-mode table candidates are enabled."""
+    """Return whether relevance-mode spreadsheet candidates are enabled.
+
+    An administrator choice, effective only while mixed-source Chat and Search is active.
+    """
     return bool(
         (settings or {}).get('enable_mixed_source_chat_search', False)
         and (settings or {}).get('enable_mixed_source_relevance_candidates', False)
     )
+
+
+# Mixed-source behaviors hand CSV and Excel files to the native tabular engine, and that engine
+# only exists while Enhanced Citations is on (is_tabular_processing_enabled). With it off, those
+# files are indexed row by row and answered from search chunks, while the mixed-source path would
+# report them as unavailable, because a table never falls back to narrative processing. So these
+# are not stored choices: they follow Enhanced Citations and are rewritten on every load and save.
+MIXED_SOURCE_DERIVED_SETTING_KEYS = (
+    'enable_mixed_source_chat_search',
+    'enable_mixed_source_conversation_continuity',
+    'enable_cross_format_compare',
+    'enable_cross_format_compare_one_to_many',
+)
+# The only rollback path for the derived behaviors. Applied to every settings read, never stored.
+MIXED_SOURCE_KILL_SWITCH_ENV = 'SIMPLECHAT_DISABLE_MIXED_SOURCE'
+MIXED_SOURCE_SETTINGS_VERSION_KEY = 'mixed_source_settings_version'
+MIXED_SOURCE_SETTINGS_VERSION = 1
+
+
+def normalize_mixed_source_derived_settings(settings):
+    """Set each derived mixed-source behavior to whether native spreadsheet processing exists.
+
+    Returns True when the settings were changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    available = is_tabular_processing_enabled(settings)
+    changed = False
+    for key in MIXED_SOURCE_DERIVED_SETTING_KEYS:
+        if settings.get(key) is not available:
+            settings[key] = available
+            changed = True
+    return changed
+
+
+def normalize_mixed_source_settings_upgrade(settings):
+    """Apply the one-time mixed-source settings upgrade.
+
+    Before version 1 the V2 admin page drew these two switches in Deep Research with no
+    description, because nothing declared them:
+
+    - ``enable_mixed_source_relevance_candidates`` had no effect at all, because the Chat and
+      Search behavior it extends had no control anywhere. It now defaults on, and a stored off
+      was never a working choice, so it is turned on.
+    - ``enable_mixed_source_analyze_all`` gates an Analyze target that no chat or workflow
+      screen can request. It is reset to off and is no longer drawn.
+
+    The version is stored, so an administrator who turns relevance candidates off afterwards
+    keeps that choice. Returns True when the settings were changed.
+    """
+    if not isinstance(settings, dict):
+        return False
+
+    stored_version = settings.get(MIXED_SOURCE_SETTINGS_VERSION_KEY)
+    if type(stored_version) is int and stored_version >= MIXED_SOURCE_SETTINGS_VERSION:
+        return False
+
+    settings['enable_mixed_source_relevance_candidates'] = True
+    settings['enable_mixed_source_analyze_all'] = False
+    settings[MIXED_SOURCE_SETTINGS_VERSION_KEY] = MIXED_SOURCE_SETTINGS_VERSION
+    return True
+
+
+def _apply_mixed_source_env_kill_switch(settings_payload):
+    """Force the derived mixed-source behaviors off when the emergency env kill switch is set.
+
+    They follow Enhanced Citations and have no admin switch, so this environment variable is
+    the only way to roll them back during an operator incident. It applies to each settings
+    read and is never persisted, so removing it restores the derived values immediately.
+    """
+    if not isinstance(settings_payload, dict):
+        return settings_payload
+    if _env_flag_enabled(MIXED_SOURCE_KILL_SWITCH_ENV):
+        for key in MIXED_SOURCE_DERIVED_SETTING_KEYS:
+            settings_payload[key] = False
+    return settings_payload
 
 
 CHAT_FILE_UPLOAD_APP_ROLE = "ChatFileUploadUser"
@@ -930,71 +1084,6 @@ def has_workflow_user_app_role(user_roles):
     return WORKFLOW_USER_APP_ROLE.lower() in normalized_roles
 
 
-GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT = 5
-
-
-def _iter_group_workflow_allowed_group_id_candidates(value, depth=0):
-    """Yield raw assignment candidates from legacy text, JSON, and nested JSON strings."""
-    if value is None or depth > GROUP_WORKFLOW_ALLOWED_GROUP_ID_PARSE_DEPTH_LIMIT:
-        return
-
-    if isinstance(value, str):
-        stripped_value = value.strip()
-        if not stripped_value:
-            return
-
-        if stripped_value.startswith('[') or stripped_value.startswith('"'):
-            try:
-                parsed_value = json.loads(stripped_value)
-            except (TypeError, ValueError):
-                parsed_value = None
-
-            if isinstance(parsed_value, list):
-                for candidate in parsed_value:
-                    yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
-                return
-
-            if isinstance(parsed_value, str) and parsed_value != stripped_value:
-                yield from _iter_group_workflow_allowed_group_id_candidates(parsed_value, depth + 1)
-                return
-
-        for candidate in stripped_value.replace('\r', '\n').replace(',', '\n').replace(';', '\n').split('\n'):
-            yield candidate
-        return
-
-    if isinstance(value, (list, tuple, set)):
-        for candidate in value:
-            yield from _iter_group_workflow_allowed_group_id_candidates(candidate, depth + 1)
-        return
-
-    yield value
-
-
-def normalize_group_workflow_allowed_group_id(value):
-    """Return a canonical SimpleChat group id or an empty string for invalid values."""
-    group_id = str(value or '').strip()
-    if not group_id:
-        return ''
-
-    try:
-        return str(uuid.UUID(group_id))
-    except (AttributeError, TypeError, ValueError):
-        return ''
-
-
-def normalize_group_workflow_allowed_group_ids(value):
-    """Normalize group workflow assignment settings into unique group ids."""
-    normalized_ids = []
-    seen_ids = set()
-    for candidate in _iter_group_workflow_allowed_group_id_candidates(value):
-        group_id = normalize_group_workflow_allowed_group_id(candidate)
-        if not group_id or group_id in seen_ids:
-            continue
-        normalized_ids.append(group_id)
-        seen_ids.add(group_id)
-    return normalized_ids
-
-
 def normalize_group_workflow_assignment_settings(settings):
     """Normalize persisted group workflow assignment settings in-place."""
     if not isinstance(settings, dict):
@@ -1180,6 +1269,53 @@ def is_user_workflows_enabled_for_user(settings, user_roles=None, authorization_
     return True
 
 
+def is_workflow_assistant_enabled_for_user(settings, user_roles=None):
+    """Return True when the AI workflow assistant is on and personal workflows are available to the user."""
+    source_settings = settings or {}
+    if not is_user_workflows_enabled_for_user(source_settings, user_roles=user_roles):
+        return False
+    return source_settings.get('enable_workflow_ai_assistant', False) is True
+
+
+def is_agent_assistant_enabled(settings):
+    """Return True when Ask AI is on for the agent editor and agents are enabled.
+
+    Scope permissions (personal, group, global) are checked by each assist route.
+    """
+    source_settings = settings or {}
+    if source_settings.get('enable_semantic_kernel', False) is not True:
+        return False
+    return source_settings.get('enable_agent_ai_assistant', True) is not False
+
+
+def is_action_assistant_enabled(settings):
+    """Return True when Ask AI is on for the action editor and agents are enabled.
+
+    Scope permissions (personal, group, global) are checked by each assist route.
+    """
+    source_settings = settings or {}
+    if source_settings.get('enable_semantic_kernel', False) is not True:
+        return False
+    return source_settings.get('enable_action_ai_assistant', True) is not False
+
+
+def is_admin_review_assistant_enabled(settings):
+    """Return True when AI assist is on for the admin Review center.
+
+    Off by default. Each assist and suggestion route still checks the caller's reviewer role
+    for its section, so this only says whether the assistant exists at all.
+    """
+    return (settings or {}).get('enable_admin_review_ai_assistant', False) is True
+
+
+def is_chat_workflow_results_enabled_for_user(settings, user_roles=None):
+    """Return True when a user may ask about their personal workflow results in chat."""
+    source_settings = settings or {}
+    if source_settings.get('enable_chat_workflow_results', False) is not True:
+        return False
+    return is_user_workflows_enabled_for_user(source_settings, user_roles=user_roles)
+
+
 def _authorize_user_settings_access(user_id, operation, allow_cross_user=False):
     """Authorize user-settings access for the current request context."""
     normalized_user_id = str(user_id or '').strip()
@@ -1244,6 +1380,29 @@ def _get_app_settings_store():
                 redis_required=bool(settings.get('enable_redis_cache', False)),
             )
         return app_settings_cache.get_settings_store()
+
+
+def save_model_catalog_change(payload, *, profile_id=None):
+    """Fence profile writes without swallowing conflict or publication failures."""
+    # The pure profile service does not import this settings owner.
+    from functions_model_catalog import change_catalog, ModelCatalogError
+
+    if not isinstance(payload, dict) or set(payload) - {"profile", "preferences", "etag"}:
+        raise ModelCatalogError("The catalog request contains unsupported fields.")
+    etag = payload.get("etag")
+    if not isinstance(etag, str) or not etag:
+        raise ModelCatalogError("Reload the catalog before saving.", "etag")
+    if "profile" not in payload and "preferences" not in payload:
+        raise ModelCatalogError("No profile changes were supplied.")
+    saved = _get_app_settings_store().write(
+        lambda current: change_catalog(
+            current, profile_id=profile_id, profile=payload.get("profile"),
+            preferences=payload.get("preferences"),
+        ),
+        expected_etag=etag,
+    )
+    log_event("[MODELS] Model catalog change saved.", extra={"profile_id": profile_id or "new"})
+    return saved
 
 
 def configure_application_cache(settings, redis_cache_endpoint=None, *, redis_client_factory):
@@ -1357,6 +1516,41 @@ def normalize_image_generation_api_version_settings(settings):
     return True
 
 
+def normalize_image_connection_api_version_settings(settings):
+    """Upgrade image connection profiles that still carry the previous default API version.
+
+    Importing legacy image settings into AI Connections copied the stored Images API version
+    into the imported connection's image operation profile, so every connection imported
+    while 2024-12-01-preview was the stored default still sends it. That value was never an
+    admin choice, so it is upgraded to AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT. Any other
+    version is left as it is, and a blank one already falls back to the newer default at
+    request time.
+
+    A profile behind an API Management gateway is never changed, for the same reason the APIM
+    legacy setting is not: the gateway defines the versions it accepts.
+
+    Returns True when the settings were changed.
+    """
+    if not isinstance(settings, dict) or not isinstance(settings.get('model_endpoints'), list):
+        return False
+
+    changed = False
+    for endpoint in settings['model_endpoints']:
+        connection = endpoint.get('connection') if isinstance(endpoint, dict) else None
+        profiles = connection.get('operation_settings') if isinstance(connection, dict) else None
+        profile = profiles.get(IMAGE_GENERATION_CAPABILITY) if isinstance(profiles, dict) else None
+        if not isinstance(profile, dict) or profile.get('is_apim'):
+            continue
+        stored_version = profile.get('api_version')
+        if (
+            isinstance(stored_version, str)
+            and stored_version.strip() == AZURE_OPENAI_IMAGE_GEN_API_VERSION_PREVIOUS_DEFAULT
+        ):
+            profile['api_version'] = AZURE_OPENAI_IMAGE_GEN_API_VERSION_DEFAULT
+            changed = True
+    return changed
+
+
 def get_settings(use_cosmos=False, include_source=False):
     default_settings = {
         # External health check
@@ -1419,12 +1613,72 @@ def get_settings(use_cosmos=False, include_source=False):
         'tabular_generation_systemic_failure_threshold': 0.5,
         'enable_multi_agent_orchestration': False,
         'enable_mixed_source_development_telemetry': False,
-        'enable_mixed_source_manifest': False,
+        # The next four follow enable_enhanced_citations on every load and save; see
+        # normalize_mixed_source_derived_settings(). False matches its default.
         'enable_mixed_source_chat_search': False,
-        'enable_mixed_source_relevance_candidates': False,
         'enable_mixed_source_conversation_continuity': False,
         'enable_cross_format_compare': False,
         'enable_cross_format_compare_one_to_many': False,
+        'enable_mixed_source_relevance_candidates': True,
+        # Backend-only Analyze target with no chat or workflow control; not drawn in admin.
+        'enable_mixed_source_analyze_all': False,
+        # One-time upgrade marker for normalize_mixed_source_settings_upgrade().
+        'mixed_source_settings_version': 0,
+
+        # Chat orchestration. Deliberately prefixed `chat_orchestration_*` rather than
+        # `orchestration_*`, because `orchestration_type` and
+        # `enable_multi_agent_orchestration` above already mean something entirely
+        # different: which Semantic Kernel multi-agent pattern runs a selected agent.
+        # This is the plan/approve/execute layer over chat, and an administrator reading
+        # the settings document should not have to guess which is which.
+        'enable_chat_orchestration': False,
+        'enable_chat_orchestration_completeness_check': True,
+        'chat_orchestration_completeness_max_corrections': 2,
+        'enable_chat_orchestration_actions': False,
+        'chat_orchestration_default_approval_mode': 'manual',
+        'chat_orchestration_timed_approval_seconds': 10,
+        'chat_orchestration_allow_user_approval_override': True,
+        'chat_orchestration_show_manual_controls': True,
+        # Empty means every capability the deployment's other settings already allow.
+        # A non-empty list narrows the registry the planner is shown.
+        'chat_orchestration_enabled_capabilities': [],
+        'chat_orchestration_max_steps': 8,
+        'chat_orchestration_max_replans': 2,
+        'chat_orchestration_step_timeout_seconds': 180,
+        'chat_orchestration_total_timeout_seconds': 900,
+        'chat_orchestration_ledger_max_bytes': 16384,
+        'chat_orchestration_ledger_max_runs': 10,
+        # Lets a chat plan propose a personal workflow that the user approves on a card before
+        # anything is created. Off by default; the capability allowlist can also leave it out.
+        'enable_chat_orchestration_workflows': False,
+        # Lets a chat plan start one of the user's saved durable personal workflows when the user
+        # asks for it. Off by default and independent of proposals; such a plan always waits for
+        # the user to approve it, whatever the approval mode.
+        'enable_chat_orchestration_workflow_runs': False,
+        # Lets a plan that starts a quick saved workflow wait for it and use its result in the
+        # same answer. Off by default; it also needs workflow runs and Use Workflow Results In Chat,
+        # because a wait that runs out falls back to posting the result to the chat.
+        'enable_chat_orchestration_workflow_run_wait': False,
+        # The longest one such wait may last, before the plan's own remaining time also caps it.
+        'chat_orchestration_workflow_run_wait_max_seconds': CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
+        # Lets a chat plan hand work too large for a plan to a one-time durable workflow, which the
+        # user approves on the plan and again on a hand-off card. Off by default and separate from
+        # proposals and runs, so an upgrade never turns it on by itself.
+        'enable_chat_orchestration_workflow_handoff': False,
+        # Lets a user save a completed chat plan as a personal workflow that replays the frozen plan
+        # as that user on a schedule. Off by default; turning it off makes existing replay
+        # workflows refuse to run with a fixed reason rather than deleting them.
+        'enable_workflow_plan_replay': False,
+        # How many workflows created from chat one user may hold.
+        'chat_orchestration_max_workflows_per_user': CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT,
+        # How many hand-offs one user may start from chat in a rolling 24 hours.
+        'chat_orchestration_max_workflow_handoffs_per_day': CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
+        # Planner model binding. Unset falls back to the deployment's default chat model,
+        # so orchestration works before an administrator picks a dedicated planner.
+        'chat_orchestration_planner_deployment': '',
+        'chat_orchestration_planner_model_id': '',
+        'chat_orchestration_planner_model_endpoint_id': '',
+        'chat_orchestration_planner_model_provider': '',
         'max_rounds_per_agent': 1,
         'workflow_max_auto_invoke_attempts': 60,
         'enable_semantic_kernel': False,
@@ -1437,14 +1691,25 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'allow_user_agents': False,
         'allow_user_custom_endpoints': False,
-        'allow_private_custom_model_endpoints': False,
-        'allow_insecure_custom_model_endpoints': False,
-        'custom_model_endpoint_ca_bundle_path': '',
         'allow_user_custom_agent_endpoints': False,
         'allow_user_plugins': False,
         'allow_user_workflows': False,
         'require_member_of_workflow_user': False,
+        # The AI workflow assistant in the V2 editor. It only applies where personal workflows do.
+        'enable_workflow_ai_assistant': True,
+        'enable_workflow_completeness_check': True,
+        'workflow_completeness_max_corrections': 2,
+        # Ask AI in the V2 agent and action editors. Each scope still needs its own permission.
+        'enable_agent_ai_assistant': True,
+        'enable_action_ai_assistant': True,
+        # Lets users ask chat about the stored results of their personal workflow runs.
+        'enable_chat_workflow_results': False,
+        # Lets workflow alert rules play one-shot or repeating browser sounds.
+        'enable_workflow_alert_sounds': True,
         'workflow_max_tasks': 50,
+        'workflow_max_loop_items': WORKFLOW_LOOP_ITEMS_DEFAULT,
+        'workflow_max_repeat_iterations': WORKFLOW_REPEAT_ITERATIONS_DEFAULT,
+        'workflow_min_schedule_interval_seconds': WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT,
         'allow_group_workflows': False,
         'require_group_assignment_for_group_workflows': False,
         'group_workflow_allowed_group_ids': [],
@@ -1541,6 +1806,9 @@ def get_settings(use_cosmos=False, include_source=False):
         },
         'enable_multi_model_endpoints': False,
         'model_endpoints': [],
+        'allow_private_custom_model_endpoints': False,
+        'allow_insecure_custom_model_endpoints': False,
+        'custom_model_endpoint_ca_bundle_path': '',
         'model_endpoint_identity_header_enabled': False,
         'model_endpoint_identity_header_name': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
         'model_endpoint_identity_header_value_type': DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -1602,7 +1870,9 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_redis_cache': False,
         'redis_url': '',
         'redis_key': '',
-        'redis_auth_type': '',
+        # Every reader treats an empty value as key authentication, so seeding 'key'
+        # changes nothing at runtime and lets the admin select show what is in effect.
+        'redis_auth_type': 'key',
         'redis_service_type': 'auto',
         'redis_port': '',
 
@@ -1627,6 +1897,10 @@ def get_settings(use_cosmos=False, include_source=False):
         'chat_bootstrap_cache_ttl_seconds': 300,
         'enable_conversation_cache': True,
         'conversation_cache_ttl_seconds': 120,
+        'model_stream_read_timeout_seconds': 120,
+        'document_action_timeout_seconds': 300,
+        'stream_disconnect_grace_seconds': 60,
+        'model_call_max_retries': 1,
 
         # Cosmos DB Throughput Scale Settings
         **get_default_cosmos_throughput_settings(),
@@ -1692,10 +1966,6 @@ def get_settings(use_cosmos=False, include_source=False):
             'provider': ''
         },
         
-        # Multimodal Vision
-        'enable_multimodal_vision': False,
-        'multimodal_vision_model': '',
-        
         'enable_summarize_content_history_for_search': False,
         'number_of_historical_messages_to_summarize': 10,
         'enable_summarize_content_history_beyond_conversation_history_limit': False,
@@ -1703,6 +1973,11 @@ def get_settings(use_cosmos=False, include_source=False):
         # Multi-Modal Vision Analysis
         'enable_multimodal_vision': False,
         'multimodal_vision_model': '',
+        'multimodal_vision_model_selection': {
+            'endpoint_id': '',
+            'model_id': '',
+            'provider': ''
+        },
 
         # Document Classification
         'enable_document_classification': False,
@@ -1756,6 +2031,14 @@ def get_settings(use_cosmos=False, include_source=False):
             category_key: CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT
             for category_key in CONTENT_SAFETY_CATEGORY_KEYS
         },
+        'enable_content_screening': False,
+        'enable_content_screening_workspace_uploads': True,
+        'enable_content_screening_chat_input': False,
+        'enable_content_screening_chat_output': False,
+        'enable_content_safety_chat_input': True,
+        'enable_content_safety_chat_output': False,
+        'chat_content_output_mode': 'stream_then_check',
+        'chat_content_scan_failure_action': 'allow_unchecked',
         'content_safety_violation_message': CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT,
         'content_safety_include_trigger_information': True,
         'require_member_of_safety_violation_admin': False,
@@ -1773,6 +2056,11 @@ def get_settings(use_cosmos=False, include_source=False):
         'enable_desktop_notifications': False,
         'require_member_of_feedback_admin': False,
         'enable_conversation_archiving': False,
+
+        # Review center AI assist: suggested reviews for feedback and safety records, which a
+        # reviewer applies or dismisses. The guidance is admin-authored and never sent to browsers.
+        'enable_admin_review_ai_assistant': False,
+        'admin_review_ai_guidance': '',
 
         # Processing Thoughts
         'enable_thoughts': True,
@@ -1845,9 +2133,20 @@ def get_settings(use_cosmos=False, include_source=False):
 
         # Web search (via Azure AI Foundry agent)
         'enable_web_search': False,
+        'web_search_provider': 'foundry',
+        'web_iq_consent_accepted': False,
+        'web_iq_news_enabled': False,
+        'web_iq_image_mode': 'off',
+        'web_iq_video_mode': 'off',
+        'web_iq': {
+            'endpoint': 'https://api.microsoft.ai/v3',
+            'authentication_type': 'key',
+            'key': '', 'tenant_id': '', 'client_id': '', 'client_secret': '', 'app_id': '',
+            'language': 'en', 'region': 'US', 'max_results': 10, 'max_length': 3000,
+        },
         'web_search_consent_accepted': False,
         'enable_web_search_user_notice': False,  # Show popup to users explaining their message will be sent to Bing
-        'web_search_user_notice_text': 'Your current message will be sent to Microsoft Bing for web search. Conversation history is not sent for web search, but any sensitive content you paste into this message may be sent.',
+        'web_search_user_notice_text': WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT,
         'web_search_agent': {
             'agent_type': 'aifoundry',
             'azure_openai_gpt_endpoint': '',
@@ -2003,6 +2302,7 @@ def get_settings(use_cosmos=False, include_source=False):
     def _format_result(settings_payload, source):
         if isinstance(settings_payload, dict):
             settings_payload = _apply_tabular_parity_env_kill_switch(settings_payload)
+            settings_payload = _apply_mixed_source_env_kill_switch(settings_payload)
         if include_source:
             return settings_payload, source
         return settings_payload
@@ -2048,12 +2348,16 @@ def get_settings(use_cosmos=False, include_source=False):
         normalize_document_access_index_required_settings(merged)
         normalize_inbound_mcp_settings(merged)
         normalize_public_workspace_display_settings(merged)
+        normalize_retired_orchestration_settings(merged)
         normalize_key_vault_reminder_settings(merged)
         normalize_model_endpoint_identity_header_settings(merged)
         normalize_tabular_parity_durable_preflight_defaults(merged)
         normalize_image_generation_api_version_settings(merged)
+        normalize_image_connection_api_version_settings(merged)
 
         merged['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(merged)
+        normalize_mixed_source_derived_settings(merged)
+        normalize_mixed_source_settings_upgrade(merged)
 
         return merged
 
@@ -2111,8 +2415,153 @@ def get_rate_limit_message(settings=None):
     return build_rate_limit_message(resolved_settings)
 
 
+def validate_content_screening_settings(new_settings, current_settings, *, repository=None):
+    """Validate activation/dependency changes without modifying persisted holds."""
+    if not isinstance(new_settings, dict) or not isinstance(current_settings, dict):
+        raise ScreeningValidationError()
+    if any(key.startswith('content_screening') for key in new_settings):
+        raise ScreeningValidationError()
+    for key in (
+        'enable_content_screening', 'enable_content_screening_workspace_uploads',
+        'enable_content_screening_chat_input', 'enable_content_screening_chat_output',
+        'enable_content_safety_chat_input', 'enable_content_safety_chat_output',
+    ):
+        if key in new_settings and type(new_settings[key]) is not bool:
+            raise ScreeningValidationError("Content check switches must be boolean values.")
+    for key, choices in {
+        'chat_content_output_mode': ('stream_then_check', 'check_before_display'),
+        'chat_content_scan_failure_action': ('allow_unchecked', 'block'),
+    }.items():
+        if key in new_settings and new_settings[key] not in choices:
+            raise ScreeningValidationError("The chat content check behavior is invalid.")
+    merged = {**current_settings, **new_settings}
+    if merged.get('enable_content_screening') is not True:
+        return
+    uploads_enabled = merged.get('enable_content_screening_workspace_uploads', True) is True
+    if uploads_enabled and merged.get('enable_enhanced_citations') is not True:
+        raise ScreeningCitationsRequiredError()
+    storage_fields = (
+        'office_docs_storage_account_url', 'office_docs_storage_account_blob_endpoint',
+        'office_docs_key', 'office_docs_authentication_type',
+    )
+    activating = current_settings.get('enable_content_screening') is not True
+    activating_uploads = uploads_enabled and current_settings.get('enable_content_screening_workspace_uploads', True) is not True
+    storage_changed = any(
+        field in new_settings and new_settings[field] != current_settings.get(field)
+        for field in storage_fields
+    )
+    if activating or storage_changed or any(key.startswith('enable_content_screening') for key in new_settings):
+        # Import at the operation boundary; the service itself reads settings.
+        from content_screening.service import validate_screening_configuration
+
+        try:
+            validate_screening_configuration(
+                merged, repository=repository,
+                check_storage=uploads_enabled and (activating or activating_uploads or storage_changed),
+                proposed_settings=True,
+                allow_missing_policy=new_settings.get('enable_content_screening') is True,
+                document_operation=uploads_enabled,
+            )
+        except ScreeningError:
+            raise
+        except Exception:
+            raise ScreeningConfigurationError() from None
+
+
 def update_settings(new_settings, *, expected_etag=None):
     """Merge intended changes into Cosmos with OCC and shared-cache publication."""
+    if isinstance(new_settings, dict) and 'workflow_max_loop_items' in new_settings:
+        new_settings = {
+            **new_settings,
+            'workflow_max_loop_items': validate_workflow_max_loop_items(
+                new_settings['workflow_max_loop_items']
+            ),
+        }
+    if isinstance(new_settings, dict) and 'workflow_max_repeat_iterations' in new_settings:
+        new_settings = {
+            **new_settings,
+            'workflow_max_repeat_iterations': validate_workflow_max_repeat_iterations(
+                new_settings['workflow_max_repeat_iterations']
+            ),
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_workflow_results' in new_settings:
+        # Only a real boolean true lets chat read workflow results; a string or number saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_workflow_results': new_settings['enable_chat_workflow_results'] is True,
+        }
+    if isinstance(new_settings, dict) and 'enable_workflow_alert_sounds' in new_settings:
+        # Only a real boolean false silences workflow alert sounds; a string or number keeps the default on.
+        new_settings = {
+            **new_settings,
+            'enable_workflow_alert_sounds': new_settings['enable_workflow_alert_sounds'] is not False,
+        }
+    if isinstance(new_settings, dict) and 'workflow_min_schedule_interval_seconds' in new_settings:
+        new_settings = {
+            **new_settings,
+            'workflow_min_schedule_interval_seconds': validate_workflow_min_schedule_interval_seconds(
+                new_settings['workflow_min_schedule_interval_seconds']
+            ),
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflows' in new_settings:
+        # Only a real boolean true turns workflow proposals on; a string or number saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflows': new_settings['enable_chat_orchestration_workflows'] is True,
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflow_runs' in new_settings:
+        # Only a real boolean true lets chat plans start saved workflows; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflow_runs': new_settings['enable_chat_orchestration_workflow_runs'] is True,
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflow_run_wait' in new_settings:
+        # Only a real boolean true lets a plan wait for a saved workflow; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflow_run_wait': (
+                new_settings['enable_chat_orchestration_workflow_run_wait'] is True
+            ),
+        }
+    if isinstance(new_settings, dict) and 'chat_orchestration_workflow_run_wait_max_seconds' in new_settings:
+        new_settings = {
+            **new_settings,
+            'chat_orchestration_workflow_run_wait_max_seconds': (
+                validate_chat_orchestration_workflow_run_wait_max_seconds(
+                    new_settings['chat_orchestration_workflow_run_wait_max_seconds']
+                )
+            ),
+        }
+    if isinstance(new_settings, dict) and 'enable_chat_orchestration_workflow_handoff' in new_settings:
+        # Only a real boolean true lets chat plans hand work off; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_chat_orchestration_workflow_handoff': (
+                new_settings['enable_chat_orchestration_workflow_handoff'] is True
+            ),
+        }
+    if isinstance(new_settings, dict) and 'enable_workflow_plan_replay' in new_settings:
+        # Only a real boolean true lets chat plans be repeated on a schedule; anything else saves as off.
+        new_settings = {
+            **new_settings,
+            'enable_workflow_plan_replay': new_settings['enable_workflow_plan_replay'] is True,
+        }
+    if isinstance(new_settings, dict) and 'chat_orchestration_max_workflow_handoffs_per_day' in new_settings:
+        new_settings = {
+            **new_settings,
+            'chat_orchestration_max_workflow_handoffs_per_day': (
+                validate_chat_orchestration_max_workflow_handoffs_per_day(
+                    new_settings['chat_orchestration_max_workflow_handoffs_per_day']
+                )
+            ),
+        }
+    if isinstance(new_settings, dict) and 'chat_orchestration_max_workflows_per_user' in new_settings:
+        new_settings = {
+            **new_settings,
+            'chat_orchestration_max_workflows_per_user': validate_chat_orchestration_max_workflows_per_user(
+                new_settings['chat_orchestration_max_workflows_per_user']
+            ),
+        }
     expected_etag = expected_etag or new_settings.get("_etag")
     updates = {
         key: copy.deepcopy(value)
@@ -2121,6 +2570,19 @@ def update_settings(new_settings, *, expected_etag=None):
     }
 
     def apply_updates(settings_item):
+        validate_content_screening_settings(new_settings, settings_item)
+        if any(key == 'web_search_provider' or key.startswith('web_iq') for key in updates):
+            candidate = {**settings_item, **updates}
+            get_web_search_provider(candidate)
+            get_web_iq_config(candidate)
+            web_iq_policy(candidate)
+            if not isinstance(candidate.get('web_iq_consent_accepted', False), bool):
+                raise ValueError('Invalid Web IQ consent.')
+            if candidate.get('enable_web_search') and candidate.get('web_search_provider') == 'web_iq':
+                if str(AZURE_ENVIRONMENT).lower() not in ('public', 'azurecloud'):
+                    raise ValueError('Web IQ is unavailable in this cloud.')
+                if candidate.get('web_iq_consent_accepted') is not True:
+                    raise ValueError('Web IQ requires separate consent.')
         existing_multi_endpoint_enabled = settings_item.get('enable_multi_model_endpoints', False)
         settings_item.update(updates)
         normalize_group_workflow_assignment_settings(settings_item)
@@ -2128,6 +2590,7 @@ def update_settings(new_settings, *, expected_etag=None):
         normalize_document_access_index_required_settings(settings_item)
         normalize_inbound_mcp_settings(settings_item)
         normalize_public_workspace_display_settings(settings_item)
+        normalize_retired_orchestration_settings(settings_item)
         normalize_key_vault_reminder_settings(settings_item)
         normalize_model_endpoint_identity_header_settings(settings_item)
         settings_item['enable_multi_model_endpoints'] = coerce_multi_model_endpoint_enablement(
@@ -2135,15 +2598,46 @@ def update_settings(new_settings, *, expected_etag=None):
             settings_item.get('enable_multi_model_endpoints', False),
         )
         settings_item['enable_tabular_processing_plugin'] = is_tabular_processing_enabled(settings_item)
+        normalize_mixed_source_derived_settings(settings_item)
         return settings_item
 
     try:
-        _get_app_settings_store().write(apply_updates, expected_etag=expected_etag)
+        # Compatibility checks initialize storage clients only for settings writes.
+        from functions_embedding_compatibility import embedding_settings_write_guard
+
+        @contextmanager
+        def guard_settings_write(current, candidate):
+            with embedding_settings_write_guard(
+                current, candidate, force_check=EMBEDDING_SELECTION_KEY in updates,
+            ):
+                if new_settings.get('enable_content_screening') is True:
+                    # First activation is create-only; revalidate a concurrent policy.
+                    from content_screening.service import initialize_screening_policy, validate_screening_configuration
+
+                    initialize_screening_policy()
+                    validate_screening_configuration(
+                        candidate, proposed_settings=True,
+                        document_operation=candidate.get('enable_content_screening_workspace_uploads', True) is True,
+                    )
+                yield
+
+        _get_app_settings_store().write(
+            apply_updates, expected_etag=expected_etag, write_guard=guard_settings_write,
+        )
         log_event(
             "[ASC] App settings updated and published successfully.",
             level=logging.INFO
         )
         return True
+    except ScreeningError as error:
+        log_event(
+            "[CONTENT_SCREENING] settings_validation_failed",
+            extra={"code": error.code},
+            level=logging.WARNING,
+        )
+        return False
+    except AIConnectionError:
+        raise
     except Exception as e:
         log_event(
             "[ASC] Unable to confirm settings save; reload and verify before retrying.",
@@ -2201,8 +2695,17 @@ def get_chunk_size_defaults():
 
 def get_embedding_context_tokens(settings=None):
     """Return the selected embedding model's context window in tokens."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            return resolve_embedding_profile(settings).policy["max_input_tokens"]
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+            log_event("[EMBEDDING] No active model for chunk-budget configuration", debug_only=True)
+            # Keep the settings editor usable while unconfigured; inference still fails closed.
+            return EMBEDDING_CONTEXT_FALLBACK_TOKENS
     try:
-        settings = settings if settings is not None else get_settings()
         embedding_model = settings.get('embedding_model', {}) if isinstance(settings, dict) else {}
         selected_models = embedding_model.get('selected') or []
 
@@ -2232,11 +2735,31 @@ def get_embedding_usable_tokens(settings=None):
 
 def get_embedding_safe_chunk_characters(settings=None):
     """Return the largest chunk length in characters expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 4))
     return max(1, int(get_embedding_usable_tokens(settings) * EMBEDDING_CHARS_PER_TOKEN))
 
 
 def get_embedding_safe_chunk_words(settings=None):
     """Return the largest chunk length in words expected to embed successfully."""
+    settings = settings if settings is not None else get_settings()
+    if embedding_settings_use_connections(settings):
+        try:
+            profile = resolve_embedding_profile(settings)
+        except AIConnectionError as exc:
+            if exc.code != "model_configuration_unavailable":
+                raise
+        else:
+            if not profile.legacy:
+                return max(1, int(get_embedding_usable_tokens(settings) / 12))
     return max(1, int(get_embedding_usable_tokens(settings) / EMBEDDING_TOKENS_PER_WORD))
 
 
@@ -2369,6 +2892,87 @@ def compare_versions(v1_str, v2_str):
 
     # If all compared parts are equal, they are the same version
     return 0
+
+def get_application_update_status(settings, current_version):
+    """Check releases on admin visits, sharing successful and failed attempts for 24 hours."""
+    now = datetime.now(timezone.utc)
+
+    def read_time(value):
+        if not isinstance(value, str):
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None or parsed > now:
+            return None
+        return parsed
+
+    def valid_version(value):
+        return isinstance(value, str) and re.fullmatch(
+            r'[vV]?\d+(?:\.\d+)*', value.strip()
+        ) is not None
+
+    latest_version = settings.get('latest_version_available')
+    latest_version = latest_version.strip().lstrip('vV') if valid_version(latest_version) else None
+    last_success = read_time(settings.get('last_update_check_time'))
+    last_attempt = read_time(settings.get('last_update_check_attempt_time'))
+    error = 'Unable to check for application updates.'
+    failed = settings.get('last_update_check_failed') is True
+    cache_time = last_attempt if failed else last_success
+    cache_valid = cache_time is not None and (now - cache_time).total_seconds() < 86400
+    if not failed:
+        cache_valid = cache_valid and latest_version is not None
+
+    if not cache_valid:
+        updates = {
+            'last_update_check_attempt_time': now.isoformat(),
+            'last_update_check_failed': True,
+        }
+        failed = True
+        try:
+            response = requests.get(
+                'https://github.com/microsoft/simplechat/releases', timeout=3
+            )
+            if response.status_code != 200:
+                raise ValueError('Unexpected release response status')
+            discovered_version = extract_latest_version_from_html(response.text)
+            if not valid_version(discovered_version):
+                raise ValueError('No valid release version')
+            latest_version = discovered_version
+            last_success = now
+            failed = False
+            updates.update({
+                'last_update_check_time': now.isoformat(),
+                'latest_version_available': latest_version,
+                'last_update_check_failed': False,
+            })
+        except (requests.RequestException, ValueError) as exc:
+            log_event(
+                '[APP_UPDATES] Release check failed.',
+                extra={'error_type': type(exc).__name__},
+                level=logging.WARNING,
+            )
+        updates['update_available'] = compare_versions(latest_version, current_version) == 1
+        try:
+            saved = update_settings(updates)
+        except AIConnectionError:
+            saved = False
+        if not saved:
+            failed = True
+            error = 'Unable to cache the application update check.'
+            log_event('[APP_UPDATES] Could not persist release check.', level=logging.WARNING)
+        last_attempt = now
+
+    return {
+        'latest_version': latest_version,
+        'update_available': compare_versions(latest_version, current_version) == 1,
+        'status': ('stale' if latest_version else 'unavailable') if failed else 'checked',
+        'checked_at': last_success.isoformat() if last_success else None,
+        'attempted_at': last_attempt.isoformat() if last_attempt else None,
+        'error': error if failed else None,
+    }
+
 
 def extract_latest_version_from_html(html_content):
     """
@@ -2559,6 +3163,11 @@ def resolve_model_endpoint_foundry_scope(auth_settings, endpoint=None):
     if custom_scope:
         return custom_scope
 
+    if endpoint_uses_mai_chat_completions(endpoint):
+        hostname = (urlparse(str(endpoint or "")).hostname or "").lower()
+        if hostname.endswith(".services.ai.azure.com"):
+            return "https://cognitiveservices.azure.com/.default"
+
     management_cloud = normalize_model_endpoint_management_cloud(auth_settings.get("management_cloud"))
     if management_cloud == "government":
         return "https://ai.azure.us/.default"
@@ -2582,6 +3191,8 @@ def resolve_model_endpoint_foundry_scope(auth_settings, endpoint=None):
 def normalize_model_endpoint_auth_for_environment(endpoint_copy):
     """Normalize endpoint auth cloud fields that are owned by app environment."""
     if not isinstance(endpoint_copy, dict):
+        return False
+    if str(endpoint_copy.get("provider") or "").strip().lower() == "custom":
         return False
 
     changed = False
@@ -2689,27 +3300,33 @@ def normalize_model_endpoints(endpoints):
         endpoint_copy = json.loads(json.dumps(endpoint))
         endpoint_copy.pop("has_api_key", None)
         endpoint_copy.pop("has_client_secret", None)
+        endpoint_copy.pop("has_bearer_token", None)
         for field_name, value in normalize_model_budget_overrides(endpoint_copy).items():
             if endpoint_copy[field_name] != value:
                 endpoint_copy[field_name] = value
                 changed = True
         connection = endpoint_copy.get("connection") or {}
+        if not isinstance(connection, dict):
+            raise AIConnectionError("Connection configuration must be an object.")
+        normalized_connection = normalize_model_inference_connection(connection)
+        if normalized_connection != connection:
+            changed = True
+        connection = normalized_connection
+        endpoint_copy["connection"] = connection
         provider = str(endpoint_copy.get("provider") or "aoai").strip().lower()
         if endpoint_copy.get("provider") != provider:
             endpoint_copy["provider"] = provider
             changed = True
         if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
-            api_type = normalize_model_endpoint_api_type(
-                provider,
-                endpoint_copy.get("api_type"),
-            )
+            api_type = normalize_api_type_value(endpoint_copy.get("api_type"))
             if endpoint_copy.get("api_type") != api_type:
                 endpoint_copy["api_type"] = api_type
                 changed = True
-            if not isinstance(connection, dict):
-                connection = {}
-                changed = True
             connection = json.loads(json.dumps(connection))
+            url_mode = normalize_custom_endpoint_url_mode(connection.get("url_mode"))
+            if connection.get("url_mode") != url_mode:
+                connection["url_mode"] = url_mode
+                changed = True
             if api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                 if "anthropic_version" in connection:
                     connection.pop("anthropic_version", None)
@@ -2726,7 +3343,7 @@ def normalize_model_endpoints(endpoints):
                     if field_name in connection:
                         connection.pop(field_name, None)
                         changed = True
-            else:
+            elif get_model_endpoint_provider(api_type) is not None:
                 for field_name in (
                     "api_version",
                     "openai_api_version",
@@ -2736,6 +3353,34 @@ def normalize_model_endpoints(endpoints):
                         connection.pop(field_name, None)
                         changed = True
             endpoint_copy["connection"] = connection
+            auth = endpoint_copy.get("auth") or {}
+            if not isinstance(auth, dict):
+                raise AIConnectionError("Authentication configuration must be an object.")
+            auth_type = normalize_custom_endpoint_auth_type(auth.get("type"))
+            if auth.get("type") != auth_type:
+                auth["type"] = auth_type
+                changed = True
+            endpoint_copy["auth"] = auth
+        operation_settings = connection.get("operation_settings")
+        if operation_settings is not None:
+            if not isinstance(operation_settings, dict):
+                raise AIConnectionError("Connection operation settings must be an object.")
+            for capability, profile in operation_settings.items():
+                if capability not in CAPABILITY_DEFINITIONS or not isinstance(profile, dict):
+                    raise AIConnectionError("Connection operation settings must describe an implemented capability.")
+                if capability == "embeddings":
+                    operation_settings[capability] = normalize_embedding_operation(profile)
+                    continue
+                allowed_routes = CAPABILITY_DEFINITIONS[capability].api_routes
+                if profile.get("api") and allowed_routes and profile["api"] not in allowed_routes:
+                    raise AIConnectionError("The connection operation API is not supported.")
+                if "is_apim" in profile and not isinstance(profile["is_apim"], bool):
+                    raise AIConnectionError("The gateway setting must be true or false.")
+                for field in ("api_version", "image_deployment"):
+                    if field in profile and not isinstance(profile[field], str):
+                        raise AIConnectionError(f"The operation {field} must be text.")
+                if profile.get("auth_header") not in (None, "", "api-key", "Ocp-Apim-Subscription-Key"):
+                    raise AIConnectionError("The gateway authentication header is not supported.")
         identity_header = normalize_model_endpoint_identity_header_override(endpoint_copy.get("identity_header"))
         if endpoint_copy.get("identity_header") != identity_header:
             endpoint_copy["identity_header"] = identity_header
@@ -2753,6 +3398,10 @@ def normalize_model_endpoints(endpoints):
 
         if normalize_model_endpoint_auth_for_environment(endpoint_copy):
             changed = True
+        if endpoint_copy.get("provider") == "openai_compatible":
+            auth = endpoint_copy.get("auth") or {}
+            if auth.get("type") != "api_key":
+                raise AIConnectionError("OpenAI-compatible custom connections require API key authentication.")
 
         models = endpoint_copy.get("models") or []
         normalized_models = []
@@ -2760,12 +3409,24 @@ def normalize_model_endpoints(endpoints):
         for model in models:
             if not isinstance(model, dict):
                 continue
-            model_copy = json.loads(json.dumps(model))
+            model_copy = normalize_model_capability_fields(json.loads(json.dumps(model)))
+            # Effective profile metadata is resolved from current settings, never accepted
+            # as a caller-supplied assertion or saved back as a deployment override.
+            model_copy.pop("_catalog_profile", None)
+            model_copy.pop("_catalog_effective_revision", None)
+            profile_id = model_copy.get("catalogProfileId")
+            if profile_id is not None and (
+                not isinstance(profile_id, str) or len(profile_id) > 160
+                or (profile_id and not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9._:-]*", profile_id))
+            ):
+                raise ModelTokenBudgetError("invalid_model_profile", "Choose a valid catalog profile.")
+            if model_copy != model:
+                changed = True
             for field_name, value in normalize_model_budget_overrides(model_copy).items():
                 if model_copy[field_name] != value:
                     model_copy[field_name] = value
                     changed = True
-            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            if provider == MODEL_ENDPOINT_PROVIDER_CUSTOM and custom_api_type:
                 if custom_api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI:
                     deployment_name = str(
                         model_copy.get("deploymentName")
@@ -2841,6 +3502,7 @@ def is_frontend_visible_model_endpoint_provider(provider):
         "aoai",
         "aifoundry",
         "new_foundry",
+        "openai_compatible",
         MODEL_ENDPOINT_PROVIDER_CUSTOM,
     }
 
@@ -2854,6 +3516,14 @@ def merge_model_endpoint_auth(existing_auth, incoming_auth):
 
     merged = dict(existing_auth)
     for key, value in incoming_auth.items():
+        if key in ("api_key", "client_secret", "bearer_token") and (
+            value in (None, "") or is_admin_settings_redacted_secret(value)
+            or (value == "Stored_In_KeyVault" and existing_auth.get(key))
+        ):
+            continue
+        if key in ("api_key_header", "api_key_prefix", "scope") and value == "":
+            merged[key] = value
+            continue
         if value in (None, ""):
             continue
         merged[key] = value
@@ -2919,12 +3589,22 @@ def merge_model_endpoints_with_existing(incoming_endpoints, existing_endpoints):
     return merged
 
 
-def sanitize_model_endpoints_for_frontend(endpoints):
+def sanitize_model_endpoints_for_frontend(endpoints, *, include_connection_details=True, catalog_settings=None):
     """Keep editable model metadata while stripping stored auth credentials."""
+    from functions_model_catalog import ModelCatalogError, apply_model_profile, get_effective_model_profiles
+
     normalized, _ = normalize_model_endpoints(endpoints)
     if not isinstance(normalized, list):
         return []
 
+    # Resolve tenant profiles only for linked deployments; unlinked callers keep
+    # the existing settings-independent projection.
+    if catalog_settings is None and any(
+        model.get("catalogProfileId") for endpoint in normalized
+        for model in endpoint.get("models", []) if isinstance(model, dict)
+    ):
+        catalog_settings = get_settings()
+    profiles = get_effective_model_profiles(catalog_settings) if catalog_settings is not None else None
     sanitized = []
     for endpoint in normalized:
         if not isinstance(endpoint, dict):
@@ -2935,14 +3615,204 @@ def sanitize_model_endpoints_for_frontend(endpoints):
         auth = endpoint_copy.get("auth") or {}
         has_api_key = bool(auth.get("api_key"))
         has_client_secret = bool(auth.get("client_secret"))
+        has_bearer_token = bool(auth.get("bearer_token"))
         for secret_field in ("api_key", "client_secret", "bearer_token", "access_token", "refresh_token"):
             auth.pop(secret_field, None)
+        if endpoint_copy.get("provider") == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+            public_auth_fields = {
+                "type", "client_id", "token_url", "scope", "api_key_header", "api_key_prefix",
+            }
+            auth = {key: value for key, value in auth.items() if key in public_auth_fields}
         endpoint_copy["auth"] = auth
         endpoint_copy["has_api_key"] = has_api_key
         endpoint_copy["has_client_secret"] = has_client_secret
+        endpoint_copy["has_bearer_token"] = has_bearer_token
+        for model in endpoint_copy.get("models") or []:
+            if isinstance(model, dict):
+                effective_model = model
+                if profiles is not None:
+                    try:
+                        effective_model = apply_model_profile(model, endpoint, catalog_settings, profiles)
+                    except ModelCatalogError as exc:
+                        log_event("[MODELS] Linked catalog profile is unavailable.", level=logging.WARNING,
+                                  extra={"error_code": exc.code})
+                model["capability_status"] = describe_model_capabilities(
+                    effective_model, endpoint_copy.get("provider"), endpoint=endpoint,
+                )
+        if not include_connection_details:
+            for field in ("auth", "connection", "management", "identity_header"):
+                endpoint_copy.pop(field, None)
         sanitized.append(endpoint_copy)
 
     return sanitized
+
+
+EMPTY_DEFAULT_MODEL_SELECTION = {"endpoint_id": "", "model_id": "", "provider": ""}
+
+
+def normalize_default_model_selection(selection):
+    """Return a default model selection dict with the three expected string fields."""
+    source = selection if isinstance(selection, dict) else {}
+    return {
+        "endpoint_id": str(source.get("endpoint_id") or "").strip(),
+        "model_id": str(source.get("model_id") or "").strip(),
+        "provider": str(source.get("provider") or "").strip().lower(),
+    }
+
+
+def resolve_model_selection(selection, endpoints, multi_endpoint_enabled=True, label="Default model"):
+    """Return a stored model selection that still points at an enabled model.
+
+    A stored selection is a loose reference -- an endpoint id plus a model id -- so it
+    outlives the thing it names. Deleting an endpoint, disabling one, or turning off a
+    single model all leave a selection that resolves to nothing.
+
+    What that costs depends on the selection. A dangling default model makes chat fall
+    back to a different model with no indication that it had; a dangling metadata
+    extraction model makes document ingestion raise instead, and the caller logs the
+    failure rather than surfacing it. Neither is acceptable, so both are re-resolved
+    whenever the endpoint list is written.
+
+    Returns ``(selection, reason)``. ``reason`` is ``None`` when the selection survived,
+    otherwise a short explanation of why it was cleared, which callers with somewhere to
+    put it surface to the administrator.
+    """
+    normalized = normalize_default_model_selection(selection)
+
+    if not multi_endpoint_enabled:
+        # A stored selection would silently come back into force if multi-endpoint mode
+        # were re-enabled later, naming an endpoint nobody has looked at since.
+        return dict(EMPTY_DEFAULT_MODEL_SELECTION), None
+
+    if not normalized["endpoint_id"] or not normalized["model_id"]:
+        return dict(EMPTY_DEFAULT_MODEL_SELECTION), None
+
+    endpoint_list = endpoints if isinstance(endpoints, list) else []
+    endpoint_cfg = next(
+        (
+            endpoint
+            for endpoint in endpoint_list
+            if isinstance(endpoint, dict) and endpoint.get("id") == normalized["endpoint_id"]
+        ),
+        None,
+    )
+    if not endpoint_cfg or not endpoint_cfg.get("enabled", True):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            f"{label} endpoint is not available. Please select a valid endpoint.",
+        )
+
+    models = endpoint_cfg.get("models", []) or []
+    model_cfg = next(
+        (
+            model
+            for model in models
+            if isinstance(model, dict) and model.get("id") == normalized["model_id"]
+        ),
+        None,
+    )
+    if not model_cfg or not model_cfg.get("enabled", True):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            f"{label} is not available. Please select a valid model.",
+        )
+
+    if not supports_model_capability(model_cfg, "chat", endpoint_cfg.get("provider")):
+        return (
+            dict(EMPTY_DEFAULT_MODEL_SELECTION),
+            f"{label} does not support chat. Please select a compatible model.",
+        )
+
+    endpoint_provider = str(endpoint_cfg.get("provider") or "").strip().lower()
+    if endpoint_provider:
+        normalized["provider"] = endpoint_provider
+    return normalized, None
+
+
+def resolve_default_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the chat default model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Default model"
+    )
+
+
+def resolve_metadata_extraction_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the metadata extraction model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Metadata extraction model"
+    )
+
+
+def resolve_vision_model_selection(selection, endpoints, multi_endpoint_enabled=True):
+    """Re-resolve the multi-modal vision model. See ``resolve_model_selection``."""
+    return resolve_model_selection(
+        selection, endpoints, multi_endpoint_enabled, label="Vision model"
+    )
+
+
+def build_migrated_model_endpoints_from_legacy(settings):
+    """Seed a connection list from the classic single-endpoint chat configuration.
+
+    Turning connections on is one-way: ``coerce_multi_model_endpoint_enablement`` keeps the
+    flag true once set. A deployment that had a working classic endpoint and then enabled
+    connections without carrying it over would be left with an empty model catalog and no
+    way back, so the existing configuration is migrated into the first connection.
+
+    Returns ``[]`` when there is nothing to migrate, which is the case for a deployment
+    that never configured the classic endpoint.
+    """
+    source = settings if isinstance(settings, dict) else {}
+    gpt_model = source.get("gpt_model") or {}
+    selected_models = gpt_model.get("selected") or [] if isinstance(gpt_model, dict) else []
+
+    migrated_models = []
+    for model in selected_models:
+        if not isinstance(model, dict):
+            continue
+        deployment_name = model.get("deploymentName") or model.get("deployment") or ""
+        if not deployment_name:
+            continue
+        migrated_models.append({
+            "id": str(uuid.uuid4()),
+            "deploymentName": deployment_name,
+            "modelName": model.get("modelName") or model.get("name") or "",
+            "displayName": deployment_name,
+            "description": "",
+            "enabled": True,
+        })
+
+    if not migrated_models:
+        return []
+
+    legacy_auth_type = source.get("azure_openai_gpt_authentication_type", "key")
+    migrated_auth_type = "api_key" if legacy_auth_type == "key" else legacy_auth_type
+
+    return [{
+        "id": str(uuid.uuid4()),
+        "name": "Migrated Azure OpenAI Endpoint",
+        "provider": "aoai",
+        "enabled": True,
+        "auth": {
+            "type": migrated_auth_type,
+            "managed_identity_type": "system_assigned",
+            "managed_identity_client_id": "",
+            "tenant_id": "",
+            "client_id": "",
+            "client_secret": "",
+            "api_key": source.get("azure_openai_gpt_key", ""),
+        },
+        "connection": {
+            "endpoint": source.get("azure_openai_gpt_endpoint", ""),
+            "api_version": source.get("azure_openai_gpt_api_version", ""),
+        },
+        "management": {
+            "subscription_id": source.get("azure_openai_gpt_subscription_id", ""),
+            "resource_group": source.get("azure_openai_gpt_resource_group", ""),
+            "location": "",
+        },
+        "models": migrated_models,
+    }]
+
 
 def encrypt_key(key):
     cipher_suite = Fernet(app.config['SECRET_KEY'])
@@ -3083,6 +3953,30 @@ def get_user_settings(user_id, allow_cross_user=False):
         raise # Re-raise the exception to be handled by the route
 
 
+def read_user_settings_snapshot(user_id, allow_cross_user=False):
+    """Return a user's settings document without repairing, creating or profile-syncing it.
+
+    ``get_user_settings`` writes a missing or incomplete document back to Cosmos. A workflow dry run
+    must not write, so it reads here instead: the same defaults are filled in on the returned copy
+    only, and nothing is cached. It needs no request context.
+    """
+    _authorize_user_settings_access(user_id, "read", allow_cross_user=allow_cross_user)
+    cached_doc = _get_request_cached_user_settings(user_id)
+    if cached_doc is not None:
+        return cached_doc
+    try:
+        doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+    except exceptions.CosmosResourceNotFoundError:
+        doc = {"id": user_id, "settings": {}}
+    snapshot = _clone_user_settings_doc(doc)
+    if not isinstance(snapshot.get("settings"), dict):
+        snapshot["settings"] = {}
+    snapshot["settings"].setdefault("personal_model_endpoints", [])
+    snapshot["settings"].setdefault("showTutorialButtons", True)
+    snapshot["settings"].setdefault("desktopNotificationsEnabled", True)
+    return snapshot
+
+
 def get_user_ui_settings(user_id, allow_cross_user=False):
     """Return a lightweight, cacheable subset of user settings used by shared page chrome."""
     _authorize_user_settings_access(user_id, "read UI settings", allow_cross_user=allow_cross_user)
@@ -3120,6 +4014,59 @@ def get_user_ui_settings(user_id, allow_cross_user=False):
         'settings': _extract_user_ui_settings(doc),
     }
     
+def _clear_stale_active_group(user_id, stale_group_id):
+    """Compare-and-clear a confirmed stale preference without changing agent defaults.
+
+    Called only by the group owner after membership validation. A failed repair
+    still masks the stale preference for this request; later requests retry it.
+    """
+    _authorize_user_settings_access(user_id, "update")
+    doc = _get_request_cached_user_settings(user_id)
+    for attempt in range(3):
+        try:
+            doc = cosmos_user_settings_container.read_item(item=user_id, partition_key=user_id)
+            if doc.get("settings", {}).get("activeGroupOid") != stale_group_id:
+                invalidate_user_settings_caches(user_id)
+                _set_request_cached_user_settings(user_id, doc)
+                return True
+            if not doc.get("_etag"):
+                log_event(
+                    "[USER_SETTINGS] Cannot clear stale active group without an ETag.",
+                    extra={"user_id": user_id}, level=logging.WARNING,
+                )
+                break
+            doc["settings"]["activeGroupOid"] = None
+            doc["lastUpdated"] = datetime.now(timezone.utc).isoformat()
+            doc = cosmos_user_settings_container.replace_item(
+                user_id, body=doc,
+                etag=doc["_etag"], match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            invalidate_user_settings_caches(user_id)
+            return True
+        except exceptions.CosmosHttpResponseError as exc:
+            if exc.status_code == 412 and attempt < 2:
+                continue
+            log_event(
+                "[USER_SETTINGS] Failed to clear stale active group.",
+                extra={"user_id": user_id, "error_type": type(exc).__name__},
+                level=logging.WARNING,
+            )
+            break
+        else:
+            invalidate_user_settings_caches(user_id)
+            _set_request_cached_user_settings(user_id, doc)
+            return True
+
+    # The write is best effort, but the revoked preference is never authoritative.
+    invalidate_user_settings_caches(user_id)
+    if doc is not None and doc.get("settings", {}).get("activeGroupOid") == stale_group_id:
+        doc["settings"]["activeGroupOid"] = None
+    if doc is not None:
+        _set_request_cached_user_settings(user_id, doc)
+    return False
+
+
 def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
     """
     Updates or creates user settings in Cosmos DB, merging new settings
@@ -3277,7 +4224,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
                     del agent['default_agent']
 
         if 'enable_agents' not in doc['settings'] or doc['settings']['enable_agents'] is None:
-            doc['settings']['enable_agents'] = False
+            doc['settings']['enable_agents'] = True
 
         # --- Update the timestamp ---
         # Use timezone-aware UTC time
@@ -3355,6 +4302,36 @@ def workflow_user_required(f):
     return wrapper
 
 
+def workflow_assistant_required(f):
+    """Allow the route only when the AI workflow assistant is available to the signed-in user."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        settings = get_settings()
+        user_roles = (session.get('user') or {}).get('roles', [])
+        if is_workflow_assistant_enabled_for_user(settings, user_roles=user_roles):
+            return f(*args, **kwargs)
+        return jsonify({
+            'error': 'The AI workflow assistant is not available.',
+            'code': 'workflow_assistant_disabled',
+        }), 403
+    return wrapper
+
+
+def workflow_results_required(f):
+    """Allow the route only when workflow results in chat are available to the signed-in user."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        settings = get_settings()
+        user_roles = (session.get('user') or {}).get('roles', [])
+        if is_chat_workflow_results_enabled_for_user(settings, user_roles=user_roles):
+            return f(*args, **kwargs)
+        return jsonify({
+            'error': 'Workflow results in chat are not available.',
+            'code': 'workflow_results_disabled',
+        }), 403
+    return wrapper
+
+
 def enabled_required(setting_key):
     def decorator(f):
         @wraps(f)
@@ -3375,7 +4352,16 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
     sanitized = {}
 
     for k, v in full_settings.items():
-        if k in {'support_feedback_recipient_email', 'm365_trusted_download_hosts'}:
+        if k.startswith('content_screening'):
+            continue
+        if k in {
+            'support_feedback_recipient_email', 'm365_trusted_download_hosts',
+            'custom_model_endpoint_ca_bundle_path', 'client_cert_path',
+            'client_key_path', 'bearer_token', 'token_url', 'embedding_vector_profile',
+            # Organization review guidance for the Review center assistant; only the model reads it.
+            'admin_review_ai_guidance',
+            'web_iq',
+        }:
             continue
         if k == 'agents_page_promoted_popular_agents':
             continue
@@ -3384,7 +4370,7 @@ def sanitize_settings_for_user(full_settings: dict) -> dict:
         if any(term in k.lower() for term in sensitive_terms):
             continue
         if k in ('model_endpoints', 'personal_model_endpoints') and isinstance(v, list):
-            sanitized[k] = sanitize_model_endpoints_for_frontend(v)
+            sanitized[k] = sanitize_model_endpoints_for_frontend(v, include_connection_details=False)
             continue
         if isinstance(v, dict):
             sanitized[k] = sanitize_settings_for_user(v)
@@ -3434,9 +4420,12 @@ def sanitize_settings_for_logging(full_settings: dict) -> dict:
         return full_settings
     
     sanitized = {}
-    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret"]
+    sensitive_key_terms = ["key", "base64", "image", "storage_account_url", "_secret", "bearer_token", "access_token"]
     
     for k, v in full_settings.items():
+        if k.startswith('content_screening'):
+            sanitized[k] = "[REDACTED]"
+            continue
         # Skip keys with sensitive terms
         if any(term in k.lower() for term in sensitive_key_terms):
             sanitized[k] = "[REDACTED]"

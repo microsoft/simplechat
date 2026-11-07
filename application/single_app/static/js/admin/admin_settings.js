@@ -89,6 +89,8 @@ const supportLatestFeaturesSettingsDiv = document.getElementById('support_latest
 
 const adminForm = document.getElementById('admin-settings-form');
 const saveButton = document.getElementById('floating-save-btn') || (adminForm ? adminForm.querySelector('button[type="submit"]') : null);
+let indexChecksPending = false;
+let indexSettingsConflict = false;
 const enableGroupWorkspacesToggle = document.getElementById('enable_group_workspaces');
 const createGroupPermissionSettingDiv = document.getElementById('create_group_permission_setting');
 const groupWorkflowAssignmentsInput = document.getElementById('group_workflow_allowed_group_ids');
@@ -3078,6 +3080,9 @@ function renderCosmosMaintenanceStatus(statusPayload) {
     setElementText('cosmos-indexing-policy-updated-count', formatNumber(indexingPolicy.updated_container_count || 0));
     setElementText('cosmos-indexing-policy-failed-count', formatNumber(indexingPolicy.failed_container_count || 0));
     setElementText('cosmos-indexing-policy-last-evaluated', indexingPolicy.evaluated_at || 'Not loaded');
+    if (Object.prototype.hasOwnProperty.call(statusPayload || {}, 'last_cosmos_indexing_policy_apply')) {
+        renderLastCosmosIndexApply(statusPayload.last_cosmos_indexing_policy_apply);
+    }
 
     setDocumentAccessIndexBadge(
         'stale-cache-cleanup-status',
@@ -3091,6 +3096,63 @@ function renderCosmosMaintenanceStatus(statusPayload) {
     setElementText('stale-cache-cleanup-more-candidates', cleanup.has_more_candidates ? 'Yes' : 'No');
     setElementText('stale-cache-cleanup-categories', formatStaleCacheCleanupCategories(cleanup.categories));
     setElementText('stale-cache-cleanup-last-evaluated', cleanup.evaluated_at || 'Not run yet');
+}
+
+function getCosmosIndexingFailureReason(code) {
+    switch (code) {
+        case 'partition_key_change_rejected':
+            return 'Cosmos rejected a partition-key change. Upgrade to the patched application and retry applying indexes.';
+        case 'invalid_partition_key_definition':
+            return 'The existing partition-key definition could not be verified. No update was submitted.';
+        case 'indexing_access_denied':
+            return 'Cosmos denied access. Ask an administrator to verify the application identity has the required access.';
+        case 'indexing_conflict':
+            return 'The container changed during the update. Refresh status and retry applying indexes.';
+        default:
+            return 'Unable to process the indexing policy. Check the server logs before retrying.';
+    }
+}
+
+function renderLastCosmosIndexApply(lastApply) {
+    const element = document.getElementById('cosmos-indexing-last-apply');
+    if (!element) {
+        return;
+    }
+    element.replaceChildren();
+    const result = lastApply?.results;
+    element.classList.toggle('d-none', !result);
+    if (!result) {
+        return;
+    }
+    const failed = Number(result.failed_container_count || 0);
+    element.className = `alert alert-${failed ? 'danger' : 'success'} small mb-3`;
+    const heading = document.createElement('p');
+    heading.className = 'fw-semibold mb-2';
+    heading.textContent = `Last index apply result: ${formatNumber(failed)} failed container(s); updates submitted for ${formatNumber(result.updated_container_count || 0)}.`;
+    element.appendChild(heading);
+    for (const container of (Array.isArray(result.containers) ? result.containers : [])) {
+        if (container.status === 'failed') {
+            const detail = document.createElement('p');
+            detail.className = 'mb-2 text-break';
+            detail.textContent = `${container.container_name || 'Unknown container'}: ${getCosmosIndexingFailureReason(container.error_code)}`;
+            element.appendChild(detail);
+        }
+    }
+    const context = document.createElement('p');
+    context.className = 'mb-0 text-break';
+    context.textContent = `${lastApply.run_id ? `Run reference: ${lastApply.run_id}. ` : ''}Successful submissions were not rolled back. Refresh status inspects current policies; it does not retry failed updates.`;
+    element.appendChild(context);
+}
+
+function getCosmosMaintenanceFailureMessage(result) {
+    const indexing = getCosmosIndexingPolicyStatusFromRunResult(result);
+    if (indexing?.success === false || Number(indexing?.failed_container_count || 0) > 0) {
+        return 'Index maintenance failed for one or more containers. Review the last index apply result.';
+    }
+    if (indexing?.success === true) {
+        return 'Index maintenance succeeded, but another maintenance step failed. Check the server logs for this run.';
+    }
+    return 'Cosmos maintenance could not be completed. Refresh status and check the server logs before retrying.';
 }
 
 function getStaleCacheCleanupStatusFromRunResult(result) {
@@ -3502,9 +3564,12 @@ async function runCosmosIndexingPolicyApply(options = {}) {
         const indexingResult = getCosmosIndexingPolicyStatusFromRunResult(data);
         if (indexingResult) {
             renderCosmosMaintenanceStatus({ cosmos_indexing_policies: indexingResult });
+            renderLastCosmosIndexApply({ run_id: data.run_id, results: indexingResult });
         }
         if (!response.ok || !data.success) {
-            throw new Error(data.error || 'Cosmos indexing policy update failed.');
+            setCosmosMaintenanceMessage(getCosmosMaintenanceFailureMessage(data), 'danger');
+            showToast(getCosmosMaintenanceFailureMessage(data), 'danger');
+            return;
         }
 
         const updated = formatNumber(indexingResult?.updated_container_count || 0);
@@ -3521,8 +3586,9 @@ async function runCosmosIndexingPolicyApply(options = {}) {
         }
         await loadCosmosMaintenanceStatus(null, { showLoading: false });
     } catch (error) {
-        setCosmosMaintenanceMessage(error.message || 'Cosmos indexing policy update failed.', 'danger');
-        showToast(error.message || 'Cosmos indexing policy update failed.', 'danger');
+        const message = 'Cosmos maintenance could not be completed. Refresh status and check the server logs before retrying.';
+        setCosmosMaintenanceMessage(message, 'danger');
+        showToast(message, 'danger');
     } finally {
         if (triggerButton) {
             setButtonBusy(triggerButton, false);
@@ -5082,6 +5148,8 @@ document.addEventListener('DOMContentLoaded', () => {
     renderGPTModels();
     renderEmbeddingModels();
     renderImageModels();
+    initializeSharedImageModels();
+    initializeSharedCapabilityModels('embeddings');
 
     updateGptHiddenInput();
     updateEmbeddingHiddenInput();
@@ -5415,63 +5483,329 @@ function renderGPTModels() {
 function renderEmbeddingModels() {
     const listDiv = document.getElementById('embedding_models_list');
     if (!listDiv) return;
-
+    listDiv.replaceChildren();
     if (!embeddingAll || embeddingAll.length === 0) {
-        listDiv.innerHTML = '<p class="text-warning">No embedding models found. Click "Fetch Embedding Models" to populate.</p>';
+        const notice = document.createElement('p');
+        notice.className = 'text-warning';
+        notice.textContent = 'No legacy embedding models found. Fetch models to recover the old configuration.';
+        listDiv.appendChild(notice);
         return;
     }
-
-    let html = '<ul class="list-group">';
-    embeddingAll.forEach(m => {
-        const isSelected = embeddingSelected.some(sel =>
-            sel.deploymentName === m.deploymentName &&
-            sel.modelName === m.modelName
-        );
-        const buttonLabel = isSelected ? 'Selected' : 'Select';
-        const buttonDisabled = isSelected ? 'disabled' : '';
-        html += `
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-                <span>${m.deploymentName} (Model: ${m.modelName})</span>
-                <button class="btn btn-sm btn-primary" ${buttonDisabled}
-                    onclick="selectEmbeddingModel('${m.deploymentName}', '${m.modelName}')">
-                    ${buttonLabel}
-                </button>
-            </li>
-        `;
+    const list = document.createElement('ul');
+    list.className = 'list-group';
+    embeddingAll.forEach(model => {
+        const selected = embeddingSelected.some(item => item.deploymentName === model.deploymentName && item.modelName === model.modelName);
+        const row = document.createElement('li');
+        row.className = 'list-group-item d-flex justify-content-between align-items-center';
+        const name = document.createElement('span');
+        name.textContent = `${model.deploymentName} (Model: ${model.modelName || model.deploymentName})`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-primary';
+        button.disabled = selected;
+        button.textContent = selected ? 'Selected' : 'Select';
+        button.addEventListener('click', () => window.selectEmbeddingModel(model.deploymentName, model.modelName));
+        row.append(name, button);
+        list.appendChild(row);
     });
-    html += '</ul>';
-    listDiv.innerHTML = html;
+    listDiv.appendChild(list);
 }
 
 function renderImageModels() {
     const listDiv = document.getElementById('image_models_list');
     if (!listDiv) return;
-
+    listDiv.replaceChildren();
     if (!imageAll || imageAll.length === 0) {
-        listDiv.innerHTML = '<p class="text-warning">No image models found. Click "Fetch Image Models" to populate.</p>';
+        const notice = document.createElement('p');
+        notice.className = 'text-warning';
+        notice.textContent = 'No legacy image models found. Fetch models to recover the old configuration.';
+        listDiv.appendChild(notice);
         return;
     }
-
-    let html = '<ul class="list-group">';
-    imageAll.forEach(m => {
-        const isSelected = imageSelected.some(sel =>
-            sel.deploymentName === m.deploymentName &&
-            sel.modelName === m.modelName
-        );
-        const buttonLabel = isSelected ? 'Selected' : 'Select';
-        const buttonDisabled = isSelected ? 'disabled' : '';
-        html += `
-            <li class="list-group-item d-flex justify-content-between align-items-center">
-                <span>${m.deploymentName} (Model: ${m.modelName})</span>
-                <button class="btn btn-sm btn-primary" ${buttonDisabled}
-                    onclick="selectImageModel('${m.deploymentName}', '${m.modelName}')">
-                    ${buttonLabel}
-                </button>
-            </li>
-        `;
+    const list = document.createElement('ul');
+    list.className = 'list-group';
+    imageAll.forEach(model => {
+        const selected = imageSelected.some(item => item.deploymentName === model.deploymentName);
+        const row = document.createElement('li');
+        row.className = 'list-group-item d-flex justify-content-between align-items-center';
+        const name = document.createElement('span');
+        name.textContent = `${model.deploymentName} (Model: ${model.modelName || model.deploymentName})`;
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-primary';
+        button.disabled = selected;
+        button.textContent = selected ? 'Selected' : 'Select';
+        button.addEventListener('click', () => window.selectImageModel(model.deploymentName, model.modelName));
+        row.append(name, button);
+        list.appendChild(row);
     });
-    html += '</ul>';
-    listDiv.innerHTML = html;
+    listDiv.appendChild(list);
+}
+
+const sharedCapabilityStates = {
+    image_generation: {
+        prefix: 'image-generation', kind: 'image', title: 'Image', container: 'shared-image-model-settings',
+        legacy: 'image', testType: 'image', testId: 'test_image_button', resultId: 'test_image_result',
+    },
+    embeddings: {
+        prefix: 'embedding', kind: 'embedding', title: 'Embedding', container: 'shared-embedding-model-settings',
+        legacy: 'embedding', testType: 'embedding', testId: 'test_embedding_button', resultId: 'test_embedding_result',
+    },
+};
+Object.values(sharedCapabilityStates).forEach(state => {
+    const container = document.getElementById(state.container);
+    state.authoritative = container?.dataset.sharedBindingAuthoritative === 'true';
+    state.initialHasSelection = container?.dataset.hasSharedSelection === 'true';
+    state.initialMigration = {
+        status: container?.dataset.migrationStatus || '',
+        message: document.getElementById(`${state.prefix}-migration-notice`)?.textContent || '',
+    };
+    state.data = null;
+    state.busy = false;
+});
+
+function isCapabilityImportFailure(migration) {
+    return migration?.status === 'error' || migration?.status === 'failed';
+}
+
+function canEditLegacyCapabilitySettings(capability) {
+    const state = sharedCapabilityStates[capability];
+    return !state.authoritative && isCapabilityImportFailure(state.data ? state.data.migration : state.initialMigration);
+}
+
+function canEditLegacyImageSettings() {
+    return canEditLegacyCapabilitySettings('image_generation');
+}
+
+function canEditLegacyEmbeddingSettings() {
+    return canEditLegacyCapabilitySettings('embeddings');
+}
+
+function setCapabilityNotice(id, message, tone = 'warning') {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.className = `alert alert-${tone} mt-2`;
+    element.classList.toggle('d-none', !message);
+    element.textContent = message || '';
+}
+
+const setImageNotice = setCapabilityNotice;
+
+function sharedCapabilityChoiceIndex(capability) {
+    const data = sharedCapabilityStates[capability].data;
+    if (!data) return -1;
+    return data.choices.findIndex(choice =>
+        choice.endpoint_id === data.selection?.endpoint_id &&
+        choice.model_id === data.selection?.model_id
+    );
+}
+
+function sharedImageChoiceIndex() {
+    return sharedCapabilityChoiceIndex('image_generation');
+}
+
+function hasConfiguredSharedEmbedding() {
+    const state = sharedCapabilityStates.embeddings;
+    return state.data ? sharedCapabilityChoiceIndex('embeddings') >= 0 : state.initialHasSelection;
+}
+
+function renderSharedCapabilityModels(capability) {
+    const state = sharedCapabilityStates[capability];
+    const { data, prefix, kind, title } = state;
+    const select = document.getElementById(`${prefix}-default-model`);
+    if (!select) return;
+    select.replaceChildren(new Option(data ? `No default ${kind} model` : 'Loading models…', ''));
+    const groups = new Map();
+    (data?.choices || []).forEach((choice, index) => {
+        let group = groups.get(choice.endpoint_id);
+        if (!group) {
+            group = document.createElement('optgroup');
+            group.label = choice.connection_name || 'Connection';
+            groups.set(choice.endpoint_id, group);
+            select.appendChild(group);
+        }
+        const name = choice.label || choice.deployment_name || choice.model_id;
+        const deployment = choice.deployment_name && choice.deployment_name !== name
+            ? ` (${choice.deployment_name})` : '';
+        group.appendChild(new Option(`${name}${deployment}`, String(index)));
+    });
+    const selectedIndex = sharedCapabilityChoiceIndex(capability);
+    const dangling = Boolean(data?.selection?.endpoint_id && selectedIndex < 0);
+    if (dangling) {
+        const stale = new Option('Saved model — no longer available', 'unavailable');
+        stale.disabled = true;
+        select.appendChild(stale);
+    }
+    select.value = dangling ? 'unavailable' : selectedIndex < 0 ? '' : String(selectedIndex);
+    select.disabled = state.busy || !data;
+    const refresh = document.getElementById(`refresh-${prefix}-models`);
+    if (refresh) refresh.disabled = state.busy;
+    const test = document.getElementById(state.testId);
+    if (test) test.disabled = state.busy || selectedIndex < 0 || !data?.enabled;
+    const selectedChoice = data?.choices[selectedIndex];
+    const support = selectedChoice?.capability;
+    const supportElement = document.getElementById(`${prefix}-model-capability`);
+    if (supportElement) {
+        supportElement.textContent = support
+            ? `${capability === 'embeddings' ? 'Text embeddings' : support.api === 'images' ? 'Direct image output' : 'Image output through the Responses image tool'} · ${support.source || 'unknown source'}`
+            : '';
+    }
+    const policyElement = document.getElementById(`${prefix}-model-policy`);
+    if (policyElement) {
+        const policy = selectedChoice?.embedding_policy;
+        const dimensions = policy?.dimensions ?? policy?.default_dimensions;
+        policyElement.textContent = selectedChoice ? [
+            Number.isSafeInteger(dimensions) && dimensions > 0 ? `${dimensions.toLocaleString()} dimensions` : 'Dimensions not configured',
+            Number.isSafeInteger(policy?.max_input_tokens) && policy.max_input_tokens > 0 ? `${policy.max_input_tokens.toLocaleString()} input tokens per text` : 'Input token limit not configured',
+        ].filter(Boolean).join(' · ') : '';
+    }
+    const emptyMessage = !data ? '' : !data.choices.length
+        ? `No saved connection publishes a compatible ${kind} model. Add or enable one in AI Connections and save the connection first.`
+        : data.enabled && selectedIndex < 0
+          ? `Choose a default ${kind} model before ${capability === 'embeddings' ? 'indexing or searching documents' : 'generating images'}. A cleared selection never restores the legacy model.`
+          : !data.enabled
+            ? 'Image generation is off. You can configure the default without enabling it. Save the feature switch before testing.'
+            : '';
+    setCapabilityNotice(`${prefix}-model-notice`, data?.reason || emptyMessage);
+    setCapabilityNotice(`${prefix}-compatibility-notice`, data?.compatibility?.message || '', 'info');
+    const migration = data ? data.migration : state.initialMigration;
+    if (migration?.status === 'complete') state.authoritative = true;
+    const recoveryAllowed = canEditLegacyCapabilitySettings(capability);
+    const migrationMessage = isCapabilityImportFailure(migration) && state.authoritative
+        ? `An earlier ${kind} import failed. ${title} configuration now uses AI Connections; legacy settings are retained and cannot be edited here.`
+        : migration?.message || '';
+    setCapabilityNotice(`${prefix}-migration-notice`, migrationMessage, recoveryAllowed ? 'warning' : 'info');
+    document.getElementById(`legacy-${state.legacy}-recovery`)?.classList.toggle('d-none', !recoveryAllowed);
+    const legacy = document.getElementById(`legacy-${state.legacy}-settings`);
+    if (legacy) legacy.disabled = !recoveryAllowed || state.busy;
+}
+
+function renderSharedImageModels() {
+    renderSharedCapabilityModels('image_generation');
+}
+
+async function readSharedCapabilityResponse(response, capability) {
+    const data = await response.json();
+    const { kind } = sharedCapabilityStates[capability];
+    if (!response.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : `The ${kind} default could not be saved.`);
+    }
+    if (data.capability !== capability || !Array.isArray(data.choices) || typeof data.enabled !== 'boolean') {
+        throw new Error(`The ${kind} model list could not be read. Reload and try again.`);
+    }
+    return {
+        ...data,
+        choices: data.choices.filter(choice => choice && typeof choice.endpoint_id === 'string' &&
+            typeof choice.model_id === 'string' && choice.capability?.supported === true && choice.capability.available !== false),
+    };
+}
+
+async function loadSharedCapabilityModels(capability) {
+    const state = sharedCapabilityStates[capability];
+    if (!document.getElementById(`${state.prefix}-default-model`) || state.busy) return;
+    state.busy = true;
+    setCapabilityNotice(state.resultId, '', 'info');
+    renderSharedCapabilityModels(capability);
+    try {
+        state.data = await readSharedCapabilityResponse(await fetch(`/api/v2/admin/capability-models/${capability}`), capability);
+        setCapabilityNotice(`${state.prefix}-model-error`, '', 'danger');
+    } catch (error) {
+        setCapabilityNotice(`${state.prefix}-model-error`, error.message || `${state.title} models could not be loaded.`, 'danger');
+    } finally {
+        state.busy = false;
+        renderSharedCapabilityModels(capability);
+    }
+}
+
+async function saveSharedCapabilityModel(capability, event) {
+    const state = sharedCapabilityStates[capability];
+    if (!state.data || state.busy) return;
+    const choice = event.target.value === '' ? null : state.data.choices[Number(event.target.value)];
+    if (event.target.value !== '' && !choice) return;
+    const selection = choice
+        ? { endpoint_id: choice.endpoint_id, model_id: choice.model_id, provider: choice.provider }
+        : { endpoint_id: '', model_id: '', provider: '' };
+    const previous = state.data;
+    state.busy = true;
+    state.data = { ...state.data, selection };
+    document.getElementById(`${state.prefix}-model-saving`)?.classList.remove('d-none');
+    setCapabilityNotice(state.resultId, '', 'info');
+    renderSharedCapabilityModels(capability);
+    try {
+        state.data = await readSharedCapabilityResponse(await fetch(`/api/v2/admin/capability-models/${capability}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ selection }),
+        }), capability);
+        state.authoritative = true;
+        setCapabilityNotice(`${state.prefix}-model-error`, '', 'danger');
+    } catch (error) {
+        state.data = previous;
+        setCapabilityNotice(`${state.prefix}-model-error`, error.message || `The ${state.kind} default could not be saved.`, 'danger');
+    } finally {
+        state.busy = false;
+        document.getElementById(`${state.prefix}-model-saving`)?.classList.add('d-none');
+        renderSharedCapabilityModels(capability);
+    }
+}
+
+async function testSharedCapabilityModel(capability) {
+    const state = sharedCapabilityStates[capability];
+    if (state.busy || !state.data || sharedCapabilityChoiceIndex(capability) < 0) return;
+    if (typeof window.hasUnsavedAIConnectionEdits === 'function' && window.hasUnsavedAIConnectionEdits()) {
+        setCapabilityNotice(state.resultId, `Save the connection first. ${state.title} tests only use the saved model and credentials.`);
+        return;
+    }
+    if (capability === 'image_generation' && (!document.getElementById('enable_image_generation')?.checked || !state.data.enabled)) {
+        setCapabilityNotice(state.resultId, 'Enable Image Generation and save settings before testing.');
+        return;
+    }
+    state.busy = true;
+    renderSharedCapabilityModels(capability);
+    setCapabilityNotice(state.resultId, `Testing the saved ${state.kind} model…`, 'info');
+    try {
+        const response = await fetch('/api/v2/admin/settings/test-connection', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ test_type: state.testType, selection: state.data.selection }),
+        });
+        const data = await response.json();
+        if (!response.ok || data.success !== true) {
+            throw new Error(data.error || `The saved ${state.kind} model did not return a valid result.`);
+        }
+        if (capability === 'embeddings' && (!Number.isSafeInteger(data.dimensions) || data.dimensions <= 0)) {
+            throw new Error('The saved embedding model did not return valid vector dimensions.');
+        }
+        setCapabilityNotice(state.resultId, capability === 'embeddings'
+            ? `The saved embedding model returned ${data.dimensions.toLocaleString()} dimensions. No vectors were stored and the default was not changed.`
+            : 'The saved image model generated an image successfully.', 'success');
+    } catch (error) {
+        setCapabilityNotice(state.resultId, error.message || `${state.title} inference could not be tested.`, 'danger');
+    } finally {
+        state.busy = false;
+        renderSharedCapabilityModels(capability);
+    }
+}
+
+function initializeSharedCapabilityModels(capability) {
+    const state = sharedCapabilityStates[capability];
+    const select = document.getElementById(`${state.prefix}-default-model`);
+    if (!select) return;
+    select.addEventListener('change', event => void saveSharedCapabilityModel(capability, event));
+    document.getElementById(`refresh-${state.prefix}-models`)?.addEventListener('click', () => void loadSharedCapabilityModels(capability));
+    document.getElementById(state.testId)?.addEventListener('click', () => void testSharedCapabilityModel(capability));
+    window.addEventListener('simplechat:model-connections-changed', (event) => {
+        if (event.detail?.saved) {
+            void loadSharedCapabilityModels(capability);
+        } else {
+            setCapabilityNotice(`${state.prefix}-model-notice`, 'Save the connection first, then refresh choices. Only saved connections are offered here.');
+        }
+    });
+    void loadSharedCapabilityModels(capability);
+}
+
+function initializeSharedImageModels() {
+    initializeSharedCapabilityModels('image_generation');
 }
 
 const fetchGptBtn = document.getElementById('fetch_gpt_models_btn');
@@ -5532,11 +5866,16 @@ function updateGptHiddenInput() {
 const fetchEmbeddingBtn = document.getElementById('fetch_embedding_models_btn');
 if (fetchEmbeddingBtn) {
     fetchEmbeddingBtn.addEventListener('click', async () => {
+        if (!canEditLegacyEmbeddingSettings()) {
+            setCapabilityNotice('embedding-model-error', 'Legacy embedding configuration is not editable. Choose a shared embedding model instead.', 'danger');
+            return;
+        }
         const listDiv = document.getElementById('embedding_models_list');
-        listDiv.innerHTML = 'Fetching...';
+        listDiv.textContent = 'Fetching...';
         try {
             const resp = await fetch('/api/models/embedding');
             const data = await resp.json();
+            if (!canEditLegacyEmbeddingSettings()) return;
             if (resp.ok && data.models && data.models.length > 0) {
                 // Clear old models and replace with new ones
                 embeddingAll = data.models;
@@ -5550,16 +5889,21 @@ if (fetchEmbeddingBtn) {
                 updateEmbeddingHiddenInput();
                 markFormAsModified();
             } else {
-                listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No embedding models found'}</p>`;
+                listDiv.textContent = data.error || 'No embedding models found.';
             }
         } catch (err) {
-            listDiv.innerHTML = `<p class="text-danger">Error fetching embedding models: ${err.message}</p>`;
+            listDiv.textContent = err.message || 'Embedding models could not be fetched.';
         }
     });
 }
 
 window.selectEmbeddingModel = (deploymentName, modelName) => {
-    embeddingSelected = [{ deploymentName, modelName }];
+    if (!canEditLegacyEmbeddingSettings()) {
+        setCapabilityNotice('embedding-model-error', 'Legacy embedding configuration is not editable. Choose a shared embedding model instead.', 'danger');
+        return;
+    }
+    const model = embeddingAll.find(item => item.deploymentName === deploymentName && item.modelName === modelName);
+    embeddingSelected = [{ ...model, deploymentName, modelName }];
     renderEmbeddingModels();
     updateEmbeddingHiddenInput();
     markFormAsModified();    // mark form as modified
@@ -5578,11 +5922,16 @@ function updateEmbeddingHiddenInput() {
 const fetchImageBtn = document.getElementById('fetch_image_models_btn');
 if (fetchImageBtn) {
     fetchImageBtn.addEventListener('click', async () => {
+        if (!canEditLegacyImageSettings()) {
+            setImageNotice('image-generation-model-error', 'Legacy image configuration is not editable. Choose a shared image model instead.', 'danger');
+            return;
+        }
         const listDiv = document.getElementById('image_models_list');
-        listDiv.innerHTML = 'Fetching...';
+        listDiv.textContent = 'Fetching...';
         try {
             const resp = await fetch('/api/models/image');
             const data = await resp.json();
+            if (!canEditLegacyImageSettings()) return;
             if (resp.ok && data.models && data.models.length > 0) {
                 // Clear old models and replace with new ones
                 imageAll = data.models;
@@ -5596,15 +5945,19 @@ if (fetchImageBtn) {
                 updateImageHiddenInput();
                 markFormAsModified();
             } else {
-                listDiv.innerHTML = `<p class="text-danger">Error: ${data.error || 'No image models found'}</p>`;
+                listDiv.textContent = data.error || 'No image models found.';
             }
         } catch (err) {
-            listDiv.innerHTML = `<p class="text-danger">Error fetching image models: ${err.message}</p>`;
+            listDiv.textContent = err.message || 'Image models could not be fetched.';
         }
     });
 }
 
 window.selectImageModel = (deploymentName, modelName) => {
+    if (!canEditLegacyImageSettings()) {
+        setImageNotice('image-generation-model-error', 'Legacy image configuration is not editable. Choose a shared image model instead.', 'danger');
+        return;
+    }
     imageSelected = [{ deploymentName, modelName: modelName || null }];
     document.getElementById('image_gen_model').value = deploymentName;
     renderImageModels();
@@ -6770,8 +7123,8 @@ function setupToggles() {
     const enableEmbeddingApim = document.getElementById('enable_embedding_apim');
     if (enableEmbeddingApim) {
         enableEmbeddingApim.addEventListener('change', function () {
-            document.getElementById('non_apim_embedding_settings').style.display = this.checked ? 'none' : 'block';
-            document.getElementById('apim_embedding_settings').style.display = this.checked ? 'block' : 'none';
+            document.getElementById('non_apim_embedding_settings')?.classList.toggle('d-none', this.checked);
+            document.getElementById('apim_embedding_settings')?.classList.toggle('d-none', !this.checked);
             markFormAsModified();
         });
     }
@@ -6779,7 +7132,8 @@ function setupToggles() {
     const enableImageGen = document.getElementById('enable_image_generation');
     if (enableImageGen) {
         enableImageGen.addEventListener('change', function () {
-            document.getElementById('image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            document.getElementById('image_gen_settings')?.classList.toggle('d-none', !this.checked);
+            renderSharedImageModels();
             markFormAsModified();
         });
     }
@@ -6787,8 +7141,8 @@ function setupToggles() {
     const enableImageGenApim = document.getElementById('enable_image_gen_apim');
     if (enableImageGenApim) {
         enableImageGenApim.addEventListener('change', function () {
-            document.getElementById('non_apim_image_gen_settings').style.display = this.checked ? 'none' : 'block';
-            document.getElementById('apim_image_gen_settings').style.display = this.checked ? 'block' : 'none';
+            document.getElementById('non_apim_image_gen_settings')?.classList.toggle('d-none', this.checked);
+            document.getElementById('apim_image_gen_settings')?.classList.toggle('d-none', !this.checked);
             markFormAsModified();
         });
     }
@@ -7280,8 +7634,7 @@ function setupToggles() {
     const embeddingAuthType = document.getElementById('azure_openai_embedding_authentication_type');
     if (embeddingAuthType) {
         embeddingAuthType.addEventListener('change', function () {
-            document.getElementById('embedding_key_container').style.display =
-                (this.value === 'key') ? 'block' : 'none';
+            document.getElementById('embedding_key_container')?.classList.toggle('d-none', this.value !== 'key');
             markFormAsModified();
         });
     }
@@ -7289,8 +7642,7 @@ function setupToggles() {
     const imgAuthType = document.getElementById('azure_openai_image_gen_authentication_type');
     if (imgAuthType) {
         imgAuthType.addEventListener('change', function () {
-            document.getElementById('image_gen_key_container').style.display =
-                (this.value === 'key') ? 'block' : 'none';
+            document.getElementById('image_gen_key_container')?.classList.toggle('d-none', this.value !== 'key');
             markFormAsModified();
         });
     }
@@ -7864,6 +8216,7 @@ function setupWorkspaceDependencyValidation() {
      * Check if embeddings are properly configured
      */
     function checkEmbeddingConfiguration() {
+        if (sharedCapabilityStates.embeddings.authoritative) return hasConfiguredSharedEmbedding();
         const useApim = document.getElementById('enable_embedding_apim')?.checked || false;
         
         if (useApim) {
@@ -8125,7 +8478,11 @@ function setupTestButtons() {
     const runEnhancedCitationsStorageTest = async (button) => {
         const resultDiv = document.getElementById('test_enhanced_citations_storage_result');
         renderAdminTestLoading(resultDiv, 'Testing Enhanced Citations storage...');
+        storageRequestInFlight = true;
         setButtonBusy(button, true, 'Testing...');
+        if (repairStorageBtn) {
+            repairStorageBtn.disabled = true;
+        }
 
         try {
             const { response, data } = await runAdminTestRequest(buildEnhancedCitationsStoragePayload());
@@ -8137,7 +8494,11 @@ function setupTestButtons() {
                 message: error.message
             });
         } finally {
+            storageRequestInFlight = false;
             setButtonBusy(button, false);
+            if (repairStorageBtn) {
+                repairStorageBtn.disabled = storageSettingsChanged();
+            }
         }
     };
 
@@ -8159,6 +8520,71 @@ function setupTestButtons() {
     const testEnhancedCitationsStorageBtn = document.getElementById('test_enhanced_citations_storage_button');
     if (testEnhancedCitationsStorageBtn) {
         testEnhancedCitationsStorageBtn.addEventListener('click', () => runEnhancedCitationsStorageTest(testEnhancedCitationsStorageBtn));
+    }
+
+    const repairStorageBtn = document.getElementById('repair_enhanced_citations_storage_button');
+    let storageRequestInFlight = false;
+    const repairStorageHelp = document.getElementById('repair_enhanced_citations_storage_help');
+    const savedStoragePayload = JSON.stringify(buildEnhancedCitationsStoragePayload());
+    const storageSettingsChanged = () => JSON.stringify(buildEnhancedCitationsStoragePayload()) !== savedStoragePayload;
+    if (repairStorageBtn) {
+        const updateRepairAvailability = () => {
+            const changed = storageSettingsChanged();
+            repairStorageBtn.disabled = storageRequestInFlight || changed;
+            if (repairStorageHelp) {
+                repairStorageHelp.textContent = changed
+                    ? 'Save storage settings before creating containers.'
+                    : 'Uses saved storage settings. Creates private containers without changing existing files or permissions.';
+            }
+        };
+        ['office_docs_authentication_type', 'office_docs_storage_account_url', 'office_docs_storage_account_blob_endpoint']
+            .forEach((id) => {
+                const field = document.getElementById(id);
+                if (field) {
+                    field.addEventListener('input', updateRepairAvailability);
+                    field.addEventListener('change', updateRepairAvailability);
+                }
+            });
+        repairStorageBtn.addEventListener('click', async () => {
+            if (storageSettingsChanged() || repairStorageBtn.disabled) {
+                return;
+            }
+            const resultDiv = document.getElementById('test_enhanced_citations_storage_result');
+            storageRequestInFlight = true;
+            renderAdminTestLoading(resultDiv, 'Creating missing storage containers...');
+            setButtonBusy(repairStorageBtn, true, 'Creating...');
+            if (testEnhancedCitationsStorageBtn) {
+                testEnhancedCitationsStorageBtn.disabled = true;
+            }
+            try {
+                const response = await fetch('/api/admin/settings/storage/repair-containers', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
+                });
+                const data = await response.json();
+                renderAdminTestResult(resultDiv, {
+                    variant: response.ok && data.success ? 'success' : 'danger',
+                    title: response.ok && data.success ? 'Storage containers are ready' : 'Storage repair needs attention',
+                    message: data.message || data.error || 'Storage containers could not be prepared.',
+                    details: data.details,
+                    guidance: data.guidance
+                });
+            } catch (error) {
+                renderAdminTestResult(resultDiv, {
+                    variant: 'danger',
+                    title: 'Storage repair could not be completed',
+                    message: 'Check the connection and try again.'
+                });
+            } finally {
+                storageRequestInFlight = false;
+                setButtonBusy(repairStorageBtn, false);
+                if (testEnhancedCitationsStorageBtn) {
+                    testEnhancedCitationsStorageBtn.disabled = false;
+                }
+                updateRepairAvailability();
+            }
+        });
     }
 
     const testGptBtn = document.getElementById('test_gpt_button');
@@ -8246,11 +8672,14 @@ function setupTestButtons() {
     }
 
 
-    const testEmbeddingBtn = document.getElementById('test_embedding_button');
+    const testEmbeddingBtn = document.getElementById('test_legacy_embedding_button');
     if (testEmbeddingBtn) {
         testEmbeddingBtn.addEventListener('click', async () => {
-            const resultDiv = document.getElementById('test_embedding_result');
-            resultDiv.innerHTML = 'Testing Embeddings...';
+            if (!canEditLegacyEmbeddingSettings()) {
+                setCapabilityNotice('embedding-model-error', 'Legacy embedding configuration is not editable. Choose a shared embedding model instead.', 'danger');
+                return;
+            }
+            setCapabilityNotice('test_legacy_embedding_result', 'Testing legacy embeddings…', 'info');
 
             const enableApim = document.getElementById('enable_embedding_apim').checked;
 
@@ -8284,63 +8713,14 @@ function setupTestButtons() {
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
+                if (!canEditLegacyEmbeddingSettings()) return;
                 if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
+                    setCapabilityNotice('test_legacy_embedding_result', data.message || 'Legacy embedding connection tested.', 'success');
                 } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Embeddings'}</span>`;
+                    setCapabilityNotice('test_legacy_embedding_result', data.error || 'Legacy embedding connection could not be tested.', 'danger');
                 }
             } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
-            }
-        });
-    }
-
-    const testImageBtn = document.getElementById('test_image_button');
-    if (testImageBtn) {
-        testImageBtn.addEventListener('click', async () => {
-            const resultDiv = document.getElementById('test_image_result');
-            resultDiv.innerHTML = 'Testing Image Generation...';
-
-            const enableApim = document.getElementById('enable_image_gen_apim').checked;
-
-            const payload = {
-                test_type: 'image',
-                enable_apim: enableApim,
-                selected_model: imageSelected[0] || null
-            };
-
-            if (enableApim) {
-                payload.apim = {
-                    endpoint: document.getElementById('azure_apim_image_gen_endpoint').value,
-                    api_version: document.getElementById('azure_apim_image_gen_api_version').value,
-                    deployment: document.getElementById('azure_apim_image_gen_deployment').value,
-                    subscription_key: document.getElementById('azure_apim_image_gen_subscription_key').value
-                };
-            } else {
-                payload.direct = {
-                    endpoint: document.getElementById('azure_openai_image_gen_endpoint').value,
-                    auth_type: document.getElementById('azure_openai_image_gen_authentication_type').value,
-                    subscription_id: document.getElementById('azure_openai_image_gen_subscription_id').value,
-                    resource_group: document.getElementById('azure_openai_image_gen_resource_group').value,
-                    key: document.getElementById('azure_openai_image_gen_key').value,
-                    api_version: document.getElementById('azure_openai_image_gen_api_version').value
-                };
-            }
-
-            try {
-                const resp = await fetch('/api/admin/settings/test_connection', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const data = await resp.json();
-                if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
-                } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Image Gen'}</span>`;
-                }
-            } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+                setCapabilityNotice('test_legacy_embedding_result', err.message || 'Legacy embedding connection could not be tested.', 'danger');
             }
         });
     }
@@ -8531,8 +8911,14 @@ function setupTestButtons() {
     const testKeyVaultBtn = document.getElementById('test_key_vault_button');
     if (testKeyVaultBtn) {
         testKeyVaultBtn.addEventListener('click', async () => {
+            if (testKeyVaultBtn.disabled) {
+                return;
+            }
             const resultDiv = document.getElementById('test_key_vault_result');
-            resultDiv.innerHTML = 'Testing Key Vault...';
+            testKeyVaultBtn.disabled = true;
+            testKeyVaultBtn.setAttribute('aria-busy', 'true');
+            resultDiv.className = 'mt-2 alert alert-info';
+            resultDiv.textContent = 'Testing Key Vault list, write, read-back, and cleanup permissions...';
 
             const payload = {
                 test_type: 'key_vault',
@@ -8540,19 +8926,25 @@ function setupTestButtons() {
                 client_id: document.getElementById('key_vault_identity').value
             };
 
-             try {
+            try {
                 const resp = await fetch('/api/admin/settings/test_connection', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
                     body: JSON.stringify(payload)
                 });
                 const data = await resp.json();
-                if (resp.ok) {
-                    resultDiv.innerHTML = `<span class="text-success">${data.message}</span>`;
-                } else {
-                    resultDiv.innerHTML = `<span class="text-danger">${data.error || 'Error testing Key Vault'}</span>`;                }
-            } catch (err) {
-                resultDiv.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;            }
+                resultDiv.className = `mt-2 alert alert-${resp.ok ? 'success' : 'danger'}`;
+                resultDiv.textContent = resp.ok
+                    ? data.message
+                    : data.error || 'The Key Vault permission test failed.';
+            } catch (error) {
+                resultDiv.className = 'mt-2 alert alert-danger';
+                resultDiv.textContent = 'Unable to complete the Key Vault permission test. Check the connection and server diagnostics.';
+            } finally {
+                testKeyVaultBtn.disabled = false;
+                testKeyVaultBtn.removeAttribute('aria-busy');
+            }
         });
     }
 
@@ -9561,142 +9953,160 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 document.addEventListener('DOMContentLoaded', () => {
-        ['user','group','public'].forEach(type => {
-            const warnDiv = document.getElementById(`index-warning-${type}`);
-            const missingSpan = document.getElementById(`missing-fields-${type}`);
-            const fixBtn = document.getElementById(`fix-${type}-index-btn`);
-  
-            // 1) check for missing fields
-            fetch('/api/admin/settings/check_index_fields', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                credentials: 'same-origin',
-                body: JSON.stringify({ indexType: type })
-            })
-            .then(r => {
-                if (!r.ok) {
-                    return r.json().then(errorData => {
-                        throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
-                    });
-                }
-                return r.json();
-            })
-            .then(response => {
-                if (response.autoFixed) {
-                    // Fields were automatically fixed
-                    console.log(`✅ Auto-fixed ${type} index: added ${response.fieldsAdded.length} field(s):`, response.fieldsAdded.join(', '));
-                    if (warnDiv) {
-                        warnDiv.className = 'alert alert-success';
-                        missingSpan.textContent = `Automatically added ${response.fieldsAdded.length} field(s): ${response.fieldsAdded.join(', ')}`;
-                        warnDiv.style.display = 'block';
-                        if (fixBtn) fixBtn.style.display = 'none';
+    const revisionInput = document.querySelector('input[name="admin_settings_etag"]');
+    const indexTypes = ['user', 'group', 'public'].filter(type =>
+        document.getElementById(`index-warning-${type}`)
+        && document.getElementById(`missing-fields-${type}`)
+        && document.getElementById(`fix-${type}-index-btn`)
+    );
+    if (!indexTypes.length) {
+        return;
+    }
 
-                        // Hide success message after 5 seconds
-                        setTimeout(() => {
-                            warnDiv.style.display = 'none';
-                        }, 5000);
-                    }
-                } else if (response.autoFixFailed) {
-                    // Auto-fix failed, show manual button
-                    console.warn(`Auto-fix failed for ${type} index:`, response.error);
-                    missingSpan.textContent = response.missingFields.join(', ') + ' (Auto-fix failed - please fix manually)';
-                    warnDiv.className = 'alert alert-warning';
-                    warnDiv.style.display = 'block';
-                    if (fixBtn) {
-                        fixBtn.textContent = `Fix ${type} Index Fields`;
-                        fixBtn.style.display = 'inline-block';
-                    }
-                } else if (response.missingFields && response.missingFields.length > 0) {
-                    // Missing fields but auto-fix was disabled
-                    missingSpan.textContent = response.missingFields.join(', ');
-                    warnDiv.className = 'alert alert-warning';
-                    warnDiv.style.display = 'block';
-                    if (fixBtn) {
-                        fixBtn.textContent = `Fix ${type} Index Fields`;
-                        fixBtn.style.display = 'inline-block';
-                    }
-                } else if (response.indexExists) {
-                    // Index exists and is complete
-                    if (warnDiv) warnDiv.style.display = 'none';
-                    console.log(`${type} index is properly configured`);
-                }
-            })
-            .catch(err => {
-                console.warn(`Checking ${type} index fields:`, err.message);
-        
-                // Check if this is an index not found error
-                if (err.message.includes('does not exist yet') || err.message.includes('not found')) {
-                    // Show a different message for missing index
-                    if (warnDiv && missingSpan && fixBtn) {
-                        missingSpan.textContent = `Index "${type}" does not exist yet`;
-                        warnDiv.style.display = 'block';
-                        fixBtn.textContent = `Create ${type} Index`;
-                        fixBtn.style.display = 'inline-block';
-                        fixBtn.dataset.action = 'create';
-                    }
-                } else if (err.message.includes('not configured')) {
-                    // Azure AI Search not configured
-                    if (warnDiv && missingSpan) {
-                        missingSpan.textContent = 'Azure AI Search not configured';
-                        warnDiv.style.display = 'block';
-                        if (fixBtn) fixBtn.style.display = 'none';
-                    }
-                } else {
-                    // Hide the warning div for other errors
-                    if (warnDiv) warnDiv.style.display = 'none';
-                }
+    function showIndexStatus(type, message, severity = 'warning', action = null) {
+        const warning = document.getElementById(`index-warning-${type}`);
+        const button = document.getElementById(`fix-${type}-index-btn`);
+        warning.className = `alert alert-${severity}`;
+        document.getElementById(`missing-fields-${type}`).textContent = message;
+        button.classList.toggle('d-none', !action);
+        button.dataset.action = action || 'fix';
+        button.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
+    }
+
+    function showSettingsConflict(type) {
+        indexSettingsConflict = true;
+        const message = 'Settings changed since this page was loaded. Your unsaved edits are still here. Copy them before reloading to review the latest settings.';
+        showIndexStatus(type, message, 'danger');
+        showToast(message, 'danger');
+        updateSaveButtonState();
+    }
+
+    let indexFailureReported = false;
+    function reportIndexFailure() {
+        if (!indexFailureReported) {
+            showToast('An AI Search index check failed. Review the index warning before saving.', 'danger');
+            indexFailureReported = true;
+        }
+    }
+
+    async function checkIndex(type) {
+        const startingRevision = revisionInput?.value;
+        const payload = { indexType: type };
+        if (startingRevision) {
+            payload.settings_etag = startingRevision;
+        }
+        try {
+            const response = await fetch('/api/admin/settings/check_index_fields', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify(payload)
             });
-  
-            // 2) wire up the fix button
-            fixBtn.addEventListener('click', () => {
-                fixBtn.disabled = true;
-                const action = fixBtn.dataset.action || 'fix';
-                const endpoint = action === 'create' ? '/api/admin/settings/create_index' : '/api/admin/settings/fix_index_fields';
-                const actionText = action === 'create' ? 'Creating' : 'Fixing';
-        
-                fixBtn.textContent = `${actionText}...`;
-        
-                fetch(endpoint, {
+            const data = await response.json();
+            if (!response.ok) {
+                if (data.code === 'settings_conflict' || data.needsReload) {
+                    showSettingsConflict(type);
+                } else {
+                    showIndexStatus(
+                        type,
+                        data.error || 'Unable to inspect the AI Search index.',
+                        data.needsCreation || data.needsConfiguration ? 'warning' : 'danger',
+                        data.needsCreation ? 'create' : null
+                    );
+                    if (!data.needsCreation && !data.needsConfiguration) {
+                        reportIndexFailure();
+                    }
+                }
+                return;
+            }
+
+            // Only adopt the revision from this form's own conditional metadata write.
+            if (startingRevision && data.settings_etag) {
+                if (revisionInput.value !== startingRevision || typeof data.settings_etag !== 'string') {
+                    showSettingsConflict(type);
+                    return;
+                }
+                revisionInput.value = data.settings_etag;
+            }
+            if (data.autoFixed) {
+                showIndexStatus(type, `Automatically added fields: ${(data.fieldsAdded || []).join(', ')}`, 'success');
+            } else if (data.autoFixFailed) {
+                showIndexStatus(type, data.error || 'Automatic field repair failed. Review the Search configuration.', 'warning', 'fix');
+            } else if (data.missingFields?.length) {
+                showIndexStatus(type, `Missing fields: ${data.missingFields.join(', ')}`, 'warning', 'fix');
+            } else {
+                document.getElementById(`index-warning-${type}`).classList.add('d-none');
+            }
+        } catch (error) {
+            showIndexStatus(type, 'Unable to complete the index check. Check the connection and server diagnostics.', 'danger');
+            reportIndexFailure();
+        }
+    }
+
+    indexTypes.forEach(type => {
+        const fixButton = document.getElementById(`fix-${type}-index-btn`);
+        fixButton.addEventListener('click', async event => {
+            event.preventDefault();
+            fixButton.disabled = true;
+            const action = fixButton.dataset.action || 'fix';
+            const endpoint = action === 'create' ? '/api/admin/settings/create_index' : '/api/admin/settings/fix_index_fields';
+            fixButton.textContent = `${action === 'create' ? 'Creating' : 'Fixing'}...`;
+            try {
+                const response = await fetch(endpoint, {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     credentials: 'same-origin',
                     body: JSON.stringify({ indexType: type })
-                })
-                .then(r => {
-                    if (!r.ok) {
-                        return r.json().then(errorData => {
-                            throw new Error(errorData.error || `HTTP ${r.status}: ${r.statusText}`);
-                        });
-                    }
-                    return r.json();
-                })
-                .then(resp => {
-                    if (resp.status === 'success') {
-                        showToast(
-                            resp.message || `Successfully ${action === 'create' ? 'created' : 'fixed'} ${type} index!`,
-                            'success',
-                            { persist: true }
-                        );
-                        window.location.reload();
-                    } else {
-                        showToast(`Failed to ${action} ${type} index: ${resp.error}`, 'danger');
-                        fixBtn.disabled = false;
-                        fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
-                    }
-                })
-                .catch(err => {
-                    showToast(`Error ${action === 'create' ? 'creating' : 'fixing'} ${type} index: ${err.message || err}`, 'danger');
-                    fixBtn.disabled = false;
-                    fixBtn.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
                 });
-            });
+                const data = await response.json();
+                if (!response.ok || !['success', 'nothingToAdd'].includes(data.status)) {
+                    throw new Error(data.error || `Unable to ${action} the index.`);
+                }
+                showToast(data.message || `Successfully ${action === 'create' ? 'created' : 'checked'} ${type} index.`, 'success', { persist: true });
+                window.location.reload();
+            } catch (error) {
+                showIndexStatus(type, error.message, 'danger', action);
+            } finally {
+                fixButton.disabled = false;
+                fixButton.textContent = `${action === 'create' ? 'Create' : 'Fix'} ${type} Index`;
+            }
         });
     });
-  
+
+    indexChecksPending = true;
+    updateSaveButtonState();
+    const checksFinished = (async () => {
+        for (const type of indexTypes) {
+            await checkIndex(type);
+            if (indexSettingsConflict) {
+                return false;
+            }
+        }
+        return true;
+    })().finally(() => {
+        indexChecksPending = false;
+        updateSaveButtonState();
+    });
+
+    let submissionQueued = false;
+    adminForm?.addEventListener('submit', async event => {
+        if (!indexChecksPending && !indexSettingsConflict) {
+            return;
+        }
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        if (indexSettingsConflict || submissionQueued) {
+            return;
+        }
+        submissionQueued = true;
+        const submitter = event.submitter;
+        const settingsCurrent = await checksFinished;
+        submissionQueued = false;
+        if (settingsCurrent) {
+            adminForm.requestSubmit(submitter || undefined);
+        }
+    }, { capture: true });
+});
 
 togglePassword('toggle_gpt_key', 'azure_openai_gpt_key');
 togglePassword('toggle_embedding_key', 'azure_openai_embedding_key');
@@ -9741,8 +10151,8 @@ function isFirstTimeSetup() {
     const workspaceEnabled = document.getElementById('enable_user_workspace')?.checked || false;
     const groupsEnabled = document.getElementById('enable_group_workspaces')?.checked || false;
     
-    if ((workspaceEnabled || groupsEnabled) && 
-        (!embeddingSelected || embeddingSelected.length === 0)) {
+    if ((workspaceEnabled || groupsEnabled) &&
+        (sharedCapabilityStates.embeddings.authoritative ? !hasConfiguredSharedEmbedding() : !embeddingSelected?.length)) {
         return true;
     }
     
@@ -10224,6 +10634,7 @@ function isStepComplete(stepNumber) {
             
         case 5: // Embedding settings (if workspace or groups enabled)
             if (!workspacesEnabled) return true; // Not required if workspaces not enabled
+            if (sharedCapabilityStates.embeddings.authoritative) return hasConfiguredSharedEmbedding();
             
             if (!document.getElementById('enable_embedding_apim').checked) {
                 const endpoint = document.getElementById('azure_openai_embedding_endpoint').value;
@@ -10631,17 +11042,30 @@ function setupLandingPageLogoScaleControl() {
     const slider = document.getElementById('landing_page_logo_scale_percent');
     const valueDisplay = document.getElementById('landing-page-logo-scale-value');
 
-    if (!slider || !valueDisplay) {
-        return;
+    if (slider && valueDisplay) {
+        const updateValue = () => {
+            valueDisplay.textContent = `${slider.value}%`;
+        };
+
+        slider.addEventListener('input', updateValue);
+        slider.addEventListener('change', updateValue);
+        updateValue();
     }
 
-    const updateValue = () => {
-        valueDisplay.textContent = `${slider.value}%`;
-    };
-
-    slider.addEventListener('input', updateValue);
-    slider.addEventListener('change', updateValue);
-    updateValue();
+    document.querySelectorAll('.scale-timeout-range').forEach(rangeInput => {
+        const displayId = rangeInput.getAttribute('data-range-display');
+        const suffix = rangeInput.getAttribute('data-range-suffix') || '';
+        const displayEl = displayId ? document.getElementById(displayId) : null;
+        if (!displayEl) {
+            return;
+        }
+        const syncRangeLabel = () => {
+            displayEl.textContent = `${rangeInput.value}${suffix}`;
+        };
+        rangeInput.addEventListener('input', syncRangeLabel);
+        rangeInput.addEventListener('change', syncRangeLabel);
+        syncRangeLabel();
+    });
 }
 
 function setupDocumentActionCapabilityControls() {
@@ -10765,6 +11189,9 @@ function checkOptionalFeaturesEnabled(stepNumber) {
             
             // For image generation, check if it's properly configured when enabled
             if (imageGenEnabled) {
+                if (sharedCapabilityStates.image_generation.authoritative) {
+                    return citationsEnabled || sharedImageChoiceIndex() >= 0;
+                }
                 const imageApim = document.getElementById('enable_image_gen_apim')?.checked;
                 if (imageApim) {
                     const apimEndpoint = document.getElementById('azure_apim_image_gen_endpoint')?.value;
@@ -10894,6 +11321,14 @@ function updateSaveButtonState() {
     const isBackupRecoveryActive = Boolean(document.querySelector('[data-admin-group-pane="backup-recovery"].active'));
     saveButton.classList.toggle('d-none', isBackupRecoveryActive);
     if (isBackupRecoveryActive) {
+        return;
+    }
+
+    if (indexChecksPending || indexSettingsConflict) {
+        saveButton.disabled = true;
+        saveButton.classList.remove('btn-primary');
+        saveButton.classList.add('btn-secondary');
+        saveButton.textContent = indexSettingsConflict ? 'Reload Settings to Save' : 'Checking Search Indexes...';
         return;
     }
     

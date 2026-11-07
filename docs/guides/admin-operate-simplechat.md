@@ -80,6 +80,7 @@ Start with [Troubleshooting]({{ '/troubleshooting/' | relative_url }}). Query fa
 | You cannot tell which backend call failed | The investigation started from settings instead of telemetry | Query Application Insights failed requests, capture `operation_Id`, then pivot to exceptions. |
 | Horizontal scale causes inconsistent behavior | Shared cache or session assumptions were not ready | Review Redis-backed cache guidance in [Scale settings]({{ '/admin/scale/' | relative_url }}) before serious scale-out. |
 | File processing history grows without cleanup | File-processing logs are enabled without a retention routine | Use [Logging settings]({{ '/admin/operations/' | relative_url }}) cleanup controls and set an operating cadence. |
+| Conversation deletion reports that execution data could not be removed | Required private-result cleanup failed; this does not by itself mean Microsoft 365 sign-in failed | Deploy 0.261.306 or later and retry **Delete**. If it persists, correlate the failed request with `sc_stage` and `sc_error_type` in Application Insights. Check storage access for storage failures and unexpected stored objects for integrity failures; do not bypass validation or purge history first. |
 
 ## Related
 

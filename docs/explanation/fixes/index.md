@@ -6,6 +6,14 @@ order: 120
 category: Version History
 ---
 
+- [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md)
+- [Safety Remediation Approval State Fix](SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md)
+- [Safety Remediation Actions Fix](SAFETY_REMEDIATION_ACTIONS_FIX.md)
+- [Mixed-Source Admin Settings Fix](MIXED_SOURCE_ADMIN_SETTINGS_FIX.md)
+- [Video Indexer Deployment Region and Permissions Fix](VIDEO_INDEXER_DEPLOYMENT_REGION_AND_PERMISSIONS_FIX.md)
+- [Search Result Cache Admin Setting Fix](SEARCH_RESULT_CACHE_ADMIN_SETTING_FIX.md)
+- [Deleted Messages Shown as Masked Fix](SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md)
+- [Shared Conversation Diagram Editing Fix](SHARED_CONVERSATION_DIAGRAM_EDITING_FIX.md)
 - [Chat Document Search File Name and Divider Artifact Fix](CHAT_DOCUMENT_SEARCH_FILENAME_AND_DIVIDER_FIX.md)
 - [Distroless Runtime Overlay Path Fix](DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md)
 - [Workspace Shared File Approval Visibility Fix](WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md)
@@ -43,3 +51,4 @@ category: Version History
 - [Admin Settings Pane Variable Scope Fix](ADMIN_SETTINGS_PANE_VARIABLE_SCOPE_FIX.md)
 - [Inline Media Cited-Only Gating Fix](INLINE_MEDIA_CITED_ONLY_GATING_FIX.md)
 - [Agent Actions With Workspace Evidence Fix](AGENT_ACTIONS_WITH_WORKSPACE_EVIDENCE_FIX.md)
+- [Orchestration Run History Hydration Fix](ORCHESTRATION_RUN_HISTORY_HYDRATION_FIX.md)

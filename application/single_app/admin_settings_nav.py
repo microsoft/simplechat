@@ -97,15 +97,24 @@ ADMIN_NAV = [
         "icon": "bi-cpu",
         "tabs": [
             {
-                # The Chat Model card is reached through the legacy model
-                # settings dialog opened from here, so it is listed with the
-                # endpoints rather than as a tab of its own.
+                "id": "model-catalog",
+                "label": "Model Catalog",
+                "icon": "bi-journal-richtext",
+                "sections": [
+                    {"id": "model-catalog-section", "label": "Model Catalog", "icon": "bi-journal-richtext"},
+                ],
+            },
+            {
+                # A connection is one Azure OpenAI or Foundry resource. The Chat
+                # Model card configures the classic single-endpoint path, which is
+                # what chat uses when connections are switched off, so it is listed
+                # alongside them.
                 "id": "model-endpoints",
-                "label": "Model Endpoints",
+                "label": "AI Connections",
                 "icon": "bi-hdd-network",
                 "sections": [
-                    {"id": "multi-endpoint-configuration", "label": "Model Endpoints", "icon": "bi-hdd-network"},
-                    {"id": "gpt-config", "label": "Chat Model", "icon": "bi-chat-square-text"},
+                    {"id": "multi-endpoint-configuration", "label": "AI Connections", "icon": "bi-hdd-network"},
+                    {"id": "gpt-config", "label": "Chat", "icon": "bi-chat-square-text"},
                 ],
             },
             {
@@ -132,11 +141,22 @@ ADMIN_NAV = [
         "icon": "bi-robot",
         "tabs": [
             {
+                # The nested cards listed here already exist in the V1 pane, so
+                # naming them costs the server-rendered page nothing while giving
+                # the V2 surface -- which draws one section per entry -- somewhere
+                # to put the runtime gate, the workspace permissions and the
+                # Agents page copy instead of one undifferentiated block.
                 "id": "agents",
                 "label": "Agents",
                 "icon": "bi-robot",
                 "sections": [
-                    {"id": "agents-config", "label": "Agents Configuration", "icon": "bi-robot"},
+                    {"id": "agents-config", "label": "Agent Runtime", "icon": "bi-robot"},
+                    # The organisation's own agents: created, edited and chosen as the
+                    # default here. V1 draws this as the Global Agents table inside the
+                    # Agent Runtime card; V2 gives it a section of its own.
+                    {"id": "organization-agents-section", "label": "Global Agents", "icon": "bi-stars"},
+                    {"id": "agent-toggles-card", "label": "Workspace Agent Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
+                    {"id": "agents-page-customization-card", "label": "Agents Page", "icon": "bi-palette"},
                     {"id": "agent-template-approvals-section", "label": "Agent Template Approvals", "icon": "bi-layers", "condition": "enable_agent_template_gallery"},
                 ],
             },
@@ -145,8 +165,10 @@ ADMIN_NAV = [
                 "label": "Actions",
                 "icon": "bi-plugin",
                 "sections": [
-                    {"id": "document-action-capabilities-card", "label": "Document Action Capabilities", "icon": "bi-files"},
-                    {"id": "actions-config", "label": "Actions Configuration", "icon": "bi-plugin"},
+                    {"id": "document-action-capabilities-card", "label": "Document Actions", "icon": "bi-files"},
+                    {"id": "plugin-feature-toggles", "label": "Workspace Action Permissions", "icon": "bi-person-gear", "condition": "per_user_semantic_kernel"},
+                    {"id": "core-plugin-toggles", "label": "Built-in Actions", "icon": "bi-tools"},
+                    {"id": "actions-config", "label": "Global Actions", "icon": "bi-plugin"},
                 ],
             },
             {
@@ -186,14 +208,7 @@ ADMIN_NAV = [
                     {"id": "file-download-settings-section", "label": "File Downloads", "icon": "bi-download"},
                     {"id": "file-sharing-section", "label": "File Sharing", "icon": "bi-share"},
                     {"id": "shared-conversation-file-approvals-section", "label": "Shared Conversation File Approvals", "icon": "bi-check2-square"},
-                    {"id": "file-size-limit-section", "label": "Maximum File Size", "icon": "bi-file-earmark-arrow-up"},
                 ],
-            },
-            {
-                "id": "workspace-identities",
-                "label": "Global Identities",
-                "icon": "bi-person-badge",
-                "sections": [],
             },
         ],
     },
@@ -210,6 +225,28 @@ ADMIN_NAV = [
                 "icon": "bi-diagram-3",
                 "sections": [
                     {"id": "workflow-settings-section", "label": "Workflow", "icon": "bi-diagram-3"},
+                ],
+            },
+        ],
+    },
+    {
+        # Orchestration plans, approves and runs a chat request on the user's behalf.
+        # It spans chat, agents and (later) workflows rather than belonging to any one
+        # of them, so it stands on its own rather than hiding inside Chat.
+        "id": "orchestration",
+        "label": "Orchestration",
+        "icon": "bi-signpost-split",
+        "tabs": [
+            {
+                "id": "chat-orchestration",
+                "label": "Chat Orchestration",
+                "icon": "bi-signpost-split",
+                "sections": [
+                    {"id": "chat-orchestration-section", "label": "Chat Orchestration", "icon": "bi-signpost-split"},
+                    {"id": "chat-orchestration-approval-section", "label": "Plan Approval", "icon": "bi-check2-square"},
+                    {"id": "chat-orchestration-capabilities-section", "label": "Capabilities", "icon": "bi-puzzle"},
+                    {"id": "chat-orchestration-limits-section", "label": "Limits", "icon": "bi-speedometer2"},
+                    {"id": "chat-orchestration-planner-model-section", "label": "Planner Model", "icon": "bi-cpu"},
                 ],
             },
         ],
@@ -245,7 +282,21 @@ ADMIN_NAV = [
                 "icon": "bi-file-earmark-text",
                 "sections": [
                     {"id": "document-intelligence-section", "label": "Document Intelligence", "icon": "bi-file-earmark-text"},
+                    # Enhanced extraction and the Content Understanding connection
+                    # that backs it are one section, led by the switch. Content
+                    # Understanding used to be a section of its own, which let it be
+                    # configured while Enhanced was off and it could never run.
+                    {"id": "enhanced-extraction-section", "label": "Enhanced Extraction", "icon": "bi-stars"},
+                    # This card has always existed in the extraction pane but was
+                    # absent from this list, so neither interface could navigate to
+                    # it. Its id is the one already in the markup, so the
+                    # server-rendered sidebar resolves it as-is.
+                    {"id": "office-embedded-image-section", "label": "Images Inside Office Files", "icon": "bi-images"},
                     {"id": "chunk-size-section", "label": "Chunk Sizes", "icon": "bi-collection"},
+                    # The upload ceiling belongs with the extraction pipeline it
+                    # feeds rather than with Workspaces, because it caps chat
+                    # attachments as well as workspace documents.
+                    {"id": "file-size-limit-section", "label": "Maximum File Size", "icon": "bi-file-earmark-arrow-up"},
                     {"id": "metadata-extraction-section", "label": "Metadata Extraction", "icon": "bi-file-earmark-code"},
                     {"id": "multimodal-vision-section", "label": "Multi-Modal Vision Analysis", "icon": "bi-eye"},
                 ],
@@ -266,10 +317,6 @@ ADMIN_NAV = [
                 "icon": "bi-arrow-repeat",
                 "sections": [
                     {"id": "file-sync-section", "label": "File Sync", "icon": "bi-arrow-repeat"},
-                    {"id": "file-sync-source-types-section", "label": "Visible Source Types", "icon": "bi-sliders"},
-                    {"id": "file-sync-personal-section", "label": "Personal Workspace Sync", "icon": "bi-person"},
-                    {"id": "file-sync-group-section", "label": "Group Workspace Sync", "icon": "bi-people"},
-                    {"id": "file-sync-public-section", "label": "Public Workspace Sync", "icon": "bi-globe"},
                 ],
             },
         ],
@@ -297,6 +344,26 @@ ADMIN_NAV = [
                 "icon": "bi-safe",
                 "sections": [
                     {"id": "keyvault-section", "label": "Key Vault", "icon": "bi-safe"},
+                ],
+            },
+            {
+                # Stored credentials for the systems File Sync and Actions reach
+                # out to, not accounts for signing in. They sit with Secrets
+                # because each one keeps its secret in Key Vault; they used to sit
+                # under Workspaces, which owns neither of the things that use them.
+                "id": "workspace-identities",
+                "label": "Global Identities",
+                "icon": "bi-person-badge",
+                "sections": [
+                    {"id": "workspace-identities-section", "label": "Global Identities", "icon": "bi-person-badge"},
+                ],
+            },
+            {
+                "id": "content-screening",
+                "label": "Content Screening",
+                "icon": "bi-shield-check",
+                "sections": [
+                    {"id": "content-screening-section", "label": "Content Screening", "icon": "bi-shield-check"},
                 ],
             },
             {
@@ -437,7 +504,7 @@ ADMIN_NAV = [
                 "label": "Restore",
                 "icon": "bi-box-seam",
                 "sections": [
-                    {"id": "data-management-backup-inventory-section", "label": "Backup Inventory &amp; Restore", "icon": "bi-box-seam"},
+                    {"id": "data-management-backup-inventory-section", "label": "Backup Inventory & Restore", "icon": "bi-box-seam"},
                 ],
             },
             {
@@ -473,6 +540,7 @@ ADMIN_NAV = [
                     {"id": "redis-cache-section", "label": "Redis Cache", "icon": "bi-database"},
                     {"id": "redis-monitoring-section", "label": "Redis Metrics", "icon": "bi-activity"},
                     {"id": "conversation-cache-section", "label": "Conversation Cache", "icon": "bi-chat-square-text"},
+                    {"id": "request-stream-timeouts-section", "label": "Request & Stream Timeouts", "icon": "bi-hourglass-split"},
                 ],
             },
             {
@@ -569,6 +637,38 @@ def iter_tabs():
     for group in ADMIN_NAV:
         for tab in group["tabs"]:
             yield group, tab
+
+
+# Tabs that existed before the information architecture rework, mapped to where
+# their content now lives. ``LEGACY_TAB_REDIRECTS`` in
+# ``static/js/admin/admin_sidebar_nav.js`` resolves the same ids for the
+# server-rendered page; this copy lets the server resolve a Latest Features
+# shortcut for the V2 surface, and a functional test keeps the two identical.
+LEGACY_TAB_REDIRECTS = {
+    "governance": "feature-governance",
+    "scale": "redis-caching",
+    "general": "branding",
+    "safety": "access-roles",
+    "security": "secrets",
+    "workspaces": "workspace-types",
+    "search-extract": "web-research",
+    "ai-models": "model-endpoints",
+    "data-management": "backup",
+}
+
+
+def resolve_admin_tab_id(tab_id):
+    """Return the live tab id for a current or pre-rework tab id.
+
+    A leading ``#`` is accepted because Latest Features shortcuts store their
+    target as a fragment. Returns None when the id names no tab, directly or
+    through ``LEGACY_TAB_REDIRECTS``.
+    """
+    candidate = str(tab_id or "").strip().lstrip("#")
+    if not candidate:
+        return None
+    candidate = LEGACY_TAB_REDIRECTS.get(candidate, candidate)
+    return candidate if candidate in get_tab_ids() else None
 
 
 def get_tab_ids():

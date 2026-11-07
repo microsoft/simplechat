@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.261.023
+Version: 0.261.127
 Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.023
 
 This test ensures that large tabular structured exports are wired through the
@@ -136,13 +136,16 @@ def test_export_runner_module():
 
     simplechat_operations_source = read_text(APP_ROOT / 'functions_simplechat_operations.py')
     assert_contains(simplechat_operations_source, 'artifact_idempotency_key', 'idempotent artifact key')
-    assert_contains(simplechat_operations_source, 'uuid.uuid5', 'deterministic artifact message identity')
+    assert_contains(simplechat_operations_source, 'generated_chat_artifact_address', 'shared artifact identity helper')
+    artifact_sources = read_text(APP_ROOT / 'functions_generated_artifact_sources.py')
+    assert_contains(artifact_sources, 'uuid.uuid5', 'deterministic artifact message identity')
 
 
 def test_background_xml_stream_is_well_formed_xml():
     """Validate XML background exports do not write JSON under an XML filename."""
     export_tree = parse_python(EXPORT_MODULE)
     writer_function = get_function(export_tree, '_write_ordered_output_stream')
+    records_function = get_function(export_tree, 'iter_tabular_output_records')
     xml_tag_function = get_function(export_tree, '_sanitize_generated_xml_tag_name')
     xml_row_function = get_function(export_tree, '_write_generated_xml_row')
     assert writer_function is not None
@@ -177,7 +180,7 @@ def test_background_xml_stream_is_well_formed_xml():
     exec(
         compile(
             ast.Module(
-                body=[xml_tag_function, xml_row_function, writer_function],
+                body=[xml_tag_function, xml_row_function, records_function, writer_function],
                 type_ignores=[],
             ),
             str(EXPORT_MODULE),

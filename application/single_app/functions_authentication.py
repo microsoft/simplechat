@@ -6,6 +6,17 @@ import json
 from flask import has_request_context
 
 from config import *
+from functions_access_restriction import (
+    ACCESS_RESTRICTED_ERROR,
+    ACCESS_STATE_EXPIRED,
+    ACCESS_STATE_RESTRICTED,
+    access_restricted_page_path,
+    access_restricted_sentence,
+    describe_access_restriction,
+    fallback_access_restriction,
+    legacy_access_denied_reason,
+    public_access_restriction,
+)
 from functions_appinsights import log_event
 from functions_settings import *
 from functions_debug import debug_print
@@ -104,14 +115,16 @@ def _save_cache(cache):
             # Decide how to handle this, maybe clear cache or log extensively
             # session.pop("token_cache", None) # Option: Clear on serialization failure
 
-def _build_msal_app(cache=None, authority_override=None):
+def _build_msal_app(cache=None, authority_override=None, *, timeout=None):
     """Builds the MSAL ConfidentialClientApplication, optionally initializing with a cache."""
     authority = authority_override or AUTHORITY
+    options = {} if timeout is None else {'timeout': timeout}
     return ConfidentialClientApplication(
         CLIENT_ID,
         authority=authority,
         client_credential=CLIENT_SECRET,
-        token_cache=cache  # Pass the cache instance here
+        token_cache=cache,
+        **options,
     )
 
 
@@ -741,52 +754,97 @@ def login_required(f):
         return f(*args, **kwargs)
     return decorated_function
 
+def _read_user_access_restriction(user_id):
+    """Return ``(restriction, reason)`` for the user's stored access setting.
+
+    ``restriction`` is None when access is allowed. A suspension whose restore time has
+    passed is restored here, which also clears its notice. Raises when the settings can't
+    be read; callers allow access then, so a storage fault never locks a user out.
+    """
+    # Imported at call time, as the access check always has been, so the check uses the
+    # settings functions functions_settings holds when it runs.
+    from functions_settings import get_user_settings, update_user_settings
+
+    user_settings = get_user_settings(user_id) or {}
+    stored_settings = user_settings.get('settings') if isinstance(user_settings, dict) else None
+    access_settings = stored_settings.get('access') if isinstance(stored_settings, dict) else None
+
+    state, restriction = describe_access_restriction(access_settings)
+    if state == ACCESS_STATE_EXPIRED:
+        update_user_settings(user_id, {
+            'access': {
+                'status': 'allow',
+                'datetime_to_allow': None
+            }
+        })
+        return None, None
+    if state != ACCESS_STATE_RESTRICTED:
+        return None, None
+    return restriction, legacy_access_denied_reason(access_settings, restriction)
+
+
+def get_user_access_restriction(user_id):
+    """Return the user's current access restriction, or None when access is allowed.
+
+    The restriction holds ``kind`` ('suspended' or 'blocked'), ``until`` (ISO 8601 UTC,
+    suspensions only), ``title``, ``message`` and ``reference_id`` -- the user's own data
+    only. Like ``check_user_access_status``, an expired suspension is restored and a failure
+    to read the settings allows access.
+    """
+    if not user_id:
+        return None
+    try:
+        restriction, _reason = _read_user_access_restriction(user_id)
+    except Exception as e:
+        log_event(
+            "[ACCESS_RESTRICTION] Access restriction could not be read; access allowed.",
+            extra={"user_id": user_id, "error_type": type(e).__name__},
+            level=logging.WARNING,
+        )
+        return None
+    return restriction
+
+
 def check_user_access_status(user_id):
     """
     Check if user access is currently allowed based on Control Center settings.
     Returns (is_allowed: bool, reason: str)
     """
     try:
-        from functions_settings import get_user_settings
-        user_settings = get_user_settings(user_id)
-        
-        access_settings = user_settings.get('settings', {}).get('access', {})
-        status = access_settings.get('status', 'allow')
-        
-        if status == 'allow':
-            return True, None
-        
-        if status == 'deny':
-            datetime_to_allow = access_settings.get('datetime_to_allow')
-            if datetime_to_allow:
-                try:
-                    # Check if time-based restriction has expired
-                    allow_time = datetime.fromisoformat(datetime_to_allow.replace('Z', '+00:00'))
-                    current_time = datetime.now(timezone.utc)
-                    
-                    if current_time >= allow_time:
-                        # Time-based restriction has expired, automatically restore access
-                        from functions_settings import update_user_settings
-                        update_user_settings(user_id, {
-                            'access': {
-                                'status': 'allow',
-                                'datetime_to_allow': None
-                            }
-                        })
-                        return True, None
-                    else:
-                        return False, f"Access denied until {datetime_to_allow}"
-                except ValueError:
-                    # Invalid datetime format, treat as permanent deny
-                    return False, "Access denied by administrator"
-            else:
-                return False, "Access denied by administrator"
-        
-        return True, None  # Default to allow if status is unknown
-        
+        restriction, reason = _read_user_access_restriction(user_id)
     except Exception as e:
         debug_print(f"Error checking user access status: {e}")
         return True, None  # Default to allow on error to prevent lockouts
+
+    if restriction is None:
+        return True, None
+    return False, reason
+
+
+def _is_api_request():
+    return (
+        request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html
+    ) or request.path.startswith('/api/')
+
+
+def access_restricted_response(user_id, reason=None):
+    """Answer a request from a user whose access is restricted.
+
+    API calls get a 403 that says why, with the caller's own restriction. Page requests
+    are sent to the Access restricted page of the interface they came from, which is
+    served to restricted users so they can read the notice and sign out.
+    """
+    restriction = get_user_access_restriction(user_id) or fallback_access_restriction(reason)
+    restricted_url = access_restricted_page_path(request.path)
+    if _is_api_request():
+        return jsonify({
+            "error": ACCESS_RESTRICTED_ERROR,
+            "message": access_restricted_sentence(restriction),
+            "restriction": public_access_restriction(restriction),
+            "restricted_url": restricted_url,
+        }), 403
+    return redirect(restricted_url)
+
 
 def user_required(f):
     @wraps(f)
@@ -804,10 +862,7 @@ def user_required(f):
             if user_id:
                 is_allowed, reason = check_user_access_status(user_id)
                 if not is_allowed:
-                    if request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html or request.path.startswith('/api/'):
-                        return jsonify({"error": "Access Denied", "message": reason}), 403
-                    else:
-                        return f"Access Denied: {reason}", 403
+                    return access_restricted_response(user_id, reason)
         
         return f(*args, **kwargs)
     return decorated_function
@@ -957,12 +1012,66 @@ def safety_violation_admin_required(f):
             return "Forbidden", 403
     return decorated_function
 
+def get_control_center_capabilities(user=None, settings=None):
+    """Return the Control Center permissions implied by the user's roles and settings."""
+    user = session.get('user', {}) if user is None else user
+    settings = get_settings() if settings is None else settings
+    require_admin_role = settings.get("require_member_of_control_center_admin", False)
+    require_dashboard_reader_role = settings.get(
+        "require_member_of_control_center_dashboard_reader", False
+    )
+
+    has_control_center_admin_role = (
+        'roles' in user and 'ControlCenterAdmin' in user['roles']
+        if isinstance(user, dict)
+        else False
+    )
+    has_dashboard_reader_role = (
+        'roles' in user and 'ControlCenterDashboardReader' in user['roles']
+        if isinstance(user, dict)
+        else False
+    )
+    has_regular_admin_role = (
+        'roles' in user and 'Admin' in user['roles']
+        if isinstance(user, dict)
+        else False
+    )
+
+    has_full_access = (
+        has_control_center_admin_role if require_admin_role else has_regular_admin_role
+    )
+    can_view_dashboard = has_full_access or (
+        require_dashboard_reader_role and has_dashboard_reader_role
+    )
+    return {
+        'can_view_dashboard': bool(can_view_dashboard),
+        'can_manage_users': bool(has_full_access),
+        'can_manage_groups': bool(has_full_access),
+        'can_manage_workspaces': bool(has_full_access),
+        'can_view_activity_logs': bool(has_full_access),
+        'can_run_maintenance': bool(has_full_access),
+    }
+
+
+def get_request_control_center_capabilities(settings=None):
+    """Return the signed-in request's Control Center capabilities, failing closed outside one.
+
+    Agent and orchestration runs re-enter a request context that carries the authenticated
+    user and roles, so tools invoked from chat are answered here too. A scheduled run has no
+    signed-in session, so it receives no Control Center access.
+    """
+    if not has_request_context():
+        return get_control_center_capabilities({}, {})
+    user = session.get('user') or {}
+    return get_control_center_capabilities(user, get_settings() if settings is None else settings)
+
+
 def control_center_required(access_level='admin'):
     """
     Unified Control Center access control decorator.
     
     Args:
-        access_level: 'admin' for full admin access, 'dashboard' for dashboard-only access
+        access_level: 'admin', 'dashboard', or 'activity_logs' for the matching capability
     
     Access logic when require_member_of_control_center_admin is ENABLED:
     - ControlCenterAdmin role → Full access to everything (admin + dashboard)
@@ -982,48 +1091,37 @@ def control_center_required(access_level='admin'):
             user = session.get('user', {})
             settings = get_settings()
             require_member_of_control_center_admin = settings.get("require_member_of_control_center_admin", False)
-            require_member_of_control_center_dashboard_reader = settings.get("require_member_of_control_center_dashboard_reader", False)
-
-            has_control_center_admin_role = 'roles' in user and 'ControlCenterAdmin' in user['roles']
-            has_dashboard_reader_role = 'roles' in user and 'ControlCenterDashboardReader' in user['roles']
-            has_regular_admin_role = 'roles' in user and 'Admin' in user['roles']
-            
-            # Check if ControlCenterAdmin role requirement is enforced
-            if require_member_of_control_center_admin:
-                # ControlCenterAdmin role is REQUIRED for access
-                # Only ControlCenterAdmin role grants full access
-                if has_control_center_admin_role:
-                    return f(*args, **kwargs)
-                
-                # For dashboard access, check if DashboardReader role grants access
-                if access_level == 'dashboard':
-                    if require_member_of_control_center_dashboard_reader and has_dashboard_reader_role:
-                        return f(*args, **kwargs)
-                
-                # User doesn't have ControlCenterAdmin role, deny access
-                # Note: Regular Admin role does NOT grant access when this setting is enabled
-                is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
-                if is_api_request:
-                    return jsonify({"error": "Forbidden", "message": "Insufficient permissions (ControlCenterAdmin role required)"}), 403
-                else:
-                    return "Forbidden: ControlCenterAdmin role required", 403
-            
-            # ControlCenterAdmin requirement is NOT enforced (default behavior)
-            # Only regular Admin role grants access - ControlCenterAdmin role is IGNORED
-            if has_regular_admin_role:
-                return f(*args, **kwargs)
-            
-            # For dashboard-only access, check if DashboardReader role is enabled and user has it
+            capabilities = get_control_center_capabilities(user, settings)
             if access_level == 'dashboard':
-                if require_member_of_control_center_dashboard_reader and has_dashboard_reader_role:
-                    return f(*args, **kwargs)
+                permitted = capabilities['can_view_dashboard']
+            elif access_level == 'activity_logs':
+                permitted = capabilities['can_view_activity_logs']
+            elif access_level == 'admin':
+                permitted = capabilities['can_manage_users']
+            else:
+                permitted = False
+            if permitted:
+                return f(*args, **kwargs)
             
             # User is not an admin and doesn't have special roles - deny access
             is_api_request = (request.accept_mimetypes.accept_json and not request.accept_mimetypes.accept_html) or request.path.startswith('/api/')
             if is_api_request:
-                return jsonify({"error": "Forbidden", "message": "Insufficient permissions (Admin role required)"}), 403
+                required_role = (
+                    "ControlCenterAdmin"
+                    if require_member_of_control_center_admin
+                    else "Admin"
+                )
+                return jsonify({
+                    "error": "Forbidden",
+                    "message": f"Insufficient permissions ({required_role} role required)",
+                }), 403
             else:
-                return "Forbidden: Admin role required", 403
+                required_role = (
+                    "ControlCenterAdmin"
+                    if require_member_of_control_center_admin
+                    else "Admin"
+                )
+                return f"Forbidden: {required_role} role required", 403
         return decorated_function
     return decorator
 

@@ -127,6 +127,9 @@ navigation:
         - title: Trigger a workflow
           url: /guides/trigger-a-workflow/
           icon: bi bi-play-btn
+        - title: Ask about workflow results
+          url: /guides/ask-about-workflow-results/
+          icon: bi bi-chat-square-quote
         - title: Create a file sync
           url: /guides/create-a-file-sync/
           icon: bi bi-arrow-repeat

@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Offline functional tests for trusted outbound MCP execution context.
-Version: 0.261.036
+Version: 0.261.371
 Implemented in: 0.261.029
 
 Exercise real normalization, destination/preconfiguration policy, descriptors,
@@ -16,6 +16,7 @@ import asyncio
 import base64
 import copy
 import importlib
+import json
 import os
 import sys
 import types
@@ -27,6 +28,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from flask import Flask, session
+from mcp.types import CallToolResult, TextContent
 
 
 APP_DIR = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -137,6 +139,7 @@ class McpAuthorizationContextTests(unittest.TestCase):
         self._stub(
             "semantic_kernel_plugins.plugin_invocation_logger",
             plugin_function_logger=_decorator,
+            report_plugin_invocation_failure=_noop,
             get_plugin_logger=lambda: types.SimpleNamespace(get_plugin_stats=lambda: {}),
             auto_wrap_plugin_functions=_noop,
         )
@@ -185,6 +188,12 @@ class McpAuthorizationContextTests(unittest.TestCase):
         owner = self
 
         class RemoteSession:
+            async def call_tool(self, name, arguments):
+                owner.events.append(("call_tool", name, arguments))
+                return CallToolResult(content=[
+                    TextContent(type="text", text=json.dumps({"echo": arguments})),
+                ])
+
             async def list_tools(self):
                 owner.events.append(("list_tools",))
                 return types.SimpleNamespace(tools=[
@@ -201,6 +210,7 @@ class McpAuthorizationContextTests(unittest.TestCase):
             def __init__(self, **kwargs):
                 self.kwargs = kwargs
                 self.session = RemoteSession()
+                self.load_tools_flag = kwargs.get("load_tools", True)
                 owner.events.append(("construct", self.transport, kwargs))
 
             async def connect(self):
@@ -210,10 +220,6 @@ class McpAuthorizationContextTests(unittest.TestCase):
 
             async def close(self):
                 owner.events.append(("close", self.transport))
-
-            async def call_tool(self, name, **arguments):
-                owner.events.append(("call_tool", name, arguments))
-                return {"echo": arguments}
 
         self.connector_types = {
             transport: type(class_name, (RemoteConnector,), {"transport": transport})
@@ -226,6 +232,7 @@ class McpAuthorizationContextTests(unittest.TestCase):
         self._stub(
             "semantic_kernel.connectors.mcp",
             **{connector.__name__: connector for connector in self.connector_types.values()},
+            _mcp_call_tool_result_to_kernel_contents=lambda result: result.content,
         )
 
     @contextmanager

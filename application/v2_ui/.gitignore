@@ -1,0 +1,6 @@
+# Build output is emitted into ../single_app/static/v2 and is never committed.
+node_modules/
+dist/
+*.local
+.vite/
+*.tsbuildinfo

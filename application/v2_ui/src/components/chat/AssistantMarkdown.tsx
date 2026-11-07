@@ -1,0 +1,470 @@
+// AssistantMarkdown.tsx
+// Markdown rendering for assistant output: prose, citations, masks, maths, diagrams, charts,
+// image proposals, inline audio, video and image cards, and galleries of images and clips.
+//
+// Split out of MessageList so that "what a message looks like" is separable from "how the
+// thread is laid out". The renderer carries the whole substitution pipeline and the fence
+// types that render as something other than code, which is a distinct concern from the
+// scrolling list around it.
+
+import { Children, useCallback, useMemo } from 'react';
+import { clsx } from 'clsx';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
+import { toText } from 'hast-util-to-text';
+import type { Element } from 'hast';
+import { rehypeHighlightSubset } from '../../lib/rehypeHighlightSubset';
+import {
+    readFenceLanguage,
+    readRichBlockIndex,
+    rehypeRichBlockIndex,
+    richFenceKind,
+} from '../../lib/rehypeRichBlockIndex';
+import {
+    CITATION_PLACEHOLDER_PATTERN,
+    parseCitations,
+    type CitationGroup,
+} from '../../lib/citations';
+import { applyMasks, MASK_PLACEHOLDER_PATTERN, type MaskedRange } from '../../lib/masking';
+import { MaskedSpan } from './MaskedSpan';
+import { CitationChip } from './CitationChip';
+import { InlineAudioPlayer } from './InlineAudioPlayer';
+import { InlineChart } from './InlineChart';
+import { InlineImageCard } from './InlineImageCard';
+import { InlineImageProposal } from './InlineImageProposal';
+import { InlineVideoCard } from './InlineVideoCard';
+import { MathDisplay, MathInline } from './MathBlock';
+import { MediaGallery, MediaGalleryTile } from './MediaGallery';
+import { MermaidDiagram } from './MermaidDiagram';
+import { inlineMediaKind, inlineMediaTitle, safeMarkdownHref, safeMediaUrl } from '../../lib/inlineMedia';
+import { readMediaGallery, readMediaTileIndex, rehypeMediaGallery } from '../../lib/mediaGallery';
+import {
+    IMAGE_PROPOSAL_LANGUAGE,
+    INLINE_CHART_LANGUAGE,
+    MERMAID_LANGUAGE,
+    markPendingFences,
+    readPendingKind,
+} from '../../lib/richBlocks';
+import { MATH_PLACEHOLDER_PATTERN, parseMath, type MathSegment } from '../../lib/mathSegments';
+import type { HybridCitation } from '../../lib/types';
+import { useWebCitations } from './WebCitationCards';
+import { rehypeWebCitationMedia, WEB_SOURCE_LINK_PROPERTY } from '../../lib/webCitations';
+
+/** The `<code>` element a `<pre>` wraps, which is where the fence's language lives. */
+function fenceCodeElement(node: unknown): Element | undefined {
+    const children = (node as Element | undefined)?.children;
+    if (!Array.isArray(children)) {
+        return undefined;
+    }
+    return children.find(
+        (candidate): candidate is Element =>
+            candidate.type === 'element' && candidate.tagName === 'code',
+    );
+}
+
+/**
+ * Stand-in for a diagram, chart or image proposal that has not finished streaming.
+ *
+ * Sized like the block it will become, so the reply below it does not jump when the real
+ * thing renders.
+ */
+function PendingRichBlock({ kind }: { kind: string }) {
+    const label =
+        kind === INLINE_CHART_LANGUAGE
+            ? 'Preparing chart…'
+            : kind === IMAGE_PROPOSAL_LANGUAGE
+              ? 'Preparing image proposal…'
+              : 'Preparing diagram…';
+
+    return (
+        <div className="my-3 flex h-24 items-center justify-center rounded-xl bg-surface-sunken text-xs text-text-3">
+            {label}
+        </div>
+    );
+}
+
+/**
+ * Shared empties for the optional inputs.
+ *
+ * Module-level rather than an inline `?? []`, which would mint a new array on every render and
+ * so invalidate the memoised component map below for messages that carry no citations, masks
+ * or maths — which is most of them.
+ */
+const NO_CITATIONS: CitationGroup[] = [];
+const NO_DOCUMENT_CITATIONS: HybridCitation[] = [];
+const NO_MASKS: MaskedRange[] = [];
+const NO_MATH: MathSegment[] = [];
+
+/**
+ * Markdown renderer for assistant output.
+ *
+ * Raw HTML is deliberately not enabled (no rehype-raw): model output is untrusted input,
+ * and react-markdown's default of escaping HTML is what keeps this XSS-safe.
+ *
+ * Citation markers, masked spans and TeX expressions are all lifted out before rendering and
+ * swapped back in afterwards as components, so the markdown pipeline never sees them and no
+ * HTML is injected to support any of them.
+ *
+ * `remark-breaks` makes a single newline a line break. This deliberately differs from the
+ * classic UI, which uses marked's defaults (`breaks: false`) so single newlines collapse
+ * into the surrounding paragraph. Without it, identical text renders differently depending
+ * on who sent it, because user messages are shown with `whitespace-pre-wrap` and keep every
+ * newline. Models also emit single newlines expecting them to be honoured, and the classic
+ * UI's own Word export uses markdown2's `break-on-newline` for exactly that reason.
+ */
+function Markdown({
+    content,
+    citations,
+    masks,
+    math,
+    messageId,
+}: {
+    content: string;
+    citations?: CitationGroup[];
+    masks?: MaskedRange[];
+    math?: MathSegment[];
+    messageId?: string;
+}) {
+    const groups = citations ?? NO_CITATIONS;
+    const maskRanges = masks ?? NO_MASKS;
+    const mathSegments = math ?? NO_MATH;
+    const webCitations = useWebCitations();
+
+    /**
+     * Substitute components for the placeholder tokens left in the text.
+     *
+     * Citations, masks and maths all survive markdown as inert tokens and are swapped back
+     * in here, so none of them injects HTML into model output. A single text node can carry
+     * more than one kind, so each pattern is applied in turn over the results of the last.
+     */
+    const renderTokens = useCallback(
+        (children: React.ReactNode): React.ReactNode => {
+            if (groups.length === 0 && maskRanges.length === 0 && mathSegments.length === 0) {
+                return children;
+            }
+
+            const substitutions: {
+                tag: string;
+                pattern: RegExp;
+                render: (index: number, key: string) => React.ReactNode;
+            }[] = [
+                {
+                    tag: 'mask',
+                    pattern: MASK_PLACEHOLDER_PATTERN,
+                    render: (index, key) => <MaskedSpan key={key} range={maskRanges[index]} />,
+                },
+                {
+                    tag: 'cite',
+                    pattern: CITATION_PLACEHOLDER_PATTERN,
+                    render: (index, key) => {
+                        const group = groups[index];
+                        return group ? <CitationChip key={key} group={group} /> : null;
+                    },
+                },
+                {
+                    tag: 'math',
+                    pattern: MATH_PLACEHOLDER_PATTERN,
+                    render: (index, key) => {
+                        const segment = mathSegments[index];
+                        if (!segment) {
+                            return null;
+                        }
+                        return segment.display ? (
+                            <MathDisplay key={key} tex={segment.tex} />
+                        ) : (
+                            <MathInline key={key} tex={segment.tex} />
+                        );
+                    },
+                },
+            ];
+
+            return Children.map(children, (child) => {
+                if (typeof child !== 'string') {
+                    return child;
+                }
+
+                let nodes: React.ReactNode[] = [child];
+                for (const substitution of substitutions) {
+                    const next: React.ReactNode[] = [];
+                    nodes.forEach((node, nodeIndex) => {
+                        if (typeof node !== 'string') {
+                            next.push(node);
+                            return;
+                        }
+                        // String.split with a capturing group interleaves text and captures, so
+                        // odd indices hold the captured index.
+                        node.split(substitution.pattern).forEach((part, partIndex) => {
+                            if (partIndex % 2 === 1) {
+                                next.push(
+                                    substitution.render(
+                                        Number(part),
+                                        `${substitution.tag}-${nodeIndex}-${partIndex}`,
+                                    ),
+                                );
+                                return;
+                            }
+                            if (part !== '') {
+                                next.push(part);
+                            }
+                        });
+                    });
+                    nodes = next;
+                }
+
+                return nodes;
+            });
+        },
+        [groups, maskRanges, mathSegments],
+    );
+
+    /**
+     * The component map react-markdown renders each node with.
+     *
+     * Memoised, and that is load-bearing rather than an optimisation. react-markdown uses these
+     * functions as the *element type* for the nodes they handle, and React unmounts and
+     * remounts a subtree whenever an element's type changes. Built inline, every render of this
+     * message would therefore tear down and rebuild every diagram, chart and image proposal
+     * card in it — discarding a proposal card's approval state, so a card mid-generation would
+     * silently reappear as though it had never been approved, and re-running Mermaid over every
+     * diagram in the thread on each token of an unrelated reply.
+     */
+    const components = useMemo<Components>(
+        () => ({
+            // Every block a citation or mask placeholder can land in. A block left
+            // out here would render the raw ⟦cite:N⟧ token as visible text.
+            p: ({ children }) => <p>{renderTokens(children)}</p>,
+            li: ({ children }) => <li>{renderTokens(children)}</li>,
+            td: ({ children }) => <td>{renderTokens(children)}</td>,
+            th: ({ children }) => <th>{renderTokens(children)}</th>,
+            h1: ({ children }) => <h1>{renderTokens(children)}</h1>,
+            h2: ({ children }) => <h2>{renderTokens(children)}</h2>,
+            h3: ({ children }) => <h3>{renderTokens(children)}</h3>,
+            h4: ({ children }) => <h4>{renderTokens(children)}</h4>,
+            blockquote: ({ children }) => <blockquote>{renderTokens(children)}</blockquote>,
+            em: ({ children }) => <em>{renderTokens(children)}</em>,
+            strong: ({ children }) => <strong>{renderTokens(children)}</strong>,
+
+            // A link to an audio or video file plays in place instead of navigating away;
+            // every other link renders as before. `node` is the hast element, read for the
+            // link's plain text and kept off the DOM element. A clip in a gallery is a tile.
+            a: ({ href, children, node, ...props }) => {
+                if (node?.properties[WEB_SOURCE_LINK_PROPERTY]) {
+                    return <a href={safeMarkdownHref(href)} target="_blank" rel="noopener noreferrer">{children}</a>;
+                }
+                const tile = readMediaTileIndex(node);
+                if (tile !== null) {
+                    return <MediaGalleryTile index={tile} />;
+                }
+                const kind = inlineMediaKind(href);
+                const source = safeMediaUrl(href);
+                if (kind && source) {
+                    const title = inlineMediaTitle(node ? toText(node) : '', source);
+                    return kind === 'audio' ? (
+                        <InlineAudioPlayer src={source} title={title} />
+                    ) : (
+                        <InlineVideoCard src={source} title={title} />
+                    );
+                }
+                return (
+                    <a href={safeMarkdownHref(href)} {...props}>
+                        {children}
+                    </a>
+                );
+            },
+            img: ({ src, alt, node }) => {
+                const tile = readMediaTileIndex(node);
+                return tile === null ? <InlineImageCard src={src} alt={alt} /> : <MediaGalleryTile index={tile} />;
+            },
+
+            // A run of images and clips, which rehypeMediaGallery wrapped in a div of figures.
+            // Markdown produces no other div, but any other is rendered as it was.
+            div: ({ children, node, ...props }) => {
+                const items = readMediaGallery(node);
+                return items ? <MediaGallery items={items}>{children}</MediaGallery> : <div {...props}>{children}</div>;
+            },
+            figure: ({ children, node: _node, ...props }) => (
+                <figure {...props} className="m-0 flex min-w-0 flex-col gap-1.5">
+                    {children}
+                </figure>
+            ),
+            figcaption: ({ children }) => (
+                <figcaption className="text-xs leading-snug break-words text-text-2">
+                    {renderTokens(children)}
+                </figcaption>
+            ),
+
+            // A diagram, chart or image proposal replaces the whole code block, so the
+            // <pre> wrapper markdown puts around it is dropped: leaving it would box
+            // the rendered output in the code block's background and padding.
+            //
+            // Handled here rather than in `code` because the <pre> is the element the
+            // renderer replaces; the index a diagram or chart is matched to any saved
+            // colours by comes from `rehypeRichBlockIndex`, stamped on the <code>
+            // inside it.
+            pre: ({ children, node }) => {
+                const code = fenceCodeElement(node);
+                if (richFenceKind(code) === null) {
+                    return <pre>{children}</pre>;
+                }
+
+                const language = readFenceLanguage(code?.properties?.className);
+                const pendingKind = readPendingKind(language);
+                if (pendingKind) {
+                    return <PendingRichBlock kind={pendingKind} />;
+                }
+
+                // Read off the hast node rather than the rendered children, which may
+                // already have been split into highlighted spans; a chart's JSON
+                // payload has to come back intact.
+                const source = code ? toText(code, { whitespace: 'pre' }) : '';
+
+                // Null only if the plugin did not run. Left undefined rather than
+                // defaulted to zero, because an unnumbered block sharing block zero's
+                // slot would overwrite that block's saved colours, and would file two
+                // proposal cards' approval state under one entry.
+                const index = readRichBlockIndex(code);
+
+                if (language === IMAGE_PROPOSAL_LANGUAGE) {
+                    return (
+                        <InlineImageProposal source={source} blockIndex={index ?? undefined} />
+                    );
+                }
+
+                if (language === MERMAID_LANGUAGE) {
+                    return (
+                        <MermaidDiagram
+                            source={source}
+                            messageId={messageId}
+                            blockIndex={index ?? undefined}
+                        />
+                    );
+                }
+                return (
+                    <InlineChart
+                        source={source}
+                        messageId={messageId}
+                        blockIndex={index ?? undefined}
+                    />
+                );
+            },
+
+            // `node` is pulled out and discarded rather than left in `props`: it is the
+            // hast node, and spreading it onto a DOM <code> element makes React warn
+            // about an unrecognised attribute on every code block in the thread.
+            code: ({ className, children, node: _node, ...props }) => {
+                // Rich fences are rendered from `pre` above and never reach this, but
+                // a placeholder is still handled here in case one is ever produced
+                // without its wrapper.
+                const pendingKind = readPendingKind(readFenceLanguage(className));
+                if (pendingKind) {
+                    return <PendingRichBlock kind={pendingKind} />;
+                }
+
+                return (
+                    <code className={className} {...props}>
+                        {children}
+                    </code>
+                );
+            },
+        }),
+        [renderTokens, messageId],
+    );
+
+    return (
+        <div
+            className={clsx(
+                'text-[15px] leading-relaxed break-words',
+                '[&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0',
+                '[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5',
+                '[&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
+                '[&_li]:my-0.5',
+                '[&_h1]:mt-4 [&_h1]:mb-2 [&_h1]:text-lg [&_h1]:font-semibold',
+                '[&_h2]:mt-4 [&_h2]:mb-2 [&_h2]:text-base [&_h2]:font-semibold',
+                '[&_h3]:mt-3 [&_h3]:mb-1.5 [&_h3]:text-sm [&_h3]:font-semibold',
+                '[&_a]:text-accent [&_a]:underline',
+                '[&_code]:rounded [&_code]:bg-surface-sunken [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-[13px]',
+                '[&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-xl [&_pre]:bg-surface-sunken [&_pre]:p-3',
+                '[&_pre_code]:bg-transparent [&_pre_code]:p-0',
+                '[&_blockquote]:my-2 [&_blockquote]:border-l-2 [&_blockquote]:border-edge-strong [&_blockquote]:pl-3 [&_blockquote]:text-text-2',
+                '[&_table]:my-3 [&_table]:w-full [&_table]:border-collapse [&_table]:text-sm',
+                '[&_th]:border [&_th]:border-edge-strong [&_th]:bg-surface-sunken [&_th]:px-2 [&_th]:py-1 [&_th]:text-left',
+                '[&_td]:border [&_td]:border-edge-strong [&_td]:px-2 [&_td]:py-1',
+            )}
+        >
+            <ReactMarkdown
+                remarkPlugins={[remarkGfm, remarkBreaks]}
+                rehypePlugins={[
+                    rehypeRichBlockIndex, [rehypeWebCitationMedia, { citations: webCitations }],
+                    rehypeMediaGallery, rehypeHighlightSubset,
+                ]}
+                components={components}
+            >
+                {content}
+            </ReactMarkdown>
+        </div>
+    );
+}
+
+/**
+ * Assistant text with its citation markers turned into chips, masked spans redacted and TeX
+ * lifted out for rendering.
+ *
+ * Order matters. Masks are applied FIRST: their offsets are canonical positions in the raw
+ * content, and citation parsing rewrites the string, which would invalidate them. Maths is
+ * lifted LAST, so it scans text that already has its markers removed and cannot mistake a
+ * citation marker for part of an expression.
+ *
+ * While streaming, an unterminated trailing diagram, chart or image proposal fence is swapped
+ * for a pending placeholder, because markdown would otherwise hand the renderer half a
+ * diagram on every token.
+ *
+ * Parsing is memoised because it runs on every render of a long thread, and the streaming
+ * bubble re-renders on each token.
+ *
+ * `messageId` is passed to the diagrams and charts inside the text, which use it to save the
+ * colours someone chooses for them. A reply that is still streaming has no message yet, so it
+ * is absent there and those blocks render with the reader's defaults.
+ */
+export function AssistantMarkdown({
+    content,
+    masks,
+    documentCitations = NO_DOCUMENT_CITATIONS,
+    streaming = false,
+    messageId,
+}: {
+    content: string;
+    masks?: MaskedRange[];
+    documentCitations?: HybridCitation[];
+    streaming?: boolean;
+    messageId?: string;
+}) {
+    // Keyed on what the masks say rather than on the array that carries them. The caller reads
+    // them off the message, and any change to its metadata, such as a diagram's saved revision,
+    // makes a new message and so a new array holding the same ranges. Keyed on that identity,
+    // the text was re-parsed and the component map in `Markdown` rebuilt, which remounted every
+    // diagram and chart in the message and closed an editor open on one of them.
+    const maskKey = JSON.stringify(masks ?? NO_MASKS);
+    const { text, groups, ranges, segments } = useMemo(() => {
+        const masked = applyMasks(content, JSON.parse(maskKey) as MaskedRange[]);
+        const parsed = parseCitations(masked.text, documentCitations);
+        const guarded = streaming ? markPendingFences(parsed.text) : parsed.text;
+        const withMath = parseMath(guarded);
+        return {
+            text: withMath.text,
+            groups: parsed.groups,
+            ranges: masked.ranges,
+            segments: withMath.segments,
+        };
+    }, [content, maskKey, streaming, documentCitations]);
+
+    return (
+        <Markdown
+            content={text}
+            citations={groups}
+            masks={ranges}
+            math={segments}
+            messageId={messageId}
+        />
+    );
+}

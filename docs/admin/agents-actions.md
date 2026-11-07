@@ -5,6 +5,7 @@ description: "Agents & Actions controls the Semantic Kernel runtime, agent marke
 section: "Administration"
 audience: admin
 admin_tab: agents-actions
+version: "0.261.271"
 redirect_from:
   - /admin/agents/
 ---
@@ -26,54 +27,224 @@ Agents and actions can call tools, inspect documents, and automate work. Expose 
 
 ## Before you change anything
 
-- Decide whether personal, group, or global agents are allowed.
+- **Enable Agents** gates this entire group. Decide whether you want agents at all before configuring anything below it.
+- Decide whether agents come from one shared global set or from each user's own workspace, because that choice changes which other settings do anything.
 - Confirm action dependencies before enabling a plugin.
 - Configure App Service Authentication excluded paths before exposing inbound MCP.
 
 ## Agents {#agents}
 
-### Agents Configuration {#agents-config}
+### Reading the V2 settings cards
 
-The Agents Configuration section belongs to the Agents tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Every V2 settings card now uses the presentation these cards introduced; see
+[Reading V2 Admin Settings]({{ '/admin/' | relative_url }}#reading-v2-admin-settings).
+On this page, person and group icons help distinguish the similarly named
+permission controls, and the accent-backed **Enable Agents** row identifies the
+runtime's main switch, with **Workspace Mode** and its global-agent option indented
+beneath it.
 
-### Agent Template Approvals {#agent-template-approvals-section}
+**Hero**, **Guidance**, and **Promoted agents** remain independently expandable.
+Their headers show setting counts while collapsed, and search reveals matching
+fields inside them. At narrow widths or larger text sizes, controls wrap within
+their card. Use the existing save bar to save or discard edits; the visual
+treatment does not change defaults, permissions, or when settings take effect.
 
-The Agent Template Approvals section belongs to the Agents tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+This presentation was implemented in **0.261.093** and extended to every V2 section
+in **0.261.258**, tracked in `application/single_app/config.py`.
+
+### Agent Runtime {#agents-config}
+
+This is where you decide whether agents run at all, and where they come from.
+
+**Enable Agents** starts the Semantic Kernel runtime. It is the gate for
+everything else in this group. While it is off, the Agents catalog page is not
+served, no global agent or action is loaded, and the workspace permissions have
+nothing to apply to.
+
+**Workspace Mode** answers a question that determines most of the rest of your
+configuration: does everyone share one set of agents, or does each user and group
+keep their own?
+
+- **Off** — one global set, curated by administrators. You choose the single
+  agent that answers, and users pick from what you publish. Use this when agent
+  behaviour has to be reviewable and consistent.
+- **On** — each user and each group owns a collection. The workspace permissions
+  section appears, and the global set is no longer used on its own. Use this when
+  people need to build agents for their own work.
+
+**Add Global Agents and Actions to Workspaces** matters only in Workspace Mode.
+Turning Workspace Mode on otherwise hides the global set entirely, which is
+rarely what an administrator intends; this setting folds the shared agents back
+in alongside each person's own.
+
+**Agent Orchestration** appears only when the deployment offers more than one
+orchestration mode. This build ships a single mode, single-agent, so the control
+is not shown. Orchestration settings save through their own endpoint rather than
+with the rest of the page.
+
+**Enable Agents** also shows the state of **Govern Global Agents** and **Govern
+Global Actions**, with a **Review** link to each under
+[Governance]({{ '/admin/governance/' | relative_url }}#governance-feature-toggles-section).
+Those switches decide who may use the agents and actions you publish, and they
+keep their value while Enable Agents is off.
+
+**Enable Ask AI in the Agent Editor** and **Enable Ask AI in the Action Editor**
+add an **Ask AI** panel to the V2 agent and action editors, for personal, group
+and global agents and actions alike. People describe what they want, and the
+assistant fills in the unsaved draft with highlighted changes they can undo. It
+never saves, never sees or enters keys or other credentials, and only offers
+models, actions and knowledge the person could already pick in the editor. In
+the agent editor it can also draft up to three new actions, which are created
+only when the agent is saved. Both are on by default and only take effect while
+Enable Agents is on. Turn one off if you would rather people configure that
+editor entirely by hand, or to stop its model calls. The panel uses the
+deployment's instruction-drafting model and shares the workflow assistant's
+per-user rate limit.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Hero Title | Provides displayed text that users see in the affected interface. | Find your next AI partner | `agents_page_title` |
-| Hero Subtitle | Provides displayed text that users see in the affected interface. | Explore specialized agents built to accelerate how you work. | `agents_page_subtitle` |
-| Hero Color Mode | Defines behavior for the related admin workflow; verify the affected feature after saving. | single | `agents_page_hero_color_mode` |
-| Primary Color | Defines behavior for the related admin workflow; verify the affected feature after saving. | #0f172a | `agents_page_hero_primary_color` |
-| Secondary Color | Defines behavior for the related admin workflow; verify the affected feature after saving. | #1e293b | `agents_page_hero_secondary_color` |
-| Disclaimer / Guidance Text (Markdown supported) | Shown below the Agents page hero. Use this for contact details, request guidance, or governance reminders. | Empty | `agents_page_disclaimer_markdown` |
-| Show agent instructions in Agents page details | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agents_page_show_instructions_in_details` |
-| Agents Page Promoted Popular Agents Json | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `agents_page_promoted_popular_agents_json` |
-| Placement | Defines behavior for the related admin workflow; verify the affected feature after saving. | before | `agents_page_promoted_popular_order` |
-| Promoted Tag Label | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | `agents_page_promoted_popular_tag_label` |
-| Show promoted tag | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agents_page_promoted_popular_tag_enabled` |
-| Add Agent | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Enable Agents | Enables the agent and action runtime so users can work with configured agents instead of only the base chat experience. | Off | `enable_semantic_kernel`; capability toggle |
-| Workspace Mode (workspace-specific agents/plugins and disables global configuration) | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `per_user_semantic_kernel` |
-| Allow User Agents | Permits user agents when the related workspace or agent feature is enabled. | Off | `allow_user_agents` |
-| Allow Group Agents | Permits group agents when the related workspace or agent feature is enabled. | Off | `allow_group_agents` |
-| Allow User Custom Endpoints | Permits user custom endpoints when the related workspace or agent feature is enabled. | Off | `allow_user_custom_endpoints` |
-| Allow Group Custom Endpoints | Permits group custom endpoints when the related workspace or agent feature is enabled. | Off | `allow_group_custom_endpoints` |
-| Merge Global Agents/Plugins into Workspace | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `merge_global_semantic_kernel_with_workspace` |
-| Enable Agent Template Gallery | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_agent_template_gallery`; capability toggle |
-| Orchestration Type | Defines behavior for the related admin workflow; verify the affected feature after saving. | default_agent | `orchestration_type` |
-| Multi-agent orchestration | Derived from **Orchestration Type**; enables group-chat orchestration paths when the selected orchestration mode is multi-agent, so the runtime can coordinate multiple configured agents instead of routing to a single default agent. | Off | `enable_multi_agent_orchestration`; saved by orchestration settings API |
-| Max Rounds Per Agent (Group Chat) | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 1 | `max_rounds_per_agent` |
-| Selected Agent: | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Allow User Template Submissions | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agent_templates_allow_user_submission` |
-| Require Admin Approval | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `agent_templates_require_approval` |
-| Enable tool throttles | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_inbound_mcp_rate_limits`; capability toggle |
-| Value | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
-| Description | Use descriptions to explain who owns this app, tenant, or source value without making the value easy to guess. | Not specified in defaults | Runtime UI control |
-| I have added the required App Service Authentication excluded paths for this SimpleChat App Service. | Defines behavior for the related admin workflow; verify the affected feature after saving. | Not specified in defaults | Runtime UI control |
+| Enable Agents | Starts the agent runtime. Gates the Agents catalog page, the global agent and action tables, and every workspace permission in this group. | Off | `enable_semantic_kernel`; capability toggle |
+| Enable Ask AI in the Agent Editor | Shows the Ask AI panel in the V2 agent editor, which fills in an agent's draft from a plain-language request and can draft new actions for it. | On | `enable_agent_ai_assistant`; requires Enable Agents |
+| Enable Ask AI in the Action Editor | Shows the Ask AI panel in the V2 action editor, which fills in an action's type, configuration and sign-in method from a plain-language request. | On | `enable_action_ai_assistant`; requires Enable Agents |
+| Workspace Mode | Chooses between one shared global set of agents and actions, and a separate collection per user and group. | Off | `per_user_semantic_kernel` |
+| Add Global Agents and Actions to Workspaces | Includes the global set in every workspace collection, so people see both what they built and what you publish. | Off | `merge_global_semantic_kernel_with_workspace`; only applies in Workspace Mode |
+| Orchestration Type | Selects how a chat is routed across agents. Hidden while only one mode is available. | default_agent | `orchestration_type`; saved by the orchestration settings API |
+| Multi-Agent Orchestration | Reports whether the runtime coordinates several agents. Follows the orchestration mode rather than being set directly. | Off | `enable_multi_agent_orchestration`; derived |
+| Max Rounds Per Agent | Caps how many turns each agent takes in a multi-agent conversation, which bounds the model calls one message can trigger. | 1 | `max_rounds_per_agent`; forced to 1 outside multi-agent modes |
+
+### Global Agents {#organization-agents-section}
+
+The agents your organisation provides. While Workspace Mode is off they are the
+only agents there are, and everyone chats with the **default agent** you choose
+here. With Workspace Mode on they appear beside people's own agents only when
+**Add Global Agents and Actions to Workspaces** is on.
+
+Each row shows the agent's type, model, and how many actions it uses, with a badge
+for whether it is enabled and another on the default agent. The icons at the end of
+a row make the agent the default, enable or disable it, open it, and delete it. Each
+change on the list saves straight away, because these are records rather than
+settings, so the save bar is not involved. Opening an agent replaces this page, so
+if other settings here are unsaved you are asked to keep editing or discard them
+first:
+
+- **New agent** opens the same full-page agent editor people use in their
+  workspaces: identity, model and connection, actions, assigned knowledge,
+  instructions, advanced settings, and examples and templates. The editor is laid
+  out as this page is, a card per section with each setting's label and help beside
+  it, and it looks the same in My Workspace and group workspaces. Saving returns you
+  to this list.
+- **Start from a template** opens a new agent with the template gallery in view.
+  Applying a template copies its instructions, tags, and recommended actions into
+  an unsaved draft; connection credentials are never copied. Choose a model, then
+  save. The button appears while **Enable Agent Template Gallery** is on.
+- **Make default** (the star) chooses the agent that answers when nobody picks
+  one. A disabled agent cannot be the default.
+- **Disable** (the power icon) keeps an agent's configuration but stops offering it. Disabling the
+  default hands the default to another enabled agent, if there is one, and the
+  confirmation names which.
+- **Delete** (the bin) removes an agent after you confirm. The default agent
+  cannot be deleted; choose another default first.
+
+A few things differ from a workspace agent, because a global agent answers
+everyone:
+
+- **Assigned knowledge** can draw only on public workspaces, never on a person's
+  or a group's documents.
+- **Model & connection** offers the global model connections, and a global agent
+  may also carry its own connection, as the classic editor allowed.
+- **Actions** lists the global actions. **New action** creates one in Global
+  Actions and attaches it to the agent you came from.
+- **Publish as template** adds the agent's recipe to the approved gallery
+  straight away; an administrator's template needs no review.
+
+Stored credentials stay masked in the editor, and while Key Vault secret storage
+is on they are kept in the global Key Vault namespace. Two administrators editing
+the same agent cannot overwrite each other: the second save is refused until the
+latest version is loaded.
+
+### Workspace Agent Permissions {#agent-toggles-card}
+
+Shown only in Workspace Mode, because outside it nothing reads these.
+
+Custom endpoints deserve particular attention: they let an agent send prompts to
+a model endpoint that the agent's owner configured, rather than one you
+administer. Enable them when teams genuinely need their own models, and pair them
+with an endpoint governance policy when only some of them should.
+
+These permissions decide whether a capability exists; governance decides who may
+use it. Each of the four shows its governance switch underneath, such as **Govern
+Personal Agents** under Allow Personal Agents, with whether it is on and a
+**Review** link to it under
+[Governance]({{ '/admin/governance/' | relative_url }}#governance-feature-toggles-section).
+A governance switch keeps its value while its permission is off and starts checking
+as soon as the permission is turned on.
+
+A personal or group endpoint that authenticates with managed identity uses the
+application's own identity, so its owner doesn't get to decide where that token
+goes. Such an endpoint has to point at an Azure AI service host in the
+deployment's cloud. It can't override the token audience or authority, and it
+can't select a managed identity client ID. It can use an API key or a service
+principal instead. Global endpoints you configure yourself aren't restricted.
+See [Configure model endpoint identity]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}#personal-and-group-endpoints-that-use-the-application-identity).
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Allow Personal Agents | Lets people build and keep agents in their own workspace. | Off | `allow_user_agents`; pair with a personal agent governance policy |
+| Allow Group Agents | Lets a group own agents its members share. | Off | `allow_group_agents`; group workspaces must also be enabled |
+| Allow Personal Custom Endpoints | Lets people point their own agents at a model endpoint they configure, instead of the deployment's shared models. | Off | `allow_user_custom_endpoints` |
+| Allow Group Custom Endpoints | The same for group-owned agents. | Off | `allow_group_custom_endpoints`; group workspaces must also be enabled |
+| Enable Agent Template Gallery | Gives workspace users approved agents to start from rather than a blank editor, and adds the Agent Template Approvals section. | On | `enable_agent_template_gallery`; capability toggle |
+
+### Agents Page {#agents-page-customization-card}
+
+Controls how the Agents catalog page presents itself. That page is served behind
+**Enable Agents**, so none of this applies while agents are off.
+
+These settings apply to both the classic catalogue and the native V2 **Agents**
+page. In V2, the catalogue omits agents blocked by the user's governance policy
+before adding usage rankings or promotions. It does not show restricted-agent
+cards or request-access controls. The instructions setting also redacts
+instructions from `GET /api/v2/agents/catalog`, not just from its details dialog.
+See the [Agents browsing guide]({{ '/guides/workspace-agents-and-actions/#find-and-start-an-agent' | relative_url }}).
+
+The promotion controls exist because the Popular tab ranks agents by how often
+people run them, which leaves a newly published agent unable to be found: nothing
+becomes popular until it is already popular. Promoting an agent places it in that
+tab regardless of usage. People only ever see promoted agents that are already
+visible to them, so a promotion cannot leak an agent someone has no access to.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Hero Title | Headline at the top of the Agents catalog page. Reverts to the default when left empty. | Find your next AI partner | `agents_page_title` |
+| Hero Subtitle | Supporting line under the headline. Reverts to the default when left empty. | Explore specialized agents built to accelerate how you work. | `agents_page_subtitle` |
+| Hero Color Mode | Draws the hero as a flat colour or as a gradient between the two colours below. | single | `agents_page_hero_color_mode` |
+| Primary Color | Hero background, and the first stop of the gradient. | #0f172a | `agents_page_hero_primary_color` |
+| Secondary Color | Second stop of the gradient. Only used in two-tone mode. | #1e293b | `agents_page_hero_secondary_color` |
+| Disclaimer or Guidance Text | Markdown shown under the hero. Use it for who to contact about a new agent, or the governance reminder people need before choosing one. | Empty | `agents_page_disclaimer_markdown` |
+| Show Agent Instructions in Details | Reveals an agent's system prompt in its details popup and in the catalog API response. Turn it off when instructions carry wording or internal references you would rather not publish. | On | `agents_page_show_instructions_in_details` |
+| Promoted Placement | Positions promoted agents before, after, or mixed in with the agents that earned their place through usage. | before | `agents_page_promoted_popular_order` |
+| Show Promoted Tag | Marks promoted agents so their placement is not mistaken for genuine usage. | On | `agents_page_promoted_popular_tag_enabled` |
+| Promoted Tag Label | Wording of that tag. | Promoted | `agents_page_promoted_popular_tag_label` |
+| Promoted Agents | The agents placed in the Popular tab regardless of usage, and which time window each promotion applies to. | None | `agents_page_promoted_popular_agents` |
+
+### Agent Template Approvals {#agent-template-approvals-section}
+
+Shown only while the Agent Template Gallery is enabled. Submissions are reviewed
+on the shared [approvals queue]({{ '/admin/governance/' | relative_url }}) rather
+than here; the section links to it.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Allow User Template Submissions | Lets workspace users offer an agent they built as a template for everyone else, which is how a gallery grows without an administrator authoring every entry. | On | `agent_templates_allow_user_submission` |
+| Require Admin Approval | Holds submissions in the approvals queue instead of publishing them straight into the gallery. | On | `agent_templates_require_approval` |
 
 ## Actions {#actions}
 
@@ -92,78 +263,299 @@ Each action also has a maximum sharing-acknowledgement duration. Users manage
 their own source preferences in Profile; action policy can shorten those grants,
 not approve on the user's behalf. See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
 
-### Document Action Capabilities {#document-action-capabilities-card}
+### Calling another agent
 
-The Document Action Capabilities section belongs to the Actions tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+From version **0.261.093**, a local agent can use a **Call agent** action to
+delegate to an explicitly configured local or Foundry-backed specialist.
+Creating and attaching the action is the opt-in; it uses existing agent/action
+permissions and governance rather than a separate orchestration toggle.
 
-### Actions Configuration {#actions-config}
+Calls stay in the same personal or group workspace, with permitted global
+agents available when global merging is enabled. Global actions target global
+agents only. Runtime checks do not trust the permissions held by the person who
+originally configured an action.
 
-The Actions Configuration section belongs to the Actions tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Classic and V2 both provide focused authoring and attachment controls for
+personal, group, and global agents. In V2 Admin Settings a global Call agent
+action is an ordinary global action: create it under **Global Actions** with the
+**Call agent** type, which offers only global agents as targets, then attach it in
+a global agent's editor. The separate **Global agent delegation** card was removed
+in **0.261.271**. See
+[Call another agent]({{ '/guides/call-another-agent/' | relative_url }}) for the
+workflow, context-sharing rules, and execution limits.
+
+### Document Actions {#document-action-capabilities-card}
+
+**Analyze** and **Document Comparison** appear in the **Action** menu in chat and
+in workflows. They are not searches. Analyze reads every selected document in
+full, so an answer covers all of them rather than only the passages a search
+returned; Comparison reads one baseline document against the others, which is
+what answers questions about what changed between versions.
+
+**Merge** combines the rows of several CSV or Excel files into one table. Since
+**0.261.239**, V2 chat orchestration uses it when someone asks to merge, combine
+or append spreadsheets, and the plan delivers the result as a CSV or Excel file.
+Since **0.261.240** it also reconciles files whose columns differ, and the same
+switch and file limit govern **Inspect spreadsheets**, which reads the files'
+headers and samples first. Since **0.261.241**, a V2 workflow task can merge
+files too, on a schedule or whenever File Sync brings new files, within the
+workflow limits below. Since **0.261.245**, the same switch and chat file limit
+also govern **Merge documents**, which joins PDFs, Word documents or PowerPoint
+decks into one file, or puts spreadsheets on separate sheets of one workbook, in
+a chat turn. Code appends the rows and copies the documents; no model reads them, so a
+merge costs far less than analyzing the same files. That is why its limits are
+higher, and why it is limited by merged rows as well as by files: a few very
+large files can cost more than many small ones.
+
+Because each document is read in full, the limits are the control that matters.
+They bound how long a single message can take and how much it costs. Chat and
+workflow are limited separately: a chat message has someone waiting on it, while
+a workflow run does not and can be allowed a much larger batch.
+
+These values are stored as one object, `document_action_capabilities`, rather
+than as separate settings.
+
+#### Settings
+
+| Setting | What it does | Default | Range | Notes |
+| --- | --- | --- | --- | --- |
+| Enable Analyze | Offers Analyze in the Action menu. | On | — | `document_action_capabilities.analyze.enabled` |
+| Analyze: Chat Document Limit | Most documents one chat message may analyze. | 3 | 2–300 | `analyze.chat_max_documents` |
+| Analyze: Workflow Document Limit | The same limit for a workflow run. | 10 | 2–1000 | `analyze.workflow_max_documents` |
+| Enable Document Comparison | Offers Document Comparison in the Action menu. | On | — | `document_action_capabilities.comparison.enabled` |
+| Comparison: Chat Document Limit | Most documents one chat message may compare, including the baseline. | 3 | 2–300 | `comparison.chat_max_documents` |
+| Comparison: Workflow Document Limit | The same limit for a workflow run. | 10 | 2–1000 | `comparison.workflow_max_documents` |
+| Enable Merge | Lets chat orchestration combine CSV and Excel files into one file, inspect their columns first, and join PDFs, Word documents, PowerPoint decks or workbooks into one file, and lets workflow tasks merge files. While it's off, workflow merge tasks can't be saved, and existing ones fail when they run. | On | — | `document_action_capabilities.merge.enabled`; in chat, also governed by the **Merge spreadsheets**, **Inspect spreadsheets** and **Merge documents** orchestration capabilities. |
+| Merge: Chat Document Limit | Most files one chat request may merge or inspect. | 10 | 2–300 | `merge.chat_max_documents` |
+| Merge: Workflow Document Limit | Most files one workflow merge task may merge in a run. A task that finds more files fails rather than merging only some. | 100 | 2–1000 | `merge.workflow_max_documents` |
+| Merge: Chat Row Limit | Most rows one chat merge may produce. A merge over the limit stops without creating a file. | 250,000 | 1,000–1,000,000 | `merge.chat_max_rows` |
+| Merge: Workflow Row Limit | The same row limit for a workflow merge task. | 1,000,000 | 1,000–1,000,000 | `merge.workflow_max_rows` |
+
+Values outside the range are clamped on save rather than rejected.
+
+### Workspace Action Permissions {#plugin-feature-toggles}
+
+Shown only in Workspace Mode.
+
+Letting someone build an action is a wider grant than letting them build an
+agent. An action carries an endpoint and the credentials to reach it, so once
+these are on, the traffic an agent can generate is no longer limited to the
+destinations you configured. Pair them with an action governance policy when only
+some people should have that.
+
+Each permission shows **Govern Personal Actions** or **Govern Group Actions**
+underneath with a **Review** link. Action-type policies under
+[Delegated Item Policies]({{ '/admin/governance/' | relative_url }}#governance-item-policies-section)
+can narrow one type, such as MCP, to fewer people, and
+[MCP destination governance]({{ '/admin/governance/' | relative_url }}#governance-mcp-destination-section)
+limits which remote MCP servers those actions may reach.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable Analyze | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `document_action_analyze_enabled` |
-| Document Action Analyze Chat Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_analyze_chat_max_documents_range` |
-| Chat max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_analyze_chat_max_documents` |
-| Document Action Analyze Workflow Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_analyze_workflow_max_documents_range` |
-| Workflow max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_analyze_workflow_max_documents` |
-| Enable Document Comparison | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `document_action_comparison_enabled` |
-| Document Action Comparison Chat Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_comparison_chat_max_documents_range` |
-| Chat max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 3 | `document_action_comparison_chat_max_documents` |
-| Document Action Comparison Workflow Max Documents Range | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_comparison_workflow_max_documents_range` |
-| Workflow max documents | Defines a capacity or timing boundary that keeps the feature inside supported limits. | 10 | `document_action_comparison_workflow_max_documents` |
-| Allow Personal Actions | Permits personal actions when the related workspace or agent feature is enabled. | Off | `allow_user_plugins` |
-| Allow Group Actions | Permits group actions when the related workspace or agent feature is enabled. | Off | `allow_group_plugins` |
-| Enable Time Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_time_plugin`; capability toggle |
-| Enable HTTP Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_http_plugin`; capability toggle |
-| Enable Wait Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_wait_plugin`; capability toggle |
-| Enable Math Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_math_plugin`; capability toggle |
-| Enable Text Action | Exposes the capability after required services, permissions, and rollout policy are ready. | On | `enable_text_plugin`; capability toggle |
-| Enable Default Embedding Model Action | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_default_embedding_model_plugin`; capability toggle |
-| Fact Memory Action | Lets agents store, update, and remove durable facts and instructions for the current user or group. Fact memory is a chat capability, so its availability follows the Chat setting rather than being edited here. | On | `enable_fact_memory_plugin`; configured in [Chat settings]({{ '/admin/chat/#fact-memory-section' | relative_url }}) |
-| Tabular Processing Action | Makes the tabular-processing action available to agents for CSV and XLSX analysis when Enhanced Citations is enabled; the setting is normalized from Enhanced Citations rather than edited directly in the UI. | Off | `enable_tabular_processing_plugin`; effective value follows `enable_enhanced_citations` |
+| Allow Personal Actions | Lets people create actions in their own workspace. | Off | `allow_user_plugins` |
+| Allow Group Actions | The same for a group's shared actions. | Off | `allow_group_plugins`; group workspaces must also be enabled |
+
+### Built-in Actions {#core-plugin-toggles}
+
+The small set of general-purpose actions that ship with the runtime. They are on
+by default and are rarely changed, so they are collapsed.
+
+The one worth a decision is **HTTP**: it is the only built-in action that reaches
+outside the deployment. Turn it off where agents should only be able to use the
+connectors you configured.
+
+Each is loaded independently, so turning one off removes that capability and
+affects nothing else.
+
+#### Settings
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Time | Lets an agent read the current date and time and calculate with them, instead of answering date questions from training data. | On | `enable_time_plugin` |
+| HTTP | Lets an agent fetch a URL directly. The only built-in action that leaves the deployment. | On | `enable_http_plugin` |
+| Wait | Lets an agent pause, which workflows use to space out repeated calls. | On | `enable_wait_plugin` |
+| Math | Lets an agent calculate rather than predict an answer. | On | `enable_math_plugin` |
+| Text | Lets an agent format, trim and reshape text deterministically. | On | `enable_text_plugin` |
+| Default Embedding Model | Exposes the embedding model for similarity work outside the normal document search path. Document search already embeds without it. | Off | `enable_default_embedding_model_plugin` |
+
+#### Managed elsewhere
+
+Two actions are listed here because they change what an agent can do, but neither
+is set from this page.
+
+| Action | Where it comes from | Notes |
+| --- | --- | --- |
+| Fact Memory | [Chat › Chat Experience › Fact Memory]({{ '/admin/chat/#fact-memory-section' | relative_url }}) | `enable_fact_memory_plugin`; a chat capability that also gives agents a memory action |
+| Tabular Processing | [Chat › Citations › Enhanced]({{ '/admin/chat/#enhanced-citations-section' | relative_url }}) | `enable_tabular_processing_plugin`; recomputed from `enable_enhanced_citations` on every settings read, so it cannot be set independently |
+
+### Global Actions {#actions-config}
+
+The actions global agents can call: connections to APIs, databases, MCP servers,
+Microsoft services, and other agents. With Workspace Mode on, workspaces see them
+too when **Add Global Agents and Actions to Workspaces** is on.
+
+As with Global Agents, each change saves straight away:
+
+- **New action** opens the full-page action editor workspaces use, with the
+  connector catalogue the deployment provides, MCP presets and the global MCP
+  preconfigurations, connection tests, and Key Vault credential handling. Saving
+  returns you to this list.
+- **Disable** (the power icon) keeps an action's configuration without loading
+  it, and **Delete** (the bin) removes it after you confirm. Deleting an action
+  does not edit the agents that used it.
+
+Connection tests and MCP tool discovery run in the global scope, so a stored
+credential resolves from the global Key Vault namespace rather than your own. A
+**Call agent** action can target only global agents, because the server refuses
+any other target for a global action.
+
+Since **0.261.333** (`application/single_app/config.py`), a Yamcs action can keep
+its administrator-owned destination while requesting each invoking user's
+personal identity. In Authentication, choose a personal source independently
+for Yamcs service credentials and reverse proxy credentials. A proxy-only
+deployment can keep Yamcs No Authentication and request only proxy sign-in.
+The existing proxy/service header restrictions still apply.
+
+Users provide credentials through a private chat card when the action is
+actually used, including direct orchestration without a custom agent. The
+card does not grant authoring rights, and shared actions/agents do not receive
+the user's credential. Identity storage follows the configured Key Vault or
+existing Cosmos choice. Save the action and use it in chat to check a personal
+identity; draft connection testing must not fall back to an administrator
+credential. See [Personal action credentials]({{ '/guides/personal-action-credentials/' | relative_url }}).
+
+Since **0.261.301**, a **Control Center** action answers read-only questions about
+SimpleChat usage, such as sign-ins, active users, conversations, uploads and token
+use, from the Control Center dashboard's data. It can only be created here, as a
+global action, and needs no connection settings. It is offered only to people who
+can view the Control Center dashboard, and it checks their roles again on every
+call. The dashboard's **Chat with this dashboard** button uses it. See
+[Control Center action]({{ '/reference/actions/control-center/' | relative_url }}).
 
 ## Inbound MCP {#inbound-mcp}
 
 ### Inbound MCP {#inbound-mcp-configuration}
 
-The Inbound MCP section belongs to the Inbound MCP tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
+Inbound MCP lets an external MCP client — an editor, for example — call
+SimpleChat tools on a signed-in user's behalf. It is the one part of SimpleChat
+that accepts requests from software you do not control, so it is deny-by-default
+at five separate layers, and turning it on is the last step rather than the first.
 
-If the tab shows that the Inbound MCP admin UI is disabled, add the Azure App Service application setting `ENABLE_MCP_UI=true`, save the configuration, and restart the app if your host does not restart it automatically. This only exposes the preview configuration UI; the inbound MCP runtime remains off until **Enable inbound MCP server** is turned on after authentication, client allowlist, source, and governance prerequisites are ready.
+A request is served only if **all** of these hold:
 
-#### Settings
+1. the caller presents the required delegated scope;
+2. the signed-in user holds the required Entra app role;
+3. the caller's application id is on the client allowlist;
+4. the caller's tenant is allowed;
+5. the source value is allowed, **and** a governance policy grants that user or
+   group access to the tool.
+
+Today the tool surface is personal tools only, and every one of them needs a
+delegated user token. The app-only role is reserved for future service tools and
+grants nothing.
+
+The fifth layer is the one most often missed, so the card opens with it: **Who
+can use inbound MCP** says how many
+[inbound MCP source policies]({{ '/admin/governance/' | relative_url }}#governance-inbound-mcp-section)
+exist, warns when there are none, and offers **Create a policy for any source**
+(or **Create a source policy** once source IDs are listed) and **Review in
+Governance**. A new source policy starts with nobody allowed, so name the people
+or groups who should connect before creating it.
+
+#### If the settings are not shown
+
+The configuration is a preview and stays hidden until the deployment opts in. Add
+the Azure App Service application setting `ENABLE_MCP_UI=true`, save, and restart
+the app if your host does not restart it for you.
+
+That reveals the settings and nothing else. The endpoint stays closed until
+**Enable Inbound MCP Server** is switched on.
+
+#### Runtime gate
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
-| Enable inbound MCP server | Exposes the capability after required services, permissions, and rollout policy are ready. | Off | `enable_inbound_mcp_server`; capability toggle |
-| Required delegated scope | Default: DelegatedMcpServerAccess. VS Code and other user clients must present this delegated scope. | DelegatedMcpServerAccess | `inbound_mcp_required_scope` |
-| Required delegated user role | Default: InboundMCPUserAccess. Governance determines which users/groups can use tools after this Entra role and delegated scope pass. | InboundMCPUserAccess | `inbound_mcp_required_user_role` |
-| Required app-only role | Default: InboundMCPAppAccess. Reserved for future app-only MCP tools and still governed separately. | InboundMCPAppAccess | `inbound_mcp_required_app_role` |
-| Max request bytes | Default: 65536. Range: 1 KB to 1 MB. | 65536 | `inbound_mcp_max_request_bytes` |
-| Rate window seconds | Default: 60. Applies to each throttle category. | 60 | `inbound_mcp_rate_limit_window_seconds` |
-| Read limit | Default: 120. | 120 | `inbound_mcp_rate_limit_read_per_window` |
-| Search limit | Default: 30. | 30 | `inbound_mcp_rate_limit_search_per_window` |
-| Write limit | Default: 10. | 10 | `inbound_mcp_rate_limit_write_per_window` |
-| Allow additional tenant IDs | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `inbound_mcp_allow_external_tenants` |
-| Allow all source IDs | Defines behavior for the related admin workflow; verify the affected feature after saving. | On | `inbound_mcp_allow_all_source_ids` |
-| Source header name | Default: X-SimpleChat-MCP-Source. | X-SimpleChat-MCP-Source | `inbound_mcp_source_header` |
+| Enable Inbound MCP Server | Accepts requests from external MCP clients. Every check above still applies afterwards. | Off | `enable_inbound_mcp_server`; capability toggle |
+| Required Delegated Scope | The delegated scope a client must present. Must match the scope exposed on the Entra application registration, or every request is refused. | DelegatedMcpServerAccess | `inbound_mcp_required_scope` |
+| Required Delegated User Role | The Entra app role a signed-in user must hold to connect at all. Which tools they then get is decided by governance policy. | InboundMCPUserAccess | `inbound_mcp_required_user_role` |
+| Required App-Only Role | Reserved for future service-to-service tools. No tool uses it today. | InboundMCPAppAccess | `inbound_mcp_required_app_role` |
+
+#### Request limits
+
+Throttles are **on by default** while the server itself is off, so seeing them
+enabled does not mean the endpoint is reachable. They take effect only once the
+server is enabled, and are counted per caller and per tool category across app
+instances.
+
+| Setting | What it does | Default | Range |
+| --- | --- | --- | --- |
+| Enable Tool Throttles | Caps how often one caller may invoke each category of tool, so a client stuck in a loop cannot exhaust the deployment. | On | — |
+| Max Request Bytes | Largest request body accepted. Anything bigger is refused unread. | 65536 | 1 KB – 1 MB |
+| Throttle Window (Seconds) | The period each limit below is counted over. | 60 | 10 – 3600 |
+| Read Calls Per Window | Reads are cheap, so this is the most permissive limit. | 120 | 1 – 10000 |
+| Search Calls Per Window | Each search costs an index query, so it is limited harder than reads. | 30 | 1 – 10000 |
+| Write Calls Per Window | Writes change stored data, so this is the tightest limit. | 10 | 1 – 10000 |
+
+#### Allowlists
+
+Each allowlist row pairs the identifier the runtime matches with a description of
+who it belongs to. Fill the description in: a list of bare GUIDs becomes
+impossible to audit within weeks, and nobody can then say which entry is safe to
+remove.
+
+**Client app IDs are required.** While that list is empty no client can connect,
+whatever else is configured.
+
+**Source IDs are weaker than they look.** The source arrives in a request header
+the client sets, so it identifies rather than authenticates, and it can be
+spoofed unless a gateway or APIM policy sets and enforces it. Leaving **Allow all
+source IDs** on accepts any value at this layer; a governance policy still
+decides who gets tools. Turn it off only where something upstream controls the
+header.
+
+| Setting | What it does | Default | Notes |
+| --- | --- | --- | --- |
+| Allowed Client App IDs | The Entra application ids permitted to connect. | Empty, so nothing can connect | `inbound_mcp_allowed_client_app_entries` |
+| Allow Additional Tenant IDs | Off restricts callers to this deployment's own tenant. | Off | `inbound_mcp_allow_external_tenants` |
+| Allowed Tenant IDs | Additional tenants whose users may connect. The deployment's own tenant is always included. | Empty | `inbound_mcp_allowed_tenant_entries` |
+| Allow All Source IDs | Accepts any source value at the allowlist layer. | On | `inbound_mcp_allow_all_source_ids` |
+| Source Header Name | The request header the source value is read from. | X-SimpleChat-MCP-Source | `inbound_mcp_source_header` |
+| Allowed Source IDs | The source values accepted when not allowing all of them. | Empty | `inbound_mcp_allowed_source_entries` |
+
+Turning **Allow Additional Tenant IDs** off does not delete the tenants you
+listed; it stops admitting them. Turning it back on restores them.
+
+Application Insights records `mcp_request_id`, the calling app, the delegated
+user, the source, the tool, duration, result and rate-limit category for each
+request — and never prompts, document content, bearer tokens or secrets.
 
 ## Common tasks
 
 1. **Turn on governed agents.** Enable the runtime, choose allowed scopes, and create a test agent. Outcome to verify: Only approved agent scopes are available.
-2. **Limit document actions.** Review analyze and comparison limits, then run a small action. Outcome to verify: Document actions complete within configured caps.
-3. **Prepare inbound MCP.** Set delegated scope, roles, throttles, and sources, then connect a test client. Outcome to verify: Approved clients can reach tools and blocked sources fail cleanly.
+2. **Publish a global agent.** Under **Global Agents**, choose **New agent** or **Start from a template**, pick a model, attach global actions, and save. With Workspace Mode off, choose **Make default** so it answers chats. Outcome to verify: The agent appears in the list with the Default agent tag.
+3. **Let a global agent call a specialist.** Under **Global Actions**, create a **Call agent** action that targets the specialist, then attach it in the calling agent's editor. Outcome to verify: The action lists the target as a global agent, and the caller shows one more action.
+4. **Limit document actions.** Review analyze and comparison limits, then run a small action. Outcome to verify: Document actions complete within configured caps.
+5. **Prepare inbound MCP.** Set delegated scope, roles, throttles, and sources, then connect a test client. Outcome to verify: Approved clients can reach tools and blocked sources fail cleanly.
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | An action is missing from an agent | The built-in action toggle or workspace action permission is disabled. | Enable the action and confirm the agent scope allows it. |
+| The Agents page returns an error instead of the catalog | **Enable Agents** is off. That page is served behind it. | Turn on Enable Agents, or remove the link from navigation. |
+| An agent setting has no effect | Workspace Mode changes where agents come from, so a global agent is unused in Workspace Mode unless the merge setting is on. | Check Workspace Mode first, then the merge setting. |
+| A global agent has no Delete button | It is the default agent, which cannot be deleted. | Make another enabled agent the default, then delete it. |
+| A global agent cannot be saved after another administrator changed it | The editor refuses to overwrite a newer version. | Open the latest version, reapply your change, and save. |
+| A Call agent action lists no personal or group agents | Global actions call global agents only. | Choose a global agent, or create the action in the workspace that owns the target. |
+| The classic page cannot save a new key for a global agent or action whose classic-page key was later replaced in V2 | V2 stores a replaced key under a new Key Vault name and soft-deletes the old one, and Key Vault will not reuse a soft-deleted name. | Enter the new key in V2 Admin Settings, or purge the deleted secret in Key Vault. |
+| A document action ignores the limit you set | The value was outside the supported range and was clamped on save. | Re-open the setting to see the stored value. |
+| An MCP client is refused after the allowlist was updated | Every layer must pass, and a governance policy is still required after the allowlists. | Check the client app id, the tenant, the source, and the governance policy in that order. |
 
 ## Related
 
 - [Administration settings overview]({{ '/admin/' | relative_url }})
+- [Governance settings]({{ '/admin/governance/' | relative_url }})
 - [Workspaces settings]({{ '/admin/workspaces/' | relative_url }})
 - [AI Models settings]({{ '/admin/ai-models/' | relative_url }})

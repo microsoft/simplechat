@@ -22,6 +22,8 @@ mimetypes.add_type('font/woff2', '.woff2')
 mimetypes.add_type('font/ttf', '.ttf')
 mimetypes.add_type('font/otf', '.otf')
 mimetypes.add_type('application/vnd.ms-outlook', '.msg')
+mimetypes.add_type('application/onenote', '.one')
+mimetypes.add_type('application/onenote', '.onepkg')
 mimetypes.add_type('application/xml', '.xsd')
 import openpyxl
 import xlrd
@@ -33,9 +35,11 @@ import ffmpeg as ffmpeg_py
 import glob
 import jwt
 import pandas
+from blob_container_readiness import APPLICATION_BLOB_CONTAINERS
 from functions_latest_features_nav import is_development_env_enabled
 from functions_appinsights import log_event
 from functions_azure_endpoint_validation import validate_configured_chat_blob_endpoint
+from csp_media_sources import build_media_src_directive, parse_csp_media_origins
 
 from functions_environment import load_simplechat_dotenv
 from flask import (
@@ -97,8 +101,9 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 # Flask app configuration constants
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
+CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.061"
+VERSION = "0.261.422"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -171,6 +176,15 @@ def _split_env_list(raw_value, lowercase=False):
 
 CSRF_TRUSTED_ORIGINS = _split_origin_list(os.getenv('CSRF_TRUSTED_ORIGINS', ''))
 
+# Origin of a separately hosted V2 React UI.
+#
+# Empty by default, which is the standard deployment: Flask serves the V2 SPA itself from
+# /v2, so every request is same-origin and no cross-origin handling is needed. Set this
+# only when the SPA is deployed to its own App Service. Doing so enables CORS for that
+# single origin, adds it to the CSRF trusted origins, and switches the session cookie to
+# SameSite=None so the browser will send it cross-site.
+V2_UI_ALLOWED_ORIGINS = _split_origin_list(os.getenv('V2_UI_ALLOWED_ORIGIN', ''))
+
 SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
 
 # Security Configuration
@@ -183,11 +197,12 @@ ENHANCED_CITATIONS_STORAGE_STATUS = {}
 
 # Base allowed extensions (always available)
 BASE_ALLOWED_EXTENSIONS = {'txt', 'doc', 'docm', 'html', 'md', 'json', 'xml', 'yaml', 'yml', 'log'}
-DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'pptx', 'ppt'}
+DOCUMENT_EXTENSIONS = {'pdf', 'docx', 'dotx', 'pptx', 'potx', 'ppt'}
 TABULAR_EXTENSIONS = {'csv', 'xlsx', 'xls', 'xlsm'}
 SCHEMA_EXTENSIONS = {'xsd'}
 VISIO_EXTENSIONS = {'vsdx'}
 EMAIL_EXTENSIONS = {'msg'}
+ONENOTE_EXTENSIONS = {'one', 'onepkg'}
 
 # Updates to image, video, audio, or Visio extensions should also be made in static/js/chat/chat-enhanced-citations.js if the new file types can be natively rendered in the browser.
 IMAGE_EXTENSIONS = {'jpg', 'jpeg', 'png', 'bmp', 'tiff', 'tif', 'heif', 'heic'}
@@ -222,6 +237,7 @@ def get_allowed_extensions(enable_video=False, enable_audio=False):
     extensions.update(SCHEMA_EXTENSIONS)
     extensions.update(VISIO_EXTENSIONS)
     extensions.update(EMAIL_EXTENSIONS)
+    extensions.update(ONENOTE_EXTENSIONS)
 
     if enable_video:
         extensions.update(VIDEO_EXTENSIONS)
@@ -251,6 +267,10 @@ def get_allowed_extension_categories(enable_video=False, enable_audio=False, ena
         {
             'name': 'Email and diagrams',
             'extensions': EMAIL_EXTENSIONS | VISIO_EXTENSIONS,
+        },
+        {
+            'name': 'OneNote (typed text and tables)',
+            'extensions': ONENOTE_EXTENSIONS,
         },
     ]
 
@@ -406,6 +426,7 @@ else:
     credential_scopes=[resource_manager + "/.default"]
     cognitive_services_scope = "https://cognitiveservices.azure.com/.default"
     video_indexer_endpoint = "https://api.videoindexer.ai"
+    search_resource_manager = "https://search.azure.com"
     KEY_VAULT_DOMAIN = ".vault.azure.net"
 
 if ENABLE_TEAMS_SSO and not TEAMS_FRAME_ANCESTORS:
@@ -431,9 +452,32 @@ if ENABLE_TEAMS_SSO:
     SESSION_COOKIE_SECURE = True
 
 TEAMS_APP_RESOURCE = TEAMS_APP_RESOURCE or (f"api://{CLIENT_ID}" if CLIENT_ID else "")
+
+# When the V2 SPA is hosted on its own App Service, its origin has to be trusted for CSRF
+# and the session cookie has to be sent cross-site. This mirrors the Teams SSO handling
+# above and stays completely inert when V2_UI_ALLOWED_ORIGIN is unset, so the default
+# same-origin deployment keeps SameSite=Lax.
+if V2_UI_ALLOWED_ORIGINS:
+    CSRF_TRUSTED_ORIGINS = list(dict.fromkeys(CSRF_TRUSTED_ORIGINS + V2_UI_ALLOWED_ORIGINS))
+    if SESSION_COOKIE_SAMESITE.lower() != 'none':
+        SESSION_COOKIE_SAMESITE = 'None'
+    SESSION_COOKIE_SECURE = True
+
 FRAME_ANCESTORS_DIRECTIVE = "frame-ancestors 'self'"
 if TEAMS_FRAME_ANCESTORS:
     FRAME_ANCESTORS_DIRECTIVE = f"{FRAME_ANCESTORS_DIRECTIVE} {' '.join(TEAMS_FRAME_ANCESTORS)}"
+
+# External hosts whose audio and video the chat may play in place, for example the media links an
+# OpenAPI action returns. Empty by default, which keeps media-src same-origin. Only bare https
+# origins are accepted (see csp_media_sources.py); anything else is ignored and logged.
+CSP_MEDIA_SRC_ORIGINS, _rejected_csp_media_origins = parse_csp_media_origins(os.getenv('CSP_MEDIA_SRC_ORIGINS', ''))
+if _rejected_csp_media_origins:
+    log_event(
+        "[CSP] Ignored CSP_MEDIA_SRC_ORIGINS entries that are not bare https origins.",
+        extra={"rejected_entries": _rejected_csp_media_origins},
+        level=logging.WARNING,
+    )
+MEDIA_SRC_DIRECTIVE = build_media_src_directive(CSP_MEDIA_SRC_ORIGINS)
 
 
 # Security Headers Configuration
@@ -448,7 +492,7 @@ SECURITY_HEADERS = {
         "img-src 'self' data: https: blob:; "
         "font-src 'self'; "
         "connect-src 'self' https: wss: ws:; "
-        "media-src 'self' blob:; "
+        f"{MEDIA_SRC_DIRECTIVE}; "
         "frame-src 'self' blob:; "
         "object-src 'none'; "
         f"{FRAME_ANCESTORS_DIRECTIVE}; "
@@ -485,17 +529,12 @@ storage_account_group_documents_container_name = "group-documents"
 storage_account_public_documents_container_name = "public-documents"
 storage_account_personal_chat_container_name = "personal-chat"
 storage_account_group_chat_container_name = "group-chat"
+storage_account_content_screening_container_name = "content-screening"
 
 
 def get_enhanced_citations_storage_container_names():
     """Return the source blob containers used by Enhanced Citations."""
-    return [
-        storage_account_user_documents_container_name,
-        storage_account_group_documents_container_name,
-        storage_account_public_documents_container_name,
-        storage_account_personal_chat_container_name,
-        storage_account_group_chat_container_name,
-    ]
+    return list(APPLICATION_BLOB_CONTAINERS)
 
 
 def _set_enhanced_citations_storage_status(
@@ -648,6 +687,12 @@ cosmos_messages_container = cosmos_database.create_container_if_not_exists(
     partition_key=PartitionKey(path="/conversation_id")
 )
 
+cosmos_conversation_handoffs_container_name = "conversation_handoffs"
+cosmos_conversation_handoffs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_conversation_handoffs_container_name,
+    partition_key=PartitionKey(path="/destination_conversation_id")
+)
+
 cosmos_tabular_export_runs_container_name = "tabular_export_runs"
 cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_tabular_export_runs_container_name,
@@ -716,6 +761,18 @@ cosmos_group_workflow_runs_container = cosmos_database.create_container_if_not_e
 cosmos_group_workflow_run_items_container_name = "group_workflow_run_items"
 cosmos_group_workflow_run_items_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_group_workflow_run_items_container_name,
+    partition_key=PartitionKey(path="/run_id")
+)
+
+cosmos_orchestration_runs_container_name = "orchestration_runs"
+cosmos_orchestration_runs_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_orchestration_runs_container_name,
+    partition_key=PartitionKey(path="/conversation_id")
+)
+
+cosmos_orchestration_run_steps_container_name = "orchestration_run_steps"
+cosmos_orchestration_run_steps_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_orchestration_run_steps_container_name,
     partition_key=PartitionKey(path="/run_id")
 )
 
@@ -797,6 +854,12 @@ cosmos_document_access_index_container = cosmos_database.create_container_if_not
     partition_key=PartitionKey(path="/scope_key")
 )
 
+cosmos_content_screening_container_name = "content_screening"
+cosmos_content_screening_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_content_screening_container_name,
+    partition_key=PartitionKey(path="/partition_key")
+)
+
 cosmos_key_vault_secret_reminders_container_name = "key_vault_secret_reminders"
 cosmos_key_vault_secret_reminders_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_key_vault_secret_reminders_container_name,
@@ -822,6 +885,13 @@ cosmos_public_file_sync_sources_container = cosmos_database.create_container_if_
 )
 
 cosmos_personal_workspace_identities_container_name = "personal_workspace_identities"
+cosmos_action_credential_state_container_name = "action_credential_state"
+cosmos_action_credential_state_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_action_credential_state_container_name,
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1,
+)
+
 cosmos_personal_workspace_identities_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_personal_workspace_identities_container_name,
     partition_key=PartitionKey(path="/user_id")
@@ -1002,9 +1072,21 @@ cosmos_search_cache_container = cosmos_database.create_container_if_not_exists(
 )
 
 cosmos_activity_logs_container_name = "activity_logs"
+ACTIVITY_LOGS_INDEXING_POLICY = {
+    "indexingMode": "consistent",
+    "automatic": True,
+    "includedPaths": [{"path": "/*"}],
+    "excludedPaths": [{"path": "/\"_etag\"/?"}],
+    "compositeIndexes": [[
+        {"path": "/timestamp", "order": "descending"},
+        {"path": "/id", "order": "descending"},
+        {"path": "/user_id", "order": "descending"},
+    ]],
+}
 cosmos_activity_logs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_activity_logs_container_name,
-    partition_key=PartitionKey(path="/user_id")
+    partition_key=PartitionKey(path="/user_id"),
+    indexing_policy=ACTIVITY_LOGS_INDEXING_POLICY,
 )
 
 cosmos_notifications_container_name = "notifications"

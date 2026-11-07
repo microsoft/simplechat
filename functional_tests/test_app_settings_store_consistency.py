@@ -1,8 +1,9 @@
 # test_app_settings_store_consistency.py
 """
 Regression tests for shared settings and conditional writes.
-Version: 0.261.027
+Version: 0.261.139
 Implemented in: 0.261.025
+Retired orchestration settings normalizer loaded in: 0.261.139
 
 Independent store objects represent workers. Fake services exercise ETag conflicts,
 interrupted publication and lease expiry without network access or wall-clock sleeps.
@@ -10,12 +11,14 @@ interrupted publication and lease expiry without network access or wall-clock sl
 
 import ast
 import copy
+from contextlib import contextmanager, nullcontext
 import importlib.util
 import json
 import logging
 from pathlib import Path
 import socket
 import secrets
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -295,9 +298,15 @@ def test_creation_and_creation_race_preserve_winner(world):
 
 def load_update_settings(store):
     tree = ast.parse((APP / "functions_settings.py").read_text(encoding="utf-8-sig"))
-    names = {"update_settings", "coerce_multi_model_endpoint_enablement"}
+    names = {
+        "update_settings", "coerce_multi_model_endpoint_enablement",
+        "validate_content_screening_settings", "normalize_retired_orchestration_settings",
+    }
+    retired_constants = {"RETIRED_SETTING_KEYS"}
     namespace = {
         "copy": copy, "logging": logging,
+        "contextmanager": contextmanager,
+        "ScreeningError": type("ScreeningError", (Exception,), {}),
         "COSMOS_METADATA_FIELDS": store_module.COSMOS_METADATA_FIELDS,
         "SETTINGS_REVISION_FIELD": store_module.SETTINGS_REVISION_FIELD,
         "_get_app_settings_store": lambda: store,
@@ -308,15 +317,35 @@ def load_update_settings(store):
         "normalize_group_workflow_assignment_settings", "normalize_agents_page_promoted_popular_settings",
         "normalize_document_access_index_required_settings", "normalize_inbound_mcp_settings",
         "normalize_public_workspace_display_settings", "normalize_key_vault_reminder_settings",
-        "normalize_model_endpoint_identity_header_settings",
+        "normalize_model_endpoint_identity_header_settings", "normalize_mixed_source_derived_settings",
     ):
         namespace[name] = lambda settings: None
-    nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+    nodes = [
+        node for node in tree.body
+        if (isinstance(node, ast.FunctionDef) and node.name in names)
+        or (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id in retired_constants for target in node.targets)
+        )
+    ]
+    connection_tree = ast.parse((APP / "functions_ai_connections.py").read_text(encoding="utf-8-sig"))
+    connection_contract = [
+        node for node in connection_tree.body
+        if (isinstance(node, ast.ClassDef) and node.name == "AIConnectionError")
+        or (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "EMBEDDING_SELECTION_KEY" for target in node.targets)
+        )
+    ]
+    exec(compile(ast.Module(body=connection_contract, type_ignores=[]), "functions_ai_connections.py", "exec"), namespace)
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "functions_settings.py", "exec"), namespace)
     return namespace["update_settings"]
 
 
-def test_real_update_settings_rejects_old_full_snapshot_and_merges_deltas(world):
+def test_real_update_settings_rejects_old_full_snapshot_and_merges_deltas(world, monkeypatch):
+    monkeypatch.setitem(sys.modules, "functions_embedding_compatibility", SimpleNamespace(
+        embedding_settings_write_guard=lambda *_args, **_kwargs: nullcontext(),
+    ))
     old = world.a.read()
     update_a, update_b = load_update_settings(world.a), load_update_settings(world.b)
     saved_a = update_a({"enabled": True})
@@ -351,6 +380,7 @@ def load_get_settings(store):
         "SettingsUnavailableError": SettingsUnavailableError,
         "log_event": lambda *_args, **_kwargs: None,
         "_apply_tabular_parity_env_kill_switch": lambda settings: settings,
+        "_apply_mixed_source_env_kill_switch": lambda settings: settings,
         "attach_public_workspace_label_context": lambda settings: settings,
         "normalize_document_intelligence_pdf_image_extraction_mode": lambda mode: mode,
         "is_tabular_processing_enabled": lambda settings: False,

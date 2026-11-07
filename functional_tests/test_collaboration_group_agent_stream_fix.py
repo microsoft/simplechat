@@ -2,8 +2,8 @@
 # test_collaboration_group_agent_stream_fix.py
 """
 Functional test for group collaboration agent stream completion.
-Version: 0.261.048
-Implemented in: 0.261.045; updated in 0.261.048
+Version: 0.261.055
+Implemented in: 0.261.045; updated in 0.261.055
 
 This test ensures group collaborative agent responses complete through the
 shared stream bridge even when mirrored agent citation payloads contain nested
@@ -15,6 +15,7 @@ import json
 import os
 import sys
 
+from azure.cosmos._cosmos_responses import CosmosDict
 from flask import Flask, Response
 from test_support.offline_bootstrap import offline_app_imports
 
@@ -28,35 +29,45 @@ if APP_ROOT not in sys.path:
 class FakeItemContainer:
     """Minimal in-memory container for collaboration message documents."""
 
-    def __init__(self, items=None):
+    def __init__(self, items=None, *, sdk_responses=True):
+        self.sdk_responses = sdk_responses
         self.items = {}
         for item in items or []:
             self.items[item['id']] = copy.deepcopy(item)
 
+    def _response(self, item):
+        value = copy.deepcopy(dict(item))
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
+
     def read_item(self, item=None, partition_key=None, *args, **kwargs):
         del partition_key, args, kwargs
-        return copy.deepcopy(self.items[item])
+        return self._response(self.items[item])
 
     def upsert_item(self, item):
-        self.items[item['id']] = copy.deepcopy(item)
-        return copy.deepcopy(item)
+        self.items[item['id']] = copy.deepcopy(dict(item))
+        return self._response(self.items[item['id']])
 
 
 class FakeConversationContainer:
     """Minimal in-memory container for source conversation lookups."""
 
-    def __init__(self, items=None):
+    def __init__(self, items=None, *, sdk_responses=True):
+        self.sdk_responses = sdk_responses
         self.items = {}
         for item in items or []:
             self.items[item['id']] = copy.deepcopy(item)
 
+    def _response(self, item):
+        value = copy.deepcopy(dict(item))
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
+
     def read_item(self, item=None, partition_key=None, *args, **kwargs):
         del partition_key, args, kwargs
-        return copy.deepcopy(self.items[item])
+        return self._response(self.items[item])
 
     def upsert_item(self, item):
-        self.items[item['id']] = copy.deepcopy(item)
-        return copy.deepcopy(item)
+        self.items[item['id']] = copy.deepcopy(dict(item))
+        return self._response(self.items[item['id']])
 
 
 class FakeEventRegistry:
@@ -83,7 +94,6 @@ def build_group_agent_stream_test_app():
     else:
         with offline_app_imports():
             import route_backend_collaboration
-
     from collaboration_models import MESSAGE_KIND_AI_REQUEST, MESSAGE_KIND_ASSISTANT
 
     conversation_id = 'shared-agent-conversation-001'

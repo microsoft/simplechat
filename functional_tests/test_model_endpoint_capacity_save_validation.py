@@ -1,8 +1,9 @@
 # test_model_endpoint_capacity_save_validation.py
 """
 Functional tests for safe capacity validation at existing endpoint save routes.
-Version: 0.261.035
+Version: 0.261.126
 Implemented in: 0.261.035
+Catalog association round trips implemented in: 0.261.126
 
 Fresh normal/optimized processes import the real application, settings normalizer,
 and route modules with external bootstrap I/O blocked. The registered route bodies
@@ -11,6 +12,8 @@ their unchanged authorization decorators. Invalid overrides must fail before
 secret/settings writes, and unrelated failures must not become validation errors.
 Real editor read APIs and template bootstrap expressions must retain all seven
 budget metadata fields and explicit nulls without exposing auth credentials.
+Catalog profile associations must survive those same save/reopen paths without
+persisting temporary effective-profile metadata.
 """
 
 from contextlib import ExitStack
@@ -256,6 +259,7 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
     # Called only inside the real-module, external-I/O bootstrap context above.
     from flask import Blueprint
     import functions_governance as governance
+    import functions_workspace_sections as workspace_sections
     import route_frontend_group_workspaces as group_workspace
     import route_frontend_workspace as workspace
 
@@ -284,6 +288,7 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
     endpoint = _endpoint()
     endpoint.update(endpoint_budget)
     endpoint["models"][0].update(model_budget)
+    endpoint["models"][0]["catalogProfileId"] = "gpt-5-nano"
     endpoint["auth"].update(credentials)
     canonical, _ = settings_module.normalize_model_endpoints([endpoint])
     stores = {scope: copy.deepcopy(canonical) for scope in ("user", "group", "global")}
@@ -328,6 +333,11 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
         _require(records[0]["has_api_key"] is True, "Stored API-key presence was lost.")
         _require(records[0]["has_client_secret"] is True, "Stored client-secret presence was lost.")
         _require(records[0]["models"][0]["responseLength"] == 512, "Metadata projection changed Response Length.")
+        _require(records[0]["models"][0]["catalogProfileId"] == "gpt-5-nano", "The catalog association was lost.")
+        _require(
+            not {"_catalog_profile", "_catalog_effective_revision"} & records[0]["models"][0].keys(),
+            "Temporary routing metadata leaked into the editor projection.",
+        )
 
     captured = {}
 
@@ -371,14 +381,17 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
             patch.object(group_workspace, "require_active_group", return_value="budget-group"),
             patch.object(group_workspace, "get_group_model_endpoints", side_effect=lambda _group_id: copy.deepcopy(stores["group"])),
         ]
+        for module in (workspace_sections, group_workspace):
+            replacements.extend((
+                patch.object(module, "is_governance_access_allowed", return_value=True),
+                patch.object(module, "is_action_scope_access_allowed", return_value=True),
+            ))
         for module in (workspace, group_workspace):
             replacements.extend((
                 patch.object(module, "get_current_user_id", return_value="budget-user"),
                 patch.object(module, "get_current_user_info", return_value={"email": "budget@example.invalid"}),
                 patch.object(module, "get_settings", side_effect=snapshot),
                 patch.object(module, "get_user_settings", side_effect=user_settings),
-                patch.object(module, "is_governance_access_allowed", return_value=True),
-                patch.object(module, "is_action_scope_access_allowed", return_value=True),
                 patch.object(module, "render_template", side_effect=capture_template),
             ))
         for replacement in replacements:
@@ -392,6 +405,10 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
                     incoming = settings_module.sanitize_model_endpoints_for_frontend(stores[scope])
                     incoming[0].update(expected_endpoint)
                     incoming[0]["models"][0].update(expected_model)
+                    incoming[0]["models"][0].update({
+                        "_catalog_profile": {"id": "must-not-persist"},
+                        "_catalog_effective_revision": "must-not-persist",
+                    })
                     incoming[0]["inputTokenLimit"] = " \t "
                     incoming[0]["models"][0]["outputTokenLimit"] = " \t "
                     if scope == "global":
@@ -409,6 +426,10 @@ def _check_editor_projection_round_trips(web, defaults, settings_module, models,
                     _require(
                         all(stores[scope][0]["auth"].get(field) == value for field, value in credentials.items()),
                         "Clearing capacity changed stored credentials.",
+                    )
+                    _require(
+                        not {"_catalog_profile", "_catalog_effective_revision"} & stores[scope][0]["models"][0].keys(),
+                        "Temporary effective-profile metadata was persisted.",
                     )
 
             public = settings_module.sanitize_settings_for_user({

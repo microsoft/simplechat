@@ -1,0 +1,18 @@
+<!-- harness.html -->
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>Workflow alert notice component tests</title>
+    </head>
+    <body>
+        <!--
+          Static harness for ui_tests/test_v2_workflow_alert_notices.py. It hosts a mount point and
+          the bundled real application frame (harness.bundle.js, built from harness_entry.tsx).
+          The test seeds the stores and mounts a route through window.WorkflowAlertHarness.
+        -->
+        <div id="root" class="flex h-screen min-w-0 flex-col"></div>
+        <script src="/harness.bundle.js"></script>
+    </body>
+</html>

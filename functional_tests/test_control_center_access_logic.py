@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
+# test_control_center_access_logic.py
 """
 Functional test for Control Center access control logic.
-Version: 0.235.011
+Version: 0.261.278
 Implemented in: 0.235.011
+Capability helper regression coverage added in: 0.261.278
 
 This test ensures that Control Center access control works correctly based on
 the require_member_of_control_center_admin setting and user roles.
@@ -38,7 +40,7 @@ def test_control_center_required_decorator_logic():
     tests_passed = 0
     tests_failed = 0
     
-    # Read the functions_authentication.py file to verify the logic
+    # Read the shared helper and decorator to verify the capability contract.
     auth_file = os.path.join(app_path, 'functions_authentication.py')
     
     if not os.path.exists(auth_file):
@@ -47,11 +49,15 @@ def test_control_center_required_decorator_logic():
     
     with open(auth_file, 'r', encoding='utf-8') as f:
         content = f.read()
-    
+
+    helper_content = content.split("def get_control_center_capabilities(", 1)[1].split(
+        "\ndef control_center_required", 1
+    )[0]
+
     # Test 1: Verify the decorator checks for regular Admin role
     print("\n📋 Test 1: Decorator checks for regular Admin role")
-    if "has_regular_admin_role = 'roles' in user and 'Admin' in user['roles']" in content:
-        print("   ✅ Decorator properly checks for regular Admin role")
+    if "'Admin' in user['roles']" in helper_content:
+        print("   ✅ Shared helper properly checks for regular Admin role")
         tests_passed += 1
     else:
         print("   ❌ Decorator missing check for regular Admin role")
@@ -59,8 +65,8 @@ def test_control_center_required_decorator_logic():
     
     # Test 2: Verify the decorator checks for ControlCenterAdmin role
     print("\n📋 Test 2: Decorator checks for ControlCenterAdmin role")
-    if "has_control_center_admin_role = 'roles' in user and 'ControlCenterAdmin' in user['roles']" in content:
-        print("   ✅ Decorator properly checks for ControlCenterAdmin role")
+    if "'ControlCenterAdmin' in user['roles']" in helper_content:
+        print("   ✅ Shared helper properly checks for ControlCenterAdmin role")
         tests_passed += 1
     else:
         print("   ❌ Decorator missing check for ControlCenterAdmin role")
@@ -68,9 +74,12 @@ def test_control_center_required_decorator_logic():
     
     # Test 3: Verify ControlCenterAdmin gets access when setting is ENABLED
     print("\n📋 Test 3: ControlCenterAdmin has access when setting is enabled")
-    # The check for ControlCenterAdmin should be inside the if require_member_of_control_center_admin block
-    if "if require_member_of_control_center_admin:" in content and "if has_control_center_admin_role:" in content:
-        print("   ✅ ControlCenterAdmin role grants access when setting is enabled")
+    if (
+        "has_full_access = (" in helper_content
+        and "if require_admin_role else has_regular_admin_role" in helper_content
+        and "capabilities = get_control_center_capabilities(user, settings)" in content
+    ):
+        print("   ✅ Shared helper preserves the role-setting access decision")
         tests_passed += 1
     else:
         print("   ❌ ControlCenterAdmin access not properly implemented")
@@ -258,7 +267,7 @@ def main():
     """Run all tests."""
     print("\n" + "🔧" * 35)
     print("Control Center Access Control Logic Tests")
-    print("Version: 0.235.010")
+    print("Version: 0.261.278")
     print("🔧" * 35)
     
     all_passed = True

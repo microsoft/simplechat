@@ -23,9 +23,12 @@ Use it for operational telemetry and App Insights-style investigation. Use SQL/S
 - Workspace ID plus identity, user, service principal, or key access.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-Set Workspace ID, Cloud, optional endpoints, Authentication Method, and test the connection.
+Set Workspace ID, Cloud, optional endpoints, and Authentication Method. The internal `query_history` cache is not shown as a configurable field because it is runtime state, not an owner-controlled setting.
+
+Connection testing appears in **Authentication**, after credentials. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 

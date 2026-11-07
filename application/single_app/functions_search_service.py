@@ -11,19 +11,44 @@ from typing import Any, Dict, List, Optional
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from openai import AzureOpenAI
+from openpyxl.utils.cell import get_column_letter
+from azure.core.exceptions import ResourceNotFoundError
 
+from content_screening import access as screening_access
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_document_available,
+    assert_document_chunks_available,
+    assert_evidence_available,
+    document_provenance,
+    guard_model_callable,
+    public_document_payload,
+    raise_source_authority_error,
+    strict_source_authority_enabled,
+)
+from content_screening.contracts import SourceAuthorityUnverifiedError
+from content_screening.storage import ScreeningStorage
 from config import (
     CLIENTS,
     cognitive_services_scope,
     cosmos_conversations_container,
     cosmos_messages_container,
+    storage_account_content_screening_container_name,
 )
+from excel_workbook_reader import ExcelWorkbookReader, bounded_range
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_documents import get_document_record, get_ordered_document_chunks
+from functions_excel_inventory import (
+    EXCEL_INVENTORY_SECTIONS,
+    open_excel_inventory,
+    open_stored_excel_inventory,
+)
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from model_endpoint_clients import build_openai_client_timeout_options
+from public_source_access import get_public_source_workspace_ids
+from public_source_policy import uses_all_public_sources
 from functions_search import (
     SEARCH_DEFAULT_TOP_N,
     SEARCH_MAX_TOP_N,
@@ -33,6 +58,8 @@ from functions_search import (
     normalize_search_top_n,
 )
 from functions_settings import get_settings, get_user_settings
+from functions_workflow_document_selection import selected_document_context_validator, selected_source_matches
+from public_chat_scope_state import aggregate_public_workspace_ids, current_public_chat_scope
 
 
 SUMMARY_DEFAULT_WINDOW_UNIT = "pages"
@@ -78,12 +105,22 @@ def _get_user_accessible_group_ids(user_id):
         return []
 
     try:
+        groups = get_user_groups(user_id)
+        if strict_source_authority_enabled() and (
+            not isinstance(groups, list) or any(
+                not isinstance(group, dict) or not isinstance(group.get("id"), str) or not group["id"].strip()
+                for group in groups
+            )
+        ):
+            raise SourceAuthorityUnverifiedError()
         return normalize_search_id_list([
             group.get("id")
-            for group in get_user_groups(user_id)
+            for group in groups
             if group.get("id")
         ])
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             f"[SEARCH_SERVICE] Failed to resolve authorized group ids: {exc}",
             extra={"user_id": user_id},
@@ -111,10 +148,30 @@ def _resolve_active_group_ids(user_id, active_group_ids=None, fallback_to_member
     return accessible_group_ids
 
 
-def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
+def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None, visible_public_workspace_ids=None):
+    """Intersect requested public workspaces with the current discovery policy.
+
+    A caller that must not write, such as a workflow dry run, passes ``visible_public_workspace_ids``
+    it computed from a read-only settings snapshot, because the classic settings lookup can
+    repair that document. V2 instead resolves all currently available public workspaces.
+    """
+    aggregate_ids = aggregate_public_workspace_ids(user_id)
+    if aggregate_ids is not None:
+        requested_ids = normalize_search_id_list(active_public_workspace_id)
+        return [value for value in aggregate_ids if not requested_ids or value in requested_ids]
     try:
-        visible_workspace_ids = normalize_search_id_list(get_user_visible_public_workspace_ids_from_settings(user_id))
+        if visible_public_workspace_ids is None or uses_all_public_sources(user_id):
+            visible_ids = get_public_source_workspace_ids(user_id)
+        else:
+            visible_ids = visible_public_workspace_ids
+        if strict_source_authority_enabled() and (
+            not isinstance(visible_ids, list) or any(not isinstance(value, str) or not value for value in visible_ids)
+        ):
+            raise SourceAuthorityUnverifiedError()
+        visible_workspace_ids = normalize_search_id_list(visible_ids)
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             f"[SEARCH_SERVICE] Failed to resolve visible public workspace ids: {exc}",
             extra={"user_id": user_id},
@@ -136,7 +193,7 @@ def _resolve_public_workspace_ids(user_id, active_public_workspace_id=None):
 
 
 def _serialize_document(document_item, scope_name):
-    return {
+    payload = {
         "id": document_item.get("id"),
         "file_name": document_item.get("file_name"),
         "title": document_item.get("title"),
@@ -157,6 +214,14 @@ def _serialize_document(document_item, scope_name):
         "conversation_id": document_item.get("conversation_id"),
         "source_type": document_item.get("source_type") or ("chat_upload" if scope_name == "chat" else "workspace_document"),
     }
+    if scope_name != "chat":
+        payload[PROVENANCE_FIELD] = document_provenance(document_item)
+        if "content_screening" in document_item:
+            payload["content_screening"] = public_document_payload(document_item)["content_screening"]
+    elif PROVENANCE_FIELD in document_item:
+        payload[PROVENANCE_FIELD] = document_item[PROVENANCE_FIELD]
+        payload["workspace_document_id"] = document_item.get("workspace_document_id")
+    return payload
 
 
 def _load_chat_upload_blob_text(message_item):
@@ -261,6 +326,8 @@ def _authorize_chat_upload_conversation(user_id, conversation_id):
     except CosmosResourceNotFoundError:
         return False
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             "[SEARCH_SERVICE] Failed to authorize chat upload conversation.",
             extra={"exception_type": type(exc).__name__},
@@ -270,6 +337,11 @@ def _authorize_chat_upload_conversation(user_id, conversation_id):
         )
         return False
 
+    if strict_source_authority_enabled() and (
+        not isinstance(conversation_item, dict) or conversation_item.get("id") != normalized_conversation_id
+        or not isinstance(conversation_item.get("user_id"), str)
+    ):
+        raise_source_authority_error(SourceAuthorityUnverifiedError())
     return str(conversation_item.get("user_id") or "").strip() == normalized_user_id
 
 
@@ -305,6 +377,7 @@ def _resolve_chat_upload_context(
                         c.filename,
                         c.title,
                         c.version,
+                        c.workspace_document_id,
                         c.metadata.is_user_upload AS is_user_upload,
                         c.metadata.is_generated_chat_artifact AS is_generated_chat_artifact,
                         c.metadata.generated_artifact_capability AS generated_artifact_capability,
@@ -323,6 +396,8 @@ def _resolve_chat_upload_context(
     except CosmosResourceNotFoundError:
         return None
     except Exception as exc:
+        if strict_source_authority_enabled():
+            raise_source_authority_error(exc)
         log_event(
             "[SEARCH_SERVICE] Failed to resolve authorized chat upload context.",
             extra={"exception_type": type(exc).__name__},
@@ -332,6 +407,11 @@ def _resolve_chat_upload_context(
         )
         return None
 
+    if strict_source_authority_enabled() and (
+        not isinstance(message_item, dict) or message_item.get("id") != normalized_document_id
+        or not isinstance(message_item.get("role"), str)
+    ):
+        raise_source_authority_error(SourceAuthorityUnverifiedError())
     role_name = str(message_item.get("role") or "").strip().lower()
     metadata = message_item.get("metadata", {}) or {}
     is_uploaded_image = role_name == "image" and bool(
@@ -340,7 +420,22 @@ def _resolve_chat_upload_context(
     if role_name not in {"file", "image"} or (role_name == "image" and not is_uploaded_image):
         return None
 
-    comparison_text = _coerce_chat_upload_text(message_item) if include_content else ""
+    linked_document = None
+    if message_item.get("workspace_document_id"):
+        linked_document = assert_document_available(
+            message_item["workspace_document_id"], user_id=user_id, purpose="chat_upload",
+        )
+    comparison_text = ""
+    if include_content and linked_document is not None:
+        linked_chunks = get_ordered_document_chunks(
+            linked_document["id"], user_id=user_id,
+            group_id=linked_document.get("group_id"),
+            public_workspace_id=linked_document.get("public_workspace_id"),
+        )
+        linked_chunks = assert_document_chunks_available(linked_chunks, linked_document, user_id=user_id)
+        comparison_text = "\n\n".join(chunk.get("chunk_text", "") for chunk in linked_chunks)
+    elif include_content:
+        comparison_text = _coerce_chat_upload_text(message_item)
     if include_content and not comparison_text:
         return None
 
@@ -369,6 +464,10 @@ def _resolve_chat_upload_context(
     }
     if include_content:
         resolved_document["comparison_text"] = comparison_text
+    if linked_document is not None:
+        resolved_document["file_name"] = linked_document.get("file_name") or message_title
+        resolved_document["workspace_document_id"] = linked_document["id"]
+        resolved_document[PROVENANCE_FIELD] = document_provenance(linked_document)
     return {
         "scope": "chat",
         "group_id": None,
@@ -378,13 +477,32 @@ def _resolve_chat_upload_context(
     }
 
 
+def _read_strict_document_context(document_id, user_id, group_id=None, public_workspace_id=None):
+    """Probe current authority without the legacy document reader's None-on-error fallback."""
+    try:
+        return screening_access._read_authorized_document(
+            document_id, user_id, group_id, public_workspace_id,
+            scope_type="personal" if group_id is None and public_workspace_id is None else None,
+        )
+    except PermissionError:
+        return None
+    except LookupError as error:
+        if type(error) is LookupError:
+            return None
+        raise_source_authority_error(error)
+    except Exception as error:
+        raise_source_authority_error(error)
+
+
 def _resolve_personal_document_context(document_id, user_id):
-    personal_document = get_document_record(
+    reader = _read_strict_document_context if strict_source_authority_enabled() else get_document_record
+    personal_document = reader(
         user_id=user_id,
         document_id=document_id,
     )
     if not personal_document:
         return None
+    personal_document = assert_document_available(personal_document, user_id=user_id)
     return {
         "scope": "personal",
         "group_id": None,
@@ -393,20 +511,26 @@ def _resolve_personal_document_context(document_id, user_id):
     }
 
 
-def _resolve_group_document_context(document_id, user_id, authorized_group_ids):
+def _resolve_group_document_context(document_id, user_id, authorized_group_ids, context_validator=None):
+    reader = _read_strict_document_context if strict_source_authority_enabled() else get_document_record
     for group_id in authorized_group_ids or []:
-        group_document = get_document_record(
+        group_document = reader(
             user_id=user_id,
             document_id=document_id,
             group_id=group_id,
         )
         if group_document:
-            return {
+            group_document = assert_document_available(
+                group_document, user_id=user_id, group_id=group_id,
+            )
+            context = {
                 "scope": "group",
                 "group_id": group_id,
                 "public_workspace_id": None,
                 "document": group_document,
             }
+            if context_validator is None or context_validator(context, document_id):
+                return context
     return None
 
 
@@ -414,20 +538,27 @@ def _resolve_public_document_context(
     document_id,
     user_id,
     authorized_public_workspace_ids,
+    context_validator=None,
 ):
+    reader = _read_strict_document_context if strict_source_authority_enabled() else get_document_record
     for public_workspace_id in authorized_public_workspace_ids or []:
-        public_document = get_document_record(
+        public_document = reader(
             user_id=user_id,
             document_id=document_id,
             public_workspace_id=public_workspace_id,
         )
         if public_document:
-            return {
+            public_document = assert_document_available(
+                public_document, user_id=user_id, public_workspace_id=public_workspace_id,
+            )
+            context = {
                 "scope": "public",
                 "group_id": None,
                 "public_workspace_id": public_workspace_id,
                 "document": public_document,
             }
+            if context_validator is None or context_validator(context, document_id):
+                return context
     return None
 
 
@@ -439,12 +570,21 @@ def resolve_document_context(
     active_public_workspace_id=None,
     conversation_id=None,
     include_content=True,
+    visible_public_workspace_ids=None,
 ):
+    validator = selected_document_context_validator(user_id)
+    context_options = {'context_validator': validator} if validator is not None else {}
     normalized_scope = normalize_search_scope(doc_scope)
+    if current_public_chat_scope(user_id):
+        normalized_scope = "public"
+    public_visibility = (
+        {} if visible_public_workspace_ids is None
+        else {"visible_public_workspace_ids": visible_public_workspace_ids}
+    )
 
     if normalized_scope in ("all", "personal"):
         personal_context = _resolve_personal_document_context(document_id, user_id)
-        if personal_context:
+        if personal_context and (validator is None or validator(personal_context, document_id)):
             return personal_context
 
     if normalized_scope in ("all", "group"):
@@ -456,6 +596,7 @@ def resolve_document_context(
                 active_group_ids=active_group_ids,
                 fallback_to_memberships=True,
             ),
+            **context_options,
         )
         if group_context:
             return group_context
@@ -467,18 +608,22 @@ def resolve_document_context(
             _resolve_public_workspace_ids(
                 user_id,
                 active_public_workspace_id=active_public_workspace_id,
+                **public_visibility,
             ),
+            **context_options,
         )
         if public_context:
             return public_context
 
+    if current_public_chat_scope(user_id):
+        return None
     chat_upload_context = _resolve_chat_upload_context(
         document_id=document_id,
         user_id=user_id,
         conversation_id=conversation_id,
         include_content=include_content,
     )
-    if chat_upload_context:
+    if chat_upload_context and (validator is None or validator(chat_upload_context, document_id)):
         return chat_upload_context
 
     return None
@@ -492,19 +637,29 @@ def resolve_document_contexts(
     active_public_workspace_id=None,
     conversation_id=None,
     include_content=True,
+    allow_scope_fallback=True,
+    context_validator=None,
 ):
-    """Resolve ordered document contexts using one current authorization snapshot."""
+    """Resolve documents, optionally requiring explicit scopes and an accepted access path."""
+    context_validator = selected_document_context_validator(user_id, context_validator)
     normalized_scope = normalize_search_scope(doc_scope)
+    aggregate = current_public_chat_scope(user_id)
+    if aggregate:
+        normalized_scope = "public"
     normalized_document_ids = normalize_search_id_list(document_ids)
     authorized_group_ids = []
-    if normalized_scope in ("all", "group"):
+    if normalized_scope in ("all", "group") and (
+        allow_scope_fallback or normalize_search_id_list(active_group_ids)
+    ):
         authorized_group_ids = _resolve_active_group_ids(
             user_id,
             active_group_ids=active_group_ids,
             fallback_to_memberships=True,
         )
     authorized_public_workspace_ids = []
-    if normalized_scope in ("all", "public"):
+    if normalized_scope in ("all", "public") and (
+        allow_scope_fallback or normalize_search_id_list(active_public_workspace_id)
+    ):
         authorized_public_workspace_ids = _resolve_public_workspace_ids(
             user_id,
             active_public_workspace_id=active_public_workspace_id,
@@ -512,26 +667,31 @@ def resolve_document_contexts(
 
     normalized_conversation_id = str(conversation_id or "").strip()
     chat_conversation_authorized = bool(
-        normalized_conversation_id
+        not aggregate and normalized_conversation_id
         and _authorize_chat_upload_conversation(user_id, normalized_conversation_id)
     )
 
     resolved_contexts = []
+    context_options = {"context_validator": context_validator} if context_validator is not None else {}
     for document_id in normalized_document_ids:
         document_context = None
         if normalized_scope in ("all", "personal"):
             document_context = _resolve_personal_document_context(document_id, user_id)
+            if document_context and context_validator and not context_validator(document_context, document_id):
+                document_context = None
         if not document_context and normalized_scope in ("all", "group"):
             document_context = _resolve_group_document_context(
                 document_id,
                 user_id,
                 authorized_group_ids,
+                **context_options,
             )
         if not document_context and normalized_scope in ("all", "public"):
             document_context = _resolve_public_document_context(
                 document_id,
                 user_id,
                 authorized_public_workspace_ids,
+                **context_options,
             )
         if not document_context and chat_conversation_authorized:
             document_context = _resolve_chat_upload_context(
@@ -541,6 +701,8 @@ def resolve_document_contexts(
                 include_content=include_content,
                 authorization_prechecked=True,
             )
+            if document_context and context_validator and not context_validator(document_context, document_id):
+                document_context = None
         resolved_contexts.append(document_context)
 
     return resolved_contexts
@@ -558,12 +720,16 @@ def build_search_request(
     active_public_workspace_id=None,
     enable_file_sharing=True,
     include_all_public_workspaces=False,
+    document_source_selection=None,
+    document_source_conversation_id=None,
 ):
     normalized_query = str(query or "").strip()
     if not normalized_query:
         raise ValueError("Query is required")
 
     normalized_scope = normalize_search_scope(doc_scope)
+    if current_public_chat_scope(user_id):
+        normalized_scope = "public"
     normalized_top_n = normalize_search_top_n(top_n, SEARCH_DEFAULT_TOP_N, SEARCH_MAX_TOP_N)
     normalized_document_ids = normalize_search_id_list(document_ids)
     if document_id and not normalized_document_ids:
@@ -576,6 +742,9 @@ def build_search_request(
         "doc_scope": normalized_scope,
         "enable_file_sharing": bool(enable_file_sharing),
     }
+    if document_source_selection is not None:
+        search_request["document_source_selection"] = document_source_selection
+        search_request["document_source_conversation_id"] = document_source_conversation_id
 
     if normalized_document_ids:
         search_request["document_ids"] = normalized_document_ids
@@ -599,7 +768,7 @@ def build_search_request(
     if resolved_public_workspace_ids and normalized_scope in ("all", "public"):
         search_request["active_public_workspace_id"] = (
             resolved_public_workspace_ids
-            if include_all_public_workspaces
+            if include_all_public_workspaces or current_public_chat_scope(user_id) or uses_all_public_sources(user_id)
             else resolved_public_workspace_ids[0]
         )
 
@@ -618,7 +787,11 @@ def search_documents(
     active_public_workspace_id=None,
     enable_file_sharing=True,
     include_all_public_workspaces=False,
+    document_source_selection=None,
+    document_source_conversation_id=None,
 ):
+    if current_public_chat_scope(user_id) and not aggregate_public_workspace_ids(user_id):
+        return {"query": query, "scope": "public", "results": [], "result_count": 0, "document_count": 0}
     search_request = build_search_request(
         query=query,
         user_id=user_id,
@@ -631,8 +804,15 @@ def search_documents(
         active_public_workspace_id=active_public_workspace_id,
         enable_file_sharing=enable_file_sharing,
         include_all_public_workspaces=include_all_public_workspaces,
+        document_source_selection=document_source_selection,
+        document_source_conversation_id=document_source_conversation_id,
     )
     results = hybrid_search(**search_request) or []
+    results = [
+        result for result in results if selected_source_matches(
+            user_id, result.get('document_id'), result.get('scope'), result.get('scope_id'),
+        )
+    ]
     unique_document_ids = {
         result.get("document_id")
         for result in results
@@ -841,6 +1021,17 @@ def get_document_chunks_payload(
     if not document_context:
         raise LookupError("Document not found or access denied")
 
+    source_evidence = document_context.get("document") if PROVENANCE_FIELD in document_context.get("document", {}) else None
+    if document_context.get("scope") != "chat":
+        current_document = assert_document_available(
+            document_context["document"], user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+            purpose="chunks",
+        )
+        document_context["document"] = current_document
+        source_evidence = {PROVENANCE_FIELD: document_provenance(current_document)}
+
     if document_context.get("scope") == "chat":
         chunks = _build_chat_upload_chunks(document_context.get("document", {}).get("comparison_text"))
     else:
@@ -849,6 +1040,12 @@ def get_document_chunks_payload(
             user_id=user_id,
             group_id=document_context.get("group_id"),
             public_workspace_id=document_context.get("public_workspace_id"),
+        )
+        chunks = assert_document_chunks_available(
+            chunks, document_context["document"], user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+            expected_chunk_count=document_context["document"].get("num_chunks"),
         )
 
     if not chunks:
@@ -873,16 +1070,16 @@ def get_document_chunks_payload(
             raise LookupError(f"Window {resolved_window_number} was not found for this document")
         selected_chunks = selected_window.get("chunks", [])
 
+    assert_evidence_available(source_evidence, user_id)
     return {
         "document": _serialize_document(document_context.get("document"), document_context.get("scope")),
         "scope": document_context.get("scope"),
-        "scope_id": (
-            document_context.get("conversation_id")
-            or document_context.get("document", {}).get("conversation_id")
-            or document_context.get("public_workspace_id")
-            or document_context.get("group_id")
-            or document_context.get("document", {}).get("user_id")
-        ),
+        "scope_id": {
+            "personal": document_context["document"].get("user_id"),
+            "group": document_context.get("group_id"),
+            "public": document_context.get("public_workspace_id"),
+            "chat": document_context.get("conversation_id") or document_context["document"].get("conversation_id"),
+        }[document_context["scope"]],
         "conversation_id": document_context.get("conversation_id") or document_context.get("document", {}).get("conversation_id"),
         "chunk_count": len(chunks),
         "returned_chunk_count": len(selected_chunks),
@@ -909,6 +1106,235 @@ def get_document_chunks_payload(
         ],
         "chunks": selected_chunks,
     }
+
+
+ACCESSIBILITY_REPORT_SECTIONS = ("accessibility", "style", "issues")
+ACCESSIBILITY_REPORT_STYLE_KEY = "style_inventory"
+ACCESSIBILITY_REPORT_ISSUES_KEY = "issues"
+
+
+def _normalize_accessibility_sections(sections):
+    if isinstance(sections, str):
+        requested = [part.strip().lower() for part in sections.split(",")]
+    else:
+        requested = [str(part or "").strip().lower() for part in (sections or [])]
+    requested = [part for part in requested if part in ACCESSIBILITY_REPORT_SECTIONS]
+    return requested or list(ACCESSIBILITY_REPORT_SECTIONS)
+
+
+def _read_excel_inspection(
+    document_context, user_id, *, native_section="comments", native_cursor=None,
+    native_page_size=100, sheet_name=None, cell_range=None,
+    max_bytes=14000,
+):
+    document = document_context["document"]
+    source_evidence = {PROVENANCE_FIELD: document_provenance(document)}
+
+    def authorize():
+        assert_evidence_available(source_evidence, user_id, cached=True)
+
+    if native_section not in EXCEL_INVENTORY_SECTIONS:
+        raise ValueError("The Excel inspection section is invalid.")
+    if type(native_page_size) is not int or not 1 <= native_page_size <= 200:
+        raise ValueError("The Excel inspection page size must be between 1 and 200.")
+    storage = ScreeningStorage(
+        client=CLIENTS.get("storage_account_office_docs_client"),
+        container_name=storage_account_content_screening_container_name,
+    )
+    try:
+        inventory = open_stored_excel_inventory(document, storage=storage, authorize=authorize)
+    except ResourceNotFoundError:
+        inventory = None
+        log_event(
+            "[DOCUMENT_METADATA] Rebuilding an unavailable derived Excel inventory.",
+            level=logging.INFO, extra={"document_id": document["id"]},
+        )
+    source_bytes = None
+    extension = "." + str(document.get("file_name") or "").rsplit(".", 1)[-1].lower()
+    if inventory is None or cell_range:
+        fresh_document, source_bytes = screening_access.read_available_document_bytes(
+            document, user_id=user_id, group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"), purpose="accessibility",
+        )
+        document_context["document"] = fresh_document
+        if inventory is None:
+            inventory = open_excel_inventory(
+                fresh_document, source_bytes, extension, storage=storage, authorize=authorize,
+                cache_namespace=(
+                    storage_account_content_screening_container_name,
+                    id(CLIENTS.get("storage_account_office_docs_client")),
+                ),
+            )
+    metadata = inventory.metadata
+    page = inventory.page(native_section, cursor=native_cursor, page_size=native_page_size, max_bytes=max_bytes)
+    result = {"metadata": metadata, "page": page}
+    if cell_range:
+        low_column, low_row, high_column, high_row = bounded_range(cell_range)
+        if (high_column - low_column + 1) * (high_row - low_row + 1) > 2000:
+            raise ValueError("The Excel cell range exceeds its 2000-cell inspection limit.")
+        with ExcelWorkbookReader(source_bytes, extension=extension) as reader:
+            if not sheet_name:
+                if len(reader.sheet_names) != 1:
+                    raise ValueError("Select a worksheet for cell inspection.")
+                sheet_name = reader.sheet_names[0]
+            references = [
+                f"{get_column_letter(column)}{row}"
+                for row in range(low_row, high_row + 1)
+                for column in range(low_column, high_column + 1)
+            ]
+            cells = reader.read_cells(sheet_name, references)
+            result["cells"] = [
+                {"sheet": sheet_name, **cells[reference]} for reference in references
+            ]
+        authorize()
+    return result
+
+
+def get_document_accessibility_payload(
+    document_id,
+    user_id,
+    doc_scope="all",
+    active_group_ids=None,
+    active_public_workspace_id=None,
+    conversation_id=None,
+    sections=None,
+    page_number=None,
+    native_section="comments",
+    native_cursor=None,
+    native_page_size=100,
+    sheet_name=None,
+    cell_range=None,
+    _native_max_bytes=14000,
+):
+    """Return the complete stored accessibility, style, and issue metadata for one document.
+
+    The parent document record keeps the uncapped document-wide inventory, so this is the
+    programmatic path for custom style-guide or accessibility checks. ``page_number``
+    additionally returns that page's stored chunk text, which carries the inline per-page
+    structure, formatting, and comment lines.
+    """
+    document_context = resolve_document_context(
+        document_id=document_id,
+        user_id=user_id,
+        doc_scope=doc_scope,
+        active_group_ids=active_group_ids,
+        active_public_workspace_id=active_public_workspace_id,
+        conversation_id=conversation_id,
+    )
+    if not document_context:
+        raise LookupError("Document not found or access denied")
+
+    if document_context.get("scope") == "chat":
+        raise LookupError(
+            "Accessibility metadata is not available for chat uploads. "
+            "Add the file to a workspace to extract it."
+        )
+
+    current_document = assert_document_available(
+        document_context["document"], user_id=user_id,
+        group_id=document_context.get("group_id"),
+        public_workspace_id=document_context.get("public_workspace_id"),
+        purpose="accessibility",
+    )
+    document_context["document"] = current_document
+    source_evidence = {PROVENANCE_FIELD: document_provenance(current_document)}
+
+    stored_metadata = current_document.get("accessibility_metadata")
+    file_name = str(current_document.get("file_name") or "")
+    extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    if not stored_metadata and extension in (".xlsx", ".xlsm", ".xls") and (
+        current_document.get("source_file_available") or current_document.get("enhanced_citations")
+        or current_document.get("blob_path") or current_document.get("archived_blob_path")
+    ):
+        stored_metadata = {"format": extension.lstrip(".")}
+    if not isinstance(stored_metadata, dict) or not stored_metadata:
+        raise LookupError(
+            "No accessibility metadata is stored for this document. It may have been uploaded before "
+            "accessibility extraction was available or may be an unsupported file type; "
+            "re-upload the file to extract it."
+        )
+
+    excel_inspection = None
+    if stored_metadata.get("format") in ("xlsx", "xlsm", "xls") and (
+        current_document.get("source_file_available") or current_document.get("enhanced_citations")
+        or current_document.get("blob_path") or current_document.get("archived_blob_path")
+        or current_document.get("excel_native_inventory")
+    ):
+        excel_inspection = _read_excel_inspection(
+            document_context, user_id, native_section=native_section,
+            native_cursor=native_cursor, native_page_size=native_page_size,
+            sheet_name=sheet_name, cell_range=cell_range,
+            max_bytes=_native_max_bytes,
+        )
+        stored_metadata = excel_inspection["metadata"]
+    elif native_cursor or cell_range:
+        raise LookupError("The original workbook or full native inventory is unavailable for this inspection.")
+
+    requested_sections = _normalize_accessibility_sections(sections)
+    report = {}
+    if "accessibility" in requested_sections:
+        report["accessibility_metadata"] = {
+            key: value
+            for key, value in stored_metadata.items()
+            if key not in (ACCESSIBILITY_REPORT_STYLE_KEY, ACCESSIBILITY_REPORT_ISSUES_KEY)
+        }
+    if "style" in requested_sections:
+        report["style_inventory"] = stored_metadata.get(ACCESSIBILITY_REPORT_STYLE_KEY) or {}
+    if "issues" in requested_sections:
+        report["issues"] = stored_metadata.get(ACCESSIBILITY_REPORT_ISSUES_KEY) or []
+
+    page_chunks = None
+    chunks = []
+    if page_number not in (None, ""):
+        chunks = get_ordered_document_chunks(
+            document_id=document_id, user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+        )
+    elif stored_metadata.get("format") in ("xlsx", "xlsm", "xls"):
+        chunks = get_ordered_document_chunks(
+            document_id=document_id, user_id=user_id,
+            group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"),
+            max_chunks=1, native_only=True,
+        )
+    if page_number not in (None, ""):
+        resolved_page = _coerce_positive_int(page_number, default_value=1)
+        page_chunks = [
+            chunk for chunk in (chunks or [])
+            if chunk.get("page_number") == resolved_page
+        ]
+
+    assert_evidence_available(source_evidence, user_id)
+    payload = {
+        "document": _serialize_document(current_document, document_context.get("scope")),
+        "scope": document_context.get("scope"),
+        "format": stored_metadata.get("format"),
+        "schema_version": stored_metadata.get("schema_version"),
+        "sections": requested_sections,
+        **report,
+    }
+    if page_chunks is not None:
+        payload["page_number"] = _coerce_positive_int(page_number, default_value=1)
+        payload["page_chunks"] = page_chunks
+    if stored_metadata.get("format") in ("xlsx", "xlsm", "xls"):
+        native_chunk = next(
+            (chunk for chunk in chunks or [] if str(chunk.get("chunk_text") or "").startswith("### Excel native inspection")),
+            None,
+        )
+        if native_chunk is not None:
+            payload["citation_chunk"] = native_chunk
+    if excel_inspection is not None:
+        payload["excel_inspection"] = {
+            key: value for key, value in excel_inspection.items() if key != "metadata"
+        }
+        page = excel_inspection["page"]
+        if native_section == "comments" and "accessibility_metadata" in payload:
+            payload["accessibility_metadata"]["comments"] = page["records"]
+            payload["accessibility_metadata"]["comment_page"] = {
+                key: value for key, value in page.items() if key != "records"
+            }
+    return payload
 
 
 def _build_summary_citation_chunk(chunks):
@@ -955,12 +1381,14 @@ def _create_summary_client(settings, user_id=None):
         settings,
         identity_context={'user_id': user_id},
     )
+    timeout_options = globals().get('build_openai_client_timeout_options', lambda *_a, **_k: {})(settings)
     if settings.get('enable_gpt_apim', False):
         return AzureOpenAI(
             api_version=settings.get('azure_apim_gpt_api_version'),
             azure_endpoint=settings.get('azure_apim_gpt_endpoint'),
             api_key=settings.get('azure_apim_gpt_subscription_key'),
             default_headers=extra_headers or None,
+            **timeout_options,
         )
 
     auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
@@ -974,6 +1402,7 @@ def _create_summary_client(settings, user_id=None):
             azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
             azure_ad_token_provider=token_provider,
             default_headers=extra_headers or None,
+            **timeout_options,
         )
 
     return AzureOpenAI(
@@ -981,6 +1410,7 @@ def _create_summary_client(settings, user_id=None):
         azure_endpoint=settings.get('azure_openai_gpt_endpoint'),
         api_key=settings.get('azure_openai_gpt_key'),
         default_headers=extra_headers or None,
+        **timeout_options,
     )
 
 
@@ -1125,6 +1555,9 @@ def summarize_document_content(
         max_value=8,
     )
     file_name = chunk_payload.get('document', {}).get('file_name') or document_id
+    summarize_block = guard_model_callable(
+        _summarize_text_block, chunk_payload.get("document"), user_id,
+    )
 
     stage_records = []
     current_stage_inputs = windows
@@ -1164,7 +1597,7 @@ def summarize_document_content(
             if not source_text.strip():
                 continue
 
-            summary_text = _summarize_text_block(
+            summary_text = summarize_block(
                 gpt_client=gpt_client,
                 model_name=model_name,
                 file_name=file_name,
@@ -1211,6 +1644,7 @@ def summarize_document_content(
         level=logging.INFO,
     )
 
+    assert_evidence_available(chunk_payload.get("document"), user_id)
     return {
         'document': chunk_payload.get('document'),
         'citation_chunk': _build_summary_citation_chunk(chunk_payload.get('chunks')),

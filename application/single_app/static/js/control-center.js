@@ -365,15 +365,6 @@ class ControlCenter {
             radio.addEventListener('change', () => this.toggleExportCustomDateRange());
         });
         
-        // Chat functionality
-        document.getElementById('executeChatBtn')?.addEventListener('click', 
-            () => this.chatActivityTrends());
-        
-        // Chat modal - show/hide custom date range based on radio selection
-        document.querySelectorAll('input[name="chatTimeWindow"]').forEach(radio => {
-            radio.addEventListener('change', () => this.toggleChatCustomDateRange());
-        });
-        
         // Activity Logs event handlers
         document.getElementById('activityLogsSearchInput')?.addEventListener('input', 
             this.debounce(() => this.handleActivityLogsSearchChange(), 300));
@@ -3851,115 +3842,6 @@ class ControlCenter {
         return text.replace(/[&<>"']/g, m => map[m]);
     }
     
-    toggleChatCustomDateRange() {
-        const customRadio = document.getElementById('chatCustom');
-        const customDateRange = document.getElementById('chatCustomDateRange');
-        
-        if (customRadio.checked) {
-            customDateRange.style.display = 'block';
-            // Set default dates
-            const endDate = new Date();
-            const startDate = new Date();
-            startDate.setDate(startDate.getDate() - 29);
-            
-            document.getElementById('chatStartDate').value = startDate.toISOString().split('T')[0];
-            document.getElementById('chatEndDate').value = endDate.toISOString().split('T')[0];
-        } else {
-            customDateRange.style.display = 'none';
-        }
-    }
-    
-    async chatActivityTrends() {
-        try {
-            // Get selected charts
-            const selectedCharts = [];
-            if (document.getElementById('chatLogins').checked) selectedCharts.push('logins');
-            if (document.getElementById('chatChats').checked) selectedCharts.push('chats');
-            if (document.getElementById('chatDocuments').checked) selectedCharts.push('documents');
-            
-            if (selectedCharts.length === 0) {
-                showToast('Please select at least one chart to include in the chat.', 'warning');
-                return;
-            }
-            
-            // Get selected time window
-            const timeWindowRadio = document.querySelector('input[name="chatTimeWindow"]:checked');
-            const timeWindow = timeWindowRadio.value;
-            
-            let chatData = {
-                charts: selectedCharts,
-                time_window: timeWindow
-            };
-
-            const tokenFilters = this.getTokenFilterRequestPayload();
-            if (Object.keys(tokenFilters).length > 0) {
-                chatData.token_filters = tokenFilters;
-            }
-            
-            // Add custom dates if selected
-            if (timeWindow === 'custom') {
-                const startDate = document.getElementById('chatStartDate').value;
-                const endDate = document.getElementById('chatEndDate').value;
-                
-                if (!startDate || !endDate) {
-                    showToast('Please select both start and end dates for custom range.', 'warning');
-                    return;
-                }
-                
-                if (new Date(startDate) > new Date(endDate)) {
-                    showToast('Start date must be before end date.', 'warning');
-                    return;
-                }
-                
-                chatData.start_date = startDate;
-                chatData.end_date = endDate;
-            }
-            
-            // Show loading state
-            const chatBtn = document.getElementById('executeChatBtn');
-            const originalText = chatBtn.innerHTML;
-            chatBtn.innerHTML = '<i class="bi bi-hourglass-split me-1"></i>Creating Chat...';
-            chatBtn.disabled = true;
-            
-            // Make API call
-            const response = await fetch('/api/admin/control-center/activity-trends/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(chatData)
-            });
-            
-            const result = await response.json();
-            
-            if (response.ok && result.success) {
-                // Close modal
-                const modal = bootstrap.Modal.getInstance(document.getElementById('chatModal'));
-                modal.hide();
-                
-                // Show success message
-                this.showAlert('success', 'Chat conversation created successfully! Redirecting...');
-                
-                // Redirect to the new conversation
-                setTimeout(() => {
-                    window.location.href = result.redirect_url;
-                }, 1500);
-                
-            } else {
-                throw new Error(result.error || 'Failed to create chat conversation');
-            }
-            
-        } catch (error) {
-            console.error('Chat creation error:', error);
-            this.showAlert('danger', `Failed to create chat: ${error.message}`);
-        } finally {
-            // Reset button state
-            const chatBtn = document.getElementById('executeChatBtn');
-            chatBtn.innerHTML = '<i class="bi bi-chat-dots me-1"></i>Start Chat';
-            chatBtn.disabled = false;
-        }
-    }
-    
     destroyAllCharts() {
         // Destroy all chart instances
         if (this.loginsChart) {
@@ -4943,172 +4825,6 @@ function showAlert(message, type = 'info') {
     }, 5000);
 }
 
-// Activity Log Migration Functions
-async function checkMigrationStatus() {
-    // Only admins can see migration status
-    if (window.hasControlCenterAdmin !== true) {
-        return;
-    }
-    
-    try {
-        const response = await fetch('/api/admin/control-center/migrate/status');
-        if (!response.ok) {
-            throw new Error('Failed to fetch migration status');
-        }
-        
-        const data = await response.json();
-        
-        if (data.migration_needed) {
-            // Update banner with counts
-            document.getElementById('migrationConversationCount').textContent = data.conversations_without_logs.toLocaleString();
-            document.getElementById('migrationDocumentCount').textContent = data.total_documents_without_logs.toLocaleString();
-            
-            // Show the banner
-            const banner = document.getElementById('migrationBanner');
-            if (banner) {
-                banner.style.display = 'block';
-            }
-        } else {
-            // Hide banner if no migration needed
-            const banner = document.getElementById('migrationBanner');
-            if (banner) {
-                banner.style.display = 'none';
-            }
-        }
-        
-        return data;
-    } catch (error) {
-        console.error('Error checking migration status:', error);
-        return null;
-    }
-}
-
-function showMigrationProgress() {
-    const progressDiv = document.getElementById('migrationProgress');
-    const migrateBtn = document.getElementById('migrateBannerBtn');
-    
-    if (progressDiv) {
-        progressDiv.style.display = 'block';
-    }
-    
-    if (migrateBtn) {
-        migrateBtn.disabled = true;
-        migrateBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Migrating...';
-    }
-}
-
-function hideMigrationProgress() {
-    const progressDiv = document.getElementById('migrationProgress');
-    const migrateBtn = document.getElementById('migrateBannerBtn');
-    
-    if (progressDiv) {
-        progressDiv.style.display = 'none';
-    }
-    
-    if (migrateBtn) {
-        migrateBtn.disabled = false;
-        migrateBtn.innerHTML = '<i class="bi bi-arrow-repeat me-1"></i> Migrate Now';
-    }
-}
-
-function updateMigrationProgress(percent, statusText) {
-    const progressBar = document.getElementById('migrationProgressBar');
-    const progressText = document.getElementById('migrationProgressText');
-    const statusTextEl = document.getElementById('migrationStatusText');
-    
-    if (progressBar) {
-        progressBar.style.width = percent + '%';
-        progressBar.setAttribute('aria-valuenow', percent);
-    }
-    
-    if (progressText) {
-        progressText.textContent = percent + '%';
-    }
-    
-    if (statusTextEl && statusText) {
-        statusTextEl.textContent = statusText;
-    }
-}
-
-function hideMigrationBanner() {
-    const banner = document.getElementById('migrationBanner');
-    if (banner) {
-        banner.style.display = 'none';
-    }
-}
-
-async function performMigration() {
-    // Show confirmation modal
-    const modal = new bootstrap.Modal(document.getElementById('migrationConfirmModal'));
-    modal.show();
-}
-
-async function executeMigration() {
-    // Close the confirmation modal
-    const modal = bootstrap.Modal.getInstance(document.getElementById('migrationConfirmModal'));
-    if (modal) {
-        modal.hide();
-    }
-    
-    try {
-        showMigrationProgress();
-        updateMigrationProgress(10, 'Starting migration...');
-        
-        const response = await fetch('/api/admin/control-center/migrate/all', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            }
-        });
-        
-        updateMigrationProgress(50, 'Processing records...');
-        
-        if (!response.ok) {
-            throw new Error('Migration request failed');
-        }
-        
-        const result = await response.json();
-        
-        updateMigrationProgress(90, 'Finalizing...');
-        
-        // Show results
-        setTimeout(() => {
-            updateMigrationProgress(100, 'Migration completed!');
-            
-            setTimeout(() => {
-                hideMigrationProgress();
-                hideMigrationBanner();
-                
-                // Show detailed results
-                const totalMigrated = result.total_migrated || 0;
-                const totalFailed = result.total_failed || 0;
-                
-                let message = `Migration completed! Conversations: ${result.conversations_migrated || 0}, Personal docs: ${result.personal_documents_migrated || 0}, Group docs: ${result.group_documents_migrated || 0}, Public docs: ${result.public_documents_migrated || 0}. Total: ${totalMigrated} records migrated`;
-                
-                if (totalFailed > 0) {
-                    message += `. Warning: ${totalFailed} records failed (check logs)`;
-                }
-                
-                showToast(message, 'success');
-                
-                // Refresh activity trends to show new data
-                if (window.controlCenter) {
-                    window.controlCenter.loadActivityTrends();
-                }
-            }, 1500);
-        }, 500);
-        
-    } catch (error) {
-        console.error('Migration error:', error);
-        hideMigrationProgress();
-        showToast(`Migration failed: ${error.message}. Check console and server logs for details.`, 'danger');
-    }
-}
-
-// Make migration functions globally accessible
-window.checkMigrationStatus = checkMigrationStatus;
-window.performMigration = performMigration;
-
 // Make refresh function globally accessible for debugging
 window.refreshControlCenterData = refreshControlCenterData;
 window.loadRefreshStatus = loadRefreshStatus;
@@ -5130,12 +4846,6 @@ document.addEventListener('DOMContentLoaded', function() {
     // Export GroupTableSorter to window for global access
     window.GroupTableSorter = GroupTableSorter;
     
-    // Wire up migration confirmation button
-    const confirmMigrationBtn = document.getElementById('confirmMigrationBtn');
-    if (confirmMigrationBtn) {
-        confirmMigrationBtn.addEventListener('click', executeMigration);
-    }
-    
     // Debug: Log element availability
     console.log('Control Center Elements Check on DOM Ready:');
     window.debugControlCenterElements();
@@ -5148,8 +4858,6 @@ document.addEventListener('DOMContentLoaded', function() {
         setTimeout(() => {
             loadRefreshStatus();
             
-            // Check migration status
-            checkMigrationStatus();
         }, 100);
     }
 });

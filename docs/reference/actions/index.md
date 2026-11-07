@@ -16,7 +16,7 @@ Actions are approved tools that agents can call. They may query data, search doc
 2. Fill **Display Name**, review generated **Name**, and add a useful **Description**.
 3. Complete action-specific **Configuration** fields described on each action page.
 4. In **Advanced**, optionally add **Metadata (JSON)**, **Additional Fields (JSON)**, or Key Vault expiration reminder metadata when secret tracking is enabled.
-5. Review **Action Summary**, use **Test Connection** where provided, then save the action.
+5. Review **Action Summary**, use the connection check in **Authentication** where provided, then save the action.
 
 If an action type does not appear, check Agents settings, workspace action permissions, and Governance policy.
 
@@ -24,11 +24,12 @@ If an action type does not appear, check Agents settings, workspace action permi
 
 | Action | What it does | Typical use | Depth |
 | --- | --- | --- | --- |
+| [Control Center](./control-center/) | Answers read-only questions about SimpleChat usage from the Control Center dashboard's data: sign-ins, active users, conversations, uploads and token use. | Use it, or the dashboard's **Chat with this dashboard** button, to ask usage questions in chat. Only Control Center dashboard viewers can use it. | overview |
 | [Cosmos Query](./cosmos-query/) | Runs read-only Azure Cosmos DB for NoSQL queries and validates Cosmos SQL-style queries. | Use it for governed lookup over one Cosmos container. Use SQL Query for relational databases. | overview |
 | [Databricks Table](./databricks-table/) | Compatibility wrapper for legacy `databricks_table` manifests. | Use only to keep older manifests working. For new work, use Databricks. | overview |
 | [Document Search](./document-search/) | Searches accessible SimpleChat documents, retrieves chunks, and summarizes documents using current user access. | Use it when an agent should reason over workspace documents as a tool. Use the normal grounded-search panel for one-off user searches. | overview |
 | [Log Analytics](./log-analytics/) | Discovers Azure Log Analytics table schemas and runs read-only KQL queries against one workspace. | Use it for operational telemetry and App Insights-style investigation. Use SQL/Snowflake/Databricks for business data. | overview |
-| [SQL Query](./sql-query/) | Executes SQL queries and scalar queries against configured SQL Server, Azure SQL, PostgreSQL, MySQL, or SQLite databases. | Exact relational data questions with joins, filters, counts, or current rows. | full guide |
+| [SQL Database](./sql-query/) | Executes SQL queries and scalar queries against configured SQL Server, Azure SQL, PostgreSQL, MySQL, or SQLite databases. | Exact relational data questions with joins, filters, counts, or current rows. | full guide |
 | [SQL Schema](./sql-schema/) | Discovers tables, table schemas, and relationships for configured SQL databases. | Schema discovery before an agent writes SQL. | full guide |
 | [Databricks]({{ '/reference/actions/databricks/' | relative_url }}) | Runs read-only SQL and discovers catalogs, schemas, tables, and table details through Databricks SQL Statement Execution. | Governed analytics queries in Azure Commercial Databricks. | full guide |
 | [Snowflake](./snowflake/) | Runs read-only Snowflake SQL and discovers databases, schemas, tables, and table details. | Governed analytics queries in Snowflake. | full guide |

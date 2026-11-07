@@ -470,6 +470,8 @@ function replyToMessage(message = {}) {
     if (!messageId) {
         return;
     }
+    const current = collaborationMessageCache.get(messageId);
+    if (current?.metadata?.content_moderation?.removed && !message.metadata?.content_moderation?.removed) return;
 
     if (!canPostMessages(window.chatConversations?.getCurrentConversationId?.())) {
         showToast('Accept the invite before replying in this shared conversation.', 'warning');
@@ -983,6 +985,12 @@ async function loadConversationMessages(conversationId) {
             .map(message => String(message.id))
     );
     messages.forEach(message => {
+        // A workflow run's own post is replaced by its mirrored reply, which says the same.
+        // It stays cached so a reply that quotes it still resolves.
+        if (message?.metadata?.superseded_by_workflow_reply) {
+            cacheCollaborationMessage(message);
+            return;
+        }
         const decoratedMessage = decorateReplyMessage(message);
         if (decoratedMessage.role === 'assistant' && generatedImageProposalMessages.has(decoratedMessage.id)) {
             decoratedMessage.generated_image_proposals = generatedImageProposalMessages.get(decoratedMessage.id);
@@ -1083,7 +1091,17 @@ function handleConversationEvent(eventEnvelope = {}) {
         }
     }
 
+    if (eventEnvelope.event_type === 'collaboration.message.updated' && payload.message) {
+        const existing = document.querySelector(`[data-message-id="${CSS.escape(payload.message.id)}"]`);
+        existing?.remove();
+        cacheCollaborationMessage(payload.message);
+        renderCollaborationMessage(payload.message, { isNewMessage: false });
+        return;
+    }
+
     if (eventEnvelope.event_type === 'collaboration.message.created' && payload.message) {
+        const current = collaborationMessageCache.get(payload.message.id);
+        if (current?.metadata?.content_moderation?.removed && !payload.message.metadata?.content_moderation?.removed) return;
         const senderUserId = String(payload.message?.sender?.user_id || payload.message?.metadata?.sender?.user_id || '').trim();
         const shouldClearNotifications = Boolean(senderUserId && senderUserId !== getCurrentUserId());
         if (senderUserId && senderUserId !== getCurrentUserId() && isCurrentUserMentioned(payload.message)) {

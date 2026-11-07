@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.44.1.10279",
-      "templateHash": "429339971357266687"
+      "templateHash": "14814241508469552508"
     }
   },
   "parameters": {
@@ -84,6 +84,22 @@
       "maxLength": 60,
       "metadata": {
         "description": "Optional name for the secondary native Python Web App.\n- Used only when deployNativePythonWebApp is true."
+      }
+    },
+    "deployV2FrontendAppService": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Deploy the V2 React UI to its own App Service instead of serving it from the primary app.\n- Default is false. By default the Flask App Service serves the compiled V2 bundle at /v2,\n  which keeps the SPA same-origin so the Entra session cookie, the same-origin CSRF check\n  and the default-src 'self' CSP all apply unchanged.\n- Enabling this splits the SPA onto its own origin, which requires cross-origin\n  configuration: V2_UI_ALLOWED_ORIGIN on the API app, a VITE_API_BASE build argument for\n  the bundle, and an extra Entra redirect URI. The session cookie becomes a third-party\n  cookie, so browsers that block those will break this topology."
+      }
+    },
+    "v2WebAppName": {
+      "type": "string",
+      "defaultValue": "[toLower(format('{0}-{1}-v2-app', parameters('appName'), parameters('environment')))]",
+      "minLength": 2,
+      "maxLength": 60,
+      "metadata": {
+        "description": "Optional name for the standalone V2 React UI Web App.\n- Used only when deployV2FrontendAppService is true."
       }
     },
     "enterpriseAppClientId": {
@@ -224,6 +240,13 @@
         "description": "Enable private endpoints and virtual network integration for deployed resources. \n- Default is false"
       }
     },
+    "enableAzureMonitorPrivateLink": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Opt in to private-only Application Insights and Log Analytics through AMPLS. Requires enablePrivateNetworking and private DNS/routing for all monitoring clients."
+      }
+    },
     "existingVirtualNetworkId": {
       "type": "string",
       "defaultValue": "",
@@ -249,7 +272,7 @@
       "type": "object",
       "defaultValue": {},
       "metadata": {
-        "description": "Optional per-zone private DNS configuration for private networking.\n- Leave empty to create all private DNS zones locally and create VNet links automatically\n- For each supported key, provide:\n  - zoneResourceId: Optional existing private DNS zone resource ID to reuse\n  - createVNetLink: Optional bool, defaults to true. Set to false if the customer manages the VNet link separately\n- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites"
+        "description": "Optional per-zone private DNS configuration for private networking.\n- Leave empty to create all private DNS zones locally and create VNet links automatically\n- For each supported key, provide:\n  - zoneResourceId: Optional existing private DNS zone resource ID to reuse\n  - createVNetLink: Optional bool, defaults to true. Set to false if the customer manages the VNet link separately\n- Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites, redis, videoIndexer, monitor, monitorOms, monitorOds, monitorAgent, monitorAdx"
       }
     },
     "existingOpenAIEndpoint": {
@@ -368,6 +391,76 @@
         "description": "Comma separated list of IP addresses or ranges to allow access to resources when private networking is enabled.\nLeave blank if not using private networking.\n- Format for single IP: 'x.x.x.x'\n- Format for range: 'x.x.x.x/y'\n- Example:  1.2.3.4, 2.3.4.5/32\n"
       }
     },
+    "webSearchProvider": {
+      "type": "string",
+      "defaultValue": "preserve",
+      "allowedValues": [
+        "preserve",
+        "none",
+        "foundry",
+        "web_iq"
+      ],
+      "metadata": {
+        "description": "Missing old AZD selections preserve configured services. Foundry reuses a compatible classic project/agent."
+      }
+    },
+    "webIqResourceMode": {
+      "type": "string",
+      "defaultValue": "create",
+      "allowedValues": [
+        "create",
+        "reuse"
+      ]
+    },
+    "existingWebIqName": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingWebIqResourceGroup": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingWebIqSubscriptionId": {
+      "type": "string",
+      "defaultValue": "[subscription().subscriptionId]"
+    },
+    "contentUnderstandingMode": {
+      "type": "string",
+      "defaultValue": "preserve",
+      "allowedValues": [
+        "preserve",
+        "none",
+        "create",
+        "reuse"
+      ]
+    },
+    "contentUnderstandingLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]"
+    },
+    "existingContentUnderstandingName": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingContentUnderstandingResourceGroup": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingContentUnderstandingSubscriptionId": {
+      "type": "string",
+      "defaultValue": "[subscription().subscriptionId]"
+    },
+    "contentUnderstandingModels": {
+      "type": "array",
+      "defaultValue": []
+    },
+    "optionalServicesDeploymentPrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object ID of the deployment runner for Content Understanding defaults/readiness data-plane access."
+      }
+    },
     "deployContentSafety": {
       "type": "bool",
       "metadata": {
@@ -432,6 +525,14 @@
       "metadata": {
         "description": "Enable deployment of Azure Video Indexer service and related resources.\n- Default is false"
       }
+    },
+    "videoIndexerLocation": {
+      "type": "string",
+      "defaultValue": "[parameters('location')]",
+      "minLength": 1,
+      "metadata": {
+        "description": "Optional Azure region override for Azure Video Indexer.\n- Defaults to the deployment location.\n- Use when the primary app region does not offer Video Indexer, for example northcentralus.\n- A region that differs from the deployment location gets a dedicated Video Indexer storage account in that region.\n- Set this before the first deployment that enables Video Indexer; an existing account cannot move regions."
+      }
     }
   },
   "variables": {
@@ -489,12 +590,21 @@
     "resolvedVideoIndexerEndpoint": "[if(equals(variables('scCloudEnvironment'), 'usgovernment'), 'https://api.videoindexer.ai.azure.us', if(and(equals(variables('scCloudEnvironment'), 'custom'), not(empty(parameters('customVideoIndexerEndpoint')))), parameters('customVideoIndexerEndpoint'), 'https://api.videoindexer.ai'))]",
     "videoIndexerSupportsOpenAiIntegration": "[equals(variables('resolvedVideoIndexerArmApiVersion'), '2025-04-01')]",
     "videoIndexerSupportsPrivateEndpoints": "[equals(variables('resolvedVideoIndexerArmApiVersion'), '2025-04-01')]",
+    "normalizedVideoIndexerLocation": "[toLower(replace(parameters('videoIndexerLocation'), ' ', ''))]",
+    "videoIndexerUsesDedicatedStorage": "[not(equals(variables('normalizedVideoIndexerLocation'), variables('normalizedLocation')))]",
+    "videoIndexerAppRoleDefinitionId": "[if(equals(variables('scCloudEnvironment'), 'public'), '3f99eaab-6f59-4877-adf5-1cacd22e20b0', 'b24988ac-6180-42a0-ab88-20f7382dd24c')]",
     "hasExistingAppServiceSubnetId": "[not(empty(parameters('existingAppServiceSubnetId')))]",
     "hasExistingPrivateEndpointSubnetId": "[not(empty(parameters('existingPrivateEndpointSubnetId')))]",
     "inferredVirtualNetworkId": "[if(variables('hasExistingAppServiceSubnetId'), split(parameters('existingAppServiceSubnetId'), '/subnets/')[0], if(variables('hasExistingPrivateEndpointSubnetId'), split(parameters('existingPrivateEndpointSubnetId'), '/subnets/')[0], ''))]",
     "resolvedExistingVirtualNetworkId": "[if(not(empty(parameters('existingVirtualNetworkId'))), parameters('existingVirtualNetworkId'), variables('inferredVirtualNetworkId'))]",
     "useExistingVirtualNetwork": "[and(parameters('enablePrivateNetworking'), or(or(not(empty(variables('resolvedExistingVirtualNetworkId'))), variables('hasExistingAppServiceSubnetId')), variables('hasExistingPrivateEndpointSubnetId')))]",
-    "allowedIpsForCosmos": "[union(createArray('0.0.0.0'), variables('allowedIpAddressesArray'))]"
+    "allowedIpsForCosmos": "[union(createArray('0.0.0.0'), variables('allowedIpAddressesArray'))]",
+    "createWebIq": "[and(and(equals(parameters('webSearchProvider'), 'web_iq'), equals(parameters('webIqResourceMode'), 'create')), equals(variables('scCloudEnvironment'), 'public'))]",
+    "createCu": "[and(equals(parameters('contentUnderstandingMode'), 'create'), equals(variables('scCloudEnvironment'), 'public'))]",
+    "useCu": "[and(contains(createArray('create', 'reuse'), parameters('contentUnderstandingMode')), equals(variables('scCloudEnvironment'), 'public'))]",
+    "cuName": "[if(equals(parameters('contentUnderstandingMode'), 'reuse'), parameters('existingContentUnderstandingName'), toLower(format('{0}-{1}-cu', parameters('appName'), parameters('environment'))))]",
+    "cuGroup": "[if(equals(parameters('contentUnderstandingMode'), 'reuse'), parameters('existingContentUnderstandingResourceGroup'), variables('rgName'))]",
+    "cuSubscription": "[if(and(equals(parameters('contentUnderstandingMode'), 'reuse'), not(empty(parameters('existingContentUnderstandingSubscriptionId')))), parameters('existingContentUnderstandingSubscriptionId'), subscription().subscriptionId)]"
   },
   "resources": {
     "rg": {
@@ -503,6 +613,434 @@
       "name": "[variables('rgName')]",
       "location": "[parameters('location')]",
       "tags": "[variables('tags')]"
+    },
+    "existingContentUnderstanding": {
+      "condition": "[equals(parameters('contentUnderstandingMode'), 'reuse')]",
+      "existing": true,
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2025-06-01",
+      "subscriptionId": "[variables('cuSubscription')]",
+      "resourceGroup": "[variables('cuGroup')]",
+      "name": "[parameters('existingContentUnderstandingName')]",
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "webIq": {
+      "condition": "[variables('createWebIq')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "webIq",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[toLower(format('{0}-{1}-webiq', parameters('appName'), parameters('environment')))]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "15745009116956964478"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.WebIQ/accounts",
+              "apiVersion": "2026-06-01-preview",
+              "name": "[parameters('accountName')]",
+              "location": "global",
+              "kind": "WebIQ.Grounding",
+              "sku": {
+                "name": "G3"
+              },
+              "properties": {
+                "statisticsEnabled": false
+              },
+              "tags": "[parameters('tags')]"
+            }
+          ],
+          "outputs": {
+            "resourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.WebIQ/accounts', parameters('accountName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "contentUnderstanding": {
+      "condition": "[variables('createCu')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "contentUnderstanding",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[variables('cuName')]"
+          },
+          "location": {
+            "value": "[parameters('contentUnderstandingLocation')]"
+          },
+          "models": {
+            "value": "[parameters('contentUnderstandingModels')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "606199855110923873"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "models": {
+              "type": "array"
+            },
+            "tags": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2025-06-01",
+              "name": "[parameters('accountName')]",
+              "location": "[parameters('location')]",
+              "kind": "AIServices",
+              "sku": {
+                "name": "S0"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "customSubDomainName": "[parameters('accountName')]",
+                "disableLocalAuth": true,
+                "publicNetworkAccess": "Enabled"
+              },
+              "tags": "[parameters('tags')]"
+            },
+            {
+              "copy": {
+                "name": "deployments",
+                "count": "[length(parameters('models'))]"
+              },
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('{0}-{1}', parameters('accountName'), parameters('models')[copyIndex()].modelName)]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "parent": {
+                    "value": "[parameters('accountName')]"
+                  },
+                  "modelName": {
+                    "value": "[parameters('models')[copyIndex()].modelName]"
+                  },
+                  "modelVersion": {
+                    "value": "[parameters('models')[copyIndex()].modelVersion]"
+                  },
+                  "skuName": {
+                    "value": "[parameters('models')[copyIndex()].skuName]"
+                  },
+                  "skuCapacity": {
+                    "value": "[parameters('models')[copyIndex()].skuCapacity]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "1013492894400488975"
+                    }
+                  },
+                  "parameters": {
+                    "parent": {
+                      "type": "string"
+                    },
+                    "modelName": {
+                      "type": "string"
+                    },
+                    "modelVersion": {
+                      "type": "string"
+                    },
+                    "skuName": {
+                      "type": "string"
+                    },
+                    "skuCapacity": {
+                      "type": "int"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.CognitiveServices/accounts/deployments",
+                      "apiVersion": "2025-06-01",
+                      "name": "[format('{0}/{1}', parameters('parent'), parameters('modelName'))]",
+                      "properties": {
+                        "model": {
+                          "format": "OpenAI",
+                          "name": "[parameters('modelName')]",
+                          "version": "[parameters('modelVersion')]"
+                        }
+                      },
+                      "sku": {
+                        "name": "[parameters('skuName')]",
+                        "capacity": "[parameters('skuCapacity')]"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "endpoint": {
+              "type": "string",
+              "value": "[format('https://{0}.services.ai.azure.com', parameters('accountName'))]"
+            },
+            "resourceId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "rg"
+      ]
+    },
+    "contentUnderstandingAccess": {
+      "condition": "[variables('useCu')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "contentUnderstandingAccess",
+      "subscriptionId": "[variables('cuSubscription')]",
+      "resourceGroup": "[variables('cuGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[variables('cuName')]"
+          },
+          "webAppName": {
+            "value": "[reference('appService').outputs.name.value]"
+          },
+          "webAppResourceGroup": {
+            "value": "[variables('rgName')]"
+          },
+          "webAppSubscriptionId": {
+            "value": "[subscription().subscriptionId]"
+          },
+          "deploymentPrincipalId": {
+            "value": "[parameters('optionalServicesDeploymentPrincipalId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "10457664038897280051"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "webAppName": {
+              "type": "string"
+            },
+            "webAppResourceGroup": {
+              "type": "string"
+            },
+            "webAppSubscriptionId": {
+              "type": "string"
+            },
+            "deploymentPrincipalId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "userRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('deploymentPrincipalId')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), parameters('deploymentPrincipalId'), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[parameters('deploymentPrincipalId')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "appService",
+        "contentUnderstanding",
+        "rg"
+      ]
+    },
+    "nativeContentUnderstandingAccess": {
+      "condition": "[and(variables('useCu'), parameters('deployNativePythonWebApp'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "nativeContentUnderstandingAccess",
+      "subscriptionId": "[variables('cuSubscription')]",
+      "resourceGroup": "[variables('cuGroup')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[variables('cuName')]"
+          },
+          "webAppName": {
+            "value": "[reference('nativeAppService').outputs.name.value]"
+          },
+          "webAppResourceGroup": {
+            "value": "[variables('rgName')]"
+          },
+          "webAppSubscriptionId": {
+            "value": "[subscription().subscriptionId]"
+          },
+          "deploymentPrincipalId": {
+            "value": ""
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "10457664038897280051"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "webAppName": {
+              "type": "string"
+            },
+            "webAppResourceGroup": {
+              "type": "string"
+            },
+            "webAppSubscriptionId": {
+              "type": "string"
+            },
+            "deploymentPrincipalId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "userRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', parameters('webAppSubscriptionId'), parameters('webAppResourceGroup')), 'Microsoft.Web/sites', parameters('webAppName')), '2024-04-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('deploymentPrincipalId')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), parameters('deploymentPrincipalId'), variables('userRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[variables('userRoleId')]",
+                "principalId": "[parameters('deploymentPrincipalId')]"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "contentUnderstanding",
+        "nativeAppService",
+        "rg"
+      ]
     },
     "rgDeleteLock": {
       "type": "Microsoft.Resources/deployments",
@@ -714,6 +1252,9 @@
           },
           "tags": {
             "value": "[variables('tags')]"
+          },
+          "enableAzureMonitorPrivateLink": {
+            "value": "[parameters('enableAzureMonitorPrivateLink')]"
           }
         },
         "template": {
@@ -723,7 +1264,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "9084211890269320873"
+              "templateHash": "1217328589617468086"
             }
           },
           "parameters": {
@@ -738,6 +1279,10 @@
             },
             "tags": {
               "type": "object"
+            },
+            "enableAzureMonitorPrivateLink": {
+              "type": "bool",
+              "defaultValue": false
             }
           },
           "resources": [
@@ -747,6 +1292,8 @@
               "name": "[toLower(format('{0}-{1}-la', parameters('appName'), parameters('environment')))]",
               "location": "[parameters('location')]",
               "properties": {
+                "publicNetworkAccessForIngestion": "[if(parameters('enableAzureMonitorPrivateLink'), 'Disabled', 'Enabled')]",
+                "publicNetworkAccessForQuery": "[if(parameters('enableAzureMonitorPrivateLink'), 'Disabled', 'Enabled')]",
                 "sku": {
                   "name": "PerGB2018"
                 }
@@ -791,6 +1338,9 @@
           },
           "logAnalyticsId": {
             "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
+          },
+          "enableAzureMonitorPrivateLink": {
+            "value": "[parameters('enableAzureMonitorPrivateLink')]"
           }
         },
         "template": {
@@ -800,7 +1350,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "16116738102101306702"
+              "templateHash": "4300797827117831457"
             }
           },
           "parameters": {
@@ -818,6 +1368,10 @@
             },
             "logAnalyticsId": {
               "type": "string"
+            },
+            "enableAzureMonitorPrivateLink": {
+              "type": "bool",
+              "defaultValue": false
             }
           },
           "resources": [
@@ -829,7 +1383,9 @@
               "kind": "web",
               "properties": {
                 "Application_Type": "web",
-                "WorkspaceResourceId": "[parameters('logAnalyticsId')]"
+                "WorkspaceResourceId": "[parameters('logAnalyticsId')]",
+                "publicNetworkAccessForIngestion": "[if(parameters('enableAzureMonitorPrivateLink'), 'Disabled', 'Enabled')]",
+                "publicNetworkAccessForQuery": "[if(parameters('enableAzureMonitorPrivateLink'), 'Disabled', 'Enabled')]"
               },
               "tags": "[parameters('tags')]"
             }
@@ -838,6 +1394,10 @@
             "appInsightsName": {
               "type": "string",
               "value": "[toLower(format('{0}-{1}-ai', parameters('appName'), parameters('environment')))]"
+            },
+            "appInsightsId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Insights/components', toLower(format('{0}-{1}-ai', parameters('appName'), parameters('environment'))))]"
             }
           }
         }
@@ -2613,7 +3173,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "3083805934796935509"
+              "templateHash": "3810140885783678261"
             }
           },
           "parameters": {
@@ -2690,6 +3250,39 @@
               "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
               "apiVersion": "2023-01-01",
               "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'group-documents')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'public-documents')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'personal-chat')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}/{2}', toLower(format('{0}{1}sa', parameters('appName'), parameters('environment'))), 'default', 'group-chat')]",
               "properties": {
                 "publicAccess": "None"
               },
@@ -4686,6 +5279,327 @@
         "virtualNetwork"
       ]
     },
+    "v2FrontendAppService": {
+      "condition": "[parameters('deployV2FrontendAppService')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "v2FrontendAppService",
+      "resourceGroup": "[variables('rgName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "v2WebAppName": {
+            "value": "[parameters('v2WebAppName')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "appServicePlanId": {
+            "value": "[reference('appServicePlan').outputs.appServicePlanId.value]"
+          },
+          "enableDiagLogging": {
+            "value": "[parameters('enableDiagLogging')]"
+          },
+          "logAnalyticsId": {
+            "value": "[reference('logAnalytics').outputs.logAnalyticsId.value]"
+          },
+          "appInsightsName": {
+            "value": "[reference('applicationInsights').outputs.appInsightsName.value]"
+          },
+          "enablePrivateNetworking": {
+            "value": "[parameters('enablePrivateNetworking')]"
+          },
+          "appServiceSubnetId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', parameters('existingAppServiceSubnetId')), createObject('value', reference('virtualNetwork').outputs.appServiceSubnetId.value)), createObject('value', ''))]"
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.44.1.10279",
+              "templateHash": "626991384843288623"
+            }
+          },
+          "parameters": {
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the V2 UI app service."
+              }
+            },
+            "v2WebAppName": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 60,
+              "metadata": {
+                "description": "Name of the App Service hosting the V2 React UI."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "metadata": {
+                "description": "Resource tags applied to the app service."
+              }
+            },
+            "appServicePlanId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource id of the App Service Plan to host this app on."
+              }
+            },
+            "enableDiagLogging": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Enable diagnostic logging to Log Analytics."
+              }
+            },
+            "logAnalyticsId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Log Analytics workspace resource id. Required when enableDiagLogging is true."
+              }
+            },
+            "appInsightsName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Application Insights resource name, used for browser telemetry. Optional."
+              }
+            },
+            "enablePrivateNetworking": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Restrict the app to a VNet-integrated subnet when private networking is enabled."
+              }
+            },
+            "appServiceSubnetId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Subnet id used for VNet integration. Required when enablePrivateNetworking is true."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/sites",
+              "apiVersion": "2023-12-01",
+              "name": "[parameters('v2WebAppName')]",
+              "location": "[parameters('location')]",
+              "tags": "[union(parameters('tags'), createObject('azd-service-name', 'v2ui'))]",
+              "kind": "app,linux",
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "serverFarmId": "[parameters('appServicePlanId')]",
+                "httpsOnly": true,
+                "virtualNetworkSubnetId": "[if(and(parameters('enablePrivateNetworking'), not(empty(parameters('appServiceSubnetId')))), parameters('appServiceSubnetId'), null())]",
+                "siteConfig": {
+                  "linuxFxVersion": "NODE|20-lts",
+                  "alwaysOn": true,
+                  "ftpsState": "Disabled",
+                  "minTlsVersion": "1.2",
+                  "http20Enabled": true,
+                  "appCommandLine": "pm2 serve /home/site/wwwroot --no-daemon --spa",
+                  "healthCheckPath": "/",
+                  "appSettings": "[concat(createArray(createObject('name', 'SCM_DO_BUILD_DURING_DEPLOYMENT', 'value', 'false'), createObject('name', 'WEBSITE_RUN_FROM_PACKAGE', 'value', '1')), if(empty(parameters('appInsightsName')), createArray(), createArray(createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', parameters('appInsightsName')), '2020-02-02').ConnectionString))))]"
+                }
+              }
+            },
+            {
+              "condition": "[and(parameters('enableDiagLogging'), not(empty(parameters('logAnalyticsId'))))]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Web/sites', parameters('v2WebAppName'))]",
+              "name": "[format('{0}-diagnostics', parameters('v2WebAppName'))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "logs": "[reference(resourceId('Microsoft.Resources/deployments', 'v2UiDiagnosticConfigs'), '2025-04-01').outputs.webAppLogCategories.value]",
+                "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'v2UiDiagnosticConfigs'), '2025-04-01').outputs.standardMetricsCategories.value]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'v2UiDiagnosticConfigs')]",
+                "[resourceId('Microsoft.Web/sites', parameters('v2WebAppName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('enableDiagLogging')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "v2UiDiagnosticConfigs",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "3644092898972470725"
+                    }
+                  },
+                  "variables": {
+                    "standardRetentionPolicy": {
+                      "enabled": false,
+                      "days": 0
+                    },
+                    "standardLogCategories": [
+                      {
+                        "categoryGroup": "allLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "limitedLogCategories": [
+                      {
+                        "categoryGroup": "allLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "standardMetricsCategories": [
+                      {
+                        "category": "AllMetrics",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "transactionMetricsCategories": [
+                      {
+                        "category": "Transaction",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ],
+                    "webAppLogCategories": [
+                      {
+                        "category": "AppServiceAntivirusScanAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceHTTPLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceConsoleLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceAppLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceFileAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServiceIPSecAuditLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      },
+                      {
+                        "category": "AppServicePlatformLogs",
+                        "enabled": true,
+                        "retentionPolicy": "[variables('standardRetentionPolicy')]"
+                      }
+                    ]
+                  },
+                  "resources": [],
+                  "outputs": {
+                    "limitedLogCategories": {
+                      "type": "array",
+                      "value": "[variables('limitedLogCategories')]"
+                    },
+                    "standardRetentionPolicy": {
+                      "type": "object",
+                      "value": "[variables('standardRetentionPolicy')]"
+                    },
+                    "standardLogCategories": {
+                      "type": "array",
+                      "value": "[variables('standardLogCategories')]"
+                    },
+                    "standardMetricsCategories": {
+                      "type": "array",
+                      "value": "[variables('standardMetricsCategories')]"
+                    },
+                    "transactionMetricsCategories": {
+                      "type": "array",
+                      "value": "[variables('transactionMetricsCategories')]"
+                    },
+                    "webAppLogCategories": {
+                      "type": "array",
+                      "value": "[variables('webAppLogCategories')]"
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "name": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the V2 UI app service."
+              },
+              "value": "[parameters('v2WebAppName')]"
+            },
+            "defaultHostName": {
+              "type": "string",
+              "metadata": {
+                "description": "Default hostname of the V2 UI app service."
+              },
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('v2WebAppName')), '2023-12-01').defaultHostName]"
+            },
+            "origin": {
+              "type": "string",
+              "metadata": {
+                "description": "HTTPS origin of the V2 UI. Set this as V2_UI_ALLOWED_ORIGIN on the API app."
+              },
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.Web/sites', parameters('v2WebAppName')), '2023-12-01').defaultHostName)]"
+            },
+            "principalId": {
+              "type": "string",
+              "metadata": {
+                "description": "System-assigned managed identity principal id."
+              },
+              "value": "[reference(resourceId('Microsoft.Web/sites', parameters('v2WebAppName')), '2023-12-01', 'full').identity.principalId]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "applicationInsights",
+        "appServicePlan",
+        "logAnalytics",
+        "rg",
+        "virtualNetwork"
+      ]
+    },
     "contentSafety": {
       "condition": "[parameters('deployContentSafety')]",
       "type": "Microsoft.Resources/deployments",
@@ -4982,7 +5896,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "8590656076085374678"
+              "templateHash": "16387019594267169649"
             }
           },
           "parameters": {
@@ -5304,6 +6218,10 @@
             "redisCacheKind": {
               "type": "string",
               "value": "[parameters('redisCacheKind')]"
+            },
+            "redisCacheResourceId": {
+              "type": "string",
+              "value": "[if(variables('deployManagedRedis'), resourceId('Microsoft.Cache/redisEnterprise', variables('redisName')), resourceId('Microsoft.Cache/redis', variables('redisName')))]"
             }
           }
         }
@@ -5572,7 +6490,7 @@
         "mode": "Incremental",
         "parameters": {
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[parameters('videoIndexerLocation')]"
           },
           "appName": {
             "value": "[parameters('appName')]"
@@ -5592,6 +6510,9 @@
           "storageAccount": {
             "value": "[reference('storageAccount').outputs.name.value]"
           },
+          "useDedicatedStorageAccount": {
+            "value": "[variables('videoIndexerUsesDedicatedStorage')]"
+          },
           "openAiServiceName": {
             "value": "[reference('openAI').outputs.openAIName.value]"
           },
@@ -5609,7 +6530,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "16333309402800302725"
+              "templateHash": "6695969075326641477"
             }
           },
           "parameters": {
@@ -5640,14 +6561,86 @@
             "videoIndexerArmApiVersion": {
               "type": "string"
             },
+            "useDedicatedStorageAccount": {
+              "type": "bool",
+              "defaultValue": false,
+              "metadata": {
+                "description": "Create a storage account in the Video Indexer region instead of using the application storage account.\n- Set when Video Indexer is deployed to a different region than the application."
+              }
+            },
             "enablePrivateNetworking": {
               "type": "bool"
             }
           },
           "variables": {
+            "dedicatedStorageAccountName": "[toLower(format('{0}{1}vi', parameters('appName'), parameters('environment')))]",
+            "videoIndexerStorageAccountId": "[if(parameters('useDedicatedStorageAccount'), resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName')), resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount')))]",
             "useLegacyVideoIndexerApi": "[equals(parameters('videoIndexerArmApiVersion'), '2024-01-01')]"
           },
           "resources": [
+            {
+              "condition": "[parameters('useDedicatedStorageAccount')]",
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2022-09-01",
+              "name": "[variables('dedicatedStorageAccountName')]",
+              "location": "[parameters('location')]",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "kind": "StorageV2",
+              "properties": {
+                "accessTier": "Hot",
+                "allowBlobPublicAccess": false,
+                "minimumTlsVersion": "TLS1_2",
+                "publicNetworkAccess": "Enabled",
+                "networkAcls": {
+                  "bypass": "AzureServices",
+                  "defaultAction": "[if(parameters('enablePrivateNetworking'), 'Deny', 'Allow')]"
+                }
+              },
+              "tags": "[parameters('tags')]"
+            },
+            {
+              "condition": "[parameters('useDedicatedStorageAccount')]",
+              "type": "Microsoft.Storage/storageAccounts/blobServices",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}/{1}', variables('dedicatedStorageAccountName'), 'default')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
+            },
+            {
+              "condition": "[and(parameters('enableDiagLogging'), parameters('useDedicatedStorageAccount'))]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]",
+              "name": "[format('{0}-diagnostics', variables('dedicatedStorageAccountName'))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "logs": [],
+                "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.transactionMetricsCategories.value]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]",
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
+            },
+            {
+              "condition": "[and(parameters('enableDiagLogging'), parameters('useDedicatedStorageAccount'))]",
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('dedicatedStorageAccountName'), 'default')]",
+              "name": "[format('{0}-blob-diagnostics', variables('dedicatedStorageAccountName'))]",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsId')]",
+                "logs": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.standardLogCategories.value]",
+                "metrics": "[reference(resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs'), '2025-04-01').outputs.transactionMetricsCategories.value]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'diagnosticConfigs')]",
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('dedicatedStorageAccountName'), 'default')]"
+              ]
+            },
             {
               "condition": "[not(variables('useLegacyVideoIndexerApi'))]",
               "type": "Microsoft.VideoIndexer/accounts",
@@ -5660,13 +6653,16 @@
               "properties": {
                 "publicNetworkAccess": "[if(parameters('enablePrivateNetworking'), 'Disabled', 'Enabled')]",
                 "storageServices": {
-                  "resourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]"
+                  "resourceId": "[variables('videoIndexerStorageAccountId')]"
                 },
                 "openAiServices": {
                   "resourceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('openAiServiceName'))]"
                 }
               },
-              "tags": "[parameters('tags')]"
+              "tags": "[parameters('tags')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
             },
             {
               "condition": "[variables('useLegacyVideoIndexerApi')]",
@@ -5679,10 +6675,13 @@
               },
               "properties": {
                 "storageServices": {
-                  "resourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccount'))]"
+                  "resourceId": "[variables('videoIndexerStorageAccountId')]"
                 }
               },
-              "tags": "[parameters('tags')]"
+              "tags": "[parameters('tags')]",
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', variables('dedicatedStorageAccountName'))]"
+              ]
             },
             {
               "condition": "[and(parameters('enableDiagLogging'), not(variables('useLegacyVideoIndexerApi')))]",
@@ -5849,6 +6848,14 @@
             "videoIndexerAccountId": {
               "type": "string",
               "value": "[if(variables('useLegacyVideoIndexerApi'), reference(resourceId('Microsoft.VideoIndexer/accounts', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment')))), '2024-01-01').accountId, reference(resourceId('Microsoft.VideoIndexer/accounts', toLower(format('{0}-{1}-video', parameters('appName'), parameters('environment')))), '2025-04-01').accountId)]"
+            },
+            "videoIndexerLocation": {
+              "type": "string",
+              "value": "[toLower(replace(parameters('location'), ' ', ''))]"
+            },
+            "videoIndexerStorageAccountName": {
+              "type": "string",
+              "value": "[if(parameters('useDedicatedStorageAccount'), variables('dedicatedStorageAccountName'), parameters('storageAccount'))]"
             }
           }
         }
@@ -5918,6 +6925,10 @@
           },
           "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
           "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]",
+          "videoIndexerStorageAccountName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerStorageAccountName.value), createObject('value', ''))]",
+          "videoIndexerAppRoleDefinitionId": {
+            "value": "[variables('videoIndexerAppRoleDefinitionId')]"
+          },
           "videoIndexerSupportsOpenAiIntegration": {
             "value": "[variables('videoIndexerSupportsOpenAiIntegration')]"
           }
@@ -5929,7 +6940,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "7465815465274830093"
+              "templateHash": "12563751307025747079"
             }
           },
           "parameters": {
@@ -5999,6 +7010,20 @@
             },
             "videoIndexerName": {
               "type": "string"
+            },
+            "videoIndexerStorageAccountName": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Storage account that holds the Video Indexer media.\n- Defaults to the application storage account."
+              }
+            },
+            "videoIndexerAppRoleDefinitionId": {
+              "type": "string",
+              "defaultValue": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+              "metadata": {
+                "description": "Role definition ID granted to the web app identity on the Video Indexer account."
+              }
             },
             "videoIndexerSupportsOpenAiIntegration": {
               "type": "bool",
@@ -6215,18 +7240,6 @@
               }
             },
             {
-              "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
-              "type": "Microsoft.Authorization/roleAssignments",
-              "apiVersion": "2022-04-01",
-              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
-              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), 'video-indexer-storage-blob-data-contributor')]",
-              "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
-                "principalId": "[reference(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), '2024-01-01', 'full').identity.principalId]",
-                "principalType": "ServicePrincipal"
-              }
-            },
-            {
               "condition": "[and(and(not(equals(parameters('videoIndexerName'), '')), not(variables('useExternalOpenAIResource'))), parameters('videoIndexerSupportsOpenAiIntegration'))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
@@ -6418,6 +7431,91 @@
                   ]
                 }
               }
+            },
+            {
+              "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "setVideoIndexerPermissions",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "videoIndexerName": {
+                    "value": "[parameters('videoIndexerName')]"
+                  },
+                  "videoIndexerStorageAccountName": "[if(empty(parameters('videoIndexerStorageAccountName')), createObject('value', parameters('storageAccountName')), createObject('value', parameters('videoIndexerStorageAccountName')))]",
+                  "webAppName": {
+                    "value": "[parameters('webAppName')]"
+                  },
+                  "webAppRoleDefinitionId": {
+                    "value": "[parameters('videoIndexerAppRoleDefinitionId')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "17195091449059813838"
+                    }
+                  },
+                  "parameters": {
+                    "videoIndexerName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the Video Indexer account."
+                      }
+                    },
+                    "videoIndexerStorageAccountName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the storage account that holds the Video Indexer media."
+                      }
+                    },
+                    "webAppName": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Name of the web app whose system-assigned identity calls the Video Indexer generateAccessToken API."
+                      }
+                    },
+                    "webAppRoleDefinitionId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Role definition ID granted to the web app identity on the Video Indexer account.\n- Video Indexer Account Contributor (3f99eaab-6f59-4877-adf5-1cacd22e20b0) in Azure Commercial\n- Contributor (b24988ac-6180-42a0-ab88-20f7382dd24c) where that role has not been confirmed"
+                      }
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName'))]",
+                      "name": "[guid(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), resourceId('Microsoft.Web/sites', parameters('webAppName')), 'video-indexer-app-access', parameters('webAppRoleDefinitionId'))]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('webAppRoleDefinitionId'))]",
+                        "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('webAppName')), '2022-03-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('videoIndexerStorageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('videoIndexerStorageAccountName')), resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), 'video-indexer-storage-blob-data-contributor')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                        "principalId": "[reference(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), '2024-01-01', 'full').identity.principalId]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              }
             }
           ]
         }
@@ -6488,7 +7586,11 @@
           "redisCacheKind": {
             "value": "[parameters('redisCacheKind')]"
           },
-          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]"
+          "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
+          "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]",
+          "videoIndexerAppRoleDefinitionId": {
+            "value": "[variables('videoIndexerAppRoleDefinitionId')]"
+          }
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -6497,7 +7599,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "6086980005977117487"
+              "templateHash": "13981557879151195852"
             }
           },
           "parameters": {
@@ -6558,6 +7660,17 @@
             },
             "contentSafetyName": {
               "type": "string"
+            },
+            "videoIndexerName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "videoIndexerAppRoleDefinitionId": {
+              "type": "string",
+              "defaultValue": "b24988ac-6180-42a0-ab88-20f7382dd24c",
+              "metadata": {
+                "description": "Role definition ID granted to the native web app identity on the Video Indexer account."
+              }
             }
           },
           "variables": {
@@ -6691,6 +7804,18 @@
               "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('contentSafetyName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'content-safety-user')]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+                "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[not(equals(parameters('videoIndexerName'), ''))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName'))]",
+              "name": "[guid(resourceId('Microsoft.VideoIndexer/accounts', parameters('videoIndexerName')), resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), 'video-indexer-app-access', parameters('videoIndexerAppRoleDefinitionId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('videoIndexerAppRoleDefinitionId'))]",
                 "principalId": "[reference(resourceId('Microsoft.Web/sites', parameters('nativeWebAppName')), '2022-03-01', 'full').identity.principalId]",
                 "principalType": "ServicePrincipal"
               }
@@ -6881,11 +8006,12 @@
         "searchService",
         "setPermissions",
         "speechService",
-        "storageAccount"
+        "storageAccount",
+        "videoIndexerService"
       ]
     },
     "privateNetworking": {
-      "condition": "[parameters('enablePrivateNetworking')]",
+      "condition": "[or(parameters('enablePrivateNetworking'), parameters('enableAzureMonitorPrivateLink'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "privateNetworking",
@@ -6900,6 +8026,15 @@
           "privateEndpointSubnetId": "[if(parameters('enablePrivateNetworking'), if(variables('useExistingVirtualNetwork'), createObject('value', parameters('existingPrivateEndpointSubnetId')), createObject('value', reference('virtualNetwork').outputs.privateNetworkSubnetId.value)), createObject('value', ''))]",
           "privateDnsZoneConfigs": {
             "value": "[parameters('privateDnsZoneConfigs')]"
+          },
+          "enableAzureMonitorPrivateLink": {
+            "value": "[parameters('enableAzureMonitorPrivateLink')]"
+          },
+          "monitoringResourceIds": {
+            "value": [
+              "[reference('logAnalytics').outputs.logAnalyticsId.value]",
+              "[reference('applicationInsights').outputs.appInsightsId.value]"
+            ]
           },
           "location": {
             "value": "[parameters('location')]"
@@ -6943,6 +8078,10 @@
           "webAppName": {
             "value": "[reference('appService').outputs.name.value]"
           },
+          "redisCacheResourceId": "[if(parameters('deployRedisCache'), createObject('value', reference('redisCache').outputs.redisCacheResourceId.value), createObject('value', ''))]",
+          "redisCacheKind": {
+            "value": "[parameters('redisCacheKind')]"
+          },
           "contentSafetyName": "[if(parameters('deployContentSafety'), createObject('value', reference('contentSafety').outputs.contentSafetyName.value), createObject('value', ''))]",
           "speechServiceName": "[if(parameters('deploySpeechService'), createObject('value', reference('speechService').outputs.speechServiceName.value), createObject('value', ''))]",
           "videoIndexerName": "[if(parameters('deployVideoIndexerService'), createObject('value', reference('videoIndexerService').outputs.videoIndexerServiceName.value), createObject('value', ''))]",
@@ -6957,7 +8096,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.44.1.10279",
-              "templateHash": "16990852046160181859"
+              "templateHash": "16307164890524009485"
             }
           },
           "parameters": {
@@ -6970,6 +8109,14 @@
             "privateDnsZoneConfigs": {
               "type": "object",
               "defaultValue": {}
+            },
+            "enableAzureMonitorPrivateLink": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "monitoringResourceIds": {
+              "type": "array",
+              "defaultValue": []
             },
             "location": {
               "type": "string"
@@ -7013,6 +8160,14 @@
             "webAppName": {
               "type": "string"
             },
+            "redisCacheResourceId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "redisCacheKind": {
+              "type": "string",
+              "defaultValue": "managed"
+            },
             "contentSafetyName": {
               "type": "string"
             },
@@ -7037,7 +8192,15 @@
                 "cosmosDb": "privatelink.documents.azure.com",
                 "keyVault": "privatelink.vaultcore.azure.net",
                 "openAi": "privatelink.openai.azure.com",
-                "webSites": "privatelink.azurewebsites.net"
+                "webSites": "privatelink.azurewebsites.net",
+                "redisClassic": "privatelink.redis.cache.windows.net",
+                "redisManaged": "privatelink.redis.azure.net",
+                "videoIndexer": "privatelink.api.videoindexer.ai",
+                "monitor": "privatelink.monitor.azure.com",
+                "monitorOms": "privatelink.oms.opinsights.azure.com",
+                "monitorOds": "privatelink.ods.opinsights.azure.com",
+                "monitorAgent": "privatelink.agentsvc.azure-automation.net",
+                "monitorAdx": ""
               },
               "azureusgovernment": {
                 "aisearch": "privatelink.search.azure.us",
@@ -7045,9 +8208,17 @@
                 "cognitiveServices": "privatelink.cognitiveservices.azure.us",
                 "containerRegistry": "privatelink.azurecr.us",
                 "cosmosDb": "privatelink.documents.azure.us",
-                "keyVault": "privatelink.vaultcore.azure.us",
+                "keyVault": "privatelink.vaultcore.usgovcloudapi.net",
                 "openAi": "privatelink.openai.azure.us",
-                "webSites": "privatelink.azurewebsites.us"
+                "webSites": "privatelink.azurewebsites.us",
+                "redisClassic": "privatelink.redis.cache.usgovcloudapi.net",
+                "redisManaged": "",
+                "videoIndexer": "",
+                "monitor": "privatelink.monitor.azure.us",
+                "monitorOms": "privatelink.oms.opinsights.azure.us",
+                "monitorOds": "privatelink.ods.opinsights.azure.us",
+                "monitorAgent": "privatelink.agentsvc.azure-automation.us",
+                "monitorAdx": "privatelink.adx.monitor.azure.us"
               }
             },
             "useExternalOpenAIResource": "[and(and(not(equals(parameters('openAIName'), '')), not(empty(parameters('openAIResourceGroupName')))), not(empty(parameters('openAISubscriptionId'))))]",
@@ -7061,6 +8232,9 @@
             "keyVaultDnsZoneName": "[variables('privateDnsZoneData')[variables('cloudName')].keyVault]",
             "openAiDnsZoneName": "[variables('privateDnsZoneData')[variables('cloudName')].openAi]",
             "webSitesDnsZoneName": "[variables('privateDnsZoneData')[variables('cloudName')].webSites]",
+            "redisDnsZoneName": "[if(equals(parameters('redisCacheKind'), 'managed'), variables('privateDnsZoneData')[variables('cloudName')].redisManaged, variables('privateDnsZoneData')[variables('cloudName')].redisClassic)]",
+            "videoIndexerDnsZoneName": "[variables('privateDnsZoneData')[variables('cloudName')].videoIndexer]",
+            "deployVideoIndexerPrivateEndpoint": "[and(and(not(equals(parameters('videoIndexerName'), '')), parameters('videoIndexerSupportsPrivateEndpoints')), not(empty(variables('videoIndexerDnsZoneName'))))]",
             "defaultPrivateDnsZoneConfig": {
               "zoneResourceId": "",
               "createVNetLink": true
@@ -7072,9 +8246,328 @@
             "blobStoragePrivateDnsZoneConfig": "[if(contains(parameters('privateDnsZoneConfigs'), 'blobStorage'), union(variables('defaultPrivateDnsZoneConfig'), parameters('privateDnsZoneConfigs').blobStorage), variables('defaultPrivateDnsZoneConfig'))]",
             "cognitiveServicesPrivateDnsZoneConfig": "[if(contains(parameters('privateDnsZoneConfigs'), 'cognitiveServices'), union(variables('defaultPrivateDnsZoneConfig'), parameters('privateDnsZoneConfigs').cognitiveServices), variables('defaultPrivateDnsZoneConfig'))]",
             "openAiPrivateDnsZoneConfig": "[if(contains(parameters('privateDnsZoneConfigs'), 'openAi'), union(variables('defaultPrivateDnsZoneConfig'), parameters('privateDnsZoneConfigs').openAi), variables('defaultPrivateDnsZoneConfig'))]",
-            "webSitesPrivateDnsZoneConfig": "[if(contains(parameters('privateDnsZoneConfigs'), 'webSites'), union(variables('defaultPrivateDnsZoneConfig'), parameters('privateDnsZoneConfigs').webSites), variables('defaultPrivateDnsZoneConfig'))]"
+            "webSitesPrivateDnsZoneConfig": "[if(contains(parameters('privateDnsZoneConfigs'), 'webSites'), union(variables('defaultPrivateDnsZoneConfig'), parameters('privateDnsZoneConfigs').webSites), variables('defaultPrivateDnsZoneConfig'))]",
+            "redisPrivateDnsZoneConfig": "[if(contains(parameters('privateDnsZoneConfigs'), 'redis'), union(variables('defaultPrivateDnsZoneConfig'), parameters('privateDnsZoneConfigs').redis), variables('defaultPrivateDnsZoneConfig'))]",
+            "videoIndexerPrivateDnsZoneConfig": "[if(contains(parameters('privateDnsZoneConfigs'), 'videoIndexer'), union(variables('defaultPrivateDnsZoneConfig'), parameters('privateDnsZoneConfigs').videoIndexer), variables('defaultPrivateDnsZoneConfig'))]"
           },
           "resources": [
+            {
+              "condition": "[not(empty(parameters('redisCacheResourceId')))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "redisDNSZone",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "zoneName": {
+                    "value": "[variables('redisDnsZoneName')]"
+                  },
+                  "appName": {
+                    "value": "[parameters('appName')]"
+                  },
+                  "environment": {
+                    "value": "[parameters('environment')]"
+                  },
+                  "name": {
+                    "value": "redis"
+                  },
+                  "vNetId": {
+                    "value": "[parameters('virtualNetworkId')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  },
+                  "existingZoneResourceId": {
+                    "value": "[variables('redisPrivateDnsZoneConfig').zoneResourceId]"
+                  },
+                  "createVNetLink": {
+                    "value": "[variables('redisPrivateDnsZoneConfig').createVNetLink]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "6946008567642736236"
+                    }
+                  },
+                  "parameters": {
+                    "zoneName": {
+                      "type": "string"
+                    },
+                    "appName": {
+                      "type": "string"
+                    },
+                    "environment": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "vNetId": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    },
+                    "existingZoneResourceId": {
+                      "type": "string",
+                      "defaultValue": ""
+                    },
+                    "createVNetLink": {
+                      "type": "bool",
+                      "defaultValue": true
+                    }
+                  },
+                  "variables": {
+                    "useExistingZone": "[not(empty(parameters('existingZoneResourceId')))]",
+                    "linkName": "[toLower(format('{0}-{1}-{2}-pe-dnszonelink', parameters('appName'), parameters('environment'), parameters('name')))]",
+                    "existingZoneSubscriptionId": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[2], '')]",
+                    "existingZoneResourceGroupName": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[4], '')]",
+                    "existingZoneName": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[8], '')]"
+                  },
+                  "resources": [
+                    {
+                      "condition": "[not(variables('useExistingZone'))]",
+                      "type": "Microsoft.Network/privateDnsZones",
+                      "apiVersion": "2020-06-01",
+                      "name": "[parameters('zoneName')]",
+                      "location": "global",
+                      "tags": "[parameters('tags')]"
+                    },
+                    {
+                      "condition": "[and(not(variables('useExistingZone')), parameters('createVNetLink'))]",
+                      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                      "apiVersion": "2020-06-01",
+                      "name": "[format('{0}/{1}', parameters('zoneName'), variables('linkName'))]",
+                      "location": "global",
+                      "properties": {
+                        "registrationEnabled": false,
+                        "virtualNetwork": {
+                          "id": "[parameters('vNetId')]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName'))]"
+                      ]
+                    },
+                    {
+                      "condition": "[and(variables('useExistingZone'), parameters('createVNetLink'))]",
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "[format('existing-{0}-privateDnsZoneLink', parameters('name'))]",
+                      "subscriptionId": "[variables('existingZoneSubscriptionId')]",
+                      "resourceGroup": "[variables('existingZoneResourceGroupName')]",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "parameters": {
+                          "zoneName": {
+                            "value": "[variables('existingZoneName')]"
+                          },
+                          "linkName": {
+                            "value": "[variables('linkName')]"
+                          },
+                          "vNetId": {
+                            "value": "[parameters('vNetId')]"
+                          }
+                        },
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.44.1.10279",
+                              "templateHash": "1211059935570939009"
+                            }
+                          },
+                          "parameters": {
+                            "zoneName": {
+                              "type": "string"
+                            },
+                            "linkName": {
+                              "type": "string"
+                            },
+                            "vNetId": {
+                              "type": "string"
+                            }
+                          },
+                          "resources": [
+                            {
+                              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                              "apiVersion": "2020-06-01",
+                              "name": "[format('{0}/{1}', parameters('zoneName'), parameters('linkName'))]",
+                              "location": "global",
+                              "properties": {
+                                "registrationEnabled": false,
+                                "virtualNetwork": {
+                                  "id": "[parameters('vNetId')]"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "privateDnsZoneId": {
+                      "type": "string",
+                      "value": "[if(variables('useExistingZone'), parameters('existingZoneResourceId'), resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName')))]"
+                    },
+                    "privateDnsZoneName": {
+                      "type": "string",
+                      "value": "[if(variables('useExistingZone'), variables('existingZoneName'), parameters('zoneName'))]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('redisCacheResourceId')))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "redisPE",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "name": {
+                    "value": "redis"
+                  },
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "appName": {
+                    "value": "[parameters('appName')]"
+                  },
+                  "environment": {
+                    "value": "[parameters('environment')]"
+                  },
+                  "serviceResourceID": {
+                    "value": "[parameters('redisCacheResourceId')]"
+                  },
+                  "subnetId": {
+                    "value": "[parameters('privateEndpointSubnetId')]"
+                  },
+                  "groupIDs": {
+                    "value": [
+                      "[if(equals(parameters('redisCacheKind'), 'managed'), 'redisEnterprise', 'redisCache')]"
+                    ]
+                  },
+                  "privateDnsZoneIds": {
+                    "value": [
+                      "[reference(resourceId('Microsoft.Resources/deployments', 'redisDNSZone'), '2025-04-01').outputs.privateDnsZoneId.value]"
+                    ]
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "1795431069306274319"
+                    }
+                  },
+                  "parameters": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "location": {
+                      "type": "string"
+                    },
+                    "appName": {
+                      "type": "string"
+                    },
+                    "environment": {
+                      "type": "string"
+                    },
+                    "serviceResourceID": {
+                      "type": "string"
+                    },
+                    "subnetId": {
+                      "type": "string"
+                    },
+                    "groupIDs": {
+                      "type": "array"
+                    },
+                    "privateDnsZoneIds": {
+                      "type": "array",
+                      "defaultValue": []
+                    },
+                    "tags": {
+                      "type": "object"
+                    }
+                  },
+                  "resources": [
+                    {
+                      "condition": "[greater(length(parameters('privateDnsZoneIds')), 0)]",
+                      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+                      "apiVersion": "2021-05-01",
+                      "name": "[format('{0}/{1}', toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name'))), 'default')]",
+                      "properties": {
+                        "copy": [
+                          {
+                            "name": "privateDnsZoneConfigs",
+                            "count": "[length(parameters('privateDnsZoneIds'))]",
+                            "input": {
+                              "name": "[last(split(parameters('privateDnsZoneIds')[copyIndex('privateDnsZoneConfigs')], '/'))]",
+                              "properties": {
+                                "privateDnsZoneId": "[parameters('privateDnsZoneIds')[copyIndex('privateDnsZoneConfigs')]]"
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Network/privateEndpoints', toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name'))))]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.Network/privateEndpoints",
+                      "apiVersion": "2021-05-01",
+                      "name": "[toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name')))]",
+                      "location": "[parameters('location')]",
+                      "properties": {
+                        "subnet": {
+                          "id": "[parameters('subnetId')]"
+                        },
+                        "privateLinkServiceConnections": [
+                          {
+                            "name": "[toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name')))]",
+                            "properties": {
+                              "privateLinkServiceId": "[parameters('serviceResourceID')]",
+                              "groupIds": "[parameters('groupIDs')]"
+                            }
+                          }
+                        ],
+                        "customNetworkInterfaceName": "[toLower(format('{0}-{1}-{2}-nic', parameters('appName'), parameters('environment'), parameters('name')))]"
+                      },
+                      "tags": "[parameters('tags')]"
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'redisDNSZone')]"
+              ]
+            },
             {
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
@@ -8966,6 +10459,572 @@
               ]
             },
             {
+              "condition": "[parameters('enableAzureMonitorPrivateLink')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "azureMonitorPrivateNetworking",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "location": {
+                    "value": "[parameters('location')]"
+                  },
+                  "appName": {
+                    "value": "[parameters('appName')]"
+                  },
+                  "environment": {
+                    "value": "[parameters('environment')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  },
+                  "virtualNetworkId": {
+                    "value": "[parameters('virtualNetworkId')]"
+                  },
+                  "privateEndpointSubnetId": {
+                    "value": "[parameters('privateEndpointSubnetId')]"
+                  },
+                  "privateDnsZoneConfigs": {
+                    "value": "[parameters('privateDnsZoneConfigs')]"
+                  },
+                  "blobStorageDnsZoneId": {
+                    "value": "[reference(resourceId('Microsoft.Resources/deployments', 'storageAccountDNSZone'), '2025-04-01').outputs.privateDnsZoneId.value]"
+                  },
+                  "monitoringResourceIds": {
+                    "value": "[parameters('monitoringResourceIds')]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "1191765375410113004"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string"
+                    },
+                    "appName": {
+                      "type": "string"
+                    },
+                    "environment": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    },
+                    "virtualNetworkId": {
+                      "type": "string"
+                    },
+                    "privateEndpointSubnetId": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "privateDnsZoneConfigs": {
+                      "type": "object",
+                      "defaultValue": {}
+                    },
+                    "blobStorageDnsZoneId": {
+                      "type": "string"
+                    },
+                    "monitoringResourceIds": {
+                      "type": "array"
+                    }
+                  },
+                  "variables": {
+                    "copy": [
+                      {
+                        "name": "zoneConfigs",
+                        "count": "[length(variables('zoneKeys'))]",
+                        "input": {
+                          "key": "[variables('zoneKeys')[copyIndex('zoneConfigs')]]",
+                          "zoneName": "[variables('dnsNames')[variables('zoneKeys')[copyIndex('zoneConfigs')]]]",
+                          "zoneResourceId": "[if(contains(parameters('privateDnsZoneConfigs'), variables('zoneKeys')[copyIndex('zoneConfigs')]), coalesce(parameters('privateDnsZoneConfigs')[variables('zoneKeys')[copyIndex('zoneConfigs')]].zoneResourceId, ''), '')]",
+                          "createVNetLink": "[if(contains(parameters('privateDnsZoneConfigs'), variables('zoneKeys')[copyIndex('zoneConfigs')]), coalesce(parameters('privateDnsZoneConfigs')[variables('zoneKeys')[copyIndex('zoneConfigs')]].createVNetLink, true()), true())]"
+                        }
+                      },
+                      {
+                        "name": "monitorDnsZoneIds",
+                        "count": "[length(take(variables('zoneConfigs'), 4))]",
+                        "input": "[if(empty(take(variables('zoneConfigs'), 4)[copyIndex('monitorDnsZoneIds')].zoneResourceId), resourceId('Microsoft.Network/privateDnsZones', take(variables('zoneConfigs'), 4)[copyIndex('monitorDnsZoneIds')].zoneName), take(variables('zoneConfigs'), 4)[copyIndex('monitorDnsZoneIds')].zoneResourceId)]"
+                      }
+                    ],
+                    "$fxv#0": {
+                      "azurecloud": {
+                        "aisearch": "privatelink.search.windows.net",
+                        "blobStorage": "privatelink.blob.core.windows.net",
+                        "cognitiveServices": "privatelink.cognitiveservices.azure.com",
+                        "containerRegistry": "privatelink.azurecr.io",
+                        "cosmosDb": "privatelink.documents.azure.com",
+                        "keyVault": "privatelink.vaultcore.azure.net",
+                        "openAi": "privatelink.openai.azure.com",
+                        "webSites": "privatelink.azurewebsites.net",
+                        "redisClassic": "privatelink.redis.cache.windows.net",
+                        "redisManaged": "privatelink.redis.azure.net",
+                        "videoIndexer": "privatelink.api.videoindexer.ai",
+                        "monitor": "privatelink.monitor.azure.com",
+                        "monitorOms": "privatelink.oms.opinsights.azure.com",
+                        "monitorOds": "privatelink.ods.opinsights.azure.com",
+                        "monitorAgent": "privatelink.agentsvc.azure-automation.net",
+                        "monitorAdx": ""
+                      },
+                      "azureusgovernment": {
+                        "aisearch": "privatelink.search.azure.us",
+                        "blobStorage": "privatelink.blob.core.usgovcloudapi.net",
+                        "cognitiveServices": "privatelink.cognitiveservices.azure.us",
+                        "containerRegistry": "privatelink.azurecr.us",
+                        "cosmosDb": "privatelink.documents.azure.us",
+                        "keyVault": "privatelink.vaultcore.usgovcloudapi.net",
+                        "openAi": "privatelink.openai.azure.us",
+                        "webSites": "privatelink.azurewebsites.us",
+                        "redisClassic": "privatelink.redis.cache.usgovcloudapi.net",
+                        "redisManaged": "",
+                        "videoIndexer": "",
+                        "monitor": "privatelink.monitor.azure.us",
+                        "monitorOms": "privatelink.oms.opinsights.azure.us",
+                        "monitorOds": "privatelink.ods.opinsights.azure.us",
+                        "monitorAgent": "privatelink.agentsvc.azure-automation.us",
+                        "monitorAdx": "privatelink.adx.monitor.azure.us"
+                      }
+                    },
+                    "cloudName": "[toLower(environment().name)]",
+                    "dnsNames": "[variables('$fxv#0')[variables('cloudName')]]",
+                    "zoneKeys": "[concat(createArray('monitor', 'monitorOms', 'monitorOds', 'monitorAgent'), if(empty(variables('dnsNames').monitorAdx), createArray(), createArray('monitorAdx')))]",
+                    "adxZoneConfig": "[coalesce(tryGet(parameters('privateDnsZoneConfigs'), 'monitorAdx'), createObject())]",
+                    "adxZoneResourceId": "[coalesce(variables('adxZoneConfig').zoneResourceId, '')]"
+                  },
+                  "resources": [
+                    {
+                      "type": "microsoft.insights/privateLinkScopes",
+                      "apiVersion": "2021-07-01-preview",
+                      "name": "[toLower(format('{0}-{1}-ampls', parameters('appName'), parameters('environment')))]",
+                      "location": "global",
+                      "properties": {
+                        "accessModeSettings": {
+                          "ingestionAccessMode": "PrivateOnly",
+                          "queryAccessMode": "PrivateOnly"
+                        }
+                      },
+                      "tags": "[parameters('tags')]"
+                    },
+                    {
+                      "copy": {
+                        "name": "scopedResources",
+                        "count": "[length(parameters('monitoringResourceIds'))]"
+                      },
+                      "type": "Microsoft.Insights/privateLinkScopes/scopedResources",
+                      "apiVersion": "2021-07-01-preview",
+                      "name": "[format('{0}/{1}', toLower(format('{0}-{1}-ampls', parameters('appName'), parameters('environment'))), format('monitor-{0}', copyIndex()))]",
+                      "properties": {
+                        "linkedResourceId": "[parameters('monitoringResourceIds')[copyIndex()]]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('microsoft.insights/privateLinkScopes', toLower(format('{0}-{1}-ampls', parameters('appName'), parameters('environment'))))]"
+                      ]
+                    },
+                    {
+                      "copy": {
+                        "name": "dnsZones",
+                        "count": "[length(variables('zoneConfigs'))]"
+                      },
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "[format('{0}DNSZone', variables('zoneConfigs')[copyIndex()].key)]",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "parameters": {
+                          "zoneName": {
+                            "value": "[variables('zoneConfigs')[copyIndex()].zoneName]"
+                          },
+                          "appName": {
+                            "value": "[parameters('appName')]"
+                          },
+                          "environment": {
+                            "value": "[parameters('environment')]"
+                          },
+                          "name": {
+                            "value": "[variables('zoneConfigs')[copyIndex()].key]"
+                          },
+                          "vNetId": {
+                            "value": "[parameters('virtualNetworkId')]"
+                          },
+                          "tags": {
+                            "value": "[parameters('tags')]"
+                          },
+                          "existingZoneResourceId": {
+                            "value": "[variables('zoneConfigs')[copyIndex()].zoneResourceId]"
+                          },
+                          "createVNetLink": {
+                            "value": "[variables('zoneConfigs')[copyIndex()].createVNetLink]"
+                          }
+                        },
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.44.1.10279",
+                              "templateHash": "6946008567642736236"
+                            }
+                          },
+                          "parameters": {
+                            "zoneName": {
+                              "type": "string"
+                            },
+                            "appName": {
+                              "type": "string"
+                            },
+                            "environment": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "vNetId": {
+                              "type": "string"
+                            },
+                            "tags": {
+                              "type": "object"
+                            },
+                            "existingZoneResourceId": {
+                              "type": "string",
+                              "defaultValue": ""
+                            },
+                            "createVNetLink": {
+                              "type": "bool",
+                              "defaultValue": true
+                            }
+                          },
+                          "variables": {
+                            "useExistingZone": "[not(empty(parameters('existingZoneResourceId')))]",
+                            "linkName": "[toLower(format('{0}-{1}-{2}-pe-dnszonelink', parameters('appName'), parameters('environment'), parameters('name')))]",
+                            "existingZoneSubscriptionId": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[2], '')]",
+                            "existingZoneResourceGroupName": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[4], '')]",
+                            "existingZoneName": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[8], '')]"
+                          },
+                          "resources": [
+                            {
+                              "condition": "[not(variables('useExistingZone'))]",
+                              "type": "Microsoft.Network/privateDnsZones",
+                              "apiVersion": "2020-06-01",
+                              "name": "[parameters('zoneName')]",
+                              "location": "global",
+                              "tags": "[parameters('tags')]"
+                            },
+                            {
+                              "condition": "[and(not(variables('useExistingZone')), parameters('createVNetLink'))]",
+                              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                              "apiVersion": "2020-06-01",
+                              "name": "[format('{0}/{1}', parameters('zoneName'), variables('linkName'))]",
+                              "location": "global",
+                              "properties": {
+                                "registrationEnabled": false,
+                                "virtualNetwork": {
+                                  "id": "[parameters('vNetId')]"
+                                }
+                              },
+                              "dependsOn": [
+                                "[resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName'))]"
+                              ]
+                            },
+                            {
+                              "condition": "[and(variables('useExistingZone'), parameters('createVNetLink'))]",
+                              "type": "Microsoft.Resources/deployments",
+                              "apiVersion": "2025-04-01",
+                              "name": "[format('existing-{0}-privateDnsZoneLink', parameters('name'))]",
+                              "subscriptionId": "[variables('existingZoneSubscriptionId')]",
+                              "resourceGroup": "[variables('existingZoneResourceGroupName')]",
+                              "properties": {
+                                "expressionEvaluationOptions": {
+                                  "scope": "inner"
+                                },
+                                "mode": "Incremental",
+                                "parameters": {
+                                  "zoneName": {
+                                    "value": "[variables('existingZoneName')]"
+                                  },
+                                  "linkName": {
+                                    "value": "[variables('linkName')]"
+                                  },
+                                  "vNetId": {
+                                    "value": "[parameters('vNetId')]"
+                                  }
+                                },
+                                "template": {
+                                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                                  "contentVersion": "1.0.0.0",
+                                  "metadata": {
+                                    "_generator": {
+                                      "name": "bicep",
+                                      "version": "0.44.1.10279",
+                                      "templateHash": "1211059935570939009"
+                                    }
+                                  },
+                                  "parameters": {
+                                    "zoneName": {
+                                      "type": "string"
+                                    },
+                                    "linkName": {
+                                      "type": "string"
+                                    },
+                                    "vNetId": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "resources": [
+                                    {
+                                      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                                      "apiVersion": "2020-06-01",
+                                      "name": "[format('{0}/{1}', parameters('zoneName'), parameters('linkName'))]",
+                                      "location": "global",
+                                      "properties": {
+                                        "registrationEnabled": false,
+                                        "virtualNetwork": {
+                                          "id": "[parameters('vNetId')]"
+                                        }
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          ],
+                          "outputs": {
+                            "privateDnsZoneId": {
+                              "type": "string",
+                              "value": "[if(variables('useExistingZone'), parameters('existingZoneResourceId'), resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName')))]"
+                            },
+                            "privateDnsZoneName": {
+                              "type": "string",
+                              "value": "[if(variables('useExistingZone'), variables('existingZoneName'), parameters('zoneName'))]"
+                            }
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "monitorPE",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "parameters": {
+                          "name": {
+                            "value": "ampls"
+                          },
+                          "location": {
+                            "value": "[parameters('location')]"
+                          },
+                          "appName": {
+                            "value": "[parameters('appName')]"
+                          },
+                          "environment": {
+                            "value": "[parameters('environment')]"
+                          },
+                          "serviceResourceID": {
+                            "value": "[resourceId('microsoft.insights/privateLinkScopes', toLower(format('{0}-{1}-ampls', parameters('appName'), parameters('environment'))))]"
+                          },
+                          "subnetId": {
+                            "value": "[parameters('privateEndpointSubnetId')]"
+                          },
+                          "groupIDs": {
+                            "value": [
+                              "azuremonitor"
+                            ]
+                          },
+                          "privateDnsZoneIds": {
+                            "value": "[concat(variables('monitorDnsZoneIds'), createArray(parameters('blobStorageDnsZoneId')))]"
+                          },
+                          "tags": {
+                            "value": "[parameters('tags')]"
+                          }
+                        },
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.44.1.10279",
+                              "templateHash": "1795431069306274319"
+                            }
+                          },
+                          "parameters": {
+                            "name": {
+                              "type": "string"
+                            },
+                            "location": {
+                              "type": "string"
+                            },
+                            "appName": {
+                              "type": "string"
+                            },
+                            "environment": {
+                              "type": "string"
+                            },
+                            "serviceResourceID": {
+                              "type": "string"
+                            },
+                            "subnetId": {
+                              "type": "string"
+                            },
+                            "groupIDs": {
+                              "type": "array"
+                            },
+                            "privateDnsZoneIds": {
+                              "type": "array",
+                              "defaultValue": []
+                            },
+                            "tags": {
+                              "type": "object"
+                            }
+                          },
+                          "resources": [
+                            {
+                              "condition": "[greater(length(parameters('privateDnsZoneIds')), 0)]",
+                              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+                              "apiVersion": "2021-05-01",
+                              "name": "[format('{0}/{1}', toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name'))), 'default')]",
+                              "properties": {
+                                "copy": [
+                                  {
+                                    "name": "privateDnsZoneConfigs",
+                                    "count": "[length(parameters('privateDnsZoneIds'))]",
+                                    "input": {
+                                      "name": "[last(split(parameters('privateDnsZoneIds')[copyIndex('privateDnsZoneConfigs')], '/'))]",
+                                      "properties": {
+                                        "privateDnsZoneId": "[parameters('privateDnsZoneIds')[copyIndex('privateDnsZoneConfigs')]]"
+                                      }
+                                    }
+                                  }
+                                ]
+                              },
+                              "dependsOn": [
+                                "[resourceId('Microsoft.Network/privateEndpoints', toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name'))))]"
+                              ]
+                            },
+                            {
+                              "type": "Microsoft.Network/privateEndpoints",
+                              "apiVersion": "2021-05-01",
+                              "name": "[toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name')))]",
+                              "location": "[parameters('location')]",
+                              "properties": {
+                                "subnet": {
+                                  "id": "[parameters('subnetId')]"
+                                },
+                                "privateLinkServiceConnections": [
+                                  {
+                                    "name": "[toLower(format('{0}-{1}-{2}-pe', parameters('appName'), parameters('environment'), parameters('name')))]",
+                                    "properties": {
+                                      "privateLinkServiceId": "[parameters('serviceResourceID')]",
+                                      "groupIds": "[parameters('groupIDs')]"
+                                    }
+                                  }
+                                ],
+                                "customNetworkInterfaceName": "[toLower(format('{0}-{1}-{2}-nic', parameters('appName'), parameters('environment'), parameters('name')))]"
+                              },
+                              "tags": "[parameters('tags')]"
+                            }
+                          ]
+                        }
+                      },
+                      "dependsOn": [
+                        "dnsZones",
+                        "[resourceId('microsoft.insights/privateLinkScopes', toLower(format('{0}-{1}-ampls', parameters('appName'), parameters('environment'))))]",
+                        "scopedResources"
+                      ]
+                    },
+                    {
+                      "condition": "[not(empty(variables('dnsNames').monitorAdx))]",
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "monitorAdxDNSRecords",
+                      "subscriptionId": "[if(empty(variables('adxZoneResourceId')), subscription().subscriptionId, split(variables('adxZoneResourceId'), '/')[2])]",
+                      "resourceGroup": "[if(empty(variables('adxZoneResourceId')), resourceGroup().name, split(variables('adxZoneResourceId'), '/')[4])]",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "parameters": {
+                          "zoneName": {
+                            "value": "[variables('dnsNames').monitorAdx]"
+                          },
+                          "records": {
+                            "value": "[map(filter(flatten(map(reference(resourceId('Microsoft.Network/networkInterfaces', toLower(format('{0}-{1}-ampls-nic', parameters('appName'), parameters('environment')))), '2023-09-01').ipConfigurations, lambda('ipConfig', map(coalesce(lambdaVariables('ipConfig').properties.privateLinkConnectionProperties.fqdns, createArray()), lambda('fqdn', createObject('fqdn', lambdaVariables('fqdn'), 'ipAddress', lambdaVariables('ipConfig').properties.privateIPAddress)))))), lambda('entry', or(endsWith(lambdaVariables('entry').fqdn, format('.{0}', variables('dnsNames').monitorAdx)), equals(lambdaVariables('entry').fqdn, variables('dnsNames').monitorAdx)))), lambda('entry', createObject('name', if(equals(lambdaVariables('entry').fqdn, variables('dnsNames').monitorAdx), '@', substring(lambdaVariables('entry').fqdn, 0, sub(sub(length(lambdaVariables('entry').fqdn), length(variables('dnsNames').monitorAdx)), 1))), 'ipAddress', lambdaVariables('entry').ipAddress)))]"
+                          }
+                        },
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.44.1.10279",
+                              "templateHash": "17923192730588741193"
+                            }
+                          },
+                          "parameters": {
+                            "zoneName": {
+                              "type": "string"
+                            },
+                            "records": {
+                              "type": "array"
+                            }
+                          },
+                          "variables": {
+                            "recordNames": "[union(map(parameters('records'), lambda('record', lambdaVariables('record').name)), createArray())]"
+                          },
+                          "resources": [
+                            {
+                              "copy": {
+                                "name": "dnsRecords",
+                                "count": "[length(variables('recordNames'))]"
+                              },
+                              "type": "Microsoft.Network/privateDnsZones/A",
+                              "apiVersion": "2020-06-01",
+                              "name": "[format('{0}/{1}', parameters('zoneName'), variables('recordNames')[copyIndex()])]",
+                              "properties": {
+                                "ttl": 60,
+                                "aRecords": "[map(filter(parameters('records'), lambda('record', equals(lambdaVariables('record').name, variables('recordNames')[copyIndex()]))), lambda('record', createObject('ipv4Address', lambdaVariables('record').ipAddress)))]"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "dependsOn": [
+                        "dnsZones",
+                        "[resourceId('Microsoft.Resources/deployments', 'monitorPE')]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "privateLinkScopeId": {
+                      "type": "string",
+                      "value": "[resourceId('microsoft.insights/privateLinkScopes', toLower(format('{0}-{1}-ampls', parameters('appName'), parameters('environment'))))]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'storageAccountDNSZone')]"
+              ]
+            },
+            {
               "condition": "[not(equals(parameters('openAIName'), ''))]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
@@ -9868,7 +11927,188 @@
               ]
             },
             {
-              "condition": "[and(not(equals(parameters('videoIndexerName'), '')), parameters('videoIndexerSupportsPrivateEndpoints'))]",
+              "condition": "[variables('deployVideoIndexerPrivateEndpoint')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "videoIndexerDNSZone",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "zoneName": {
+                    "value": "[variables('videoIndexerDnsZoneName')]"
+                  },
+                  "appName": {
+                    "value": "[parameters('appName')]"
+                  },
+                  "environment": {
+                    "value": "[parameters('environment')]"
+                  },
+                  "name": {
+                    "value": "videoIndexer"
+                  },
+                  "vNetId": {
+                    "value": "[parameters('virtualNetworkId')]"
+                  },
+                  "tags": {
+                    "value": "[parameters('tags')]"
+                  },
+                  "existingZoneResourceId": {
+                    "value": "[variables('videoIndexerPrivateDnsZoneConfig').zoneResourceId]"
+                  },
+                  "createVNetLink": {
+                    "value": "[variables('videoIndexerPrivateDnsZoneConfig').createVNetLink]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.44.1.10279",
+                      "templateHash": "6946008567642736236"
+                    }
+                  },
+                  "parameters": {
+                    "zoneName": {
+                      "type": "string"
+                    },
+                    "appName": {
+                      "type": "string"
+                    },
+                    "environment": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    },
+                    "vNetId": {
+                      "type": "string"
+                    },
+                    "tags": {
+                      "type": "object"
+                    },
+                    "existingZoneResourceId": {
+                      "type": "string",
+                      "defaultValue": ""
+                    },
+                    "createVNetLink": {
+                      "type": "bool",
+                      "defaultValue": true
+                    }
+                  },
+                  "variables": {
+                    "useExistingZone": "[not(empty(parameters('existingZoneResourceId')))]",
+                    "linkName": "[toLower(format('{0}-{1}-{2}-pe-dnszonelink', parameters('appName'), parameters('environment'), parameters('name')))]",
+                    "existingZoneSubscriptionId": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[2], '')]",
+                    "existingZoneResourceGroupName": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[4], '')]",
+                    "existingZoneName": "[if(variables('useExistingZone'), split(parameters('existingZoneResourceId'), '/')[8], '')]"
+                  },
+                  "resources": [
+                    {
+                      "condition": "[not(variables('useExistingZone'))]",
+                      "type": "Microsoft.Network/privateDnsZones",
+                      "apiVersion": "2020-06-01",
+                      "name": "[parameters('zoneName')]",
+                      "location": "global",
+                      "tags": "[parameters('tags')]"
+                    },
+                    {
+                      "condition": "[and(not(variables('useExistingZone')), parameters('createVNetLink'))]",
+                      "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                      "apiVersion": "2020-06-01",
+                      "name": "[format('{0}/{1}', parameters('zoneName'), variables('linkName'))]",
+                      "location": "global",
+                      "properties": {
+                        "registrationEnabled": false,
+                        "virtualNetwork": {
+                          "id": "[parameters('vNetId')]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName'))]"
+                      ]
+                    },
+                    {
+                      "condition": "[and(variables('useExistingZone'), parameters('createVNetLink'))]",
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "[format('existing-{0}-privateDnsZoneLink', parameters('name'))]",
+                      "subscriptionId": "[variables('existingZoneSubscriptionId')]",
+                      "resourceGroup": "[variables('existingZoneResourceGroupName')]",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "parameters": {
+                          "zoneName": {
+                            "value": "[variables('existingZoneName')]"
+                          },
+                          "linkName": {
+                            "value": "[variables('linkName')]"
+                          },
+                          "vNetId": {
+                            "value": "[parameters('vNetId')]"
+                          }
+                        },
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.44.1.10279",
+                              "templateHash": "1211059935570939009"
+                            }
+                          },
+                          "parameters": {
+                            "zoneName": {
+                              "type": "string"
+                            },
+                            "linkName": {
+                              "type": "string"
+                            },
+                            "vNetId": {
+                              "type": "string"
+                            }
+                          },
+                          "resources": [
+                            {
+                              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+                              "apiVersion": "2020-06-01",
+                              "name": "[format('{0}/{1}', parameters('zoneName'), parameters('linkName'))]",
+                              "location": "global",
+                              "properties": {
+                                "registrationEnabled": false,
+                                "virtualNetwork": {
+                                  "id": "[parameters('vNetId')]"
+                                }
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "privateDnsZoneId": {
+                      "type": "string",
+                      "value": "[if(variables('useExistingZone'), parameters('existingZoneResourceId'), resourceId('Microsoft.Network/privateDnsZones', parameters('zoneName')))]"
+                    },
+                    "privateDnsZoneName": {
+                      "type": "string",
+                      "value": "[if(variables('useExistingZone'), variables('existingZoneName'), parameters('zoneName'))]"
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "condition": "[variables('deployVideoIndexerPrivateEndpoint')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "videoIndexerPE",
@@ -9903,7 +12143,7 @@
                   },
                   "privateDnsZoneIds": {
                     "value": [
-                      "[reference(resourceId('Microsoft.Resources/deployments', 'docIntelDNSZone'), '2025-04-01').outputs.privateDnsZoneId.value]"
+                      "[reference(resourceId('Microsoft.Resources/deployments', 'videoIndexerDNSZone'), '2025-04-01').outputs.privateDnsZoneId.value]"
                     ]
                   },
                   "tags": {
@@ -10000,7 +12240,7 @@
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.Resources/deployments', 'docIntelDNSZone')]"
+                "[resourceId('Microsoft.Resources/deployments', 'videoIndexerDNSZone')]"
               ]
             }
           ]
@@ -10008,12 +12248,15 @@
       },
       "dependsOn": [
         "acr",
+        "applicationInsights",
         "appService",
         "contentSafety",
         "cosmosDB",
         "docIntel",
         "keyVault",
+        "logAnalytics",
         "openAI",
+        "redisCache",
         "rg",
         "searchService",
         "speechService",
@@ -10024,6 +12267,26 @@
     }
   },
   "outputs": {
+    "var_webSearchProvider": {
+      "type": "string",
+      "value": "[parameters('webSearchProvider')]"
+    },
+    "var_webIqResourceId": {
+      "type": "string",
+      "value": "[if(equals(parameters('webSearchProvider'), 'web_iq'), if(variables('createWebIq'), reference('webIq').outputs.resourceId.value, resourceId(if(empty(parameters('existingWebIqSubscriptionId')), subscription().subscriptionId, parameters('existingWebIqSubscriptionId')), parameters('existingWebIqResourceGroup'), 'Microsoft.WebIQ/accounts', parameters('existingWebIqName'))), '')]"
+    },
+    "var_webIqOnboardingUrl": {
+      "type": "string",
+      "value": "[if(equals(parameters('webSearchProvider'), 'web_iq'), 'https://webiq.microsoft.ai/profiles', '')]"
+    },
+    "var_webIqOnboardingState": {
+      "type": "string",
+      "value": "[if(equals(parameters('webSearchProvider'), 'web_iq'), 'pending_admin_connection_test_and_consent', '')]"
+    },
+    "var_contentUnderstandingEndpoint": {
+      "type": "string",
+      "value": "[if(variables('useCu'), if(equals(parameters('contentUnderstandingMode'), 'reuse'), format('https://{0}.services.ai.azure.com', reference('existingContentUnderstanding').customSubDomainName), reference('contentUnderstanding').outputs.endpoint.value), '')]"
+    },
     "var_acrName": {
       "type": "string",
       "value": "[toLower(format('{0}{1}acr', parameters('appName'), parameters('environment')))]"
@@ -10100,6 +12363,10 @@
       "type": "string",
       "value": "[if(parameters('deployRedisCache'), parameters('redisCacheKind'), '')]"
     },
+    "var_redisCacheResourceId": {
+      "type": "string",
+      "value": "[if(parameters('deployRedisCache'), reference('redisCache').outputs.redisCacheResourceId.value, '')]"
+    },
     "var_redisCachePort": {
       "type": "string",
       "value": "[if(parameters('deployRedisCache'), string(reference('redisCache').outputs.redisCachePort.value), '')]"
@@ -10132,6 +12399,10 @@
       "type": "string",
       "value": "[variables('resolvedVideoIndexerEndpoint')]"
     },
+    "var_videoIndexerLocation": {
+      "type": "string",
+      "value": "[if(parameters('deployVideoIndexerService'), reference('videoIndexerService').outputs.videoIndexerLocation.value, '')]"
+    },
     "var_videoIndexerName": {
       "type": "string",
       "value": "[if(parameters('deployVideoIndexerService'), reference('videoIndexerService').outputs.videoIndexerServiceName.value, '')]"
@@ -10155,6 +12426,14 @@
     "var_nativeWebService": {
       "type": "string",
       "value": "[if(parameters('deployNativePythonWebApp'), reference('nativeAppService').outputs.name.value, '')]"
+    },
+    "var_v2WebService": {
+      "type": "string",
+      "value": "[if(parameters('deployV2FrontendAppService'), reference('v2FrontendAppService').outputs.name.value, '')]"
+    },
+    "var_v2WebServiceOrigin": {
+      "type": "string",
+      "value": "[if(parameters('deployV2FrontendAppService'), reference('v2FrontendAppService').outputs.origin.value, '')]"
     },
     "var_enablePrivateNetworking": {
       "type": "bool",

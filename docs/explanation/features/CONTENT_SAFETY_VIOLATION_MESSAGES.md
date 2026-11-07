@@ -4,9 +4,11 @@ Implemented in version: **0.250.061**
 
 Related config.py version update: `application/single_app/config.py` is **0.250.061** for this implementation.
 
+Current documentation version: **0.261.127**. Expanded chat checkpoints were implemented in **0.261.127**, tracked in the same configuration file.
+
 ## Overview
 
-Administrators can configure the Markdown message shown when Azure Content Safety blocks a chat message. They can also choose whether the response includes trigger information such as block reasons, detected categories with severity, and blocklist matches.
+Administrators can configure the Markdown notice shown when Azure Content Safety blocks a submitted message. They can also choose whether safe trigger information, such as detected categories and severity, is included. The expanded chat checkpoints do not echo matched sensitive values.
 
 ## Dependencies
 
@@ -27,7 +29,7 @@ Administrators can configure the Markdown message shown when Azure Content Safet
 
 1. Open **Admin Settings** and enable Content Safety.
 2. Use the standard Markdown toolbar in **Safety Violation Message** to format the desired text.
-3. Keep **Include Trigger Information** selected to append the block reason, categories, severities, and blocklist matches. Clear it to show only the configured message.
+3. Keep **Include Trigger Information** selected to append the block reason, categories, and severities. Clear it to show only the configured message.
 4. Save the settings. Newly blocked chat messages use the saved configuration.
 
 ## Testing and Validation
@@ -38,5 +40,6 @@ Administrators can configure the Markdown message shown when Azure Content Safet
 
 ## Known Limitations
 
-- The setting applies to text-chat Content Safety blocks. Image-generation moderation messages continue to use their existing dedicated copy.
+- The template applies to submitted-message Content Safety blocks. AI-output removal uses a separate neutral notice without repeating rejected text or blaming the user. Image-generation moderation keeps its existing dedicated copy.
 - Saved messages affect newly created safety messages; historical conversation messages retain the text stored when they were created.
+- Scanner outages are not findings. By default, they allow chat through without a user warning and record private not-checked metadata for administrator rechecks. See [Chat content checks]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }}).

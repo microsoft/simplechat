@@ -2,7 +2,10 @@
 """Shared deterministic document comparison services."""
 
 import logging
+from copy import deepcopy
 
+from content_screening.access import assert_evidence_available, guard_model_callable
+from content_screening.contracts import ScreeningError
 from functions_appinsights import log_event
 from functions_debug import debug_print
 from functions_mixed_source_orchestration import (
@@ -12,6 +15,7 @@ from functions_mixed_source_orchestration import (
 from functions_document_actions import DOCUMENT_ACTION_TYPE_COMPARISON
 from functions_document_analysis import (
     build_document_analysis_progress_snapshot,
+    build_document_source_citation_guidance,
     run_document_analysis,
 )
 
@@ -170,7 +174,9 @@ def _build_document_summary_prompt(comparison_prompt, role_label, document_name)
     )
 
 
-def _build_pairwise_comparison_prompt(comparison_prompt, left_name, right_name, left_summary, right_summary):
+def _build_pairwise_comparison_prompt(
+    comparison_prompt, left_name, right_name, left_summary, right_summary, *, include_source_citations=False,
+):
     return (
         'You are comparing two documents that were summarized from analysis. '
         'Treat the left document as the primary baseline and compare the right document against it.\n\n'
@@ -179,12 +185,15 @@ def _build_pairwise_comparison_prompt(comparison_prompt, left_name, right_name, 
         f'Right document: {right_name}\n\n'
         'Explain what matches, what differs, what the right document changes or impacts relative to the left, '
         'and any conflicts, missing items, risks, or open questions that matter to the user request.\n\n'
+        f'{build_document_source_citation_guidance(comparison_prompt) if include_source_citations else ""}'
         f'<LeftDocumentSummary>\n{left_summary}\n</LeftDocumentSummary>\n\n'
         f'<RightDocumentSummary>\n{right_summary}\n</RightDocumentSummary>'
     )
 
 
-def _build_comparison_reduction_prompt(comparison_prompt, left_name, comparison_items):
+def _build_comparison_reduction_prompt(
+    comparison_prompt, left_name, comparison_items, *, include_source_citations=False,
+):
     combined_sections = []
     for comparison_item in comparison_items:
         combined_sections.append(
@@ -197,6 +206,7 @@ def _build_comparison_reduction_prompt(comparison_prompt, left_name, comparison_
         f'Comparison request:\n{comparison_prompt}\n\n'
         f'Left document: {left_name}\n\n'
         'Preserve material differences, impact analysis, conflicts, and unresolved questions.\n\n'
+        f'{build_document_source_citation_guidance(comparison_prompt) if include_source_citations else ""}'
         f"<PairwiseComparisons>\n{'\n\n'.join(combined_sections)}\n</PairwiseComparisons>"
     )
 
@@ -236,6 +246,7 @@ def run_evidence_document_comparison(
     activity_callback=None,
     cancel_requested=None,
     request_correlation_id=None,
+    user_id=None,
 ):
     """Run the established one-left-to-many comparison over native evidence envelopes."""
     normalized_prompt = str(comparison_prompt or '').strip()
@@ -244,6 +255,7 @@ def run_evidence_document_comparison(
 
     left_source = left_source if isinstance(left_source, dict) else {}
     right_sources = [source for source in list(right_sources or []) if isinstance(source, dict)]
+    invoke_prompt = guard_model_callable(invoke_prompt, [left_source, *right_sources], user_id)
     left_name = str(left_source.get('document_name') or 'Source').strip() or 'Source'
     left_summary = str(left_source.get('summary') or '').strip()
     left_status = str(left_source.get('status') or '').strip().lower()
@@ -305,7 +317,7 @@ def run_evidence_document_comparison(
                     'comparison',
                     request_correlation_id=request_correlation_id,
                 )
-        except MixedSourceCancellationError:
+        except (MixedSourceCancellationError, ScreeningError):
             raise
         except Exception:
             failed_targets.append(right_name)
@@ -366,6 +378,7 @@ def run_evidence_document_comparison(
         f'- Evidence engines: {", ".join(evidence_engines)}\n'
         f'- Conclusion level: {conclusion_level}'
     )
+    assert_evidence_available([left_source, *right_sources], user_id)
     return {
         'reply': f'{final_reply}{coverage_note}',
         'analysis_reply': f'{final_reply}{coverage_note}',
@@ -380,6 +393,221 @@ def run_evidence_document_comparison(
     }
 
 
+def _internal_comparison_summary(result, document_id):
+    if not isinstance(result, dict):
+        raise ValueError('The comparison summary has an invalid result shape.')
+    coverage = result.get('coverage')
+    if not isinstance(coverage, dict):
+        raise ValueError('The comparison summary has no source coverage.')
+    counts = {name: coverage.get(name) for name in ('total_windows', 'processed_windows', 'failed_windows')}
+    if any(type(value) is not int or value < 0 for value in counts.values()):
+        raise ValueError('The comparison summary has invalid source coverage.')
+    if counts['processed_windows'] + counts['failed_windows'] > counts['total_windows']:
+        raise ValueError('The comparison summary coverage is inconsistent.')
+    text = result.get('analysis_reply')
+    if not isinstance(text, str):
+        raise ValueError('The comparison summary has no complete text.')
+    documents = result.get('documents')
+    if not isinstance(documents, list) or len(documents) != 1 or documents[0].get('document_id') != document_id:
+        raise ValueError('The comparison summary does not match its assigned document.')
+    status = 'failed'
+    if counts['processed_windows'] and text.strip():
+        status = 'complete' if (
+            counts['processed_windows'] == counts['total_windows'] and not counts['failed_windows']
+        ) else 'partial'
+    return {
+        'document_id': document_id,
+        'document_name': documents[0].get('file_name') or documents[0].get('document_name') or document_id,
+        'status': status,
+        'coverage': deepcopy(coverage),
+        'text': text,
+    }
+
+
+def _run_internal_document_comparison(
+    user_id, comparison_prompt, action_config, invoke_prompt, *,
+    activity_callback, conversation_id, cancel_requested, request_correlation_id,
+):
+    """Keep complete per-target results even when another comparison fails."""
+    left_id = action_config['left_document_id']
+    right_ids = list(action_config['right_document_ids'])
+    if left_id in right_ids or len(set(right_ids)) != len(right_ids):
+        raise ValueError('Comparison targets must be unique and distinct from the Source.')
+    summaries = {}
+    failures = []
+    items = []
+    target_statuses = {}
+    source_results = {}
+
+    def check_cancelled():
+        raise_if_mixed_source_cancelled(
+            cancel_requested, 'comparison', request_correlation_id=request_correlation_id,
+        )
+
+    def fail(document_id, phase, error=None):
+        failures.append({'document_id': document_id, 'phase': phase, 'code': f'{phase}_unavailable'})
+        log_event(
+            '[DOCUMENT_COMPARISON] Internal comparison work did not complete',
+            extra={
+                'document_id': document_id, 'phase': phase,
+                'error_type': type(error).__name__ if error is not None else 'IncompleteResult',
+            },
+            level=logging.WARNING,
+        )
+
+    for document_id in [left_id, *right_ids]:
+        check_cancelled()
+        if document_id != left_id and summaries[left_id]['status'] == 'failed':
+            summaries[document_id] = {
+                'document_id': document_id, 'document_name': document_id,
+                'status': 'not_attempted', 'coverage': {}, 'text': '',
+            }
+            continue
+        try:
+            result = run_document_analysis(
+                user_id=user_id,
+                analysis_prompt=_build_document_summary_prompt(
+                    comparison_prompt, 'left' if document_id == left_id else 'right', document_id,
+                ),
+                document_ids=[document_id], invoke_prompt=invoke_prompt,
+                doc_scope=action_config.get('doc_scope'),
+                active_group_ids=action_config.get('active_group_ids'),
+                active_public_workspace_id=action_config.get('active_public_workspace_id'),
+                conversation_id=conversation_id, max_documents=1, include_coverage_summary=False,
+                include_source_citations=True,
+                activity_callback=activity_callback, cancel_requested=cancel_requested,
+                request_correlation_id=request_correlation_id,
+            )
+        except (MixedSourceCancellationError, ScreeningError, PermissionError):
+            raise
+        except Exception as exc:
+            # The source/model boundary can fail independently for one target.
+            check_cancelled()
+            fail(document_id, 'source_summary', exc)
+            summaries[document_id] = {
+                'document_id': document_id, 'document_name': document_id,
+                'status': 'failed', 'coverage': {}, 'text': '',
+            }
+            continue
+        check_cancelled()
+        source_results[document_id] = result
+        summaries[document_id] = _internal_comparison_summary(result, document_id)
+        if summaries[document_id]['status'] == 'failed':
+            fail(document_id, 'source_summary')
+
+    invoke = guard_model_callable(invoke_prompt, lambda: list(source_results.values()), user_id)
+    left = summaries[left_id]
+    for index, right_id in enumerate(right_ids, start=1):
+        check_cancelled()
+        right = summaries[right_id]
+        if left['status'] == 'failed' or right['status'] in {'failed', 'not_attempted'}:
+            target_statuses[right_id] = 'failed'
+            fail(right_id, 'comparison_inputs')
+            continue
+        try:
+            text = invoke(
+                _build_pairwise_comparison_prompt(
+                    comparison_prompt, left['document_name'], right['document_name'], left['text'], right['text'],
+                    include_source_citations=True,
+                ),
+                stage='comparison',
+                metadata={
+                    'comparison_index': index, 'comparison_count': len(right_ids),
+                    'left_document_id': left_id, 'right_document_id': right_id,
+                },
+            )
+        except (MixedSourceCancellationError, ScreeningError, PermissionError):
+            raise
+        except Exception as exc:
+            check_cancelled()
+            target_statuses[right_id] = 'failed'
+            fail(right_id, 'pairwise_comparison', exc)
+            continue
+        check_cancelled()
+        if not isinstance(text, str) or not text.strip():
+            target_statuses[right_id] = 'failed'
+            fail(right_id, 'pairwise_comparison')
+            continue
+        items.append({'right_document_id': right_id, 'right_document_name': right['document_name'], 'text': text})
+        target_statuses[right_id] = 'partial' if 'partial' in {left['status'], right['status']} else 'complete'
+
+    report = None
+    if len(items) == 1:
+        report = items[0]['text']
+    elif items:
+        check_cancelled()
+        try:
+            text = invoke(
+                _build_comparison_reduction_prompt(
+                    comparison_prompt, left['document_name'], items, include_source_citations=True,
+                ),
+                stage='comparison_reduction',
+                metadata={'comparison_count': len(items), 'left_document_id': left_id},
+            )
+        except (MixedSourceCancellationError, ScreeningError, PermissionError):
+            raise
+        except Exception as exc:
+            check_cancelled()
+            fail(left_id, 'comparison_reduction', exc)
+        else:
+            if isinstance(text, str) and text.strip():
+                report = text
+            else:
+                fail(left_id, 'comparison_reduction')
+    check_cancelled()
+    assert_evidence_available(list(source_results.values()), user_id)
+    failed_ids = [document_id for document_id in right_ids if target_statuses[document_id] == 'failed']
+    partial_sources = [document_id for document_id, summary in summaries.items() if summary['status'] == 'partial']
+    status = 'failed' if not items else 'partial' if failures or partial_sources else 'complete'
+    limitations = [
+        'Comparisons are model judgments over complete retained source-summary text, not an independent factual review.',
+    ]
+    if failed_ids:
+        limitations.append('Some requested targets could not be compared; their identities and failures are retained.')
+    if partial_sources:
+        limitations.append('Some source summaries have incomplete source-window coverage; their comparisons remain partial.')
+    if items and report is None:
+        limitations.append('Pairwise findings are retained, but no complete consolidated report was produced.')
+    citations = {}
+    compared_ids = [left_id, *(item['right_document_id'] for item in items)] if items else []
+    for document_id in compared_ids:
+        for citation in source_results[document_id].get('citations', []):
+            if citation.get('document_id') != document_id:
+                continue
+            identity = (
+                citation.get('scope'), citation.get('scope_id'), document_id, citation['citation_id'],
+            )
+            citations[identity] = deepcopy(citation)
+    return {
+        'comparison_result_version': 'comparison-v1',
+        'execution_status': status,
+        'citations': list(citations.values()),
+        'comparison': {
+            'left_document_id': left_id, 'right_document_ids': right_ids,
+            'items': items, 'failed_document_ids': failed_ids,
+        },
+        'comparison_items': items,
+        'analysis_reply': report,
+        'report_status': 'ready' if report is not None else 'unavailable',
+        'coverage': {
+            'requested_targets': len(right_ids), 'completed_targets': len(items),
+            'failed_targets': failed_ids, 'partial_sources': partial_sources,
+            'target_statuses': target_statuses,
+            'documents': [
+                {key: deepcopy(value) for key, value in summary.items() if key != 'text'}
+                for summary in summaries.values()
+            ],
+        },
+        'left_document': {'document_id': left_id, 'document_name': left['document_name']},
+        'right_documents': [
+            {'document_id': document_id, 'document_name': summaries[document_id]['document_name']}
+            for document_id in right_ids
+        ],
+        'failures': failures,
+        'limitations': limitations,
+    }
+
+
 def run_document_comparison(
     user_id,
     comparison_prompt,
@@ -389,7 +617,10 @@ def run_document_comparison(
     conversation_id=None,
     cancel_requested=None,
     request_correlation_id=None,
+    result_version=None,
 ):
+    if result_version not in (None, 'comparison-v1'):
+        raise ValueError('Unsupported document comparison result version.')
     normalized_prompt = str(comparison_prompt or '').strip()
     if not normalized_prompt:
         raise ValueError('A comparison prompt is required for document comparison.')
@@ -408,6 +639,12 @@ def run_document_comparison(
         'comparison_manifest',
         request_correlation_id=request_correlation_id,
     )
+    if result_version == 'comparison-v1':
+        return _run_internal_document_comparison(
+            user_id, normalized_prompt, action_config, invoke_prompt,
+            activity_callback=activity_callback, conversation_id=conversation_id,
+            cancel_requested=cancel_requested, request_correlation_id=request_correlation_id,
+        )
 
     debug_print(
         '[DOCUMENT_COMPARISON] Starting comparison | '
@@ -450,6 +687,9 @@ def run_document_comparison(
     _refresh_comparison_coverage(coverage, document_order, document_states)
 
     document_summaries = {}
+    invoke_prompt = guard_model_callable(
+        invoke_prompt, lambda: list(document_summaries.values()), user_id,
+    )
     for document_index, document_id in enumerate(document_order, start=1):
         raise_if_mixed_source_cancelled(
             cancel_requested,
@@ -759,6 +999,7 @@ def run_document_comparison(
         f"failed={coverage.get('failed_windows', 0)}"
     )
 
+    assert_evidence_available(list(document_summaries.values()), user_id)
     return {
         'reply': final_reply,
         'analysis_reply': analysis_reply,

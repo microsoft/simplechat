@@ -2,8 +2,8 @@
 # test_image_description_indexing_without_ocr_text.py
 """
 Functional test for indexing image descriptions when OCR finds no text.
-Version: 0.261.047
-Implemented in: 0.261.047
+Version: 0.261.210
+Implemented in: 0.261.047 (Development); 0.261.210 (React V2)
 
 Issue #1583: two nearly identical photos of an empty lab floor had no real text. Document
 Intelligence Layout returned only a bogus page-number comment for one and nothing for the other,
@@ -467,7 +467,7 @@ def check_comment_only_ocr_is_not_text(documents):
         _require(has_text(content), f"Content must count as real text: {content!r}")
 
 
-def _run_save_chunks(documents, page_text, vision_analysis, max_characters=100000):
+def _run_save_chunks(documents, page_text, vision_analysis, max_characters=100000, legacy_embedding=True):
     embedded_inputs = []
     uploaded_documents = []
     metadata = {"id": "doc-1583", "version": 1, "title": "", "tags": [], "shared_user_ids": []}
@@ -486,6 +486,11 @@ def _run_save_chunks(documents, page_text, vision_analysis, max_characters=10000
         stack.enter_context(patch.object(documents, "get_document_metadata", lambda **_: copy.deepcopy(metadata)))
         stack.enter_context(patch.object(documents, "generate_embedding", fake_generate_embedding))
         stack.enter_context(patch.object(documents, "get_embedding_safe_chunk_characters", lambda *a, **k: max_characters))
+        # React V2 refuses an oversized chunk for a non-legacy embedding profile instead of
+        # clamping it; the profile is supplied here rather than read from settings.
+        stack.enter_context(patch.object(
+            documents, "active_embedding_profile", lambda *a, **k: SimpleNamespace(legacy=legacy_embedding),
+        ))
         stack.enter_context(patch.object(documents, "_execute_document_search_write", fake_search_write))
         stack.enter_context(patch.object(documents, "add_file_task_to_file_processing_log", lambda **_: None))
         stack.enter_context(patch.object(documents, "log_event", lambda *a, **k: None))
@@ -536,6 +541,29 @@ def check_save_chunks_embeds_the_stored_text(documents):
     _require(len(embedded[0]) == 60 and embedded[0] == (long_text + block)[:60],
              "The last-resort guard must still clamp only the embedding input.")
     _require(uploaded[0]["chunk_text"] == long_text + block, "The stored chunk text must never be clamped.")
+
+    # React V2: a non-legacy embedding profile refuses an oversized chunk. Appending the vision
+    # block must not turn a page that fits into a refused one, so the embedding input is cut to
+    # the budget while the stored chunk keeps the full text.
+    _, embedded, uploaded = _run_save_chunks(
+        documents, "EXIT 12", VISION_ANALYSIS, max_characters=60, legacy_embedding=False,
+    )
+    _require(embedded == [("EXIT 12" + block)[:60]], "A page that fits must embed its clamped stored text.")
+    _require(uploaded[0]["chunk_text"] == "EXIT 12" + block, "The stored text must still carry the whole block.")
+
+    # An image whose only text is its description must never fail ingestion for a long description.
+    _, embedded, uploaded = _run_save_chunks(
+        documents, "", VISION_ANALYSIS, max_characters=60, legacy_embedding=False,
+    )
+    _require(embedded == [block.lstrip()[:60]], "A description-only chunk must embed its clamped description.")
+    _require(uploaded[0]["chunk_text"] == block.lstrip(), "The description-only chunk must store the whole block.")
+
+    refused = False
+    try:
+        _run_save_chunks(documents, long_text, VISION_ANALYSIS, max_characters=60, legacy_embedding=False)
+    except Exception as error:  # noqa: BLE001 - the V2 guard raises AIConnectionError.
+        refused = "too large" in str(error)
+    _require(refused, "An OCR page that is itself too large is still refused, as before.")
 
 
 def check_save_chunks_batch_matches_save_chunks(documents, content):
@@ -1025,15 +1053,20 @@ def check_metadata_extraction_client_is_unchanged(documents):
     no_api_version = build_model_endpoints()
     no_api_version[1]["connection"].pop("openai_api_version")
 
+    # React V2 looks the model up and re-checks its chat capability before resolving any Key
+    # Vault secret, so a missing or disabled model is refused without a secret lookup, and a
+    # disabled model is refused by the shared capability check.
+    from functions_ai_connections import AIConnectionError  # noqa: PLC0415 - offline bootstrap
+
     for label, settings, expected_type, expected_message, expects_key_vault in (
         ("missing endpoint", settings_with({"endpoint_id": "missing", "model_id": "luna-model"}),
          LookupError, "Selected metadata extraction endpoint could not be found.", False),
         ("disabled endpoint", settings_with(endpoints=disabled_endpoint),
          ValueError, "Selected metadata extraction endpoint is disabled.", False),
         ("missing model", settings_with({"endpoint_id": "global-endpoint", "model_id": "missing"}),
-         LookupError, "Selected metadata extraction model could not be found on the endpoint.", True),
+         LookupError, "Selected metadata extraction model could not be found on the endpoint.", False),
         ("disabled model", settings_with(endpoints=disabled_model),
-         ValueError, "Selected metadata extraction model is disabled.", True),
+         AIConnectionError, "The selected model is not available for chat. Choose a compatible model.", False),
         ("unsupported provider", settings_with(endpoints=unsupported),
          ValueError, "Selected metadata extraction provider 'bogus' is not supported.", True),
         ("incomplete endpoint", settings_with(endpoints=incomplete),

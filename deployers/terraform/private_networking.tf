@@ -19,6 +19,12 @@ variable "param_existing_virtual_network_id" {
   default     = ""
 }
 
+variable "param_enable_azure_monitor_private_link" {
+  description = "Opt in to private-only Application Insights and Log Analytics through AMPLS. Requires private networking and private DNS/routing for all monitoring clients."
+  type        = bool
+  default     = false
+}
+
 variable "param_existing_app_service_subnet_id" {
   description = "Optional existing subnet resource ID to use for App Service VNet integration."
   type        = string
@@ -50,7 +56,7 @@ variable "param_private_endpoint_subnet_prefixes" {
 }
 
 variable "param_private_dns_zone_configs" {
-  description = "Optional per-zone configuration for private DNS create or reuse behavior. Supported keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites."
+  description = "Optional per-zone configuration for private DNS create or reuse behavior, including videoIndexer and monitor/monitorOms/monitorOds/monitorAgent/monitorAdx."
   type = map(object({
     zone_resource_id = optional(string, "")
     create_vnet_link = optional(bool, true)
@@ -60,9 +66,9 @@ variable "param_private_dns_zone_configs" {
   validation {
     condition = length(setsubtract(
       toset(keys(var.param_private_dns_zone_configs)),
-      toset(["keyVault", "cosmosDb", "containerRegistry", "aiSearch", "blobStorage", "cognitiveServices", "openAi", "webSites"])
+      toset(["keyVault", "cosmosDb", "containerRegistry", "aiSearch", "blobStorage", "cognitiveServices", "openAi", "webSites", "videoIndexer", "monitor", "monitorOms", "monitorOds", "monitorAgent", "monitorAdx"])
     )) == 0
-    error_message = "param_private_dns_zone_configs only supports these keys: keyVault, cosmosDb, containerRegistry, aiSearch, blobStorage, cognitiveServices, openAi, webSites."
+    error_message = "Unsupported private DNS key. Use a core service key, videoIndexer, monitor, monitorOms, monitorOds, monitorAgent, or monitorAdx."
   }
 }
 
@@ -71,13 +77,13 @@ locals {
   resolved_existing_virtual_network_id = var.param_existing_virtual_network_id != "" ? var.param_existing_virtual_network_id : local.inferred_virtual_network_id
   use_existing_private_network         = var.param_enable_private_networking && (local.resolved_existing_virtual_network_id != "" || var.param_existing_app_service_subnet_id != "" || var.param_existing_private_endpoint_subnet_id != "")
 
-  private_dns_zone_names = var.global_which_azure_platform == "AzureUSGovernment" ? {
+  private_dns_zone_names = merge(var.global_which_azure_platform == "AzureUSGovernment" ? {
     aiSearch          = "privatelink.search.azure.us"
     blobStorage       = "privatelink.blob.core.usgovcloudapi.net"
     cognitiveServices = "privatelink.cognitiveservices.azure.us"
     containerRegistry = "privatelink.azurecr.us"
     cosmosDb          = "privatelink.documents.azure.us"
-    keyVault          = "privatelink.vaultcore.azure.us"
+    keyVault          = "privatelink.vaultcore.usgovcloudapi.net"
     openAi            = "privatelink.openai.azure.us"
     webSites          = "privatelink.azurewebsites.us"
     } : {
@@ -89,7 +95,9 @@ locals {
     keyVault          = "privatelink.vaultcore.azure.net"
     openAi            = "privatelink.openai.azure.com"
     webSites          = "privatelink.azurewebsites.net"
-  }
+    }, var.param_deploy_video_indexer_service && local.video_indexer_supports_private_endpoints && var.global_which_azure_platform != "AzureUSGovernment" ? {
+    videoIndexer = "privatelink.api.videoindexer.ai"
+  } : {})
 
   private_dns_zone_link_suffixes = {
     aiSearch          = "searchService"
@@ -107,7 +115,7 @@ locals {
       name             = zone_name
       zone_resource_id = try(var.param_private_dns_zone_configs[zone_key].zone_resource_id, "")
       create_vnet_link = try(var.param_private_dns_zone_configs[zone_key].create_vnet_link, true)
-      link_name        = lower("${var.param_base_name}-${var.param_environment}-${local.private_dns_zone_link_suffixes[zone_key]}-pe-dnszonelink")
+      link_name        = lower("${var.param_base_name}-${var.param_environment}-${lookup(local.private_dns_zone_link_suffixes, zone_key, zone_key)}-pe-dnszonelink")
     }
   }
 }
@@ -118,6 +126,11 @@ resource "terraform_data" "private_networking_validation" {
   }
 
   lifecycle {
+    precondition {
+      condition     = !var.param_enable_azure_monitor_private_link || var.param_enable_private_networking
+      error_message = "param_enable_azure_monitor_private_link requires param_enable_private_networking=true."
+    }
+
     precondition {
       condition     = !var.param_enable_private_networking || !local.use_existing_private_network || (var.param_existing_app_service_subnet_id != "" && var.param_existing_private_endpoint_subnet_id != "")
       error_message = "When reusing an existing virtual network for private networking, both param_existing_app_service_subnet_id and param_existing_private_endpoint_subnet_id must be provided."
@@ -283,12 +296,12 @@ locals {
         dns_zone_key = "openAi"
       }
     } : {},
-    var.param_deploy_video_indexer_service && local.video_indexer_supports_private_endpoints ? {
+    var.param_deploy_video_indexer_service && local.video_indexer_supports_private_endpoints && var.global_which_azure_platform != "AzureUSGovernment" ? {
       videoIndexer = {
         name         = "videoindexer"
         resource_id  = azapi_resource.video_indexer[0].id
         subresource  = "account"
-        dns_zone_key = "cognitiveServices"
+        dns_zone_key = "videoIndexer"
       }
     } : {}
   ) : {}
@@ -324,6 +337,32 @@ resource "azurerm_private_endpoint" "service" {
 output "virtual_network_id" {
   description = "The virtual network ID used for private networking, if enabled."
   value       = local.resolved_virtual_network_id
+}
+
+resource "azurerm_resource_group_template_deployment" "azure_monitor_private_networking" {
+  count               = var.param_enable_azure_monitor_private_link ? 1 : 0
+  name                = "azureMonitorPrivateNetworking"
+  resource_group_name = azurerm_resource_group.rg.name
+  deployment_mode     = "Incremental"
+  template_content    = file("${path.module}/../bicep/modules/azureMonitorPrivateNetworking.json")
+  parameters_content = jsonencode({
+    location                = { value = azurerm_resource_group.rg.location }
+    appName                 = { value = var.param_base_name }
+    environment             = { value = var.param_environment }
+    tags                    = { value = local.common_tags }
+    virtualNetworkId        = { value = local.resolved_virtual_network_id }
+    privateEndpointSubnetId = { value = local.resolved_private_endpoint_subnet_id != null ? local.resolved_private_endpoint_subnet_id : "" }
+    blobStorageDnsZoneId    = { value = try(local.private_dns_zone_ids["blobStorage"], "") }
+    monitoringResourceIds   = { value = [azurerm_log_analytics_workspace.la.id, azurerm_application_insights.ai.id] }
+    privateDnsZoneConfigs = {
+      value = { for key, config in var.param_private_dns_zone_configs : key => {
+        zoneResourceId = config.zone_resource_id
+        createVNetLink = config.create_vnet_link
+      } }
+    }
+  })
+
+  depends_on = [terraform_data.private_networking_validation, azapi_resource.private_dns_zone_link]
 }
 
 output "app_service_subnet_id" {

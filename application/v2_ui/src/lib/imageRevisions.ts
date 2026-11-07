@@ -1,0 +1,503 @@
+// imageRevisions.ts
+// Reads and writes the version history of one generated image.
+//
+// The image counterpart of `blockRevisions.ts`, and deliberately much smaller. A diagram is a
+// fenced block inside a message and has no identity, so its history is addressed by position
+// among blocks of the same kind plus a fingerprint of its original source, with every failure
+// mode that implies. **An image is its own message**, so it is addressed by message id and none
+// of that machinery is needed.
+//
+// The other difference worth knowing: a diagram revision is substituted at render time, leaving
+// the message's stored content alone. An image revision changes the content, because that
+// content *is* a URL and an edited image is served from a different one. The server returns the
+// new URL with the revision id in it, which is what stops the browser showing the copy it
+// already has.
+
+import { useCallback, useMemo, useState } from 'react';
+import { useChatStore } from '../stores/chatStore';
+import type { ConversationKind } from '../stores/chatStore';
+import { useBootstrapStore } from '../stores/bootstrapStore';
+import { ASSIST_INSTRUCTION_LIMITS } from './assistLimits';
+import { imageThreadKey, type AssistSendRequest, type AssistSendResult } from './assistThread';
+import type {
+    ImageRevision,
+    ImageRevisionChatTurn,
+    ImageRevisionEntry,
+    ImageRevisionOrigin,
+    ImageRevisionOperation,
+} from './endpoints';
+import type { ImageEditCapability } from './types';
+
+export type { ImageRevision, ImageRevisionChatTurn, ImageRevisionOrigin, ImageRevisionOperation } from './endpoints';
+export type { ImageEditCapability } from './types';
+
+/**
+ * Longest instruction the server accepts. Matches MAX_INSTRUCTION_LENGTH.
+ *
+ * Longer text is refused with a counter, never cut short: a truncated instruction asks the model
+ * for something the reader did not write, and an image edit costs a wait to find that out.
+ */
+export const MAX_IMAGE_INSTRUCTION_LENGTH = ASSIST_INSTRUCTION_LIMITS.image;
+
+/** What the Ask tab's thread shows after an image edit worked. */
+export const IMAGE_ASSIST_REPLY = 'Created a new version.';
+
+/** Longest prompt the server stores. Matches MAX_PROMPT_LENGTH. */
+export const MAX_IMAGE_PROMPT_LENGTH = 4000;
+
+/** Friendly labels only; the server profile decides which sizes are offered. */
+export const IMAGE_SIZE_LABELS: Record<string, string> = {
+    '1024x1024': 'Square',
+    '1536x1024': 'Landscape',
+    '1024x1536': 'Portrait',
+    '1024x768': 'Landscape',
+    '768x1024': 'Portrait',
+};
+
+/** How a version came about, in words a reader recognises. */
+export const IMAGE_ORIGIN_LABELS: Record<string, string> = {
+    original: 'As generated',
+    ai: 'AI edit',
+    prompt: 'Prompt rewritten',
+    control: 'Rendering change',
+};
+
+function text(value: unknown): string {
+    return typeof value === 'string' ? value.trim() : '';
+}
+
+function options(value: unknown): string[] {
+    return Array.isArray(value) ? [...new Set(value.map(text).filter(Boolean))] : [];
+}
+
+/** Missing or inconsistent capabilities must never become permission to run inference. */
+export function toImageEditCapability(value: unknown): ImageEditCapability {
+    const source = value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : {};
+    const editing = source.editing === true;
+    const masking = source.masking === true;
+    const mode = (
+        source.mode === 'masked' && editing && masking
+        || source.mode === 'edit' && editing && !masking
+        || source.mode === 'regenerate' && !editing && !masking
+    ) && typeof source.editing === 'boolean' && typeof source.masking === 'boolean'
+        ? source.mode as ImageEditCapability['mode']
+        : 'unavailable';
+    const availability = source.availability === 'documented' || source.availability === 'unavailable'
+        ? source.availability
+        : 'unknown';
+    const enabled = source.enabled === true && mode !== 'unavailable' && availability !== 'unavailable';
+    const maxReferenceImages = typeof source.max_reference_images === 'number'
+        && Number.isFinite(source.max_reference_images) && source.max_reference_images > 0
+        ? Math.max(1, Math.floor(source.max_reference_images))
+        : 1;
+    return {
+        enabled,
+        mode: enabled ? mode : 'unavailable',
+        model_name: text(source.model_name),
+        reason: text(source.reason) || (enabled
+            ? ''
+            : 'Image generation and editing are unavailable. Ask an administrator to review the image model.'),
+        provider_label: text(source.provider_label),
+        cloud_label: text(source.cloud_label),
+        availability,
+        availability_reason: text(source.availability_reason),
+        editing: enabled && editing,
+        masking: enabled && masking,
+        sizes: options(source.sizes),
+        qualities: options(source.qualities),
+        backgrounds: options(source.backgrounds),
+        max_reference_images: enabled && editing ? maxReferenceImages : 0,
+        input_fidelity: enabled && editing && source.input_fidelity === true,
+    };
+}
+
+/** Read only safe, authoritative operation metadata, never model-name or hosting-cloud guesses. */
+export function useImageEditCapability(): ImageEditCapability {
+    const capability = useBootstrapStore((state) => state.data?.capabilities?.image_edit);
+    return useMemo(() => toImageEditCapability(capability), [capability]);
+}
+
+export interface ImageRenderingOptions {
+    size?: string;
+    quality?: string;
+    background?: string;
+}
+
+export interface ImageRevisionChange extends ImageRenderingOptions {
+    origin?: ImageRevisionOrigin;
+    operation?: ImageRevisionOperation;
+    instruction?: string;
+    prompt?: string;
+    mask?: string;
+    maskRegions?: number;
+}
+
+/** Drop local option selections that no longer belong to the selected profile. */
+export function imageOptionsForCapability(
+    capability: ImageEditCapability,
+    selected: ImageRenderingOptions,
+): ImageRenderingOptions {
+    return {
+        ...(selected.size && capability.sizes.includes(selected.size) ? { size: selected.size } : {}),
+        ...(selected.quality && capability.qualities.includes(selected.quality) ? { quality: selected.quality } : {}),
+        ...(selected.background && capability.backgrounds.includes(selected.background) ? { background: selected.background } : {}),
+    };
+}
+
+export function imageRevisionOperation(
+    capability: ImageEditCapability,
+    request: ImageRevisionChange,
+): ImageRevisionOperation {
+    return request.operation ?? (
+        (request.origin ?? 'ai') === 'ai' && (capability.mode === 'masked' || capability.mode === 'edit')
+            ? 'edit'
+            : 'regenerate'
+    );
+}
+
+/** Recheck at submission too, so a refreshed bootstrap cannot leave a stale paid operation. */
+export function describeImageRevisionProblem(
+    capability: ImageEditCapability,
+    request: ImageRevisionChange,
+): string | null {
+    if (!capability.enabled || capability.mode === 'unavailable' || capability.availability === 'unavailable') {
+        return capability.reason || 'Image generation and editing are unavailable. You can still restore saved versions.';
+    }
+    const operation = imageRevisionOperation(capability, request);
+    if (operation !== 'edit' && operation !== 'regenerate') {
+        return 'The image operation is unavailable. Reopen the editor and choose a supported operation.';
+    }
+    if (operation === 'edit' && (!capability.editing
+        || (capability.mode !== 'masked' && capability.mode !== 'edit'))) {
+        return 'The selected image model cannot edit a source image. Use whole-image regeneration instead.';
+    }
+    if ((request.mask || request.maskRegions)
+        && (operation !== 'edit' || capability.mode !== 'masked' || !capability.masking)) {
+        return 'The selected operation cannot use a region mask. Clear the selection and review the image model.';
+    }
+    for (const [key, allowed] of [
+        ['size', capability.sizes],
+        ['quality', capability.qualities],
+        ['background', capability.backgrounds],
+    ] as const) {
+        const value = request[key];
+        if (value !== undefined && !allowed.includes(value)) {
+            return `The selected image model does not support that ${key}. Review the rendering controls and try again.`;
+        }
+    }
+    return null;
+}
+
+/** The revisions in a stored entry, ignoring anything that is not one. */
+function readRevisions(entry: ImageRevisionEntry | undefined): ImageRevision[] {
+    if (!entry || !Array.isArray(entry.revisions)) {
+        return [];
+    }
+    return entry.revisions.filter(
+        (revision): revision is ImageRevision => Boolean(revision) && typeof revision?.id === 'string',
+    );
+}
+
+/** Where `current` points, clamped into the revisions that actually exist. */
+function readCurrentIndex(entry: ImageRevisionEntry | undefined, total: number): number {
+    const current = entry?.current;
+    if (typeof current !== 'number' || !Number.isInteger(current) || total === 0) {
+        return 0;
+    }
+    return Math.min(Math.max(current, 0), total - 1);
+}
+
+/** Whether an instruction is something the server will accept, and why not when it is not. */
+export function describeInstructionProblem(instruction: string): string | null {
+    const candidate = String(instruction ?? '').trim();
+    if (!candidate) {
+        return 'Describe the change you want.';
+    }
+    if (candidate.length > MAX_IMAGE_INSTRUCTION_LENGTH) {
+        return `That is too long by ${
+            candidate.length - MAX_IMAGE_INSTRUCTION_LENGTH
+        } characters. Try describing one change at a time.`;
+    }
+    return null;
+}
+
+/** Whether a prompt is something the server will accept, and why not when it is not. */
+export function describePromptProblem(prompt: string): string | null {
+    const candidate = String(prompt ?? '').trim();
+    if (!candidate) {
+        return 'The prompt cannot be empty.';
+    }
+    if (candidate.length > MAX_IMAGE_PROMPT_LENGTH) {
+        return `The prompt is too long by ${candidate.length - MAX_IMAGE_PROMPT_LENGTH} characters.`;
+    }
+    return null;
+}
+
+export interface ImageRevisionState {
+    /** Every stored version, oldest first, with the original at index zero. */
+    revisions: ImageRevision[];
+    /** Which of them is showing. */
+    currentIndex: number;
+    /** The version currently showing, or null when the image has never been changed. */
+    current: ImageRevision | null;
+    /** The version before the one showing, which is what a compare control reveals. */
+    previous: ImageRevision | null;
+    /** The image's own sub-conversation. */
+    chat: ImageRevisionChatTurn[];
+    /** Whether anything other than the original is showing. */
+    isEdited: boolean;
+    /** Whether this image has any stored history at all. */
+    hasHistory: boolean;
+    /** Whether a change can be kept. False while a reply is still streaming. */
+    canPersist: boolean;
+    /** True while a request is in flight, so the editor can disable itself. */
+    busy: boolean;
+    error: string | null;
+    clearError: () => void;
+    /** The prompt describing the version showing, which the Prompt tab edits. */
+    prompt: string;
+    /** Change the image from the Prompt or Controls tab. A failure is set as `error`. */
+    revise: (request: ImageRevisionChange) => Promise<boolean>;
+    /**
+     * Ask the model to change the image from the Ask tab's thread, which shows the outcome
+     * itself, so a failure is returned rather than set as `error`.
+     */
+    ask: (request: AssistSendRequest, change: ImageRevisionChange) => Promise<AssistSendResult>;
+    /** The Ask tab's thread, or null while nothing can be kept. */
+    threadKey: string | null;
+    /** The conversation an edit would be written to. */
+    conversationId: string | null;
+    /** Show one of the stored versions. Nothing is discarded. */
+    restore: (revisionId: string) => Promise<boolean>;
+    /** The URL of one stored version, for the history thumbnails. */
+    revisionUrl: (revisionId: string) => string;
+}
+
+/**
+ * The version history of one image message, and the operations on it.
+ *
+ * `fallbackPrompt` is the prompt stored on the message itself, used before any version has been
+ * recorded — an image nobody has edited has no revision to read a prompt from, but the Prompt
+ * tab should still show what produced it.
+ */
+export function useImageRevisions(
+    messageId: string | undefined,
+    fallbackPrompt = '',
+    imageEndpoint = '',
+): ImageRevisionState {
+    const canPersist = Boolean(messageId);
+
+    // Selecting the raw metadata rather than a derived object keeps the subscription stable:
+    // zustand compares by reference, and building a new object inside the selector would
+    // re-render on any store change.
+    const storedMetadata = useChatStore((state) =>
+        messageId
+            ? state.messages.find((message) => message.id === messageId)?.metadata
+            : undefined,
+    );
+
+    const entry = useMemo<ImageRevisionEntry | undefined>(() => {
+        if (!storedMetadata || typeof storedMetadata !== 'object') {
+            return undefined;
+        }
+        const stored = (storedMetadata as Record<string, unknown>).image_revisions;
+        return stored && typeof stored === 'object' ? (stored as ImageRevisionEntry) : undefined;
+    }, [storedMetadata]);
+
+    const revisions = useMemo(() => readRevisions(entry), [entry]);
+    const currentIndex = readCurrentIndex(entry, revisions.length);
+    const chat = useMemo(() => (Array.isArray(entry?.chat) ? entry.chat : []), [entry]);
+
+    const current = revisions.length > 0 ? revisions[currentIndex] ?? null : null;
+    const previous = currentIndex > 0 ? revisions[currentIndex - 1] ?? null : null;
+
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+
+    const reviseImage = useChatStore((state) => state.reviseImage);
+    const restoreImageRevision = useChatStore((state) => state.restoreImageRevision);
+
+    /**
+     * Run one operation, holding the busy flag and surfacing whatever went wrong.
+     *
+     * The conversation and its *kind* are captured when the call is made rather than read
+     * inside it. A reader can switch threads while a generation is in flight -- these take
+     * seconds, not milliseconds -- and the edit belongs to the conversation it was started in.
+     * The kind decides which endpoint is used, so reading it later could send a shared
+     * conversation's edit to the personal route.
+     */
+    const run = useCallback(
+        async (
+            operation: (
+                conversationId: string,
+                conversationKind: ConversationKind | null,
+            ) => Promise<string | null>,
+        ) => {
+            if (!canPersist) {
+                return false;
+            }
+            const { activeConversationId, activeConversationKind } = useChatStore.getState();
+            const conversationId = activeConversationId ?? '';
+            if (!conversationId) {
+                return false;
+            }
+
+            setBusy(true);
+            setError(null);
+            try {
+                const failure = await operation(conversationId, activeConversationKind);
+                if (failure) {
+                    setError(failure);
+                    return false;
+                }
+                return true;
+            } finally {
+                setBusy(false);
+            }
+        },
+        [canPersist],
+    );
+
+    const revise = useCallback(
+        (request: ImageRevisionChange) => {
+            const capability = toImageEditCapability(useBootstrapStore.getState().data?.capabilities?.image_edit);
+            const origin = request.origin ?? 'ai';
+            const problem = describeImageRevisionProblem(capability, request) || (
+                origin === 'ai'
+                    ? describeInstructionProblem(request.instruction ?? '')
+                    : origin === 'prompt'
+                      ? describePromptProblem(request.prompt ?? '')
+                      : null);
+            if (problem) {
+                setError(problem);
+                return Promise.resolve(false);
+            }
+
+            return run(async (conversationId, conversationKind) => {
+                const outcome = await reviseImage({
+                    messageId: messageId as string,
+                    conversationId,
+                    conversationKind,
+                    origin,
+                    operation: imageRevisionOperation(capability, request),
+                    instruction: (request.instruction ?? '').trim(),
+                    prompt: (request.prompt ?? '').trim().slice(0, MAX_IMAGE_PROMPT_LENGTH),
+                    mask: request.mask,
+                    maskRegions: request.maskRegions,
+                    size: request.size,
+                    quality: request.quality,
+                    background: request.background,
+                    expectedRevisionCount: revisions.length || undefined,
+                    expectedCurrentRevisionId: current?.id,
+                });
+                return outcome.error;
+            });
+        },
+        [current?.id, messageId, revisions.length, reviseImage, run],
+    );
+
+    const restore = useCallback(
+        (revisionId: string) =>
+            run((conversationId, conversationKind) =>
+                restoreImageRevision({
+                    messageId: messageId as string,
+                    conversationId,
+                    conversationKind,
+                    revisionId,
+                }),
+            ),
+        [messageId, restoreImageRevision, run],
+    );
+
+    // Each version is addressed by its own id, which is what lets the history show several of
+    // them at once: they would otherwise all resolve to the same URL and therefore to the same
+    // cached image.
+    const revisionUrl = useCallback(
+        (revisionId: string) => {
+            if (!imageEndpoint || !revisionId) {
+                return imageEndpoint;
+            }
+            const separator = imageEndpoint.includes('?') ? '&' : '?';
+            return `${imageEndpoint}${separator}rev=${encodeURIComponent(revisionId)}`;
+        },
+        [imageEndpoint],
+    );
+
+    const ask = useCallback(
+        async (request: AssistSendRequest, change: ImageRevisionChange): Promise<AssistSendResult> => {
+            const capability = toImageEditCapability(useBootstrapStore.getState().data?.capabilities?.image_edit);
+            const asked: ImageRevisionChange = { ...change, origin: 'ai', instruction: request.text };
+            const problem = describeImageRevisionProblem(capability, asked)
+                || describeInstructionProblem(request.text);
+            if (problem) {
+                return { ok: false, error: problem };
+            }
+            const { activeConversationId, activeConversationKind } = useChatStore.getState();
+            if (!canPersist || !activeConversationId) {
+                return { ok: false, error: 'This image cannot be changed until the reply has finished.' };
+            }
+
+            setBusy(true);
+            setError(null);
+            try {
+                const outcome = await reviseImage({
+                    messageId: messageId as string,
+                    conversationId: activeConversationId,
+                    conversationKind: activeConversationKind,
+                    origin: 'ai',
+                    operation: imageRevisionOperation(capability, asked),
+                    instruction: request.text.trim(),
+                    mask: change.mask,
+                    maskRegions: change.maskRegions,
+                    size: change.size,
+                    quality: change.quality,
+                    background: change.background,
+                    expectedRevisionCount: revisions.length || undefined,
+                    expectedCurrentRevisionId: current?.id,
+                    submissionId: request.submissionId,
+                    signal: request.signal,
+                    earlierSubmissionIds: request.earlierSubmissionIds,
+                    revisionUrl,
+                });
+                if (outcome.aborted) {
+                    return { ok: false, error: '', aborted: true };
+                }
+                if (outcome.earlierApplied) {
+                    return { ok: false, error: '', earlierApplied: true };
+                }
+                return outcome.error
+                    ? { ok: false, error: outcome.error }
+                    : { ok: true, reply: IMAGE_ASSIST_REPLY };
+            } finally {
+                setBusy(false);
+            }
+        },
+        [canPersist, current?.id, messageId, revisionUrl, revisions.length, reviseImage],
+    );
+
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const conversationId = canPersist ? activeConversationId : null;
+
+    return {
+        revisions,
+        currentIndex,
+        current,
+        previous,
+        chat,
+        isEdited: revisions.length > 0 && currentIndex > 0,
+        hasHistory: revisions.length > 1,
+        canPersist,
+        busy,
+        error,
+        clearError: useCallback(() => setError(null), []),
+        prompt: current?.prompt || fallbackPrompt,
+        revise,
+        ask,
+        threadKey: conversationId ? imageThreadKey(conversationId, messageId as string) : null,
+        conversationId,
+        restore,
+        revisionUrl,
+    };
+}

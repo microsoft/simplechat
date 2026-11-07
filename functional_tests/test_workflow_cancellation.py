@@ -1,8 +1,9 @@
 # test_workflow_cancellation.py
 """
 Functional test for active workflow cancellation.
-Version: 0.261.029
+Version: 0.261.305
 Implemented in: 0.250.062
+Deletion/runtime conflict responses implemented in: 0.261.305
 
 This test ensures personal and group workflow cancellation requests persist by
 scope and run id, stop the runner at a cooperative boundary, mark unfinished
@@ -27,6 +28,7 @@ from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
 from m365_interaction import M365SignInRequired
 RUNNER_FILE = APP_ROOT / "functions_workflow_runner.py"
 ROUTES_FILE = APP_ROOT / "route_backend_workflows.py"
+RUNTIME_STORE_FILE = APP_ROOT / "functions_workflow_runtime_store.py"
 BACKGROUND_TASKS_FILE = APP_ROOT / "background_tasks.py"
 CONFIG_FILE = APP_ROOT / "config.py"
 ACTIVITY_FILE = APP_ROOT / "functions_workflow_activity.py"
@@ -84,16 +86,21 @@ def _load_nodes(path, function_names=(), class_names=(), assignment_names=(), na
     return resolved_namespace
 
 
-def _load_cancellation_route_helpers():
+def _load_cancellation_route_helpers(namespace=None):
+    runtime_store = _load_nodes(RUNTIME_STORE_FILE, class_names=("WorkflowRuntimeConflict",))
     return _load_nodes(
         ROUTES_FILE,
         function_names=("_request_workflow_run_cancellation",),
         class_names=("WorkflowCancellationConflictError",),
+        assignment_names=("WORKFLOW_DELETE_PENDING_MESSAGE", "WORKFLOW_RUNTIME_MISSING_MESSAGE"),
         namespace={
             "datetime": datetime,
             "timezone": timezone,
             "M365_ACTIVE_STATES": M365_ACTIVE_STATES,
+            "WorkflowRuntimeConflict": runtime_store["WorkflowRuntimeConflict"],
             "_normalize_identifier": lambda value: str(value or "").strip(),
+            "_workflow_definition_response": lambda workflow: workflow,
+            **(namespace or {}),
         },
     )
 
@@ -267,6 +274,67 @@ def test_early_cancellation_is_saved_and_mismatched_runs_are_rejected():
         pass
     else:
         raise AssertionError("Expected a workflow run belonging to another workflow to be rejected.")
+
+
+def test_deleting_workflow_refuses_cancellation_with_retry_guidance():
+    """A workflow left mid-delete must explain that deleting again finishes cleanup."""
+    assert_app_version_at_least("0.261.305")
+    helpers = _load_cancellation_route_helpers()
+    request_cancellation = helpers["_request_workflow_run_cancellation"]
+    conflict_type = helpers["WorkflowCancellationConflictError"]
+
+    for workflow in (
+        {"id": "wf-1", "active_run_id": "run-1", "status": "deleting", "deleting": True},
+        {"id": "wf-1", "active_run_id": "run-1", "status": "Deleting"},
+    ):
+        try:
+            request_cancellation(
+                workflow,
+                run_id="run-1",
+                requested_by="user-1",
+                get_run=lambda run_id: (_ for _ in ()).throw(AssertionError("No run read expected.")),
+                save_run=lambda run_record: run_record,
+                update_runtime_fields=lambda updates: updates,
+            )
+        except conflict_type as exc:
+            assert exc.public_message == helpers["WORKFLOW_DELETE_PENDING_MESSAGE"]
+        else:
+            raise AssertionError("Expected cancellation of a deleting workflow to be refused.")
+
+
+def test_durable_runtime_conflicts_become_cancellation_conflicts():
+    """A tombstoned runtime control must return a 409 message instead of escaping as a 500."""
+    assert_app_version_at_least("0.261.305")
+    probe = _load_cancellation_route_helpers()
+    runtime_conflict = probe["WorkflowRuntimeConflict"]
+    workflow = {"id": "wf-1", "active_run_id": "run-1", "status": "running"}
+    durable_run = {"id": "run-1", "workflow_id": "wf-1", "status": "running", "durable_execution": True}
+
+    for conflict, expected_message in (
+        (runtime_conflict("not_found", "Workflow runtime control was deleted."), probe["WORKFLOW_RUNTIME_MISSING_MESSAGE"]),
+        (runtime_conflict("terminal", "Workflow run is already finished."), "Workflow run is already finished."),
+    ):
+        def cancel_durable_workflow_run(*args, _conflict=conflict, **kwargs):
+            raise _conflict
+
+        helpers = _load_cancellation_route_helpers({
+            "cancel_durable_workflow_run": cancel_durable_workflow_run,
+            "WorkflowRuntimeConflict": runtime_conflict,
+        })
+        try:
+            helpers["_request_workflow_run_cancellation"](
+                workflow,
+                run_id="run-1",
+                requested_by="user-1",
+                get_run=lambda run_id: dict(durable_run),
+                save_run=lambda run_record: run_record,
+                update_runtime_fields=lambda updates: updates,
+            )
+        except helpers["WorkflowCancellationConflictError"] as exc:
+            assert exc.public_message == expected_message
+            assert exc.__cause__ is conflict
+        else:
+            raise AssertionError("Expected a durable runtime conflict to become a cancellation conflict.")
 
 
 def test_runner_cancellation_helpers_cover_personal_and_group_items():

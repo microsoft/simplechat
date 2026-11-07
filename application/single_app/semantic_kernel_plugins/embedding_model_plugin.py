@@ -1,9 +1,11 @@
+# embedding_model_plugin.py
+"""Default shared embedding action, preserving explicitly configured action manifests."""
+
 from typing import Dict, Any, List
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
 import requests
-from flask import current_app
-from functions_settings import get_settings
+from functions_content import generate_embedding
 from semantic_kernel.functions import kernel_function
 
 class EmbeddingModelPlugin(BasePlugin):
@@ -17,13 +19,7 @@ class EmbeddingModelPlugin(BasePlugin):
             self.deployment = manifest.get('deployment')
             self.auth_type = manifest.get('auth', {}).get('type', 'key')
         else:
-            settings = get_settings()
             self.manifest = None
-            self.endpoint = settings.get('azure_openai_embedding_endpoint', None)
-            self.api_version = settings.get('azure_openai_embedding_api_version', None)
-            self.key = settings.get('azure_openai_embedding_key', None)
-            self.deployment = settings.get('embedding_model', {}).get('selected', [None])[0].get('deploymentName', None)
-            self.auth_type = settings.get('azure_openai_embedding_authentication_type', 'key')
 
     @property
     def display_name(self) -> str:
@@ -53,6 +49,9 @@ class EmbeddingModelPlugin(BasePlugin):
     @plugin_function_logger("EmbeddingModelPlugin")
     @kernel_function(description="Generate an embedding vector for the given text.")
     def embed(self, text: str) -> List[float]:
+        if self.manifest is None:
+            vector, _ = generate_embedding(text, purpose="text")
+            return vector
         if not self.endpoint or not self.key or not self.deployment:
             raise RuntimeError("Embedding model configuration is missing.")
         url = f"{self.endpoint}/openai/deployments/{self.deployment}/embeddings?api-version={self.api_version}"

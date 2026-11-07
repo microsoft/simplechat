@@ -2,7 +2,7 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.035
+Version: 0.261.126
 Implemented in: 0.261.035
 
 Exercises the real shared modal, local Bootstrap/assets, and admin/personal/group
@@ -17,6 +17,7 @@ import json
 import mimetypes
 import os
 from pathlib import Path
+import re
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -104,16 +105,23 @@ class EndpointApiFixture:
         self.saved_payloads = []
         self.discovered_models = []
         self.fetch_payloads = []
+        self.operation_tests = []
         self.page_errors = []
         self.console_errors = []
         self.nonlocal_requests = []
+        self.unhandled_api_requests = []
         self.fail_save = False
         self.expected_save_error = False
 
     def handle_api(self, route, path):
         prefix = "/api" if self.scope == "admin" else f"/api/{self.scope}"
         body = route.request.post_data_json or {}
-        if path == f"{prefix}/model-endpoints":
+        if path == "/api/models/catalog":
+            payload = {"profiles": [
+                {"id": "gpt-5", "displayName": "GPT-5", "summary": "Coding and reasoning."},
+                {"id": "custom:internal", "displayName": "Internal", "summary": "Administrator-declared text model."},
+            ]}
+        elif path == f"{prefix}/model-endpoints":
             if route.request.method == "POST":
                 self.saved_payloads.append(copy.deepcopy(body))
                 if self.fail_save:
@@ -134,7 +142,16 @@ class EndpointApiFixture:
         elif path == f"{prefix}/models/fetch":
             self.fetch_payloads.append(copy.deepcopy(body))
             payload = {"models": self.discovered_models}
+        elif self.scope == "admin" and path == "/api/models/vision-capability":
+            payload = {"models": {
+                model["deploymentName"]: {"supports_vision": False, "source": "heuristic"}
+                for model in body["models"]
+            }}
+        elif self.scope == "admin" and path == "/api/v2/admin/settings/test-connection":
+            self.operation_tests.append(copy.deepcopy(body))
+            payload = {"success": True, "dimensions": 1536}
         else:
+            self.unhandled_api_requests.append((route.request.method, path))
             route.fulfill(status=404, content_type="application/json", body="{}")
             return
         route.fulfill(content_type="application/json", body=json.dumps(payload))
@@ -142,7 +159,8 @@ class EndpointApiFixture:
 
 @pytest.fixture(params=("admin", "user", "group"))
 def capacity_ui(request, capacity_browser):
-    scope = request.param
+    options = request.param if isinstance(request.param, dict) else {"scope": request.param}
+    scope = options["scope"]
     api = EndpointApiFixture(scope)
     environment = Environment(
         loader=FileSystemLoader(APP_ROOT / "templates"),
@@ -151,6 +169,13 @@ def capacity_ui(request, capacity_browser):
     modal = environment.get_template("_multiendpoint_modal.html").render(
         model_endpoint_api_types=get_model_endpoint_provider_ui_options(),
     )
+    connection_templates = ""
+    if options.get("connection_templates"):
+        source = (APP_ROOT / "templates" / "admin" / "_panes" / "model-endpoints.html").read_text(encoding="utf-8")
+        for template_id in ("model-endpoint-embedding-template", "custom-model-endpoint-fields-template"):
+            match = re.search(rf'<template id="{template_id}">.*?</template>', source, re.DOTALL)
+            assert match is not None, f"The actual admin template {template_id} must exist."
+            connection_templates += environment.from_string(match.group()).render()
     module = "admin/admin_model_endpoints.js" if scope == "admin" else "workspace/workspace_model_endpoints.js"
     container_id = "group-multi-endpoint-configuration" if scope == "group" else "workspace-multi-endpoint-configuration"
     html = (
@@ -167,7 +192,7 @@ def capacity_ui(request, capacity_browser):
         '<button type="button" id="add-model-endpoint-btn">Add Endpoint</button>'
         '<div class="table-responsive"><table class="table">'
         '<tbody id="model-endpoints-tbody"></tbody></table></div></div></main>'
-        f'{modal}'
+        f'{connection_templates}{modal}'
         '<script src="/static/js/bootstrap/bootstrap.bundle.min.js"></script>'
         '<script src="/static/js/toast.js"></script>'
         f'<script type="module" src="/static/js/{module}"></script>'
@@ -218,7 +243,7 @@ def capacity_ui(request, capacity_browser):
                 and ("Error saving endpoint" in error or "status of 400" in error)
             )
         ]
-        assert not unexpected_errors
+        assert not unexpected_errors, (unexpected_errors, api.unhandled_api_requests)
 
 
 def _open_editor(page, api):
@@ -265,6 +290,20 @@ def _save(page, api):
         return json.loads(page.locator("#model_endpoints_json").input_value())[0]
     assert api.saved_payloads
     return api.saved_payloads[-1]["endpoints"][0]
+
+
+def test_catalog_profile_association_survives_scope_save(capacity_ui):
+    page, api = capacity_ui
+    original = copy.deepcopy(api.endpoints[0])
+    _open_editor(page, api)
+    picker = page.get_by_label("Catalog profile", exact=True)
+    picker.select_option("custom:internal")
+    saved = _save(page, api)
+    assert saved["models"][0]["catalogProfileId"] == "custom:internal"
+    assert saved["models"][0]["modelName"] == original["models"][0]["modelName"]
+    assert saved["models"][0]["capabilities"] == original["models"][0]["capabilities"]
+    _edit_saved_endpoint(page)
+    expect(page.get_by_label("Catalog profile", exact=True)).to_have_value("custom:internal")
 
 
 def test_capacity_save_clear_inheritance_and_metadata(capacity_ui):

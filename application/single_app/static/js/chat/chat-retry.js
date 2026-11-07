@@ -93,7 +93,8 @@ export async function handleRetryButtonClick(messageDiv, messageId, messageType)
     window.pendingMessageRetry = {
         messageDiv,
         messageId,
-        messageType
+        messageType,
+        submissionId: crypto.randomUUID()
     };
     
     // Populate retry modal with current model options
@@ -253,7 +254,7 @@ window.executeMessageRetry = function() {
     const isAgentMode = retryModeAgent && retryModeAgent.checked;
     
     // Prepare retry request body
-    const requestBody = {};
+    const requestBody = { submission_id: pendingRetry.submissionId };
     
     if (isAgentMode) {
         // Agent mode - get agent info
@@ -281,6 +282,7 @@ window.executeMessageRetry = function() {
             || selectedOption?.dataset?.deploymentName
             || (retryModelSelect ? retryModelSelect.value : null);
         requestBody.model = selectedModel;
+        requestBody.model_deployment = selectedModel;
         requestBody.model_id = selectedOption?.dataset?.modelId || null;
         requestBody.model_endpoint_id = selectedOption?.dataset?.endpointId || null;
         requestBody.model_provider = selectedOption?.dataset?.provider || null;

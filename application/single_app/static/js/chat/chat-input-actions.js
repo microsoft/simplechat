@@ -723,6 +723,7 @@ export async function uploadFileToConversation(file) {
     try {
       response = await fetch("/upload", {
         method: "POST",
+        headers: { Accept: "application/json" },
         body: formData,
       });
     } catch (error) {

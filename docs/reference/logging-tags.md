@@ -8,7 +8,205 @@ When adding or renaming a tag in `log_event`, `debug_print`, `print`, or `logger
 
 Last inventoried: 2026-08-10
 
+## Workflow authoring diagnostics
+
+Since **0.261.332**, `[WORKFLOW_ASSIST]` records request outcome and failure
+categories, the validation/execution stage, correction and model-call counts,
+and elapsed time. `turn_id_hash` correlates the submitted turn without exposing
+its identifier. Model usage uses numeric `input_count`, `output_count`, and
+`total_count`, not credential-sensitive token property names.
+
+`[WORKFLOW_DOCUMENT_SELECTION]` records validation/failure codes, candidate and
+match counts, window minutes, and elapsed time. `run_id_hash` and `step_id_hash`
+correlate runtime captures. An over-limit count is explicitly a lower bound;
+zero matches is distinct from an incomplete catalog or denied access.
+
+Since **0.261.333**, the existing `[WORKFLOW_DOCUMENT_ACTION]` tag also records
+runtime-choice success, refusal, invalid/incomplete decisions, and provider
+failures. Fields are action/failure codes, captured-input counts and
+`selection_model_call_count`; replayed decisions report zero new calls. Numeric
+selection-model usage is retained separately from processing usage in run
+results, not included as model response text in telemetry.
+
+These diagnostics do not emit prompts, replies, document text/names, tags, regex
+literals, or raw actor identifiers. Their categorical/count fields survive the
+Application Insights sanitization boundary with debug logging on or off.
+
+## Chat execution outcomes
+
+Since **0.261.341**, `[CHAT_EXECUTION]` records the semantic result of direct
+chat and orchestration separately from the HTTP/SSE transport status. Fields
+include `execution_path`, `status`, `outcome`, the application version when
+known, hashed conversation/turn/run/step identifiers, and safe root failure
+and capability codes. A cancelled stream is informational, not an error.
+Orchestration records an outcome only after its saved state is confirmed;
+replaying a cached response does not record another execution.
+
+## SQL connection diagnostics
+
+Since **0.261.351**, `[SQL_CONNECTION]` records connection-check and runtime
+connection failures at WARNING level, independently of debug logging. Application
+Insights must already be configured for these records to reach Azure.
+
+The shared classifier supplies `failure_code`, normalized `sql_engine`, and a
+known `error_type`. Valid provider evidence adds a five-character `sqlstate`
+and/or a bounded integer `sql_native_error`. Missing evidence is omitted, not
+invented. `operation` distinguishes `sql_connection_test`, `sql_query_connect`,
+and `sql_schema_connect`.
+
+The logging boundary preserves these as `sc_failure_code`, `sc_sql_engine`,
+`sc_error_type`, `sc_sqlstate`, `sc_sql_native_error`, and `sc_operation`.
+Use the existing request `OperationId` to correlate the warning; no raw
+identity/workspace identifiers, provider messages, credentials, connection
+strings, server/database names, or SQL are added to this event.
+
+For example, in a workspace-based Log Analytics resource:
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(30m)
+| where OperationId == "PASTE_REQUEST_OPERATION_ID"
+| where tostring(Properties.sc_message) startswith "[SQL_CONNECTION]"
+| project TimeGenerated, OperationId,
+    Operation=tostring(Properties.sc_operation),
+    Code=tostring(Properties.sc_failure_code),
+    Engine=tostring(Properties.sc_sql_engine),
+    ErrorType=tostring(Properties.sc_error_type),
+    SqlState=tostring(Properties.sc_sqlstate),
+    NativeError=toint(Properties.sc_sql_native_error)
+| order by TimeGenerated asc
+| take 100
+```
+
+An `InterfaceError` without structured evidence remains `sql_connection_failed`.
+SQLSTATE class `08` alone does not prove a firewall, TLS, or identity problem.
+See the [SQL action troubleshooting categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories).
+
+Since **0.261.372**, an invalid managed identity client-ID selector records
+`sql_configuration_rejected` at the configuration stage, before a connection
+attempt. Parameter-based managed identity connections report
+`sql_auth_mode=managed_identity` even if inactive SQL password fields remain.
+The selector itself is not included in the event.
+
+### Connection context and diagnostic references
+
+Since **0.261.356**, connection-check failures return
+`details.diagnostic_reference`, an opaque 32-character hexadecimal reference.
+The V2 connection feedback shows it beside the safe error. Runtime Query/Schema
+connection failures and the existing driver fallback also carry a server-side
+reference. No user, workspace, host, database, query, or credential is encoded
+in it.
+
+| Additional property (exported with `sc_`) | Meaning |
+| --- | --- |
+| `sql_diagnostic_reference` | Correlates one connection attempt chain, including fallback. |
+| `sql_operation` | Closed enum for connection test, query connection, or schema connection; existing `operation` is retained. |
+| `sql_connection_source` | `parameters`, `connection_string`, or `unknown`. |
+| `sql_auth_mode` | Effective `username_password`, `managed_identity`, `integrated`, `none`, or `unknown`. Complete strings stay unknown. |
+| `sql_auth_source` | `reusable_identity`, `inline`, or `unknown`; no identity identifier. |
+| `sql_stage` | `configuration`, `identity_resolution`, `driver_import`, `connect`, or the test's `probe`. |
+| `sql_driver_family`, `sql_driver_major` | Closed family enum; recognized SQL Server ODBC major `17`/`18`, otherwise unknown. |
+| `sql_driver_inventory` | `observed`, `unavailable` after enumeration failure, or `unknown`. |
+| `sql_driver_17_available`, `sql_driver_18_available` | Booleans only when a bounded driver inventory was observed. |
+| `sql_mi_endpoint_present`, `sql_mi_header_present` | App Service environment-variable presence for a managed-identity parameter connection, never the values. |
+| `sql_attempt_count`, `sql_fallback_count` | Bounded actual connection attempts (0-2) and existing fallback count (0-1). |
+| `sql_duration_ms` | Elapsed time through the recorded stage, capped at 24 hours. |
+
+Unknown or omitted context is not evidence of success or absence. An identity
+endpoint/header being present does not prove token acquisition. Driver
+enumeration does not test driver loading. A complete string's major is
+recognized only from an exact leading standard driver attribute; custom strings
+can legitimately remain unknown. Configuration/identity refusals occur before
+effective provider context has been resolved.
+
+To find the event from the UI reference, use the actual structured tag property
+rather than filtering the generic `Message` field:
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(1h)
+| where tostring(Properties.sc_message) startswith "[SQL_CONNECTION]"
+| where tostring(Properties.sc_sql_diagnostic_reference) == "PASTE_DIAGNOSTIC_REFERENCE"
+| project TimeGenerated, OperationId, Properties
+| order by TimeGenerated asc
+| take 20
+```
+
+First distinguish a setup/identity refusal from a driver import, connect, or
+probe failure. For managed identity, verify the effective mode/source, runtime
+environment presence, driver inventory, and any structured provider code.
+Compare the configured App Service principal with the database principal and
+grants through an authorized administrator; do not change permissions just
+because native code `18456` reports login rejection. Operator-account SQL
+access is not an application-runtime connection check. If the deployed build
+does not yet emit this context, a separately approved deployment and application
+connection test are needed before drawing a new root-cause conclusion.
+
+## Azure Files connector diagnostics
+
+Since **0.261.358**, `[FILE_SYNC] Azure Files operation failed.` records
+credential-free failures independently of debug logging. `sc_operation`
+distinguishes `azure_files_client`, `azure_files_test_connection`,
+`azure_files_browse`, `azure_files_list`, and `azure_files_download`.
+
+`sc_failure_code` is one of `azure_files_authentication_failed`,
+`azure_files_authorization_failed`, `azure_files_resource_not_found`,
+`azure_files_transport_failed`, `azure_files_sdk_unavailable`,
+`azure_files_configuration_failed`, or `azure_files_operation_failed`.
+`sc_error_type` is a bounded, known exception class or `Exception`; a valid
+HTTP status is retained as numeric `sc_status_code`.
+
+Classification uses structured status/error codes and exception types, never
+provider message matching. Unknown evidence stays unknown. In particular, an
+authorization category does not prove a specific missing role or network rule.
+No source/identity identifiers, endpoints, paths, credentials, signed URLs, raw
+provider messages, or provider tracebacks are added to this event. Existing
+request OperationId correlation requires no new identifier logging.
+
+Since **0.261.369**, `[FILE_SYNC] Azure Files inventory limit exceeded.` records
+`sc_operation=azure_files_list` and
+`sc_failure_code=azure_files_inventory_limit_exceeded` when the selected scope
+exceeds twice the per-run file limit. This application safety refusal has no
+provider HTTP status or exception type. It prevents partial inventory from
+triggering remote-delete reconciliation. Confirmed absent selections do not
+emit a provider error; unavailable roots and failed listings still do.
+
+```kusto
+AppTraces
+| where TimeGenerated > ago(30m)
+| where OperationId == "PASTE_REQUEST_OPERATION_ID"
+| where tostring(Properties.sc_message) == "[FILE_SYNC] Azure Files operation failed."
+| project TimeGenerated, OperationId,
+    Operation=tostring(Properties.sc_operation),
+    Failure=tostring(Properties.sc_failure_code),
+    ErrorType=tostring(Properties.sc_error_type),
+    Status=toint(Properties.sc_status_code)
+| order by TimeGenerated asc
+| take 100
+```
+
+## Request-resolution memory diagnostics
+
+Since **0.261.349**, `[ORCHESTRATION_PLANNER]` records
+`stage=request_resolution`, the relationship in `outcome`, memory `status`,
+`memory_context_included`, and `clarification_answer_count`. Hashed conversation
+and turn IDs correlate this decision without logging the request or answers.
+
+`[ORCHESTRATION] Loaded saved memory context.` records instruction/fact available
+and selected counts, unembedded/incompatible fact counts, recall mode in `reason`,
+and the hashed conversation ID. These counts expose selection pressure without
+logging memory values. A selected count below the available count does not alone
+prove a cap omission: relevance, empty values, and embedding compatibility also
+affect selection. Inclusion proves context delivery, not that the model used it.
+See the [request-memory resolution fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_REQUEST_MEMORY_RESOLUTION_FIX.md)
+for availability states and live-UI validation limits.
+
 ## Current tag inventory
+
+- `[EDITOR_ASSIST]`
+- `[WORKFLOW_ASSIST]`
+- `[WORKFLOW_DOCUMENT_SELECTION]`
+- `[PUBLIC_CHAT_SCOPE]`
 
 - `[ACTION_TEST]`
 - `[AGENT_DOCUMENT_CITATIONS]`
@@ -20,26 +218,31 @@ Last inventoried: 2026-08-10
 - `[GENERATED_FILE_APPROVALS]`
 - `[MIXED_SOURCE_ANALYZE]`
 - `[OFFICE_EMBEDDED_IMAGES]`
+- `[ONENOTE_INGESTION]`
 - `[RATE_LIMIT]`
 - `[TABULAR_MODEL_HTTP]`
 - `[WORKFLOW_ALERTS]`
 - `[YAMCS_PLUGIN]`
+- `[ACCESS_RESTRICTION]`
 - `[ACTIVITY_LOGGING]`
 - `[ADMIN_FEEDBACK]`
 - `[ADMIN_RELEASE_NOTIFICATIONS]`
 - `[AGENTS_CATALOG]`
 - `[AGENT_CATALOG]`
 - `[AGENT_CITATIONS]`
+- `[AGENT_DELEGATION]`
 - `[AGENT_INSTRUCTIONS]`
 - `[AGENT_LOGGING]`
 - `[AGENT_RESPONSE_CALLBACK]`
 - `[AGENT_STREAMING]`
 - `[AGENT_STREAMING_TOKENS]`
+- `[AI_CONNECTIONS]`
 - `[ANALYSIS_DELIVERABLE_CONTRACT]`
 - `[AKV_TEST]`
 - `[APPROVALS]`
 - `[APP_INSIGHTS]`
 - `[APP_MAINTENANCE]`
+- `[APP_UPDATES]`
 - `[ASC]`
 - `[ASSIGNED_KNOWLEDGE]`
 - `[ASSISTANT_FILE_EXPORT]`
@@ -54,6 +257,8 @@ Last inventoried: 2026-08-10
 - `[CHAT_API]`
 - `[CHAT_API_ERROR]`
 - `[CHAT_BOOTSTRAP_CACHE]`
+- `[CHAT_CONTENT_CHECKS]`
+- `[CHAT_EXECUTION]`
 - `[CHAT_DOCUMENT_ACTION]`
 - `[CHAT_DOCUMENT_ANALYSIS]`
 - `[CHAT_TABULAR_SK]`
@@ -62,6 +267,7 @@ Last inventoried: 2026-08-10
 - `[CHAT_UPLOAD_COLLABORATION_SHARING]`
 - `[CHAT_UPLOAD_WORKSPACE_CONTEXT]`
 - `[CITATION_EXTRACTION]`
+- `[CITATION]`
 - `[CI_AUTH]`
 - `[CLAIMS]`
 - `[COLLABORATION]`
@@ -73,12 +279,17 @@ Last inventoried: 2026-08-10
 - `[CONTENT_SAFETY_ERROR]`
 - `[CONTENT_SAFETY_ERROR_STREAMING]`
 - `[CONTENT_SAFETY_STREAMING]`
+- `[CONTENT_SCREENING]`
+- `[THOUGHTS]`
 - `[CONTROL_CENTER]`
+- `[CONTROL_CENTER_ACTION]`
 - `[CONTROL_CENTER_AUTO_REFRESH]`
 - `[CONVERSATION_CACHE]`
 - `[CONVERSATION_DELETE]`
 - `[CONVERSATION_FEED]`
 - `[CONVERSATION_FORK]`
+- `[CONVERSATION_GENERATED_DOCUMENTS]`
+- `[CONVERSATION_HANDOFF]`
 - `[CONVERSATION_METADATA]`
 - `[CONVERSATION_SEARCH]`
 - `[CONVERSATION_TASK_DOCUMENTS]`
@@ -123,18 +334,22 @@ Last inventoried: 2026-08-10
 - `[FACT_MEMORY_PLUGIN]`
 - `[FALLBACK_FAILURE]`
 - `[FEEDBACK_LIFECYCLE]`
+- `[FEEDBACK_REVIEW]`
 - `[FILE_PROCESSING_LOGS]`
 - `[FILE_SYNC]`
 - `[FOUNDRY_AGENT]`
 - `[FOUNDRY_WORKFLOW_AGENT]`
 - `[GENERATED_FILE_EXPORT]`
 - `[GET_FILE_CONTENT]`
+- `[GOVERNANCE_ADMIN]`
 - `[GPT_CLIENT]`
 - `[GROUP_ACTIVITY]`
+- `[GROUP_SETTINGS]`
 - `[GROUP_STATS]`
 - `[GROUP_WORKFLOW_STORE]`
 - `[HISTORY_CONTEXT]`
 - `[HISTORY_FALLBACK]`
+- `[IDENTITIES]`
 - `[IMAGE_CONTEXT]`
 - `[IMAGE_GENERATION]`
 - `[INBOUND_MCP]`
@@ -146,6 +361,7 @@ Last inventoried: 2026-08-10
 - `[LOGGED_PLUGIN_LOADER]`
 - `[LOGGING_AGENT_REQUEST]`
 - `[LOGGING_AGENT_RESPONSE]`
+- `[LOGGING_TIMERS]`
 - `[MAGENTIC_AGENT_RESPONSE_CALLBACK]`
 - `[MAGENTIC_STREAMING_AGENT_RESPONSE_CALLBACK]`
 - `[MASK]`
@@ -170,6 +386,15 @@ Last inventoried: 2026-08-10
 - `[NEW_FOUNDRY_AGENT]`
 - `[NOTIFICATIONS]`
 - `[OPEN_API_PLUGIN]`
+- `[ORCHESTRATION]`
+- `[ORCHESTRATION_ADAPTERS]`
+- `[ORCHESTRATION_CONTEXT]`
+- `[ORCHESTRATION_EXECUTOR]`
+- `[ORCHESTRATION_EXTERNAL_SOURCES]`
+- `[ORCHESTRATION_M365]`
+- `[ORCHESTRATION_PLANNER]`
+- `[ORCHESTRATION_REGISTRY]`
+- `[ORCHESTRATION_RUNS]`
 - `[ORCHESTRATOR_AGENT_EVENT]`
 - `[ORCHESTRATOR_EVENT]`
 - `[PLUGIN]`
@@ -187,7 +412,9 @@ Last inventoried: 2026-08-10
 - `[PROCESS_TABULAR]`
 - `[PROCESS_VISIO]`
 - `[PROFILE_FACT_MEMORY]`
+- `[PROMPT_KNOWLEDGE_FILL]`
 - `[PUBLIC_DOCUMENTS]`
+- `[PUBLIC_SETTINGS]`
 - `[PUBLIC_WORKSPACE_ACTIVITY]`
 - `[PUBLIC_WORKSPACE_STATS]`
 - `[RBEP]`
@@ -196,15 +423,19 @@ Last inventoried: 2026-08-10
 - `[REDIS_TEST]`
 - `[RESULT_REQUIRES_MESSAGE_RELOAD]`
 - `[RETENTION_POLICY]`
+- `[REVIEW_ASSIST]`
+- `[REVIEW_CENTER]`
 - `[ROCKSDB_PLUGIN]`
 - `[SAFETY_LIFECYCLE]`
 - `[SAFETY_REMEDIATION]`
 - `[SAFETY_VIOLATIONS]`
+- `[SAFETY_WARNINGS]`
 - `[SAVE_CHUNKS]`
 - `[SAVE_CHUNKS_BATCH]`
 - `[SEARCH_CACHE_DEBUG]`
 - `[SEARCH_SERVICE]`
 - `[SERVICE_HEALTH]`
+- `[SESSION_STORE]`
 - `[SHARED_CACHE]`
 - `[SIMPLE_CHAT]`
 - `[SIMPLE_CHAT_DEBUG_TRACE]`
@@ -219,6 +450,7 @@ Last inventoried: 2026-08-10
 - `[SORT]`
 - `[SOURCE_REVIEW]`
 - `[SPEECH]`
+- `[SQL_CONNECTION]`
 - `[SQL_ODBC]`
 - `[SQL_QUERY_PLUGIN]`
 - `[SQL_SCHEMA_PLUGIN]`
@@ -230,6 +462,7 @@ Last inventoried: 2026-08-10
 - `[STREAM_BACKGROUND]`
 - `[SUMMARY]`
 - `[SUPPORT_FEEDBACK]`
+- `[SUPPORT_LATEST_FEATURES]`
 - `[TABLEAU_PLUGIN]`
 - `[TABULAR_CHARTS]`
 - `[TABULAR_GENERATED_OUTPUT]`
@@ -257,6 +490,8 @@ Last inventoried: 2026-08-10
 - `[USER_SETTINGS_CACHE]`
 - `[XSD_GENERATION]`
 - `[XSD_INGESTION]`
+- `[V2_BOOTSTRAP]`
+- `[V2_SCOPE]`
 - `[VIDEO]`
 - `[VIDEO_CHUNK]`
 - `[VIDEO_INDEXER]`
@@ -278,3 +513,374 @@ Last inventoried: 2026-08-10
 - `[WORKSPACE_ACTIVITY]`
 - `[WORKSPACE_IDENTITY]`
 - `[WORKSPACE_ROUTE]`
+
+## Ask AI operation diagnostics
+
+Implemented in version: **0.261.332**, recorded in `application/single_app/config.py`.
+
+`[EDITOR_ASSIST] Ask AI diagnostic` covers agent and action editor turns;
+`[WORKFLOW_ASSIST] Ask AI diagnostic` covers personal workflow turns. The shared provider
+adapter uses the same surface-specific tag. **Enable Debug Logging** must be enabled for any of
+these new detailed records to reach the configured Application Insights logger or debug console.
+Existing assistant request summaries retain their previous behavior.
+
+The records use explicitly enumerated `assist_*` categories, bounded numeric measurements,
+boolean flags and `turn_id_hash`. The serializer preserves these safe categories instead of
+replacing them with string lengths. It does not allow arbitrary diagnostic text. No instruction,
+draft, response, credentials, raw identity IDs or provider exception message is recorded.
+
+See [Ask AI operation diagnostics](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ASK_AI_OPERATION_DIAGNOSTICS_FIX.md)
+for the event and dimension reference, bounded queries and reproduction procedure.
+
+## Orchestration failure diagnostics
+
+Implemented in version **0.261.140**, recorded in
+`application/single_app/config.py`. Step, file-render and content-preparation
+events were added in version **0.261.141**.
+
+The `[ORCHESTRATION_CONTEXT]`, `[ORCHESTRATION_PLANNER]`, `[ORCHESTRATION_RUNS]`, `[ORCHESTRATION]`,
+`[ORCHESTRATION_EXECUTOR]`, and `[ORCHESTRATION_ADAPTERS]` failure events distinguish
+planning validation, execution admission, step execution, saved-status projection, and
+scheduler recovery. Since **0.261.291**, `[ORCHESTRATION_EXTERNAL_SOURCES]` events name
+the check that refused a step's web, linked-page, deep research, agent, action or
+memory source. `[CONTENT_SCREENING]` events record why a source's current authority
+could not be verified. Their safe properties appear in Application
+Insights `customDimensions` or Log Analytics `AppTraces.Properties`.
+
+| Property | Meaning |
+| --- | --- |
+| `sc_conversation_id_hash`, `sc_turn_id_hash`, `sc_run_id_hash`, `sc_step_id_hash` | SHA-256 of the exact workflow identifier encoded as UTF-8. Only applicable identifiers are present; these hashes do not grant access to the underlying records. Step IDs repeat across runs, so narrow by the run hash before the step hash. |
+| `sc_stage` | The failing boundary, such as `plan_normalization`, `claim_validation`, `settings`, `context`, `identity`, `result_binding`, `model_binding`, `run_detail`, or `scheduler_item`. On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events, `external_source_preflight` (before or during the step's acquisition), `external_source_admission` (saving the step's result), or `external_source_read` (reading a saved result again). |
+| `sc_validation_code` | Validation category, including `deliverables_invalid`, `source_kind_invalid`, `source_binding_required`, `analysis_options_invalid`, or `selected_requirements_missing`. |
+| `sc_validation_rule` | Specific application-owned rejection, such as `invalid_quantity`, `non_file_format`, `answer_producer_mismatch`, `missing_final_response`, `file_format_mismatch`, `narrative_source_required`, or `document_sources_required`. |
+| `sc_response_failure` | A missing, incomplete, or refused planner completion, when applicable. |
+| `sc_attempt` | Planner proposal number: 1 for the initial proposal and 2 for its single shared correction. Since 0.261.413, also present on Analyze-option and selected-requirement correction/failure events. |
+| `sc_execution_code`, `sc_output_code` | Safe execution or output-store failure category, where available. |
+| `sc_failure_code` | On step and adapter events, a step failure category, such as `step_timeout`, `run_timeout`, or `context_unavailable`. On `[CONTENT_SCREENING]` events, the source-authority code, such as `source_authority_unverified`, `source_authority_unavailable`, or `screening_revision_conflict`. |
+| `sc_authority_reason` | Which check failed for a source. With `source_authority_unverified`, the check that could not verify the source's current authority: `document_record_invalid`, `screening_marker_invalid`, `screening_state_unknown`, `screening_marker_incomplete`, `document_scope_invalid`, `workspace_record_invalid`, `scan_record_invalid`, `provenance_mismatch`, `document_id_invalid`, `manifest_context_invalid`, `manifest_scope_missing`, `manifest_revision_invalid`, or `manifest_batch_invalid`. With `screening_revision_conflict`, what saved evidence no longer matches in the current document: `source_revision_changed` (the document was re-versioned), `screening_generation_changed` (it was re-screened or remediated), `source_scope_changed` (its id or workspace differs), `provenance_shape_invalid` (the saved provenance has a different set of fields), `screened_record_changed` (a saved copy of the screened record differs), `source_version_changed` (a legacy reference without provenance), or `cached_evidence_unproven` (cached evidence from before screening enrollment). On `[ORCHESTRATION_EXECUTOR]` step, saved-wait, finalization and content-preparation failure events (since 0.261.209), the stable code of a refused external source, such as `external_identity_session_unavailable` (the step ran in a background continuation with no signed-in session), `external_identity_role_required`, `external_identity_access_restricted`, `external_identity_conversation_unavailable`, `external_identity_settings_unavailable`, or `external_configuration_changed`. On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events (since 0.261.291), the same refusal code, such as `result_external_source_unavailable` or `result_external_capability_unavailable`, with the check that failed in `sc_reason`. |
+| `sc_reason` | On `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal events (since 0.261.291), the check that failed, when the refusal code covers more than one: `selected_agent_unavailable` or `selected_agent_ambiguous` (the agent picked for the run), `selection_not_in_catalog` or `selection_ambiguous` (the step's agent or action in the user's current catalog), `reference_not_in_catalog` or `reference_ambiguous` (a saved result's agent or action), `integration_not_mapping`, `integration_reference_mismatch` or `integration_origin_mismatch` (the resolved agent or action isn't the one selected), `integration_access_denied` (scope off, not the owner or a group member, or governance), `integration_not_found` (missing or disabled), `reference_binding_mismatch` or `reference_identity_changed` (a saved reference), `required_setting_off`, `capability_allowlist_invalid`, `capability_not_available`, or `url_access_not_permitted`. Other events use `sc_reason` for their own codes. |
+| `sc_capability_id` | The capability the step ran, such as `compose`, `render_file`, `generate_image`, or `document_compare`. |
+| `sc_output_format` | The file format of a render attempt, such as `csv`, `xlsx`, or `docx`. |
+| `sc_error_type`, `sc_response_type` | Exception class and, on runner admission/preparation failures, the record's Python type. |
+| `sc_durable_status` | The terminal status confirmed by execution preparation, if one was recorded. Absence is not proof that the run stopped. |
+
+These fields preserve categorical diagnostics, not raw exception text, model
+responses, prompts, document content, or user identity. Hash fields accept only
+64-character lowercase hexadecimal strings; diagnostic code fields accept bounded
+lowercase identifiers. Unrecognized strings are not retained as text.
+
+### Find a conversation's planning and execution failures
+
+Use the conversation ID from the chat URL. The query hashes it locally in KQL;
+there is no need to search for the prompt text or enable verbose debug logging.
+
+```kusto
+let conversationHash = hash_sha256("<conversation-id>");
+traces
+| where timestamp > ago(2h)
+| where tostring(customDimensions.sc_conversation_id_hash) == conversationHash
+| project timestamp,
+    message = tostring(customDimensions.sc_message),
+    stage = tostring(customDimensions.sc_stage),
+    validationCode = tostring(customDimensions.sc_validation_code),
+    rule = tostring(customDimensions.sc_validation_rule),
+    attempt = toint(customDimensions.sc_attempt),
+    executionCode = tostring(customDimensions.sc_execution_code),
+    outputCode = tostring(customDimensions.sc_output_code),
+    errorType = tostring(customDimensions.sc_error_type),
+    responseType = tostring(customDimensions.sc_response_type),
+    durableStatus = tostring(customDimensions.sc_durable_status)
+| order by timestamp asc
+| take 200
+```
+
+For an individual saved run in Log Analytics:
+
+```kusto
+let runHash = hash_sha256("<run-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_run_id_hash) == runHash
+| project TimeGenerated,
+    message = tostring(Properties.sc_message),
+    stage = tostring(Properties.sc_stage),
+    executionCode = tostring(Properties.sc_execution_code),
+    outputCode = tostring(Properties.sc_output_code),
+    errorType = tostring(Properties.sc_error_type),
+    durableStatus = tostring(Properties.sc_durable_status)
+| order by TimeGenerated asc
+| take 200
+```
+
+### Selected-document planning diagnostics
+
+Implemented in version **0.261.413**, tracked in
+`application/single_app/config.py`. The existing **Enable Debug Logging** setting
+gates these three events in both App Service console logs and Application Insights.
+They use the normal application logger after the debug gate; they do not enable
+third-party SDK payload logging. Normal correction and terminal failure events
+remain available with debug logging off.
+
+| Event message | Meaning |
+| --- | --- |
+| `[ORCHESTRATION_PLANNER] Planning diagnostic.` | Source-coverage summary, counts, model-binding fingerprint, and an owned rejection rule when applicable. |
+| `[ORCHESTRATION_PLANNER] Source binding diagnostic.` | One bounded, hashed source entry: selected, used, authorized when an explicit authorization set exists, server-resolved kind, availability, and limited-preview state. |
+| `[ORCHESTRATION_PLANNER] Step binding diagnostic.` | One bounded step entry: hashed step ID, known capability, enabled state, binding-field presence, and Analyze option shape/known-value flags. |
+
+Stages are `planner_input`, `plan_proposal` (before defaults), `analysis_defaults`,
+`plan_normalized`, and `plan_validated`. A rejected attempt also uses its actual
+boundary, such as `plan_normalization` or `selected_requirements`.
+
+| Property | Meaning |
+| --- | --- |
+| `sc_document_id_hash` | SHA-256 of a referenced source ID, never its raw ID or filename. |
+| `sc_planner_binding_hash` | Fingerprint of the selected deployment and available binding source/model/endpoint IDs, provider, and behavior name; never a URL, key, or client object. |
+| `sc_document_set_hash` | Fingerprint of the sorted effective document references for comparison between stages. |
+| `sc_selected_document_count`, `sc_used_document_count`, `sc_matched_document_count`, `sc_missing_document_count`, `sc_unselected_document_count` | Source-coverage counts from the canonical document-reference/effective-search helpers. |
+| `sc_authorization_scope_supplied`, `sc_authorized_document_count` | Whether an explicit authorization set was supplied and its size. An absent set is not reported as a verified denial. |
+| `sc_source_availability_known`, `sc_source_available` | Whether server availability metadata exists and whether it declares the source available; absence is not a verified missing file. |
+| `sc_required_capability_count`, `sc_missing_capability_count` | Positive-operation coverage, separate from document coverage. |
+| `sc_normalization_lost_document_count` | References present in the raw proposal but absent after normalization. Zero missing references at proposal time followed by loss here differs from a model omission. |
+| `sc_remaining_corrections` | Remaining shared proposal-correction allowance; never a new per-error budget. |
+| `sc_model_routing_auto`, `sc_planner_binding_provided` | Auto-routing selection and whether planning uses a resolved binding rather than the legacy client resolver. |
+| `sc_step_count`, `sc_omitted_step_count`, `sc_omitted_document_count` | Total steps and explicit diagnostic omissions. At most 32 source and 32 step detail events are emitted per snapshot; summaries still count all references. |
+| `sc_options_version_present`, `sc_options_version_v1`, `sc_options_version_v2`, `sc_options_mode_present`, `sc_options_mode_observations`, `sc_options_mode_records`, `sc_options_mode_legacy` | Presence/known-value flags, not arbitrary supplied option strings. |
+| `sc_required_field_count`, `sc_calculation_rules_present`, `sc_unknown_option_field_count` | Structural Analyze requirements without field names, rule bodies, or values. |
+
+`selected_requirements_missing` rules distinguish `selected_documents_missing`,
+`selected_capabilities_missing`, and `selected_documents_and_capabilities_missing`.
+Analyze rules include `options_object_required`, `unsupported_option_fields`,
+`unsupported_options_version`, `version_mode_mismatch`, `supported_mode_required`,
+`required_fields_invalid`, `calculation_rules_object_required`,
+`calculation_rules_conflict`, `calculation_rules_invalid`,
+`observation_requirements_conflict`, and `analysis_options_schema_invalid`.
+
+A picked document missing from both `plan_proposal` and `plan_normalized` indicates
+an omitted recognized binding in the proposal, not a normalization loss. These
+structural diagnostics do not establish extraction fidelity or prove that every
+source was read at execution. Do not log the raw prompt, model reply, source text,
+filenames, arbitrary option fields/values, settings, or credentials to investigate.
+
+```kusto
+let conversationHash = hash_sha256("<conversation-id>");
+traces
+| where timestamp > ago(2h)
+| where tostring(customDimensions.sc_conversation_id_hash) == conversationHash
+| where tostring(customDimensions.sc_message) startswith "[ORCHESTRATION_PLANNER]"
+| project timestamp,
+    event=tostring(customDimensions.sc_message),
+    stage=tostring(customDimensions.sc_stage),
+    attempt=toint(customDimensions.sc_attempt),
+    documentHash=tostring(customDimensions.sc_document_id_hash),
+    selected=customDimensions.sc_selected,
+    used=customDimensions.sc_used,
+    missing=toint(customDimensions.sc_missing_document_count),
+    normalizationLoss=toint(customDimensions.sc_normalization_lost_document_count),
+    rule=tostring(customDimensions.sc_validation_rule),
+    omittedDocuments=toint(customDimensions.sc_omitted_document_count)
+| order by timestamp asc
+| take 500
+```
+
+### Step, render and content-preparation events
+
+Since **0.261.141**, these events explain a slow or failed step without logging
+file names, file content, prompts, or model responses.
+
+| Event message | Severity | Properties |
+| --- | --- | --- |
+| `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` | Information when the file completed; otherwise Warning | `sc_status`, `sc_output_code`, `sc_output_format`, `sc_size_bytes`, the timing and check counts described below, and `sc_error_type`, `sc_error_cause_type`, and `sc_error_errno` when the attempt failed with an exception. |
+| `[ORCHESTRATION_EXECUTOR] A step finished after its time budget; its finished result was kept.` | Warning | `sc_failure_code` (`step_timeout` or `run_timeout`), `sc_elapsed_ms`, `sc_step_timeout_seconds`. |
+| `[ORCHESTRATION_EXECUTOR] Prepared content did not match its declared outputs; asking once more.` | Information | `sc_reason` (`compose_output_retry`), `sc_error_type`, and `sc_execution_code` when the mismatch has one. |
+| `[ORCHESTRATION_EXECUTOR] Content preparation could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, and `sc_authority_reason` when a retained source was refused. |
+| `[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.` | Warning; Information at `external_source_read` | Since **0.261.291**. `sc_stage`, `sc_authority_reason`, `sc_reason` (the check that failed), `sc_capability_id`, and the run, conversation and step hashes of the step that produced the source. Logged once per refusal, ahead of the step's failure event when there is one. Reads are Information because saved results are rechecked whenever they're opened. |
+| `[ORCHESTRATION] Retrying the answer model without a JSON response format.` | Information | `sc_reason` (`json_format_retry`), `sc_stage`, `sc_error_type`. Content preparation asks the endpoint for a JSON object; an endpoint that refuses that option is asked again without it. |
+| `[ORCHESTRATION_ADAPTERS] Native result bridge did not complete.` | Warning | `sc_stage`, `sc_failure_code`, `sc_execution_code`, such as `native_compute_source_identity_mismatch` when a saved spreadsheet location now points at a different revision. |
+| `[CONTENT_SCREENING] Current source authority could not be verified.` | Warning | `sc_failure_code`, `sc_authority_reason`, `sc_error_type`. |
+| `[ORCHESTRATION_M365] A Microsoft 365 step stopped.` | Warning | Since **0.261.238**. `sc_failure_code` (`m365_sign_in_required`, `m365_approval_required`, `m365_unavailable`, `m365_shared_conversation`, `m365_read_only` or `external_session_required`), `sc_authority_reason` (the Microsoft 365 refusal code, such as `interactive_auth_required`, `authentication_required`, `m365_action_not_authorized` or `m365_shared_conversation_unsupported`), `sc_capability_id`, and `sc_source_count`. Since **0.261.300**, a SharePoint or OneDrive step can also stop with `m365_model_limits_required`, with an authority reason such as `model_generation_unbounded` or `model_context_unavailable`, or `m365_evidence_unavailable`, with an authority reason such as `memory_unavailable`. |
+| `[MS_GRAPH_PLUGIN] Microsoft 365 operation could not complete.` | Warning | `sc_operation`. Since **0.261.238**, also `sc_failure_code`, the refusal code (for example `m365_context_required`), and `sc_resource`, the source (`email`, `calendar`, `onedrive` or `spo`). Earlier versions logged only the code's length, `sc_error_code_length`. |
+
+Every `[ORCHESTRATION_EXECUTOR]`, `[ORCHESTRATION_ADAPTERS]` and
+`[ORCHESTRATION_EXTERNAL_SOURCES]` event in this table carries `sc_run_id_hash`,
+`sc_conversation_id_hash`, and `sc_step_id_hash`; the executor and external-source
+events also carry `sc_capability_id`. The `[ORCHESTRATION]` and
+`[CONTENT_SCREENING]` events in this table have no workflow hashes, so match them by
+time to the step event that follows them.
+
+To find which check refused a step, read the step's failure event together with its
+refusal event:
+
+```kusto
+let runHash = hash_sha256("<run-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_run_id_hash) == runHash
+| extend message = tostring(Properties.sc_message)
+| where message contains "A dependency-bound step could not complete"
+    or message contains "A step's source was refused"
+| project TimeGenerated, message,
+    stepHash = tostring(Properties.sc_step_id_hash),
+    capability = tostring(Properties.sc_capability_id),
+    stage = tostring(Properties.sc_stage),
+    authorityReason = tostring(Properties.sc_authority_reason),
+    check = tostring(Properties.sc_reason),
+    failureCode = tostring(Properties.sc_failure_code)
+| order by TimeGenerated asc
+```
+
+A render attempt records how its time was spent:
+
+- `sc_render_ms`, `sc_verify_ms`, `sc_stage_ms`, and `sc_commit_ms` are the time
+  spent producing, verifying, staging, and committing the file. Only the phases the
+  attempt reached are present. `sc_total_ms` covers the whole attempt.
+- `sc_full_checks` counts full ownership, run, capability, and source-access checks.
+  `sc_light_checks` counts the calls in between, which do no I/O. A long render
+  shows roughly one full check every five seconds; a much higher ratio of full to
+  light checks means the renderer is spending its time re-authorizing.
+- `sc_source_rechecks` counts source rechecks performed for the renderer, and
+  `sc_paced_source_rechecks` counts the ones skipped because a recheck had just run.
+- `sc_stop_observed` is `true` when the step asked the attempt to stop, because of
+  a cancellation or a time limit, before the file was staged.
+- `sc_status` is the file's resulting state, such as `completed`, `failed`,
+  `retry_scheduled`, or `cancelled`, or `raised` when the attempt ended with an
+  exception. `sc_output_code` carries the output failure category when there is
+  one; a render stopped by the step time limit reports `failed` with
+  `output_step_time_limit`.
+- Since **0.261.233**, an attempt that failed with an exception also records
+  `sc_error_type`, the exception's class name; `sc_error_cause_type`, the class at
+  the end of its explicit cause chain when the error was wrapped; and
+  `sc_error_errno`, the first operating-system error number in that chain. Messages,
+  paths, and identifiers are never recorded. These fields separate causes that share
+  an output code: an access refusal, such as losing access to the file's
+  conversation, and a local file-system `PermissionError` both report
+  `output_access_denied`, but only the file-system error carries `sc_error_errno`
+  (`13` for permission denied).
+
+To see where a run's file rendering spent its time:
+
+```kusto
+let runHash = hash_sha256("<run-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_run_id_hash) == runHash
+| where tostring(Properties.sc_message) contains "A file render attempt finished"
+| project TimeGenerated,
+    format = tostring(Properties.sc_output_format),
+    status = tostring(Properties.sc_status),
+    outputCode = tostring(Properties.sc_output_code),
+    totalMs = toint(Properties.sc_total_ms),
+    renderMs = toint(Properties.sc_render_ms),
+    verifyMs = toint(Properties.sc_verify_ms),
+    fullChecks = toint(Properties.sc_full_checks),
+    lightChecks = toint(Properties.sc_light_checks),
+    stopObserved = tobool(Properties.sc_stop_observed),
+    errorType = tostring(Properties.sc_error_type),
+    errorErrno = toint(Properties.sc_error_errno)
+| order by TimeGenerated asc
+```
+
+Planning may fail inside a successful HTTP streaming response. Correlate these
+events with request outcomes instead of interpreting HTTP 200 as a valid plan or
+HTTP 503 as proof that no execution claim exists. Historical events before this
+version may contain only string-length metadata and cannot be used to reconstruct
+the exact rejected proposal.
+
+### Analyze validation and partial-input events
+
+Since **0.261.191**, these events explain why an Analyze result was partial and
+which later step refused it. They record codes and counts only: no quotes,
+findings, caveats, notes, prompts, file names, or model responses.
+
+| Event message | Severity | Properties |
+| --- | --- | --- |
+| `[DOCUMENT_ANALYSIS] Final findings validated` | Information when the result is `valid`; otherwise Warning | `sc_validation_code`, the record, window and evidence counts described below, and one `sc_issue_<code>_count` per validation issue code. |
+| `[ORCHESTRATION_EXECUTOR] A dependency-bound step could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, `sc_authority_reason` when an access check refused the step (its `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal event names the check), and, when the step refused a partial input, the `sc_producer_*` fields described below. |
+
+Analyze writes its event each time it validates newly assembled final findings. A
+step that resumes from an already saved final result does not write it again. The
+event carries `sc_conversation_id_hash` when the analysis runs for a conversation,
+but no run or step hash, so match it by time to the step events that follow it.
+The executor event carries the run, conversation and step hashes and
+`sc_capability_id`, like the other executor events.
+
+The Analyze event reports:
+
+- `sc_validation_code`: the result's validation status, `valid`, `partial`,
+  `pending`, or `invalid`.
+- `sc_finalized_record_count` and `sc_unresolved_candidate_count`: the candidate
+  findings that became final records and those that did not. `sc_candidate_count`
+  counts all candidates.
+- `sc_window_count`: the assigned source windows, split into
+  `sc_completed_window_count`, `sc_failed_window_count`, and
+  `sc_pending_window_count`. `sc_reused_window_count` counts windows restored from
+  a checkpoint instead of being analyzed again.
+- `sc_caveat_count` and `sc_note_count`: finding caveats and slice notes. Neither
+  makes a result partial.
+- `sc_evidence_<outcome>_count`: cited passages by outcome. A located passage is
+  counted under the first tier that finds it in the chunk it cites:
+  - `exact`: the quote appears verbatim.
+  - `normalized`: the quote matches once presentation is set aside. Markup, table
+    rules and runs of whitespace separate words without merging them. Entities,
+    typographic quotes and dashes, compatibility forms, invisible characters, and
+    emphasis marks at a word edge are ignored. Written signs, symbols and list
+    markers still have to match, and the match must start and end on whole words
+    and numbers.
+  - `normalized_casefold`: the quote matches as `normalized`, also ignoring case.
+
+  A rejected passage is counted under its reason:
+  - `missing_quote`: the quote is empty, or has no text once presentation is set
+    aside.
+  - `missing_location`: the passage names no chunk sequence, chunk ID, or page.
+  - `ambiguous`: the citation selects more than one chunk, and the quote is found
+    in more than one of them.
+  - `not_in_cited_location`: the quote is in a different chunk of the same window.
+    This is a mis-citation, and the passage is still rejected.
+  - `not_in_window`: the quote is nowhere in the window, typically because it is a
+    paraphrase, a summary, or text joined from different chunks.
+- `sc_issue_<code>_count`: how often each validation issue code occurred, such as
+  `sc_issue_unmatched_evidence_count` or `sc_issue_unresolved_finding_count`. Only
+  codes present in the result appear.
+
+A step whose inputs must be complete does not run when an earlier step returned a
+partial result. Its executor event reports `input_partial_not_accepted` as both
+`sc_failure_code` and `sc_execution_code`, with `sc_error_type`
+`PartialInputNotAcceptedError`, and identifies the producer:
+
+- `sc_producer_capability_id`, such as `document_analyze`, and
+  `sc_producer_step_id_hash`, which matches the producing step's
+  `sc_step_id_hash`.
+- `sc_producer_actual_count` and `sc_producer_expected_count`: the records the
+  producer returned and the total it expected.
+- `sc_producer_coverage_completed` and `sc_producer_coverage_expected`: the
+  producer's completed and assigned coverage units, such as sources or work units.
+- `sc_producer_limitation_count`: the limitations the producer recorded to qualify
+  its partial result.
+
+The expected count and expected coverage are absent when the producer declared no
+total.
+
+To see why a conversation's analysis or comparison was partial:
+
+```kusto
+let conversationHash = hash_sha256("<conversation-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_conversation_id_hash) == conversationHash
+| where tostring(Properties.sc_message) contains "Final findings validated"
+    or tostring(Properties.sc_failure_code) == "input_partial_not_accepted"
+| project TimeGenerated,
+    message = tostring(Properties.sc_message),
+    validationCode = tostring(Properties.sc_validation_code),
+    finalized = toint(Properties.sc_finalized_record_count),
+    unresolved = toint(Properties.sc_unresolved_candidate_count),
+    failedWindows = toint(Properties.sc_failed_window_count),
+    normalized = toint(Properties.sc_evidence_normalized_count),
+    miscited = toint(Properties.sc_evidence_not_in_cited_location_count),
+    notInWindow = toint(Properties.sc_evidence_not_in_window_count),
+    producer = tostring(Properties.sc_producer_capability_id),
+    producerLimitations = toint(Properties.sc_producer_limitation_count)
+| order by TimeGenerated asc
+```
+
+See [the evidence matching fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_COMPARISON_ANALYZE_EVIDENCE_MATCHING_FIX.md)
+for how the tiers are applied.

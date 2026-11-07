@@ -22,6 +22,13 @@ Scaling Simple Chat is about coordinating several Azure services, not just addin
 
 ## Component overview
 
+{% include media.html id="slide-scale" %}
+
+Treat this as a coordinated scaling pattern, not a tested user-count or
+document-capacity promise. Configure shared sessions before adding web
+instances, then use measured application, data, search, and AI-service
+bottlenecks to decide the next change.
+
 ### Azure App Service
 
 Scale up when single requests need more memory or CPU. Scale out when concurrent users, long chats, and upload traffic rise.
@@ -450,15 +457,15 @@ AI Search powers document retrieval and hybrid search.
 
 **Scaling examples:**
 
+These examples show search-unit arithmetic, not document-capacity or throughput
+guarantees. Verify the selected service tier, index dimensions, storage limits,
+and measured workload before sizing a deployment.
+
 ```
 
 Small deployment:
 
 - 1 replica, 1 partition (1 search unit)
-
-- Up to 15 million documents
-
-- Basic query performance
 
 
 
@@ -466,19 +473,11 @@ Medium deployment:
 
 - 2 replicas, 2 partitions (4 search units)
 
-- Up to 30 million documents  
-
-- Better performance and availability
-
 
 
 Large deployment:
 
 - 3 replicas, 3 partitions (9 search units)
-
-- Up to 45 million documents
-
-- High performance and high availability
 
 ```
 
@@ -562,11 +561,12 @@ Each deployment has rate limits measured in:
 
 **Model selection for scale:**
 
-- **GPT-4**: Higher quality, lower throughput
+- Use currently configured, authorized models suited to the task.
 
-- **GPT-3.5 Turbo**: Lower cost, higher throughput
+- Measure latency and token demand against the selected deployment's quota.
 
-- **Consider newer models** as they become available
+- Review [model catalog profiles]({{ '/admin/model-catalog/' | relative_url }})
+  rather than assuming a model family guarantees a particular speed or quality.
 
 
 

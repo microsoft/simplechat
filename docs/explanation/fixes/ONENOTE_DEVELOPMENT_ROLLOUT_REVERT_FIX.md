@@ -46,3 +46,19 @@ the exact inverse. Documentation inventory, coverage and quality checks, route
 policy suites, the existing mixed-source and workspace-format contracts, and
 Python syntax checks cover the restored integration surfaces without deploying
 or rebuilding cloud images.
+
+## Superseded by the React V2 integration
+
+The integration in **0.261.419**, tracked in
+`application/single_app/config.py`, brings the intended React V2 OneNote
+implementation into `Development`. The rollback above remains historical: it
+prevented a premature rollout, not the later reviewed promotion.
+
+The rollback-only test that required native formats and packaging to be absent
+is retired. Current acceptance, dispatch, extraction, isolation, and packaging
+coverage remains in `test_onenote_upload_dispatch.py`,
+`test_onenote_workspace_ingestion.py`, `test_onenote_extractor_runtime.py`,
+`test_v2_onenote_uploads.py`, and the separately enabled native integration tests
+under `functional_tests/`. Native executable checks require their documented
+build and fixtures; passing the Python contracts alone does not establish a
+native-container build result.

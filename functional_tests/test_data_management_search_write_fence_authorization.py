@@ -1,17 +1,20 @@
 # test_data_management_search_write_fence_authorization.py
 """
 Functional test for Data Management Search fence authorization safety.
-Version: 0.261.052
+Version: 0.261.268
 Implemented in: 0.250.071
-Updated in: 0.261.052
+Updated in: 0.261.268
 
 This test ensures an AI Search migration fence cannot make a document-unshare
-request report success while stale Search chunks still grant access.
+request report success while stale Search chunks still grant access, and that
+share approvals and group sharing changes surface search projection failures
+as safe, retryable errors instead of saving access the index does not enforce.
 """
 
 import ast
 import copy
 import logging
+from contextlib import nullcontext
 from pathlib import Path
 
 import pytest
@@ -99,6 +102,8 @@ def load_search_write_helpers():
     namespace = {
         "hold_data_management_search_write_slot": lambda *_args, **_kwargs: FakeSlot(),
         "cosmos_data_management_jobs_container": object(),
+        # A non-group write holds no projection fence: `nullcontext(None)` stands in for it.
+        "nullcontext": nullcontext,
     }
     exec(compile(isolated_module, str(DOCUMENTS_PATH), "exec"), namespace)
     return namespace["_execute_document_search_write"]
@@ -114,6 +119,18 @@ class FakeDocumentContainer:
     def read_item(self, item, partition_key):
         assert item == partition_key == self.document["id"]
         return copy.deepcopy(self.document)
+
+
+def _exception_names(handler):
+    if isinstance(handler.type, ast.Name):
+        return {handler.type.id}
+    if isinstance(handler.type, ast.Tuple):
+        return {element.id for element in handler.type.elts if isinstance(element, ast.Name)}
+    return set()
+
+
+def _route(tree, name):
+    return next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == name)
 
 
 def test_unshare_preserves_cosmos_acl_when_search_projection_is_frozen():
@@ -137,6 +154,27 @@ def test_unshare_preserves_cosmos_acl_when_search_projection_is_frozen():
 
     with pytest.raises(deferred_error, match="temporarily frozen"):
         unshare_document("document-1", "owner-1", "viewer-1")
+    assert container.document["shared_user_ids"] == ["viewer-1,approved"]
+    assert container.upserts == []
+
+
+def test_unshare_reports_a_failed_search_projection_without_saving():
+    """Any other Search failure is raised with a fixed message, not hidden as a generic failure."""
+    unshare_document, namespace, _frozen_error, _deferred_error = load_unshare_function()
+    container = FakeDocumentContainer({
+        "id": "document-1",
+        "user_id": "owner-1",
+        "shared_user_ids": ["viewer-1,approved"],
+    })
+    namespace["cosmos_user_documents_container"] = container
+    namespace["_upsert_document_and_sync_access_index"] = lambda *_args, **_kwargs: container.upserts.append(True)
+    namespace["project_fields_to_document_chunks"] = lambda *_args, **_kwargs: (_ for _ in ()).throw(
+        RuntimeError("PRIVATE-PROVIDER detail")
+    )
+
+    with pytest.raises(namespace["DocumentSearchAclProjectionError"]) as failure:
+        unshare_document("document-1", "owner-1", "viewer-1")
+    assert "PRIVATE-PROVIDER" not in str(failure.value)
     assert container.document["shared_user_ids"] == ["viewer-1,approved"]
     assert container.upserts == []
 
@@ -197,36 +235,45 @@ def test_unshare_route_returns_retryable_response_for_deferred_acl_projection():
     """Keep an active target migration fence visible to callers as a retryable unshare response."""
     source = DOCUMENTS_ROUTE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(DOCUMENTS_ROUTE_PATH))
-    unshare_route = next(
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "api_unshare_document"
-    )
-    deferred_handler = next(
+    unshare_route = _route(tree, "api_unshare_document")
+    acl_handler = next(
         handler for handler in ast.walk(unshare_route)
-        if isinstance(handler, ast.ExceptHandler) and
-        isinstance(handler.type, ast.Name) and
-        handler.type.id == "DocumentSearchAclProjectionDeferredError"
+        if isinstance(handler, ast.ExceptHandler)
+        and {"DocumentSearchAclProjectionDeferredError", "DocumentSearchAclProjectionError"} <= _exception_names(handler)
     )
-    handler_source = ast.get_source_segment(source, deferred_handler) or ""
+    handler_source = ast.get_source_segment(source, acl_handler) or ""
+    assert "_document_search_acl_error_response(exc)" in handler_source
 
-    assert "Retry-After" in handler_source
-    assert "503" in handler_source
+    helper = next(
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_document_search_acl_error_response"
+    )
+    helper_source = ast.get_source_segment(source, helper) or ""
+    assert "Retry-After" in helper_source and "describe_document_search_acl_error(error)" in helper_source
+
+    documents_source = DOCUMENTS_PATH.read_text(encoding="utf-8")
+    describe = ast.get_source_segment(
+        documents_source,
+        next(node for node in ast.parse(documents_source).body
+             if isinstance(node, ast.FunctionDef) and node.name == "describe_document_search_acl_error"),
+    ) or ""
+    assert "DOCUMENT_SEARCH_ACL_DEFERRED_MESSAGE, 503, DOCUMENT_SEARCH_ACL_RETRY_AFTER_SECONDS" in describe
 
 
 def test_share_approval_and_group_sharing_routes_surface_acl_projection_failures():
     """Share approvals and group sharing changes return safe, retryable errors instead of saving."""
     documents_source = DOCUMENTS_ROUTE_PATH.read_text(encoding="utf-8")
     documents_tree = ast.parse(documents_source, filename=str(DOCUMENTS_ROUTE_PATH))
-    approve_route = next(
-        node for node in ast.walk(documents_tree)
-        if isinstance(node, ast.FunctionDef) and node.name == "api_approve_shared_document"
-    )
-    handled_errors = {
-        handler.type.id
-        for handler in ast.walk(approve_route)
-        if isinstance(handler, ast.ExceptHandler) and isinstance(handler.type, ast.Name)
-    }
-    assert {"DocumentSearchAclProjectionDeferredError", "DocumentSearchAclProjectionError"} <= handled_errors
+    approve_route = _route(documents_tree, "api_approve_shared_document")
+    handled_errors = set()
+    for handler in ast.walk(approve_route):
+        if isinstance(handler, ast.ExceptHandler):
+            handled_errors |= _exception_names(handler)
+    assert {
+        "DocumentSearchAclProjectionDeferredError",
+        "DocumentSearchAclProjectionError",
+        "DocumentMutationPropagationError",
+    } <= handled_errors
     approve_source = ast.get_source_segment(documents_source, approve_route) or ""
     assert approve_source.index("project_document_acl_to_chunks(") < approve_source.index("upsert_item(document_item)"), (
         "A share approval must reach Search before it is saved."
@@ -242,16 +289,13 @@ def test_share_approval_and_group_sharing_routes_surface_acl_projection_failures
         "api_unshare_document_with_group",
         "api_remove_self_from_group_document",
     ):
-        route = next(
-            node for node in ast.walk(group_tree)
-            if isinstance(node, ast.FunctionDef) and node.name == route_name
-        )
-        route_source = ast.get_source_segment(group_source, route) or ""
+        route_source = ast.get_source_segment(group_source, _route(group_tree, route_name)) or ""
         assert "_group_share_search_acl_error_response(exc)" in route_source, route_name
+        assert "str(e)" not in route_source, route_name
 
     helper = next(
         node for node in group_tree.body
         if isinstance(node, ast.FunctionDef) and node.name == "_group_share_search_acl_error_response"
     )
     helper_source = ast.get_source_segment(group_source, helper) or ""
-    assert "Retry-After" in helper_source and "503" in helper_source
+    assert "Retry-After" in helper_source and "describe_document_search_acl_error(error)" in helper_source

@@ -1,8 +1,9 @@
 # test_web_search_current_message_only.py
 """
 Functional test for current-message-only web search egress.
-Version: 0.241.046
+Version: 0.261.099
 Implemented in: 0.241.008
+Updated in: 0.261.099
 
 This test ensures external web search uses only the current user message,
 keeps history-derived internal search rewrites out of the outbound web-search
@@ -70,7 +71,7 @@ def test_perform_web_search_uses_explicit_outbound_query_and_empty_metadata():
     assert 'foundry_metadata = {}' in perform_source
 
     metadata_block = perform_source.split('foundry_metadata = {}', 1)[1].split(
-        'debug_print("[WebSearch] Foundry metadata prepared: {}")', 1
+        'debug_print("[WEB_SEARCH] Foundry metadata prepared: {}")', 1
     )[0]
 
     forbidden_snippets = [

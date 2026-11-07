@@ -197,6 +197,10 @@ def prepare_scoped_action(action, scope_type, scope_id):
         if not key.startswith("_") and key not in _MANAGEMENT_FIELDS
     }
     payload = bind_action_origin(payload, scope_type, scope_id)
+    # Pure contract validation runs before any identity or Key Vault write.
+    from action_credential_contracts import validate_credential_requirements
+
+    validate_credential_requirements(payload)
     if is_retired_mcp_stdio(payload):
         raise McpStdioRemovedError()
     if payload["type"] == "mcp":

@@ -14,14 +14,37 @@ from html import escape as _escape_html
 from typing import Any, Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup, NavigableString, Tag
+from collaboration_models import is_shared_conversation_backing
+from content_screening.access import public_history_messages
+from content_screening.contracts import DocumentHeldError
 from config import *
 from flask import jsonify, make_response, request
 from functions_appinsights import log_event
+from functions_evidence_status import append_export_evidence_notice
+from functions_ai_connections import require_model_capability
 from functions_authentication import *
 from functions_chat import sort_messages_by_thread
-from functions_chart_export import (
-    decode_base64_image_data_uri,
-    replace_inline_chart_blocks_with_export_html,
+from functions_chart_export import decode_base64_image_data_uri
+from functions_export_visuals import (
+    EXPORT_VISUAL_ASSET_MAX_COUNT,
+    EXPORT_VISUAL_KIND_CHART,
+    EXPORT_VISUAL_KIND_DIAGRAM,
+    EXPORT_VISUAL_KIND_IMAGE,
+    EXPORT_VISUAL_KIND_MATH,
+    EXPORT_VISUAL_WRAPPER_CLASSES,
+    find_export_visual_caption_node,
+    find_export_visual_wrapper,
+    get_export_visual_kind,
+    is_export_visual_caption_class,
+    normalize_visual_assets,
+    replace_inline_visual_blocks_with_export_html,
+)
+from functions_mermaid_export import extract_mermaid_sources
+from functions_message_block_revisions import resolve_block_sources_in_content
+from functions_orchestration_attempts import exclude_superseded_orchestration_attempts
+from functions_mermaid_server_render import (
+    is_mermaid_server_rendering_available,
+    render_mermaid_visual_assets,
 )
 from functions_collaboration import (
     assert_user_can_view_collaboration_conversation,
@@ -34,6 +57,7 @@ from functions_citation_tracking import (
     get_message_reference_citation_buckets,
     get_message_source_citation_buckets,
 )
+from functions_m365_citations import sanitize_m365_citation_record
 from functions_conversation_metadata import update_conversation_with_metadata
 from functions_debug import debug_print
 from functions_group import get_group_model_endpoints, get_user_groups
@@ -45,6 +69,8 @@ from functions_image_messages import (
     is_external_image_url,
 )
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_model_endpoint_runtime import build_model_endpoint_sync_chat_client
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_message_artifacts import (
     build_message_artifact_payload_map,
     hydrate_agent_citations_from_artifacts,
@@ -59,6 +85,12 @@ from functions_model_endpoint_types import (
 )
 from functions_simplechat_operations import download_blob_content
 from functions_thoughts import get_thoughts_for_conversation
+from functions_saved_analysis import (
+    authorize_analysis_artifact,
+    authorize_saved_analysis_message_read,
+    is_saved_analysis_unavailable,
+    sanitize_saved_analysis_messages,
+)
 from foundry_agent_runtime import resolve_authority
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
@@ -86,6 +118,21 @@ EMAIL_SUBJECT_CHAR_LIMIT = 120
 EMAIL_SUBJECT_SOURCE_CHAR_LIMIT = 12000
 EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX = 'message_chart'
 EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX = 'message_image'
+EMAIL_DIAGRAM_ATTACHMENT_FILENAME_PREFIX = 'message_diagram'
+EMAIL_FORMULA_ATTACHMENT_FILENAME_PREFIX = 'message_formula'
+EMAIL_VISUAL_ATTACHMENT_FILENAME_PREFIX_BY_KIND = {
+    EXPORT_VISUAL_KIND_CHART: EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX,
+    EXPORT_VISUAL_KIND_IMAGE: EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX,
+    EXPORT_VISUAL_KIND_DIAGRAM: EMAIL_DIAGRAM_ATTACHMENT_FILENAME_PREFIX,
+    EXPORT_VISUAL_KIND_MATH: EMAIL_FORMULA_ATTACHMENT_FILENAME_PREFIX,
+}
+EMAIL_VISUAL_ATTACHMENT_LABELS = {
+    EXPORT_VISUAL_KIND_CHART: 'Chart',
+    EXPORT_VISUAL_KIND_IMAGE: 'Image',
+    EXPORT_VISUAL_KIND_DIAGRAM: 'Diagram',
+    EXPORT_VISUAL_KIND_MATH: 'Formula',
+}
+MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT = 20
 POWERPOINT_PLAN_SOURCE_CHAR_LIMIT = 24000
 POWERPOINT_DEFAULT_SLIDES = 7
 POWERPOINT_MAX_SLIDES = 30
@@ -141,6 +188,7 @@ def register_route_backend_conversation_export(bp):
             summary_model_endpoint_id (str): Optional configured endpoint id for summary generation.
             summary_model_id (str): Optional configured endpoint model id for summary generation.
             summary_model_provider (str): Optional configured endpoint provider for summary generation.
+            visual_assets (list): Optional browser-rasterized diagram PNGs to embed.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -158,6 +206,7 @@ def register_route_backend_conversation_export(bp):
         summary_model_endpoint_id = str(data.get('summary_model_endpoint_id', '') or '').strip()
         summary_model_id = str(data.get('summary_model_id', '') or '').strip()
         summary_model_provider = str(data.get('summary_model_provider', '') or '').strip()
+        visual_assets = normalize_visual_assets(data.get('visual_assets'))
 
         if not conversation_ids or not isinstance(conversation_ids, list):
             return jsonify({'error': 'At least one conversation_id is required'}), 400
@@ -172,44 +221,11 @@ def register_route_backend_conversation_export(bp):
             settings = get_settings()
             exported = []
             for conv_id in conversation_ids:
-                conversation = None
-                messages = []
-                try:
-                    conversation = cosmos_conversations_container.read_item(
-                        item=conv_id,
-                        partition_key=conv_id
-                    )
-                    if conversation.get('user_id') != user_id:
-                        debug_print(f"Export: user {user_id} does not own conversation {conv_id}")
-                        continue
+                loaded_conversation = _load_exportable_conversation_for_user(user_id, conv_id)
+                if not loaded_conversation:
+                    continue
 
-                    message_query = """
-                        SELECT * FROM c
-                        WHERE c.conversation_id = @conversation_id
-                        ORDER BY c.timestamp ASC
-                    """
-                    messages = list(cosmos_messages_container.query_items(
-                        query=message_query,
-                        parameters=[{'name': '@conversation_id', 'value': conv_id}],
-                        partition_key=conv_id
-                    ))
-                except Exception:
-                    try:
-                        conversation = get_collaboration_conversation(conv_id)
-                        access_context = assert_user_can_view_collaboration_conversation(
-                            user_id,
-                            conversation,
-                            allow_pending=True,
-                        )
-                        user_state = access_context.get('user_state') or {}
-                        conversation = dict(conversation)
-                        conversation['is_pinned'] = bool(user_state.get('is_pinned', False))
-                        conversation['is_hidden'] = bool(user_state.get('is_hidden', False))
-                        messages = list_collaboration_messages(conv_id)
-                    except Exception:
-                        debug_print(f"Export: conversation {conv_id} not found or access denied")
-                        continue
-
+                conversation, messages = loaded_conversation
                 exported.append(
                     _build_export_entry(
                         conversation=conversation,
@@ -227,17 +243,98 @@ def register_route_backend_conversation_export(bp):
             if not exported:
                 return jsonify({'error': 'No accessible conversations found'}), 404
 
+            if export_format != 'json':
+                visual_assets = _merge_server_rendered_visual_assets(
+                    _collect_export_entry_contents(exported),
+                    visual_assets,
+                )
+
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
 
             if packaging == 'zip':
-                return _build_zip_response(exported, export_format, timestamp_str)
+                return _build_zip_response(
+                    exported,
+                    export_format,
+                    timestamp_str,
+                    visual_assets=visual_assets,
+                )
 
-            return _build_single_file_response(exported, export_format, timestamp_str)
+            return _build_single_file_response(
+                exported,
+                export_format,
+                timestamp_str,
+                visual_assets=visual_assets,
+            )
 
         except Exception as exc:
             debug_print(f"Export error: {str(exc)}")
             log_event(f"Conversation export failed: {exc}", level="WARNING")
             return jsonify({'error': f'Export failed: {str(exc)}'}), 500
+
+    @bp.route('/api/conversations/export/visual-scan', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def api_scan_conversation_export_visuals():
+        """
+        List the diagram sources in one or more conversations that need rasterizing.
+
+        Mermaid is a browser rendering library, so the client rasterizes each source
+        returned here and sends the PNGs back on the export request as `visual_assets`.
+
+        Request body:
+            conversation_ids (list): List of conversation IDs to scan.
+        """
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({'error': 'User not authenticated'}), 401
+
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'error': 'Request body is required'}), 400
+
+        conversation_ids = data.get('conversation_ids', [])
+        if not conversation_ids or not isinstance(conversation_ids, list):
+            return jsonify({'error': 'At least one conversation_id is required'}), 400
+
+        try:
+            settings = get_settings()
+            visual_sources: List[Dict[str, str]] = []
+            seen_sources = set()
+
+            for conv_id in conversation_ids:
+                loaded_conversation = _load_exportable_conversation_for_user(user_id, conv_id)
+                if not loaded_conversation:
+                    continue
+
+                conversation, messages = loaded_conversation
+                entry = _build_export_entry(
+                    conversation=conversation,
+                    raw_messages=messages,
+                    user_id=user_id,
+                    settings=settings,
+                    include_summary_intro=False,
+                )
+                for message in entry.get('messages', []):
+                    for source in extract_mermaid_sources(message.get('content_text') or ''):
+                        if source['source'] in seen_sources:
+                            continue
+                        seen_sources.add(source['source'])
+                        visual_sources.append(source)
+                        if len(visual_sources) >= EXPORT_VISUAL_ASSET_MAX_COUNT:
+                            break
+                    if len(visual_sources) >= EXPORT_VISUAL_ASSET_MAX_COUNT:
+                        break
+
+                if len(visual_sources) >= EXPORT_VISUAL_ASSET_MAX_COUNT:
+                    break
+
+            return jsonify({'visual_sources': visual_sources}), 200
+
+        except Exception as exc:
+            debug_print(f"Conversation export visual scan error: {str(exc)}")
+            log_event(f"Conversation export visual scan failed: {exc}", level="WARNING")
+            return jsonify({'error': 'Visual scan failed due to a server error.'}), 500
 
     @bp.route('/api/message/export-word', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -250,6 +347,7 @@ def register_route_backend_conversation_export(bp):
         Request body:
             message_id (str): ID of the message to export.
             conversation_id (str): ID of the conversation the message belongs to.
+            visual_assets (list): Optional browser-rasterized diagram PNGs to embed.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -273,8 +371,16 @@ def register_route_backend_conversation_export(bp):
             )
             message_content_override = _get_message_export_content_override(data)
             message = _apply_message_export_content_override(message, message_content_override)
+            visual_assets = normalize_visual_assets(
+                data.get('visual_assets'),
+                max_count=MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT,
+            )
+            visual_assets = _merge_server_rendered_visual_assets(
+                [message.get('content', '')],
+                visual_assets,
+            )
 
-            document_bytes = _message_to_docx_bytes(message)
+            document_bytes = _message_to_docx_bytes(message, visual_assets=visual_assets)
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
             filename = f"message_export_{timestamp_str}.docx"
 
@@ -308,6 +414,7 @@ def register_route_backend_conversation_export(bp):
         Request body:
             message_id (str): ID of the message to export.
             conversation_id (str): ID of the conversation the message belongs to.
+            visual_assets (list): Optional browser-rasterized diagram PNGs to embed.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -344,10 +451,19 @@ def register_route_backend_conversation_export(bp):
                 message_content_override = _get_message_export_content_override(data)
                 message = _apply_message_export_content_override(message, message_content_override)
 
+            visual_assets = normalize_visual_assets(
+                data.get('visual_assets'),
+                max_count=MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT,
+            )
+            visual_assets = _merge_server_rendered_visual_assets(
+                [message.get('content', '')],
+                visual_assets,
+            )
             presentation_bytes = _message_to_pptx_bytes(
                 message,
                 settings,
                 requested_slide_count=requested_slide_count,
+                visual_assets=visual_assets,
             )
             timestamp_str = datetime.utcnow().strftime('%Y%m%d_%H%M%S')
             filename = f"message_export_{timestamp_str}.pptx"
@@ -382,6 +498,7 @@ def register_route_backend_conversation_export(bp):
             message_id (str): ID of the message to export.
             conversation_id (str): ID of the conversation the message belongs to.
             summary_model_deployment (str): Optional model deployment for subject generation.
+            visual_assets (list): Optional browser-rasterized diagram PNGs to attach.
         """
         user_id = get_current_user_id()
         if not user_id:
@@ -407,10 +524,19 @@ def register_route_backend_conversation_export(bp):
             )
             message_content_override = _get_message_export_content_override(data)
             message = _apply_message_export_content_override(message, message_content_override)
+            visual_assets = normalize_visual_assets(
+                data.get('visual_assets'),
+                max_count=MESSAGE_EXPORT_VISUAL_ASSET_MAX_COUNT,
+            )
+            visual_assets = _merge_server_rendered_visual_assets(
+                [message.get('content', '')],
+                visual_assets,
+            )
             draft_payload = _message_to_email_draft_payload(
                 message=message,
                 settings=settings,
-                summary_model_deployment=summary_model_deployment
+                summary_model_deployment=summary_model_deployment,
+                visual_assets=visual_assets,
             )
             return jsonify(draft_payload), 200
 
@@ -427,6 +553,113 @@ def register_route_backend_conversation_export(bp):
             return jsonify({'error': 'Email draft export failed due to a server error. Please try again later.'}), 500
 
 
+def _merge_server_rendered_visual_assets(
+    contents: List[Any],
+    visual_assets: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Render any diagram the client did not supply a picture for.
+
+    A browser attached to the export covers its own diagrams. This fills the gap for
+    everything else, such as an export started from an interface that does not rasterize,
+    using the Chromium already installed in the image. When that is unavailable the fence
+    is simply left as a code block.
+    """
+    merged_assets = list(visual_assets or [])
+    covered_sources = {
+        asset.get('normalized_source')
+        for asset in merged_assets
+        if asset.get('kind') == EXPORT_VISUAL_KIND_DIAGRAM
+    }
+
+    pending_sources: List[Dict[str, str]] = []
+    seen_sources = set(covered_sources)
+    for content in contents:
+        for source in extract_mermaid_sources(_normalize_content(content)):
+            if source['source'] in seen_sources:
+                continue
+            seen_sources.add(source['source'])
+            pending_sources.append(source)
+            if len(pending_sources) >= EXPORT_VISUAL_ASSET_MAX_COUNT:
+                break
+        if len(pending_sources) >= EXPORT_VISUAL_ASSET_MAX_COUNT:
+            break
+
+    if not pending_sources or not is_mermaid_server_rendering_available():
+        return merged_assets
+
+    try:
+        merged_assets.extend(render_mermaid_visual_assets(pending_sources))
+    except Exception as exc:
+        debug_print(f"Server-side diagram rendering failed: {exc}")
+        log_event(f"Server-side diagram rendering failed: {exc}", level="WARNING")
+
+    return merged_assets
+
+
+def _collect_export_entry_contents(exported: List[Dict[str, Any]]) -> List[str]:
+    """Return every message body an export will render."""
+    contents: List[str] = []
+    for entry in exported:
+        summary_intro = entry.get('summary_intro') or {}
+        if summary_intro.get('content'):
+            contents.append(summary_intro['content'])
+        for message in entry.get('messages', []):
+            if message.get('content_text'):
+                contents.append(message['content_text'])
+    return contents
+
+
+def _load_exportable_conversation_for_user(
+    user_id: str,
+    conversation_id: str,
+) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
+    """Load a conversation and its messages when the user is allowed to export it.
+
+    Orchestrate's backing record shares its shared conversation's id; the shared conversation
+    is what gets exported.
+    """
+    try:
+        conversation = cosmos_conversations_container.read_item(
+            item=conversation_id,
+            partition_key=conversation_id
+        )
+        if is_shared_conversation_backing(conversation):
+            raise LookupError('A shared conversation backing is exported as its shared conversation.')
+        if conversation.get('user_id') != user_id:
+            debug_print(f"Export: user {user_id} does not own conversation {conversation_id}")
+            return None
+
+        message_query = """
+            SELECT * FROM c
+            WHERE c.conversation_id = @conversation_id
+            ORDER BY c.timestamp ASC
+        """
+        messages = list(cosmos_messages_container.query_items(
+            query=message_query,
+            parameters=[{'name': '@conversation_id', 'value': conversation_id}],
+            partition_key=conversation_id
+        ))
+        return conversation, messages
+    except Exception:
+        pass
+
+    try:
+        conversation = get_collaboration_conversation(conversation_id)
+        access_context = assert_user_can_view_collaboration_conversation(
+            user_id,
+            conversation,
+            allow_pending=True,
+        )
+        user_state = access_context.get('user_state') or {}
+        conversation = dict(conversation)
+        conversation['is_pinned'] = bool(user_state.get('is_pinned', False))
+        conversation['is_hidden'] = bool(user_state.get('is_hidden', False))
+        return conversation, list_collaboration_messages(conversation_id)
+    except Exception:
+        debug_print(f"Export: conversation {conversation_id} not found or access denied")
+        return None
+
+
 def _build_export_entry(
     conversation: Dict[str, Any],
     raw_messages: List[Dict[str, Any]],
@@ -440,7 +673,11 @@ def _build_export_entry(
 ) -> Dict[str, Any]:
     artifact_payload_map = build_message_artifact_payload_map(raw_messages)
     filtered_messages = _filter_messages_for_export(raw_messages)
+    filtered_messages = sanitize_saved_analysis_messages(filtered_messages, user_id)
     filtered_messages = hydrate_agent_citations_from_artifacts(filtered_messages, artifact_payload_map)
+    filtered_messages = public_history_messages(filtered_messages, user_id)
+    # The thread shows only the latest attempt of a retried plan; the export matches it.
+    filtered_messages = exclude_superseded_orchestration_attempts(filtered_messages)
     ordered_messages = sort_messages_by_thread(filtered_messages)
 
     raw_thoughts = [] if is_collaboration_conversation(conversation) else get_thoughts_for_conversation(conversation.get('id'), user_id)
@@ -463,8 +700,9 @@ def _build_export_entry(
             transcript_index += 1
             message_transcript_index = transcript_index
 
-        thoughts = thoughts_by_message.get(message.get('id'), [])
-        if not thoughts and is_collaboration_conversation(conversation):
+        unavailable_content = message.get("content_unavailable") or is_saved_analysis_unavailable(message)
+        thoughts = [] if unavailable_content else thoughts_by_message.get(message.get('id'), [])
+        if not unavailable_content and not thoughts and is_collaboration_conversation(conversation):
             collaboration_thoughts = get_accessible_collaboration_message_thoughts(
                 conversation,
                 message,
@@ -574,6 +812,11 @@ def _sanitize_message(
 ) -> Dict[str, Any]:
     role = message.get('role', '')
     content = message.get('content', '')
+    # Substitute the current version of any edited diagram, so an export matches what the
+    # reader has on screen rather than the version the model first produced.
+    if isinstance(content, str) and content:
+        content = resolve_block_sources_in_content(message, content)
+    content = append_export_evidence_notice(content, message)
     reference_citation_buckets = _collect_raw_citation_buckets(message)
     source_citation_buckets = _collect_source_citation_buckets(message)
     normalized_citations = _normalize_citations(reference_citation_buckets)
@@ -609,8 +852,20 @@ def _sanitize_message(
         'legacy_citations': source_citation_buckets['legacy'],
         'hybrid_citations': source_citation_buckets['hybrid'],
         'web_search_citations': source_citation_buckets['web'],
-        'agent_citations': source_citation_buckets['agent']
+        'agent_citations': source_citation_buckets['agent'],
+        'm365_citations': _export_m365_citations(message),
     }
+
+
+def _export_m365_citations(message: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The message's Microsoft 365 citation records, re-validated and without the owner id."""
+    records = []
+    for value in message.get('m365_citations') or []:
+        record = sanitize_m365_citation_record(value)
+        if record:
+            record.pop('data_user_id', None)
+            records.append(record)
+    return records
 
 
 def _sanitize_thought(thought: Dict[str, Any]) -> Dict[str, Any]:
@@ -1189,16 +1444,23 @@ def _find_summary_endpoint_model(
     requested_model: str,
     requested_model_id: str,
 ) -> Optional[Dict[str, Any]]:
-    models = endpoint_cfg.get('models', []) or []
+    models = [model for model in endpoint_cfg.get('models', []) or [] if isinstance(model, dict)]
+    if not requested_model_id and requested_model:
+        deployment_matches = [
+            model for model in models
+            if requested_model in {
+                _normalize_summary_model_value(model.get('deploymentName')),
+                _normalize_summary_model_value(model.get('deployment')),
+            }
+        ]
+        models = deployment_matches or models
     for model_cfg in models:
-        if not isinstance(model_cfg, dict) or not model_cfg.get('enabled', True):
-            continue
-        if _summary_model_matches(
-            endpoint_cfg,
-            model_cfg,
-            requested_model,
-            requested_model_id,
-        ):
+        matches = (
+            _normalize_summary_model_value(model_cfg.get('id')) == requested_model_id
+            if requested_model_id else _summary_model_matches(endpoint_cfg, model_cfg, requested_model, '')
+        )
+        if matches:
+            require_model_capability(model_cfg, provider=endpoint_cfg.get('provider') or 'aoai')
             return model_cfg
     return None
 
@@ -1384,12 +1646,14 @@ def _resolve_summary_multi_endpoint_client(
             if _normalize_summary_model_value(endpoint.get('id')) == requested_endpoint_id
         ]
         if not endpoint_candidates:
-            if selection_source == 'request':
-                raise ValueError('Selected summary model endpoint could not be found.')
-            return None
+            raise ValueError('Selected summary model endpoint could not be found.')
 
     for endpoint_cfg in endpoint_candidates:
-        if not isinstance(endpoint_cfg, dict) or not endpoint_cfg.get('enabled', True):
+        if not isinstance(endpoint_cfg, dict):
+            continue
+        if not endpoint_cfg.get('enabled', True):
+            if requested_endpoint_id:
+                raise ValueError('Selected summary model endpoint is disabled.')
             continue
 
         model_cfg = _find_summary_endpoint_model(endpoint_cfg, requested_model, requested_model_id)
@@ -1408,6 +1672,7 @@ def _resolve_summary_multi_endpoint_client(
         )
 
         provider = _normalize_summary_model_value(resolved_endpoint_cfg.get('provider') or requested_provider or 'aoai').lower()
+        require_model_capability(model_cfg, provider=provider)
         connection = resolved_endpoint_cfg.get('connection', {}) or {}
         auth_settings = resolved_endpoint_cfg.get('auth', {}) or {}
         if provider == 'custom':
@@ -1469,8 +1734,10 @@ def _resolve_summary_multi_endpoint_client(
         )
         return gpt_client, deployment
 
-    if selection_source == 'request' and requested_endpoint_id:
+    if requested_endpoint_id or requested_model_id:
         raise ValueError('Selected summary model could not be found on the configured endpoint.')
+    if requested_model:
+        require_model_capability(requested_model, provider=requested_provider or 'aoai')
 
     return None
 
@@ -1553,7 +1820,12 @@ def _initialize_gpt_client(
     return gpt_client, gpt_model
 
 
-def _build_single_file_response(exported: List[Dict[str, Any]], export_format: str, timestamp_str: str):
+def _build_single_file_response(
+    exported: List[Dict[str, Any]],
+    export_format: str,
+    timestamp_str: str,
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
+):
     """Build a single-file download response."""
     if export_format == 'json':
         content = json.dumps(exported, indent=2, ensure_ascii=False, default=str)
@@ -1561,7 +1833,7 @@ def _build_single_file_response(exported: List[Dict[str, Any]], export_format: s
         content_type = 'application/json; charset=utf-8'
     elif export_format == 'pdf':
         if len(exported) == 1:
-            content = _conversation_to_pdf_bytes(exported[0])
+            content = _conversation_to_pdf_bytes(exported[0], visual_assets=visual_assets)
         else:
             combined_parts = []
             for idx, entry in enumerate(exported):
@@ -1570,14 +1842,14 @@ def _build_single_file_response(exported: List[Dict[str, Any]], export_format: s
                         '<div style="margin-top: 24pt; border-top: 2px solid #999; '
                         'padding-top: 12pt;"></div>'
                     )
-                combined_parts.append(_build_pdf_html_body(entry))
+                combined_parts.append(_build_pdf_html_body(entry, visual_assets=visual_assets))
             content = _html_body_to_pdf_bytes('\n'.join(combined_parts))
         filename = f"conversations_export_{timestamp_str}.pdf"
         content_type = 'application/pdf'
     else:
         parts = []
         for entry in exported:
-            parts.append(_conversation_to_markdown(entry))
+            parts.append(_conversation_to_markdown(entry, visual_assets=visual_assets))
         content = '\n\n---\n\n'.join(parts)
         filename = f"conversations_export_{timestamp_str}.md"
         content_type = 'text/markdown; charset=utf-8'
@@ -1588,7 +1860,12 @@ def _build_single_file_response(exported: List[Dict[str, Any]], export_format: s
     return response
 
 
-def _build_zip_response(exported: List[Dict[str, Any]], export_format: str, timestamp_str: str):
+def _build_zip_response(
+    exported: List[Dict[str, Any]],
+    export_format: str,
+    timestamp_str: str,
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
+):
     """Build a ZIP archive containing one file per conversation."""
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1601,10 +1878,10 @@ def _build_zip_response(exported: List[Dict[str, Any]], export_format: str, time
                 file_content = json.dumps(entry, indent=2, ensure_ascii=False, default=str)
                 ext = 'json'
             elif export_format == 'pdf':
-                file_content = _conversation_to_pdf_bytes(entry)
+                file_content = _conversation_to_pdf_bytes(entry, visual_assets=visual_assets)
                 ext = 'pdf'
             else:
-                file_content = _conversation_to_markdown(entry)
+                file_content = _conversation_to_markdown(entry, visual_assets=visual_assets)
                 ext = 'md'
 
             file_name = f"{safe_title}_{conversation_id_short}.{ext}"
@@ -1619,7 +1896,10 @@ def _build_zip_response(exported: List[Dict[str, Any]], export_format: str, time
     return response
 
 
-def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
+def _conversation_to_markdown(
+    entry: Dict[str, Any],
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """Convert a conversation + messages entry to Markdown format."""
     conversation = entry['conversation']
     messages = entry['messages']
@@ -1667,8 +1947,9 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
             lines.append(
-                replace_inline_chart_blocks_with_export_html(
-                    message.get('content_text') or '_No content recorded._'
+                replace_inline_visual_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._',
+                    visual_assets,
                 )
             )
             lines.append('')
@@ -1740,8 +2021,9 @@ def _conversation_to_markdown(entry: Dict[str, Any]) -> str:
                 lines.append(f"*{message.get('timestamp')}*")
             lines.append('')
             lines.append(
-                replace_inline_chart_blocks_with_export_html(
-                    message.get('content_text') or '_No content recorded._'
+                replace_inline_visual_blocks_with_export_html(
+                    message.get('content_text') or '_No content recorded._',
+                    visual_assets,
                 )
             )
             lines.append('')
@@ -1754,10 +2036,21 @@ def _append_citations_markdown(lines: List[str], message: Dict[str, Any]):
     web_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'web']
     agent_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'agent_tool']
     legacy_citations = [citation for citation in message.get('citations', []) if citation.get('citation_type') == 'legacy']
+    m365_citations = [record for record in message.get('m365_citations', []) if record.get('cited')]
 
-    if not any([document_citations, web_citations, agent_citations, legacy_citations]):
+    if not any([document_citations, web_citations, agent_citations, legacy_citations, m365_citations]):
         lines.append('_No citations were recorded for this message._')
         return
+
+    if m365_citations:
+        lines.append('#### Microsoft 365 References')
+        lines.append('')
+        for index, record in enumerate(m365_citations, start=1):
+            title = _escape_markdown_link_text(record.get('title') or 'Microsoft 365 item')
+            location = record.get('location_label') or 'Microsoft 365'
+            url = str(record.get('web_url') or '').replace('(', '%28').replace(')', '%29')
+            lines.append(f"{index}. [{title}]({url}) ({location})" if url else f"{index}. {title} ({location})")
+        lines.append('')
 
     if document_citations:
         lines.append('#### Document References')
@@ -1860,6 +2153,14 @@ def _append_code_block(lines: List[str], value: Any, indent: str = ''):
     for line in code_block.splitlines() or ['']:
         lines.append(f"{indent}{line}")
     lines.append(f"{indent}```")
+
+
+def _escape_markdown_link_text(value: Any) -> str:
+    """Link text that cannot close its own brackets or start an escape sequence."""
+    text = str(value or '')
+    for character in ('\\', '[', ']'):
+        text = text.replace(character, f'\\{character}')
+    return text
 
 
 def _format_markdown_key(key: str) -> str:
@@ -2022,6 +2323,17 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
     if message.get('conversation_id') != conversation_id:
         raise LookupError('Message not found')
 
+    # Covers both result lineages: saved analyses and workflow results in this private chat.
+    authorize_saved_analysis_message_read(
+        user_id, conversation_id, message_id,
+        message_loader=lambda *_: message, conversation_reader=lambda _conversation_id: conversation,
+    )
+    if message.get('role') == 'file':
+        # File exports retain the same source boundary as direct artifact downloads.
+        from functions_generated_artifact_sources import authorize_generated_artifact_source
+
+        authorize_generated_artifact_source(user_id, message, native_authorizer=authorize_analysis_artifact)
+
     if isinstance(message.get('agent_citations'), list) and any(
         isinstance(citation, dict) and citation.get('artifact_id')
         for citation in message.get('agent_citations', [])
@@ -2035,6 +2347,10 @@ def _load_export_message_for_user(user_id: str, conversation_id: str, message_id
         hydrated_messages = hydrate_agent_citations_from_artifacts([message], artifact_payload_map)
         if hydrated_messages:
             message = hydrated_messages[0]
+
+    message = public_history_messages([message], user_id)[0]
+    if message.get("content_unavailable"):
+        raise DocumentHeldError()
 
     if message.get('role') == 'assistant':
         message = _attach_generated_image_proposal_assets(
@@ -2131,6 +2447,7 @@ def _attach_generated_image_proposal_assets(
     image_assets = _load_generated_image_proposal_assets(
         conversation_id=conversation_id,
         source_assistant_message_id=message_id,
+        listed_image_message_ids=_orchestration_generated_image_message_ids(message),
     )
     if not image_assets:
         return message
@@ -2140,13 +2457,28 @@ def _attach_generated_image_proposal_assets(
     return export_message
 
 
+def _orchestration_generated_image_message_ids(message: Dict[str, Any]) -> set:
+    """Image messages an orchestrated answer shows, including ones an earlier attempt generated."""
+    metadata = message.get('metadata') if isinstance(message.get('metadata'), dict) else {}
+    orchestration = metadata.get('orchestration') if isinstance(metadata.get('orchestration'), dict) else {}
+    entries = orchestration.get('generated_images')
+    if message.get('role') != 'assistant' or not isinstance(entries, list):
+        return set()
+    return {
+        str(entry.get('message_id')).strip() for entry in entries
+        if isinstance(entry, dict) and isinstance(entry.get('message_id'), str) and entry.get('message_id').strip()
+    }
+
+
 def _load_generated_image_proposal_assets(
     conversation_id: str,
     source_assistant_message_id: str,
+    listed_image_message_ids=None,
 ) -> List[Dict[str, Any]]:
     normalized_source_id = str(source_assistant_message_id or '').strip()
     if not normalized_source_id:
         return []
+    listed_ids = set(listed_image_message_ids or ())
 
     try:
         image_messages = list(cosmos_messages_container.query_items(
@@ -2169,7 +2501,7 @@ def _load_generated_image_proposal_assets(
         metadata = image_message.get('metadata') if isinstance(image_message.get('metadata'), dict) else {}
         proposal = metadata.get('image_proposal') if isinstance(metadata.get('image_proposal'), dict) else {}
         proposal_source_id = str(proposal.get('source_assistant_message_id') or '').strip()
-        if proposal_source_id != normalized_source_id:
+        if proposal_source_id != normalized_source_id and str(image_message.get('id') or '') not in listed_ids:
             continue
 
         image_asset = _build_export_image_asset_from_message(
@@ -2275,10 +2607,17 @@ def _image_bytes_to_png_data_uri(image_bytes: bytes) -> str:
 def _render_message_export_content(
     message: Dict[str, Any],
     source_content: Optional[Any] = None,
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
 ) -> str:
     raw_content = message.get('content', '') if source_content is None else source_content
-    rendered_content = replace_inline_chart_blocks_with_export_html(
-        _normalize_content(raw_content)
+    # Only when the caller has not supplied its own content: an override is a deliberate
+    # substitution and resolving into it would fight whatever the caller meant to export.
+    if source_content is None and isinstance(raw_content, str) and raw_content:
+        raw_content = resolve_block_sources_in_content(message, raw_content)
+    raw_content = append_export_evidence_notice(raw_content, message)
+    rendered_content = replace_inline_visual_blocks_with_export_html(
+        _normalize_content(raw_content),
+        visual_assets,
     )
     return _replace_inline_image_proposal_blocks_with_export_html(
         rendered_content,
@@ -2491,7 +2830,10 @@ def _normalize_export_prompt(value: Any) -> str:
     return str(value or '').replace('\r\n', '\n').replace('\r', '\n').strip()[:4000]
 
 
-def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
+def _message_to_docx_bytes(
+    message: Dict[str, Any],
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
+) -> bytes:
     doc = DocxDocument()
     doc.add_heading('Message Export', level=1)
 
@@ -2506,7 +2848,7 @@ def _message_to_docx_bytes(message: Dict[str, Any]) -> bytes:
 
     doc.add_paragraph('')
 
-    content = _render_message_export_content(message)
+    content = _render_message_export_content(message, visual_assets=visual_assets)
     if content:
         _add_markdown_content_to_doc(doc, content)
     else:
@@ -2528,11 +2870,12 @@ def _message_to_pptx_bytes(
     message: Dict[str, Any],
     settings: Dict[str, Any],
     requested_slide_count: Optional[int] = None,
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
 ) -> bytes:
     role_label = _role_to_label(message.get('role', 'unknown'))
     timestamp = str(message.get('timestamp', '') or '')
 
-    render_content = _render_message_export_content(message)
+    render_content = _render_message_export_content(message, visual_assets=visual_assets)
     slide_plan = _build_message_powerpoint_plan(
         content=render_content,
         message=message,
@@ -3015,11 +3358,12 @@ def _line_contains_powerpoint_inline_visual(line: str) -> bool:
     if not normalized_line:
         return False
 
-    return (
-        '<img' in normalized_line
-        or 'export-inline-chart' in normalized_line
-        or 'export-inline-image' in normalized_line
-        or normalized_line.startswith('![')
+    if '<img' in normalized_line or normalized_line.startswith('!['):
+        return True
+
+    return any(
+        wrapper_class in normalized_line
+        for wrapper_class in EXPORT_VISUAL_WRAPPER_CLASSES
     )
 
 
@@ -3207,14 +3551,8 @@ def _extract_structured_powerpoint_images(content: str) -> List[Dict[str, Any]]:
             continue
         seen_keys.add(image_key)
 
-        image_wrapper = image_node.find_parent(class_='export-inline-image')
-        chart_wrapper = image_node.find_parent(class_='export-inline-chart')
-        wrapper = image_wrapper or chart_wrapper
-        caption_node = None
-        if wrapper:
-            caption_node = wrapper.find(class_='export-inline-image-caption')
-            if caption_node is None:
-                caption_node = wrapper.find(class_='export-inline-chart-caption')
+        wrapper = find_export_visual_wrapper(image_node)
+        caption_node = find_export_visual_caption_node(wrapper)
         caption = (
             caption_node.get_text(' ', strip=True)
             if caption_node and caption_node.get_text(' ', strip=True)
@@ -3762,8 +4100,8 @@ def _extract_powerpoint_images(root: Tag) -> List[Dict[str, Any]]:
             continue
         seen_keys.add(image_key)
 
-        chart_wrapper = image_node.find_parent(class_='export-inline-chart')
-        caption_node = chart_wrapper.find(class_='export-inline-chart-caption') if chart_wrapper else None
+        chart_wrapper = find_export_visual_wrapper(image_node)
+        caption_node = find_export_visual_caption_node(chart_wrapper)
         caption = (
             caption_node.get_text(' ', strip=True)
             if caption_node and caption_node.get_text(' ', strip=True)
@@ -4360,7 +4698,8 @@ def _chunk_items(items: List[str], chunk_size: int) -> List[List[str]]:
 def _message_to_email_draft_payload(
     message: Dict[str, Any],
     settings: Dict[str, Any],
-    summary_model_deployment: str = ''
+    summary_model_deployment: str = '',
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     content = _normalize_content(message.get('content', ''))
     subject_payload = _build_message_email_subject(
@@ -4372,6 +4711,7 @@ def _message_to_email_draft_payload(
     rendered_body_content = _render_message_export_content(
         message,
         source_content=body_content,
+        visual_assets=visual_assets,
     )
     chart_attachments = _extract_email_chart_png_attachments(rendered_body_content)
     image_labels_by_src = {
@@ -4419,12 +4759,10 @@ def _extract_email_chart_png_attachments(rendered_content: str) -> List[Dict[str
     seen_keys = set()
 
     for image_node in root.find_all('img'):
-        chart_wrapper = image_node.find_parent(class_='export-inline-chart')
-        image_wrapper = image_node.find_parent(class_='export-inline-image')
-        visual_wrapper = chart_wrapper or image_wrapper
+        visual_wrapper = find_export_visual_wrapper(image_node)
         if not visual_wrapper:
             continue
-        visual_type = 'chart' if chart_wrapper else 'image'
+        visual_type = get_export_visual_kind(visual_wrapper) or EXPORT_VISUAL_KIND_CHART
 
         data_uri = str(image_node.get('src') or '').strip()
         image_bytes = decode_base64_image_data_uri(data_uri)
@@ -4436,26 +4774,24 @@ def _extract_email_chart_png_attachments(rendered_content: str) -> List[Dict[str
             continue
         seen_keys.add(image_key)
 
-        caption_node = visual_wrapper.find(class_='export-inline-chart-caption')
-        if caption_node is None:
-            caption_node = visual_wrapper.find(class_='export-inline-image-caption')
+        caption_node = find_export_visual_caption_node(visual_wrapper)
         caption = (
             caption_node.get_text(' ', strip=True)
             if caption_node and caption_node.get_text(' ', strip=True)
             else ''
         )
         alt_text = str(image_node.get('alt') or '').strip()
-        attachment_label = caption or alt_text or f'{visual_type.title()} {len(attachments) + 1}'
-        if visual_type == 'chart':
-            filename = _safe_email_chart_attachment_filename(
-                attachment_label,
-                len(attachments) + 1,
-            )
-        else:
-            filename = _safe_email_image_attachment_filename(
-                attachment_label,
-                len(attachments) + 1,
-            )
+        type_label = EMAIL_VISUAL_ATTACHMENT_LABELS.get(visual_type, 'Visual')
+        attachment_label = caption or alt_text or f'{type_label} {len(attachments) + 1}'
+        filename = _safe_email_visual_attachment_filename(
+            attachment_label,
+            len(attachments) + 1,
+            EMAIL_VISUAL_ATTACHMENT_FILENAME_PREFIX_BY_KIND.get(
+                visual_type,
+                EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX,
+            ),
+            visual_type,
+        )
         attachments.append({
             'filename': filename,
             'content_type': 'image/png',
@@ -4473,7 +4809,7 @@ def _safe_email_chart_attachment_filename(label: str, sequence_number: int) -> s
         label,
         sequence_number,
         EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX,
-        'chart',
+        EXPORT_VISUAL_KIND_CHART,
     )
 
 
@@ -4482,7 +4818,7 @@ def _safe_email_image_attachment_filename(label: str, sequence_number: int) -> s
         label,
         sequence_number,
         EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX,
-        'image',
+        EXPORT_VISUAL_KIND_IMAGE,
     )
 
 
@@ -4502,17 +4838,18 @@ def _safe_email_visual_attachment_filename(
 
 
 def _format_email_chart_attachment_reference(attachment: Dict[str, str]) -> str:
-    visual_type = str(attachment.get('visual_type') or 'chart').strip().lower()
+    visual_type = str(attachment.get('visual_type') or EXPORT_VISUAL_KIND_CHART).strip().lower()
     filename = str(attachment.get('filename') or f'{visual_type}.png').strip()
     caption = str(attachment.get('caption') or attachment.get('alt') or '').strip()
-    if visual_type == 'image':
-        if caption and caption != filename:
-            return f'Image PNG exported as {filename}: {caption}'
-        return f'Image PNG exported as {filename}'
+    if visual_type == EXPORT_VISUAL_KIND_CHART:
+        reference = f'Chart image exported as {filename}'
+    else:
+        type_label = EMAIL_VISUAL_ATTACHMENT_LABELS.get(visual_type, 'Visual')
+        reference = f'{type_label} PNG exported as {filename}'
 
     if caption and caption != filename:
-        return f'Chart image exported as {filename}: {caption}'
-    return f'Chart image exported as {filename}'
+        return f'{reference}: {caption}'
+    return reference
 
 
 def _render_markdown_to_email_lines(
@@ -4563,10 +4900,7 @@ def _append_html_block_to_email_lines(
         return
 
     if tag_name == 'p':
-        if image_labels_by_src and any(
-            class_name in {'export-inline-chart-caption', 'export-inline-image-caption'}
-            for class_name in (node.get('class') or [])
-        ):
+        if image_labels_by_src and is_export_visual_caption_class(node.get('class')):
             return
 
         paragraph_text = _extract_email_inline_text(
@@ -5371,20 +5705,20 @@ small {
     font-size: 8pt;
     color: #666;
 }
-.export-inline-chart {
+.export-inline-chart, .export-inline-image, .export-inline-diagram, .export-inline-math {
     background-color: #fafafa;
     border: 1px solid #ddd;
     padding: 8pt;
     margin-top: 6pt;
     margin-bottom: 10pt;
 }
-.export-inline-chart img {
+.export-inline-chart img, .export-inline-image img, .export-inline-diagram img, .export-inline-math img {
     max-width: 100%;
     height: auto;
     display: block;
     margin: 0 auto;
 }
-.export-inline-chart-caption {
+.export-inline-chart-caption, .export-inline-image-caption, .export-inline-diagram-caption, .export-inline-math-caption {
     font-size: 8pt;
     color: #666;
     text-align: center;
@@ -5408,7 +5742,10 @@ def _pdf_bubble_class(role: str) -> str:
     return role_classes.get(role, 'other-bubble')
 
 
-def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
+def _build_pdf_html_body(
+    entry: Dict[str, Any],
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
+) -> str:
     """Build the HTML body content for a single conversation PDF."""
     conversation = entry['conversation']
     messages = entry['messages']
@@ -5443,7 +5780,10 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
     if summary_intro.get('enabled') and summary_intro.get('generated') and summary_intro.get('content'):
         parts.append('<h2>Abstract</h2>')
         abstract_html = markdown2.markdown(
-            replace_inline_chart_blocks_with_export_html(summary_intro.get('content', '')),
+            replace_inline_visual_blocks_with_export_html(
+                summary_intro.get('content', ''),
+                visual_assets,
+            ),
             extras=['fenced-code-blocks', 'tables']
         )
         parts.append(f'<div class="abstract">{abstract_html}</div>')
@@ -5485,7 +5825,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 f'{_escape_html(speaker)}</b>{ts_str}</p>'
             )
             content_html = markdown2.markdown(
-                replace_inline_chart_blocks_with_export_html(content),
+                replace_inline_visual_blocks_with_export_html(content, visual_assets),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)
@@ -5582,7 +5922,7 @@ def _build_pdf_html_body(entry: Dict[str, Any]) -> str:
                 )
             content = message.get('content_text', '') or 'No content recorded.'
             content_html = markdown2.markdown(
-                replace_inline_chart_blocks_with_export_html(content),
+                replace_inline_visual_blocks_with_export_html(content, visual_assets),
                 extras=['fenced-code-blocks', 'tables', 'break-on-newline']
             )
             parts.append(content_html)
@@ -5623,9 +5963,12 @@ def _render_pdf_bytes(body_html: str) -> bytes:
                 pass
 
 
-def _conversation_to_pdf_bytes(entry: Dict[str, Any]) -> bytes:
+def _conversation_to_pdf_bytes(
+    entry: Dict[str, Any],
+    visual_assets: Optional[List[Dict[str, Any]]] = None,
+) -> bytes:
     """Convert a conversation export entry to PDF bytes."""
-    body_html = _build_pdf_html_body(entry)
+    body_html = _build_pdf_html_body(entry, visual_assets=visual_assets)
     return _render_pdf_bytes(body_html)
 
 

@@ -1,3 +1,4 @@
+# sql_query_plugin.py
 """
 SQL Query Plugin for Semantic Kernel
 - Executes SQL queries against various databases (SQL Server, PostgreSQL, MySQL, SQLite)
@@ -7,6 +8,7 @@ SQL Query Plugin for Semantic Kernel
 """
 
 import logging
+import os
 import re
 from typing import Dict, Any, List, Optional, Union
 from semantic_kernel_plugins.base_plugin import BasePlugin
@@ -18,6 +20,10 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     DEFAULT_SQL_SERVER_ODBC_DRIVER,
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
+    resolve_sql_auth_type,
+)
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SqlConnectionContext, SqlConnectionError, classify_sql_connection_error,
 )
 
 # Helper class to wrap results with metadata
@@ -42,11 +48,13 @@ class SQLQueryPlugin(BasePlugin):
         raw_db_type = (manifest.get('database_type') or additional_fields.get('database_type', 'sqlserver')).lower()
         # Map azure_sql to sqlserver for compatibility
         self.database_type = 'sqlserver' if raw_db_type in ['azure_sql', 'azuresql'] else raw_db_type
-        manifest_auth_type = manifest.get('auth', {}).get('type', 'connection_string')
         additional_auth_type = additional_fields.get('auth_type') or additional_fields.get('identity_auth_type')
-        self.auth_type = additional_auth_type or manifest_auth_type
-        if self.auth_type == 'identity' and raw_db_type in ['azure_sql', 'azuresql']:
-            self.auth_type = 'managed_identity'
+        self.auth_type = resolve_sql_auth_type(
+            additional_auth_type, manifest.get('auth'), database_type=raw_db_type,
+        )
+        self.managed_identity_client_id = additional_fields.get(
+            'managed_identity_client_id', manifest.get('managed_identity_client_id'),
+        )
         self.server = manifest.get('server') or additional_fields.get('server')
         self.database = manifest.get('database') or additional_fields.get('database')
         self.username = manifest.get('username') or additional_fields.get('username')
@@ -122,6 +130,13 @@ class SQLQueryPlugin(BasePlugin):
 
     def _create_connection(self):
         """Create database connection based on database type"""
+        context = SqlConnectionContext("sql_query_connect")
+        context.configure(
+            self.database_type, connection_string_used=bool(self.connection_string),
+            auth_type=self.auth_type, username_password=bool(self.username and self.password),
+            identity_selected=bool(self.manifest.get("identity_id")), environ=os.environ,
+        )
+        context.stage = "driver_import"
         try:
             debug_print(
                 f"[SQL_QUERY_PLUGIN] Creating database connection database_type={self.database_type} "
@@ -137,8 +152,10 @@ class SQLQueryPlugin(BasePlugin):
                         self.connection_string,
                         connect_kwargs={"timeout": self.timeout},
                         log_source="SQLQueryPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                 else:
+                    context.stage = "configuration"
                     conn_str = build_sql_server_odbc_connection_string(
                         server=self.server,
                         database=self.database,
@@ -146,16 +163,20 @@ class SQLQueryPlugin(BasePlugin):
                         username=self.username,
                         password=self.password,
                         auth_type=self.auth_type,
+                        managed_identity_client_id=self.managed_identity_client_id,
                     )
                     return connect_with_sql_server_odbc_fallback(
                         pyodbc.connect,
                         conn_str,
                         connect_kwargs={"timeout": self.timeout},
                         log_source="SQLQueryPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                     
             elif self.database_type == 'postgresql':
                 import psycopg2
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     return psycopg2.connect(self.connection_string)
                 else:
@@ -169,6 +190,8 @@ class SQLQueryPlugin(BasePlugin):
                     
             elif self.database_type == 'mysql':
                 import pymysql
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     # Parse connection string for MySQL
                     return pymysql.connect(self.connection_string)
@@ -183,22 +206,22 @@ class SQLQueryPlugin(BasePlugin):
                     
             elif self.database_type == 'sqlite':
                 import sqlite3
+                context.stage = "connect"
+                context.attempts = 1
                 database_path = self.connection_string or self.database
                 conn = sqlite3.connect(database_path, timeout=self.timeout)
                 # Enable row factory for better column access
                 conn.row_factory = sqlite3.Row
                 return conn
                 
-        except ImportError as e:
-            debug_print(f"[SQL_QUERY_PLUGIN] Database driver import failed database_type={self.database_type} error={e}")
-            raise ImportError(f"Required database driver not installed for {self.database_type}: {e}")
         except Exception as e:
-            debug_print(
-                f"[SQL_QUERY_PLUGIN] Connection failed database_type={self.database_type} server={self.server} "
-                f"database={self.database} exception_type={type(e).__name__} message={e}"
+            diagnostic = classify_sql_connection_error(e, self.database_type)
+            log_event(
+                "[SQL_CONNECTION] SQL connection failed.",
+                level=logging.WARNING,
+                extra={**diagnostic.log_properties(), **context.log_properties(), "operation": "sql_query_connect"},
             )
-            log_event(f"[SQL_QUERY_PLUGIN] Connection failed: {e}", extra={"database_type": self.database_type})
-            raise
+            raise SqlConnectionError(diagnostic) from None
 
     @property
     def display_name(self) -> str:
@@ -356,6 +379,8 @@ class SQLQueryPlugin(BasePlugin):
                 "data": [],
                 "row_count": 0
             }
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(error_result, self.metadata)
 
     @kernel_function(description="Execute a query that returns a single scalar value (e.g., COUNT, SUM, MAX, MIN). If the database schema is provided in your instructions, use it directly to construct the query. Otherwise, call get_database_schema from the SQL Schema plugin first to discover table and column names.")
@@ -424,6 +449,8 @@ class SQLQueryPlugin(BasePlugin):
                 "query": query,
                 "value": None
             }
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(error_result, self.metadata)
 
     @kernel_function(description="Validate a SQL query for syntax correctness and safety without executing it. Use this to pre-check complex queries before execution, especially when constructing multi-table JOINs or complex WHERE clauses.")
@@ -530,6 +557,8 @@ class SQLQueryPlugin(BasePlugin):
                 "data": [],
                 "row_count": 0
             }
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(error_result, self.metadata)
 
     def _clean_query(self, query: str) -> str:

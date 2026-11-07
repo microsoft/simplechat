@@ -29,6 +29,56 @@ function buildSafeExternalLinkHtml(url, label) {
   return serializeSafeElement(link);
 }
 
+// Microsoft 365 citation ids are minted by the server: "m365-" and 16 hex characters.
+const M365_CITATION_ID_PATTERN = /^m365-[0-9a-f]{16}$/;
+
+export function isM365CitationId(citationId) {
+  return M365_CITATION_ID_PATTERN.test(String(citationId || '').replace(/^#/, '').trim());
+}
+
+function buildM365CitationLookup(records) {
+  const lookup = new Map();
+  if (!Array.isArray(records)) {
+    return lookup;
+  }
+  records.forEach((record) => {
+    if (record && typeof record === 'object' && isM365CitationId(record.citation_id)) {
+      lookup.set(record.citation_id, record);
+    }
+  });
+  return lookup;
+}
+
+function getM365CitationLabel(record, fallbackLabel) {
+  if (!record) {
+    return fallbackLabel || 'Microsoft 365 source';
+  }
+  const label = record.kind === 'file' ? (record.file_name || record.title) : record.title;
+  return String(label || fallbackLabel || 'Microsoft 365 source');
+}
+
+// An item opens where it lives (SharePoint, OneDrive or Outlook) only through an https link
+// recorded from Microsoft Graph; without one the item is shown as text.
+function buildM365CitationHtml(citationId, record, fallbackLabel) {
+  const label = getM365CitationLabel(record, fallbackLabel);
+  const safeUrl = sanitizeHttpUrl(record?.web_url || '');
+  if (safeUrl && safeUrl.startsWith('https://')) {
+    const link = document.createElement('a');
+    link.href = safeUrl;
+    link.className = 'm365-citation-link';
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.dataset.m365CitationId = citationId;
+    link.textContent = label;
+    return serializeSafeElement(link);
+  }
+  const text = document.createElement('span');
+  text.className = 'm365-citation-text';
+  text.dataset.m365CitationId = citationId;
+  text.textContent = label;
+  return serializeSafeElement(text);
+}
+
 export function parseDocIdAndPage(citationId) {
   // ... (keep existing implementation)
   const underscoreIndex = citationId.lastIndexOf("_");
@@ -40,9 +90,75 @@ export function parseDocIdAndPage(citationId) {
   return { docId, pageNumber };
 }
 
-export function parseCitations(message) {
+function buildDocumentFileNameLookup(records) {
+    const names = new Map();
+    if (!Array.isArray(records)) {
+        return names;
+    }
+    for (const record of records) {
+        if (typeof record?.citation_id !== 'string' || typeof record?.file_name !== 'string') {
+            continue;
+        }
+        const id = record.citation_id.trim().replace(/^#/, '');
+        const name = record.file_name.trim();
+        if (!id || !name || isM365CitationId(id)) {
+            continue;
+        }
+        // Conflicting records cannot safely identify the source, even if one repeats later.
+        names.set(id, names.has(id) && names.get(id) !== name ? null : name);
+    }
+    return names;
+}
+
+function buildRawDocumentSourceLookup(records) {
+    const sources = new Map();
+    if (!Array.isArray(records)) {
+        return sources;
+    }
+    const uuidPrefixRegex = /^([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_([a-z0-9_.-]{1,128})$/i;
+    for (const record of records) {
+        if (typeof record?.citation_id !== 'string' || typeof record?.file_name !== 'string') {
+            continue;
+        }
+        const id = record.citation_id.trim().replace(/^#/, '');
+        const fileName = record.file_name.trim();
+        if (!id || !fileName || isM365CitationId(id)) {
+            continue;
+        }
+        const location = record.location_value ?? record.sheet_name ?? record.page_number ?? parseDocIdAndPage(id).pageNumber ?? '1';
+        const locationValue = typeof location === 'string' || (typeof location === 'number' && Number.isFinite(location))
+            ? String(location)
+            : '1';
+        const locationLabel = typeof record.location_label === 'string' && record.location_label.trim()
+            ? record.location_label.trim()
+            : typeof record.sheet_name === 'string'
+                ? 'Sheet'
+                : 'Page';
+        const sheetName = typeof record.sheet_name === 'string' ? record.sheet_name : null;
+        const source = {
+            citationId: id,
+            fileName,
+            locationLabel,
+            locationValue,
+            sheetName,
+        };
+        const serialized = JSON.stringify(source);
+        sources.set(id, sources.has(id) && JSON.stringify(sources.get(id)) !== serialized ? null : source);
+        const shortMatch = uuidPrefixRegex.exec(id);
+        if (shortMatch) {
+            const shortKey = `${shortMatch[1].toLowerCase()}_${shortMatch[2]}`;
+            sources.set(shortKey, sources.has(shortKey) && JSON.stringify(sources.get(shortKey)) !== serialized ? null : source);
+        }
+    }
+    return sources;
+}
+
+export function parseCitations(message, options = {}) {
   // ... (keep existing implementation)
-  const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const citationRegex = /\(Source:\s*((?:(?!\(Source:).)+?),\s*(Page(?:s)?|Sheet(?:s)?|Location|Worksheet cell):\s*((?:(?!\(Source:).)+?)\)\s*((?:\[#.*?\]\s*)+)/gi;
+  const m365CitationLookup = buildM365CitationLookup(options.m365Citations);
+  const documentFileNames = buildDocumentFileNameLookup(options.documentCitations);
+  const rawDocumentSources = buildRawDocumentSourceLookup(options.documentCitations);
 
   let result = message.replace(citationRegex, (whole, filename, locationLabel, locations, bracketSection) => {
     // The bracket group's trailing \s* consumes whatever whitespace followed the last
@@ -79,6 +195,36 @@ export function parseCitations(message) {
       });
     });
 
+    if (orderedRefs.some(ref => ref.includes(':native-comments:')) || locationLabel.toLowerCase() === 'worksheet cell') {
+        const links = orderedRefs.map(ref => {
+            const records = (options.documentCitations || []).filter(record => record?.citation_id === ref);
+            if (!records.length || records.some(record => JSON.stringify(record) !== JSON.stringify(records[0]))
+                || !records[0].native_evidence || !records[0].document_id) {
+                return '[Source unavailable]';
+            }
+            const record = records[0];
+            const link = document.createElement('a');
+            link.href = '#';
+            link.className = 'citation-link';
+            link.dataset.citationId = ref;
+            link.dataset.documentId = record.document_id;
+            link.dataset.nativeEvidence = JSON.stringify(record.native_evidence);
+            link.dataset.conversationId = record.native_evidence.producer?.conversation_id || '';
+            link.textContent = record.location_value || locations.trim();
+            return serializeSafeElement(link);
+        });
+        return `(Source: ${filenameHtml}, Location: ${links.join(', ')})${trailingWhitespace}`;
+    }
+
+    // A Microsoft 365 email, event or file has no workspace passage to fetch, so its
+    // citation links to the item itself, or is plain text when no link was recorded.
+    if (orderedRefs.length > 0 && orderedRefs.every((ref) => isM365CitationId(ref))) {
+      const itemsHtml = [...new Set(orderedRefs)].map((ref) => (
+        buildM365CitationHtml(ref, m365CitationLookup.get(ref), trimmedFilename)
+      ));
+      return `(Source: ${itemsHtml.join(', ')}, ${escapeHtml(locationLabel)}: ${escapeHtml(locations.trim())})${trailingWhitespace}`;
+    }
+
     function getDocPrefix(ref) {
       const underscoreIndex = ref.lastIndexOf('_');
       return underscoreIndex === -1 ? ref : ref.slice(0, underscoreIndex + 1);
@@ -91,6 +237,27 @@ export function parseCitations(message) {
     )
       ? [locations.trim()]
       : locations.split(/,/).map(tok => tok.trim());
+
+    if (/^untitled(?:\s+document)?$/i.test(trimmedFilename)) {
+        const names = orderedRefs.map(ref => documentFileNames.get(ref) || trimmedFilename);
+        const resolvedMultipleDocuments = names.some(name => name !== trimmedFilename)
+            && new Set(orderedRefs.map(getDocPrefix)).size > 1;
+        if (new Set(names).size > 1 || resolvedMultipleDocuments) {
+            const sources = orderedRefs.map((ref, index) => {
+                const location = locationTokens[index]
+                    || (normalizedLocationLabel.startsWith('page')
+                        ? parseDocIdAndPage(ref).pageNumber
+                        : locations.trim());
+                const sheetName = normalizedLocationLabel.startsWith('sheet') ? location : null;
+                return `(Source: ${escapeHtml(names[index])}, ${escapeHtml(locationLabel)}: ${buildAnchorIfExists(location, ref, sheetName)})`;
+            });
+            return `${sources.join(', ')}${trailingWhitespace}`;
+        }
+        if (names[0]) {
+            filenameHtml = escapeHtml(names[0]);
+        }
+    }
+
     const linkedTokens = locationTokens.map((token, index) => {
       if (!normalizedLocationLabel.startsWith('page')) {
         const ref = orderedRefs[index] || orderedRefs[0];
@@ -137,6 +304,29 @@ export function parseCitations(message) {
     return `(Source: ${filenameHtml}, ${escapeHtml(locationLabel)}: ${linkedPagesText})${trailingWhitespace}`;
   });
 
+  if (rawDocumentSources.size > 0 && result.includes('[')) {
+    const bracketedDocRegex = /\[\s*(#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128}(?:\s*[;,]\s*#?(?:[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|[0-9a-f]{8})_[a-z0-9_.-]{1,128})*)\s*\]/gi;
+    result = result.replace(bracketedDocRegex, (whole, inner) => {
+      const tokens = inner
+        .split(/[;,]/)
+        .map((part) => part.trim().replace(/^#/, ''))
+        .filter(Boolean);
+      if (!tokens.length) {
+        return whole;
+      }
+      const resolvedSources = tokens.map(
+        (token) => rawDocumentSources.get(token) || rawDocumentSources.get(token.toLowerCase()) || null
+      );
+      if (resolvedSources.some((source) => !source)) {
+        return whole;
+      }
+      const rendered = resolvedSources.map((source) => (
+        `(Source: ${escapeHtml(source.fileName)}, ${escapeHtml(source.locationLabel)}: ${buildAnchorIfExists(source.locationValue, source.citationId, source.sheetName)})`
+      ));
+      return rendered.join(', ');
+    });
+  }
+
   // Cleanup pass: strip any remaining [#guid...] bracket groups that the main regex didn't match.
   // These appear when the model uses non-standard citation formats (e.g. "passim" instead of "Page: N").
   // Pattern matches brackets containing one or more UUID-like citation IDs (with optional _suffix parts).
@@ -154,6 +344,10 @@ export function parseCitations(message) {
   // Anything still left is inline, so only the spaces or tabs in front of it are consumed.
   // Consuming newlines here would collapse the paragraph break that precedes the bracket.
   result = result.replace(new RegExp(`(?:[ \\t]*${guidBracketPattern})+`, 'gi'), '');
+
+  // A Microsoft 365 id copied without its Source prefix names no label to show, so it is
+  // removed the same way rather than shown as a raw id.
+  result = result.replace(/(?:[ \t]*\[#\s*m365-[0-9a-f]{16}\s*\])+/g, '');
 
   return result;
 }
@@ -198,6 +392,10 @@ export function fetchCitedText(citationId, citationContext = {}) {
   if (chunkId) {
     requestPayload.chunk_id = chunkId;
   }
+  if (citationContext.nativeEvidence) {
+      requestPayload.native_evidence = citationContext.nativeEvidence;
+      requestPayload.conversation_id = citationContext.conversationId;
+  }
 
   fetch("/api/get_citation", {
     method: "POST",
@@ -221,7 +419,29 @@ export function fetchCitedText(citationId, citationContext = {}) {
       hideLoadingIndicator();
 
       // Check for expected data fields explicitly
-      if (data.cited_text !== undefined && data.file_name && data.page_number !== undefined) {
+      if (data.native_annotation || data.native_coverage) {
+        const record = data.native_annotation;
+        const text = record ? [
+            record.kind === 'note' ? 'Workbook note' : record.parent_id ? 'Threaded comment reply' : 'Threaded comment',
+            `Author: ${record.author || 'Unavailable'}`,
+            `Worksheet / cell: ${record.sheet || 'Unavailable'} / ${record.cell || 'Unavailable'}`,
+            `Date: ${record.date || 'Unavailable'}`,
+            `Reply to: ${record.parent_id || 'Not a reply'}`,
+            `Saved cell value: ${record.cell_value_status === 'blank' ? 'Blank' : record.cell_value == null ? 'Unavailable (not recalculated)' : JSON.stringify(record.cell_value)}`,
+            '', 'Reviewer text', data.cited_text || 'No stored reviewer text.',
+        ].join('\n') : [
+            'Native annotation inventory',
+            `${data.native_coverage.returned_records} of ${data.native_coverage.total_records} records retained.`,
+            data.native_coverage.partial ? 'Partial inventory.' : 'Complete saved inventory.',
+            'Inventory coverage is not a worksheet cell or reviewer comment.',
+        ].join('\n');
+        showCitedTextPopup(text, data.file_name, '', {
+            title: `Native workbook evidence: ${data.file_name}`,
+            workbookPreview: () => showEnhancedCitationModal(
+                data.document_id, record?.sheet || '', null, record?.sheet || null,
+            ),
+        });
+      } else if (data.cited_text !== undefined && data.file_name && data.page_number !== undefined) {
         showCitedTextPopup(data.cited_text, data.file_name, data.page_number);
       } else if (data.error) { // Handle explicit errors from server even on 200 OK
          showToast(`Could not retrieve citation: ${data.error}`, "warning");
@@ -309,6 +529,7 @@ export function showCitedTextPopup(citedText, fileName, pageNumber, options = {}
   }
 
   const citedTextContent = ensureCitedTextContentElement(modalContainer, renderMarkdown);
+  modalContainer.querySelector('.native-workbook-preview')?.remove();
   if (citedTextContent) {
     citedTextContent.className = renderMarkdown
       ? "generated-analysis-preview-block generated-analysis-markdown-preview citation-markdown-content p-3"
@@ -319,6 +540,14 @@ export function showCitedTextPopup(citedText, fileName, pageNumber, options = {}
       renderMarkdownIntoCitationElement(citedTextContent, citedText);
     } else {
       citedTextContent.textContent = citedText;
+    }
+    if (options.workbookPreview) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-outline-primary mt-3 native-workbook-preview';
+        button.textContent = 'Open workbook preview (separate from annotation evidence)';
+        button.addEventListener('click', options.workbookPreview);
+        modalContainer.querySelector('.modal-body').appendChild(button);
     }
   }
 
@@ -934,6 +1163,25 @@ if (chatboxEl) {
       if (!citationId) {
           console.warn("Citation link/button clicked but data-citation-id is missing.");
           showToast("Cannot process citation: Missing ID.", "warning");
+          return;
+      }
+      // Microsoft 365 ids never name a workspace passage; their links open the item itself.
+      if (isM365CitationId(citationId)) {
+          return;
+      }
+      if (citationId.includes(':native-comments:')) {
+          let nativeEvidence;
+          try {
+              nativeEvidence = JSON.parse(target.dataset.nativeEvidence || 'null');
+          } catch {
+              showToast('Retained native citation evidence is unavailable.', 'warning');
+              return;
+          }
+          fetchCitedText(citationId, {
+              documentId: target.dataset.documentId,
+              nativeEvidence,
+              conversationId: target.dataset.conversationId,
+          });
           return;
       }
 

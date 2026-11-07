@@ -29,6 +29,7 @@ from functions_assistant_table_exports import assistant_table_export_requested
 from functions_generated_file_exports import get_requested_artifact_formats
 from functions_generated_file_exports import get_requested_structured_artifact_format
 from functions_generated_file_exports import get_requested_structured_artifact_formats
+from functions_native_analysis_results import NativeTabularResultReader
 
 
 TABULAR_ORCHESTRATION_PLANNER_CONTRACT_VERSION = "tabular-orchestration-v1"
@@ -849,6 +850,7 @@ def execute_tabular_plan(
     durable_execution_callback=None,
     cancel_requested=None,
     idempotency_cache=None,
+    execution_policy="publish",
     **execution_context,
 ):
     """Execute a durable tabular plan through the provided side-effect boundary."""
@@ -871,6 +873,63 @@ def execute_tabular_plan(
             "reason_code": "invalid_plan",
             "safe_failure_details": "Tabular planner result was invalid.",
         }
+
+    if execution_policy not in {"publish", "data_only"}:
+        raise ValueError("The native execution policy is invalid.")
+
+    if execution_policy == "data_only":
+        result = dict(plan)
+        result.update({"generated_output_metadata": None, "native_compute_result": None})
+        reason = None
+        if plan.get("source_count") != 1:
+            reason = "native_compute_multi_source_unsupported"
+        elif plan.get("reason_code") not in {"bounded_foreground", "durable_intent"}:
+            reason = "native_compute_plan_unsupported"
+        elif not callable(durable_execution_callback):
+            reason = "native_compute_executor_unavailable"
+        if reason:
+            result.update({
+                "execution_state": TABULAR_EXECUTION_STATE_DECLINED,
+                "reason_code": reason, "safe_failure_details": "Native computation was not accepted.",
+            })
+            return result
+        native = durable_execution_callback(plan=plan, **execution_context)
+        valid = isinstance(native, dict) and native.get("status") in {
+            "pending", "completed", "failed", "cancelled",
+        }
+        if valid and (native.get("handle") is not None or native["status"] in {"pending", "completed"}):
+            handle = native.get("handle")
+            valid = (
+                isinstance(handle, dict)
+                and set(handle) == {"version", "job_id", "request_fingerprint"}
+                and handle["version"] == "native-tabular-compute-v1"
+                and isinstance(handle["job_id"], str)
+                and re.fullmatch(
+                    r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}", handle["job_id"],
+                ) is not None
+                and isinstance(handle["request_fingerprint"], str)
+                and re.fullmatch(r"[a-f0-9]{64}", handle["request_fingerprint"]) is not None
+            )
+        if valid and native["status"] == "completed":
+            valid = isinstance(native.get("reader"), NativeTabularResultReader)
+        if valid and native["status"] != "completed":
+            valid = native.get("reader") is None and not native.get("readers")
+        if not valid:
+            result.update({
+                "execution_state": TABULAR_EXECUTION_STATE_DECLINED,
+                "reason_code": "native_compute_result_invalid",
+                "safe_failure_details": "Native computation did not return a complete result or a durable handle.",
+            })
+            return result
+        result.update({
+            "execution_state": {
+                "pending": TABULAR_EXECUTION_STATE_QUEUED, "completed": "completed",
+                "failed": "failed", "cancelled": TABULAR_EXECUTION_STATE_CANCELED,
+            }[native["status"]],
+            "native_compute_result": native, "reason_code": f"native_compute_{native['status']}",
+            "safe_failure_details": None,
+        })
+        return result
 
     if plan.get("execution_contract") == TABULAR_EXECUTION_CONTRACT_FOREGROUND_AGGREGATE:
         result = dict(plan)
@@ -968,6 +1027,7 @@ def orchestrate_tabular_request(
     durable_execution_callback=None,
     cancel_requested=None,
     idempotency_cache=None,
+    execution_policy="publish",
     **execution_context,
 ):
     """Plan and optionally execute a tabular request through the shared facade."""
@@ -1015,6 +1075,7 @@ def orchestrate_tabular_request(
         durable_execution_callback=durable_execution_callback,
         cancel_requested=cancel_requested,
         idempotency_cache=idempotency_cache,
+        execution_policy=execution_policy,
         **active_execution_context,
     )
     result.update({

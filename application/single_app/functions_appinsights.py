@@ -1,5 +1,6 @@
 # functions_appinsights.py
 
+import hashlib
 import logging
 import os
 import re
@@ -10,6 +11,10 @@ from typing import Any, Dict, Optional, Tuple
 
 from azure.monitor.opentelemetry import configure_azure_monitor
 import app_settings_cache
+from functions_assist_diagnostics import ASSIST_DIAGNOSTIC_TEXT, safe_assist_diagnostics
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SQL_CONTEXT_KEYS, SQL_ENGINES, valid_native_error, valid_sql_context_property, valid_sqlstate,
+)
 
 # Singleton for the logger and Azure Monitor configuration
 _appinsights_logger = None
@@ -100,6 +105,7 @@ LOGGER_FALLBACK_MESSAGE = "[SIMPLE_CHAT_LOG_FALLBACK]"
 LOGGER_EXTERNAL_EVENT_MESSAGE = "[SIMPLE_CHAT_EXTERNAL_EVENT]"
 MAX_EXTERNAL_EVENT_STRING_LENGTH = 256
 LOGGER_SAFE_TEXT_MAX_LENGTH = 1024
+LOGGER_APPLICATION_VERSION_MAX_LENGTH = 64
 # Diagnostic keys whose sanitized text may be retained; everything else stays a length.
 LOGGER_SAFE_TEXT_KEYS = frozenset({
     "attempt",
@@ -119,12 +125,75 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
     "reason",
     "resource",
     "resourcename",
+    "responsetype",
     "service",
     "stage",
     "status",
     "step",
     "taskname",
 })
+LOGGER_WORKFLOW_HASH_KEYS = frozenset({
+    "conversationidhash", "turnidhash", "runidhash", "stepidhash", "producerstepidhash",
+    "documentidhash", "plannerbindinghash", "documentsethash",
+})
+# Application-owned snake_case codes; any other text under these keys is dropped.
+LOGGER_WORKFLOW_CODE_KEYS = frozenset({
+    "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
+    "failurecode", "authorityreason", "capabilityid", "outputformat", "producercapabilityid",
+    "executionpath", "outcome",
+})
+
+
+def workflow_log_context(*, conversation_id=None, turn_id=None, run_id=None, step_id=None):
+    """Correlate workflow requests without recording their raw identifiers."""
+    return {
+        f"{name}_hash": hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+        for name, value in (
+            ("conversation_id", conversation_id), ("turn_id", turn_id), ("run_id", run_id),
+            ("step_id", step_id),
+        )
+        if isinstance(value, str) and value
+    }
+
+
+def _is_application_version(value: Any) -> bool:
+    """Accept bounded three-part decimal versions without regex backtracking."""
+    if not isinstance(value, str) or len(value) > LOGGER_APPLICATION_VERSION_MAX_LENGTH:
+        return False
+    parts = value.split(".", 2)
+    return len(parts) == 3 and all(part.isdecimal() for part in parts)
+
+
+def log_chat_execution_outcome(
+    *, execution_path, status, outcome, conversation_id, turn_id=None, run_id=None,
+    failure=None, application_version=None, attempt_index=None, message_saved=None,
+):
+    """Record business outcomes independently of a successful SSE/HTTP transport."""
+    if execution_path not in {"direct", "orchestration"}:
+        raise ValueError("Invalid chat execution path.")
+    outcomes = {"completed", "partial", "failed", "waiting", "cancelled"}
+    if outcome not in outcomes or status not in outcomes:
+        raise ValueError("Invalid chat execution outcome.")
+    failure = failure if isinstance(failure, dict) else {}
+    fields = {
+        **workflow_log_context(
+            conversation_id=conversation_id, turn_id=turn_id, run_id=run_id,
+            step_id=failure.get("step_id"),
+        ),
+        "execution_path": execution_path, "status": status, "outcome": outcome,
+        "failure_code": failure.get("code"), "capability_id": failure.get("capability_id"),
+    }
+    if _is_application_version(application_version):
+        fields["application_version"] = application_version
+    if type(attempt_index) is int and attempt_index > 0:
+        fields["attempt_index"] = attempt_index
+    if type(message_saved) is bool:
+        fields["message_saved"] = message_saved
+    log_event(
+        "[CHAT_EXECUTION] Execution outcome recorded.",
+        extra=fields,
+        level=logging.WARNING if outcome in {"failed", "partial"} else logging.INFO,
+    )
 
 
 def _format_message(message: Any, message_args: Optional[Tuple[Any, ...]] = None) -> str:
@@ -181,6 +250,8 @@ def sanitize_log_message(message: Any) -> str:
         message_text,
     )
     message_text = LOG_CONTROL_CHAR_RE.sub(" ", message_text)
+    # No-ops after the regex above; they make its line-break removal visible to static analysis.
+    message_text = message_text.replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
     if len(message_text) > MAX_LOG_STRING_LENGTH:
         return f"{message_text[:MAX_LOG_STRING_LENGTH]}... [truncated]"
     return message_text
@@ -201,6 +272,10 @@ def sanitize_log_properties(value: Any, _depth: int = 0) -> Any:
         sanitized = {}
         for key, item in value.items():
             key_text = str(key)
+            if key_text in SQL_CONTEXT_KEYS:
+                if valid_sql_context_property(key_text, item):
+                    sanitized[key_text] = item
+                continue
             if _is_sensitive_log_key(key_text):
                 sanitized[key_text] = REDACTED_LOG_VALUE
             else:
@@ -241,8 +316,21 @@ def _build_logger_extra(
     if isinstance(extra, dict):
         for key, value in extra.items():
             normalized_key = _normalize_extra_key(key)
+            if key in SQL_CONTEXT_KEYS:
+                if valid_sql_context_property(key, value):
+                    logger_extra[normalized_key] = value
+                continue
             if _is_sensitive_log_key(key):
                 logger_extra[f"{normalized_key}_present"] = value is not None
+                continue
+            diagnostic_key = _normalize_log_key(key)
+            if diagnostic_key in {"sqlstate", "sqlengine", "sqlnativeerror"}:
+                if (
+                    (diagnostic_key == "sqlstate" and valid_sqlstate(value))
+                    or (diagnostic_key == "sqlengine" and type(value) is str and value in SQL_ENGINES)
+                    or (diagnostic_key == "sqlnativeerror" and valid_native_error(value))
+                ):
+                    logger_extra[normalized_key] = value
                 continue
             if isinstance(value, dict):
                 logger_extra[f"{normalized_key}_count"] = len(value)
@@ -250,7 +338,20 @@ def _build_logger_extra(
                 logger_extra[f"{normalized_key}_count"] = len(value)
             elif isinstance(value, str):
                 logger_extra[f"{normalized_key}_length"] = len(value)
-                if _is_safe_log_text_key(key):
+                diagnostic_key = _normalize_log_key(key)
+                if diagnostic_key in LOGGER_WORKFLOW_HASH_KEYS:
+                    if re.fullmatch(r"[0-9a-f]{64}", value):
+                        logger_extra[normalized_key] = value
+                elif key in ASSIST_DIAGNOSTIC_TEXT:
+                    if value in ASSIST_DIAGNOSTIC_TEXT[key]:
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key in LOGGER_WORKFLOW_CODE_KEYS:
+                    if re.fullmatch(r"[a-z][a-z0-9_]{0,79}", value):
+                        logger_extra[normalized_key] = value
+                elif diagnostic_key == "applicationversion":
+                    if _is_application_version(value):
+                        logger_extra[normalized_key] = value
+                elif _is_safe_log_text_key(key):
                     logger_extra[normalized_key] = (
                         sanitize_log_message(value)[:LOGGER_SAFE_TEXT_MAX_LENGTH]
                     )
@@ -356,6 +457,19 @@ def is_debug_enabled() -> bool:
     return bool(settings.get('enable_debug_logging', False))
 
 
+def log_assist_debug(properties):
+    """Send content-free Ask AI diagnostics to both sinks only while debug logging is enabled."""
+    if not is_debug_enabled():
+        return
+    safe = safe_assist_diagnostics(properties)
+    if 'assist_surface' not in safe or 'assist_event' not in safe:
+        return
+    if safe['assist_surface'] == 'workflow':
+        log_event('[WORKFLOW_ASSIST] Ask AI diagnostic', extra=safe)
+    else:
+        log_event('[EDITOR_ASSIST] Ask AI diagnostic', extra=safe)
+
+
 def _get_appinsights_debug_logger() -> Optional[logging.Logger]:
     """Return a logger that can emit DEBUG traces without widening parent logger levels."""
     base_logger = get_appinsights_logger()
@@ -423,6 +537,24 @@ def get_appinsights_logger():
         return logging.getLogger('azure_monitor')
     
     return None
+
+
+def get_appinsights_runtime_state() -> Dict[str, bool]:
+    """Report how Application Insights was wired when this process started.
+
+    The settings document records what an administrator asked for; this reports
+    what the running process is doing. The two differ until the App Service
+    restarts, because ``setup_appinsights_logging`` configures the exporter and the
+    global logger once, at startup. Only booleans are returned, so the connection
+    string itself never leaves the server.
+    """
+    return {
+        'connection_configured': bool(os.environ.get('APPLICATIONINSIGHTS_CONNECTION_STRING')),
+        'exporter_configured': bool(_azure_monitor_configured),
+        'global_logging_active': (
+            _appinsights_logger is not None and _appinsights_logger is logging.getLogger()
+        ),
+    }
 
 # --- Logging function for Application Insights ---
 def log_event(

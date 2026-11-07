@@ -10,6 +10,13 @@ audience: user
 
 **Deep Research** is a chat control that reviews sources more deeply for the current message. It is separate from normal workspace search and direct URL Access.
 
+{% include media.html id="slide-external-research" %}
+
+Choose the evidence path deliberately: web search discovers public sources,
+URL Access reads an approved address, and research performs deeper source
+review. These paths depend on enabled services and policy; they do not
+inherit a private workspace boundary merely because the chat also uses documents.
+
 {% include media.html type="video"
                       title="Use deep research walkthrough"
                       poster="video-posters/guide-use-deep-research.png"
@@ -18,6 +25,41 @@ audience: user
 ## Why you would use this
 
 Use Deep Research when the answer depends on evidence review rather than a quick model response, especially when pasted URLs need a deeper read. It is wrong for short drafting tasks, private content that should not leave approved paths, or work that only needs local workspace documents.
+
+## When orchestration plans research
+
+In the V2 interface, orchestration can select deep research when broader discovery or
+closer source review would meaningfully improve your answer. A selected research step
+can run several related searches and review the resulting sources without requiring you
+to paste starting URLs or select a separate web-search step.
+
+Research is not automatically better for every request. Focused current lookups can use
+ordinary web search, while brainstorming may need no external research at all. Review
+the plan's rationale to understand the chosen approach, and describe the coverage or
+supporting details you need rather than adding special trigger words.
+
+The same deployment permissions and research limits apply. See
+[Orchestration settings]({{ '/admin/orchestration/' | relative_url }}) for how the planner
+balances evidence needs and cost.
+
+### Web IQ discovery in Gather
+
+Starting in **0.261.405**, a V2 research plan can gather relevant Web IQ News, Image,
+and Video evidence when your administrator permits those types. The planner sees the
+active provider and each delivery policy before selecting its Gather steps. News is
+useful for announcements; images can identify visual examples; videos can identify
+tutorials and demonstrations. A type being available is not a reason to call it for
+every research question.
+
+Images and Videos in **Text-only** mode still contribute descriptions and source-page
+citations, without previews. **With media** allows only selected answer media. Generated
+captions and summaries remain provider metadata, distinct from inspected page evidence.
+Additional endpoints share the discovery query/result budgets.
+
+The existing Source Review engine continues to read approved pages and follow selected
+links within page, depth, time, robots, and domain limits. URL Access uses that same
+reader; Web IQ Browse and Auto are not used. Search provenance labels the discovery
+provider, not child pages fetched by the local reader.
 
 ## Before you start
 

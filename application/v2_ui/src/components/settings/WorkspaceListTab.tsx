@@ -1,0 +1,293 @@
+// WorkspaceListTab.tsx
+// Shared list for the Groups and Public workspace settings tabs.
+//
+// Paging and search are server-side, so the search box is debounced rather than filtering a
+// local array: the list may be longer than the page in hand, and filtering only what has
+// been fetched would quietly hide matches.
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { clsx } from 'clsx';
+import { ArrowUpRight, Check, Globe2, Loader2, Search, Users } from 'lucide-react';
+import { ApiError } from '../../lib/apiClient';
+import type { WorkspaceKind, WorkspaceSummary } from '../../lib/workspaces';
+import { GlassPanel, Skeleton } from '../ui/primitives';
+import { SettingsCard } from './SettingsCard';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useGroupWorkspaceStore } from '../../stores/groupWorkspaceStore';
+
+const PAGE_SIZE = 10;
+const SEARCH_DEBOUNCE_MS = 300;
+
+function RoleBadge({ role }: { role?: string }) {
+    if (!role) {
+        return null;
+    }
+    return (
+        <span className="shrink-0 rounded-full border border-edge px-2 py-0.5 text-[11px] text-text-3">
+            {role}
+        </span>
+    );
+}
+
+export function WorkspaceListTab({ kind }: { kind: WorkspaceKind }) {
+    const navigate = useNavigate();
+    const needsReconciliation = useGroupWorkspaceStore((state) => kind.scope === 'group' && state.needsReconciliation);
+    const [items, setItems] = useState<WorkspaceSummary[]>([]);
+    const [page, setPage] = useState(1);
+    const [totalCount, setTotalCount] = useState(0);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [search, setSearch] = useState('');
+    const [activating, setActivating] = useState<string | null>(null);
+    const [actionError, setActionError] = useState<string | null>(null);
+
+    const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const listRequest = useRef<AbortController | null>(null);
+    const [effectiveSearch, setEffectiveSearch] = useState('');
+
+    const load = useCallback(
+        async (targetPage: number, term: string) => {
+            listRequest.current?.abort();
+            const controller = new AbortController();
+            listRequest.current = controller;
+            setLoading(true);
+            setError(null);
+            try {
+                const result = await kind.list(targetPage, PAGE_SIZE, term, controller.signal);
+                if (controller.signal.aborted) return;
+                setItems(result.items);
+                setTotalCount(result.totalCount);
+                setPage(result.page);
+            } catch (caught) {
+                if (controller.signal.aborted) return;
+                setError(
+                    caught instanceof Error
+                        ? caught.message
+                        : `Failed to load your ${kind.pluralNoun}.`,
+                );
+            } finally {
+                if (!controller.signal.aborted) setLoading(false);
+            }
+        },
+        [kind],
+    );
+
+    useEffect(() => {
+        void load(1, effectiveSearch);
+        return () => listRequest.current?.abort();
+    }, [load, effectiveSearch]);
+
+    useEffect(() => () => {
+        if (searchTimer.current !== null) clearTimeout(searchTimer.current);
+    }, []);
+
+    const onSearchChange = (value: string) => {
+        setSearch(value);
+        if (searchTimer.current !== null) {
+            clearTimeout(searchTimer.current);
+        }
+        searchTimer.current = setTimeout(() => setEffectiveSearch(value), SEARCH_DEBOUNCE_MS);
+    };
+
+    const activate = async (workspace: WorkspaceSummary) => {
+        setActivating(workspace.id);
+        setActionError(null);
+        try {
+            if (kind.scope === 'group') {
+                await useGroupWorkspaceStore.getState().activate(workspace.id, () => true);
+            } else {
+                const viewerId = useBootstrapStore.getState().data?.user.id;
+                await kind.setActive(workspace.id);
+                await useBootstrapStore.getState().refreshRequired(viewerId);
+            }
+            // Re-read rather than patching locally: which one is active is resolved
+            // server-side against the caller's membership, so the server is authoritative.
+            await load(page, effectiveSearch);
+        } catch (caught) {
+            setActionError(
+                caught instanceof ApiError && caught.status < 500
+                    ? caught.message
+                    : kind.scope === 'group'
+                        ? useGroupWorkspaceStore.getState().error || `Could not switch to that ${kind.noun}.`
+                        : `Could not switch to that ${kind.noun}.`,
+            );
+        } finally {
+            setActivating(null);
+        }
+    };
+
+    const reconcile = async () => {
+        setActivating('reconciling');
+        setActionError(null);
+        try {
+            await useGroupWorkspaceStore.getState().reconcile();
+            await load(page, effectiveSearch);
+        } catch {
+            setActionError(useGroupWorkspaceStore.getState().error || 'Could not confirm the active workspace.');
+        } finally {
+            setActivating(null);
+        }
+    };
+
+    // Open never activates from here; the page it lands on decides, as with the directories.
+    const openWorkspace = (workspace: WorkspaceSummary) => {
+        let path: string;
+        try {
+            path = kind.openPath(workspace.id);
+        } catch {
+            setActionError(`Could not open that ${kind.noun}.`);
+            return;
+        }
+        navigate(path);
+    };
+
+    const lastPage = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+    const title = `Your ${kind.pluralNoun}`;
+
+    return (
+        <SettingsCard
+            title={title}
+            Icon={kind.scope === 'group' ? Users : Globe2}
+            description={`The ${kind.pluralNoun} you can use. The active one is where new work in this interface is scoped.`}
+            bodyClassName="space-y-3"
+        >
+                <label className="relative block">
+                    <Search
+                        size={15}
+                        className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-text-3"
+                    />
+                    <input
+                        value={search}
+                        onChange={(event) => onSearchChange(event.target.value)}
+                        placeholder={`Search ${kind.pluralNoun}`}
+                    aria-label={`Search ${kind.pluralNoun}`}
+                        className="w-full rounded-xl border border-edge bg-surface-solid py-2 pr-3 pl-9 text-sm text-text-1 outline-none focus:border-accent"
+                    />
+                </label>
+
+                {actionError && (
+                    <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-2 text-xs text-danger">
+                        {actionError}
+                    </p>
+                )}
+                {needsReconciliation ? (
+                    <button type="button" disabled={activating !== null} onClick={() => void reconcile()}
+                        className="rounded-lg border border-edge px-3 py-2 text-sm text-text-1 hover:bg-surface-2 disabled:opacity-50">
+                        Refresh workspace selection
+                    </button>
+                ) : null}
+
+                {error ? (
+                    <p className="rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">
+                        {error}
+                    </p>
+                ) : loading ? (
+                    <div className="space-y-2">
+                        <Skeleton className="h-16 w-full" />
+                        <Skeleton className="h-16 w-full" />
+                        <Skeleton className="h-16 w-full" />
+                    </div>
+                ) : items.length === 0 ? (
+                    <GlassPanel className="p-6 text-center">
+                        <p className="text-sm text-text-2">
+                            {effectiveSearch
+                                ? `No ${kind.pluralNoun} match “${effectiveSearch}”.`
+                                : `You are not a member of any ${kind.pluralNoun} yet.`}
+                        </p>
+                    </GlassPanel>
+                ) : (
+                    <ul className="space-y-2">
+                        {items.map((workspace) => (
+                            <li key={workspace.id}>
+                                {/* Wraps like the directory rows: on a narrow screen the actions drop
+                                    below the name instead of squeezing it to a few letters. */}
+                                <GlassPanel className="flex flex-wrap items-center gap-3 p-3">
+                                    <div className="min-w-0 flex-1 basis-48">
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            <span className="truncate text-sm font-medium text-text-1">
+                                                {workspace.name || 'Untitled'}
+                                            </span>
+                                            <RoleBadge role={workspace.userRole} />
+                                            {workspace.status && workspace.status !== 'active' && (
+                                                <span className="shrink-0 rounded-full bg-warn-soft px-2 py-0.5 text-[11px] text-warn">
+                                                    {workspace.status}
+                                                </span>
+                                            )}
+                                        </div>
+                                        {workspace.description && (
+                                            <p className="mt-0.5 truncate text-xs text-text-3">
+                                                {workspace.description}
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <div className="ml-auto flex shrink-0 items-center gap-2">
+                                        {workspace.isActive ? (
+                                            <span className="flex shrink-0 items-center gap-1.5 rounded-lg bg-ok-soft px-2.5 py-1.5 text-xs font-medium text-ok">
+                                                <Check size={13} /> Active
+                                            </span>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => void activate(workspace)}
+                                                disabled={activating !== null || needsReconciliation}
+                                                className={clsx(
+                                                    'shrink-0 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1',
+                                                    'hover:bg-surface-2 disabled:opacity-60',
+                                                )}
+                                            >
+                                                {activating === workspace.id ? (
+                                                    <Loader2 size={13} className="animate-spin" />
+                                                ) : (
+                                                    'Set active'
+                                                )}
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => openWorkspace(workspace)}
+                                            disabled={activating !== null || needsReconciliation}
+                                            aria-label={`Open ${workspace.name || 'Untitled'}`}
+                                            className={clsx(
+                                                'flex shrink-0 items-center gap-1 rounded-lg border border-edge px-2.5 py-1.5 text-xs font-medium text-text-1',
+                                                'hover:bg-surface-2 disabled:opacity-60',
+                                            )}
+                                        >
+                                            Open<ArrowUpRight size={13} />
+                                        </button>
+                                    </div>
+                                </GlassPanel>
+                            </li>
+                        ))}
+                    </ul>
+                )}
+
+                {totalCount > PAGE_SIZE && (
+                    <div className="flex items-center justify-between text-xs text-text-3">
+                        <span>
+                            Page {page} of {lastPage} · {totalCount} {kind.pluralNoun}
+                        </span>
+                        <div className="flex gap-1.5">
+                            <button
+                                type="button"
+                                disabled={page <= 1 || loading}
+                                onClick={() => void load(page - 1, effectiveSearch)}
+                                className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
+                            >
+                                Previous
+                            </button>
+                            <button
+                                type="button"
+                                disabled={page >= lastPage || loading}
+                                onClick={() => void load(page + 1, effectiveSearch)}
+                                className="rounded-lg border border-edge px-2.5 py-1 text-text-1 hover:bg-surface-2 disabled:opacity-50"
+                            >
+                                Next
+                            </button>
+                        </div>
+                    </div>
+                )}
+        </SettingsCard>
+    );
+}

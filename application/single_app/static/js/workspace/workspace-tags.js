@@ -611,6 +611,7 @@ function wireBackButton(container) {
 }
 
 function buildFolderDocumentsTable(docs) {
+    docs = docs.filter(doc => !window.ContentScreening?.isHeld(doc));
     const fnIcon = folderSortBy === 'file_name'
         ? (folderSortOrder === 'asc' ? 'bi-sort-alpha-down' : 'bi-sort-alpha-up')
         : 'bi-arrow-down-up text-muted';
@@ -647,10 +648,8 @@ function buildFolderDocumentsTable(docs) {
         const pctStr = String(doc.percentage_complete);
         const pct = /^\d+(\.\d+)?$/.test(pctStr) ? parseFloat(pctStr) : 0;
         const docStatus = doc.status || '';
-        const isComplete = pct >= 100
-            || docStatus.toLowerCase().includes('complete')
-            || docStatus.toLowerCase().includes('error');
-        const hasError = docStatus.toLowerCase().includes('error');
+        const hasError = window.DocumentStatus.isFailure(docStatus);
+        const isComplete = pct >= 100 || window.DocumentStatus.isComplete(docStatus) || hasError;
 
         const currentUserId = window.current_user_id;
         const isOwner = doc.user_id === currentUserId;
@@ -1001,6 +1000,14 @@ async function renderFolderContents(tagName) {
             });
         }
 
+        window.ContentScreening?.registerWorkspace({
+            scopeType: "personal", scopeId: "", documents: docs,
+            getSelectedIds: () => Array.from(window.selectedDocuments || []),
+            refresh: () => renderFolderContents(tagName),
+            render: () => renderFolderContents(tagName)
+        });
+        if (window.ContentScreening) docs = window.ContentScreening.filterDocuments(docs, { scopeType: "personal", scopeId: "" });
+
         // Build the full view
         let html = buildBreadcrumbHtml(displayName, tagColor, currentFolderType || 'tag');
         // Inline search bar for folder drill-down
@@ -1040,6 +1047,7 @@ async function renderFolderContents(tagName) {
 
         container.innerHTML = html;
         wireBackButton(container);
+        window.ContentScreening?.decorateFolderTable(container.querySelector("#folder-docs-table"), docs, { scopeType: "personal", scopeId: "" });
         if (currentView === 'folders-cards' && docs.length > 0) {
             renderFolderDocumentCards(docs);
         }

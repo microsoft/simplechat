@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for outbound MCP tool argument normalization.
-Version: 0.261.029
-Implemented in: 0.250.128; 0.261.029
+Version: 0.261.371
+Implemented in: 0.250.128; 0.261.029; 0.261.371
 
 This test ensures wrapped Semantic Kernel kwargs are normalized before outbound
 MCP tool validation and invocation, while legitimate kwargs tool fields remain
@@ -69,6 +69,7 @@ _TEST_MODULES = {
         MCPSsePlugin=object,
         MCPStreamableHttpPlugin=object,
         MCPWebsocketPlugin=object,
+        _mcp_call_tool_result_to_kernel_contents=lambda result: result.content,
     ),
 }
 

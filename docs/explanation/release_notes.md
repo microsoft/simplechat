@@ -2,81 +2,4779 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.061)**
+### **(v0.261.422)**
+
+#### Bug Fixes
+
+*   **Group Agent API Tests Execute Requests Outside Assertions**
+    *   Preserves all API response and state assertions while ensuring Python optimization cannot remove the requests they validate.
+    *   Adds fresh-process normal/optimized coverage for 12 scenarios and 49 request/status contracts using the existing isolated backend harness.
+    *   Corrects a proven PR-introduced CodeQL finding cluster without changing application authorization, checks, or the remaining integration blockers.
+    *   (Ref: `test_group_agent_apis.py`, `test_group_agent_assertion_execution.py`, `GROUP_AGENT_API_ASSERTION_EXECUTION_FIX.md`, [PR #1903](https://github.com/microsoft/simplechat/pull/1903))
+
+### **(v0.261.421)**
+
+#### Bug Fixes
+
+*   **React V2 Dependency Pins And Visible Unicode Fixtures**
+    *   Pins frontend dependencies to their existing resolved versions without library upgrades or lockfile metadata churn.
+    *   Replaces three invisible screening-fixture joiners with visible source escapes while preserving the same Unicode selection coverage and runtime values.
+    *   Leaves the security checks and broader integration validation findings intact.
+    *   (Ref: `application/v2_ui/package.json`, `application/v2_ui/package-lock.json`, `test_v2_content_screening_logic.mjs`, `test_v2_static_security_fix.py`, [PR #1903](https://github.com/microsoft/simplechat/pull/1903))
+
+### **(v0.261.420)**
+
+#### Bug Fixes
+
+*   **Queued Admin Saves Preserve Late Conflict Protection**
+    *   Settings saves wait for all initial index checks and remain blocked if a later group or public check detects a concurrent edit.
+    *   Duplicate queued submissions still produce only one save, and unsaved form values remain available to copy before reloading.
+    *   (Ref: `admin_settings.js`, `test_admin_settings_save_consistency.py`, [#1903](https://github.com/microsoft/simplechat/pull/1903))
+
+*   **Action Recovery Editor Links Use Encoded Local Routes**
+    *   Recovery notices retain literal diagnostics, reporting, and recheck controls while rebuilding editor links from permitted local routes and encoded identifiers.
+    *   Malformed or nonlocal links show the existing owner/admin guidance instead of a clickable destination; image/embedding button dispatch and reasoning notices retain their existing behavior.
+    *   (Ref: `chat-action-recovery.js`, `admin_model_endpoints.js`, `chat-messages.js`, `test_chat_action_recovery_rendering.py`, [#1903](https://github.com/microsoft/simplechat/pull/1903))
+
+### **(v0.261.419)**
 
 #### New Features
+
+*   **React V2 Integration Into Development**
+    *   Brings the React V2 interface and its orchestration, workspace, and document capabilities into Development while retaining both branches' fixes and existing interface rollout controls.
+    *   Preserves distinct release entries from both histories and Development's recursive Python package validation.
+    *   (Ref: React V2 integration, `application/single_app/config.py`, `docs/explanation/fixes/REACT_V2_DEVELOPMENT_INTEGRATION_FIX.md`)
+
+#### Bug Fixes
+
+*   **Waiting Runs No Longer Take Over the Composer**
+    *   A restored orchestration run waiting for results remains tracked without replacing Send with Stop when no reply is streaming.
+    *   Saved-status and cancellation controls remain available through the plan; reloading does not start another execution.
+    *   (Ref: `Composer.tsx`, orchestration waiting-state recovery, `test_v2_orchestration_planning_persistence.py`)
+
+*   **Configured Navigation Rejects Unsafe Destinations**
+    *   Administrator-configured navigation keeps valid local and HTTP(S) links while refusing executable schemes, protocol-relative paths, backslashes, and control characters at the browser link boundary.
+    *   (Ref: `navigationGroups.ts`, `NavExtras.tsx`, navigation runtime and browser regression coverage)
+
+### **(v0.261.410)**
+
+#### New Features
+
+*   **Microsoft MAI-Thinking-1 In AI Connections**
+    *   A single native Foundry resource/project connection can now route OpenAI, Grok, and Microsoft MAI models to their appropriate inference APIs automatically, including managed identity, streaming, and function tools.
+    *   Built-in model selections preconfigure canonical model identity while retaining automatic exact name matching, deployment names, explicit overrides, and publication choices.
+    *   Preserved Custom/APIM base paths, authentication headers, and request aliases. MAI keeps its native Chat Completions contract even when the shared connection prefers Responses for compatible OpenAI-style models.
+    *   Added the verified MAI profile, generation limits, token audience, and setup guidance without changing existing chat, planner, image, or embedding defaults.
+    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, `functions_model_capabilities.py`, `ModelConnectionsManager.tsx`, `model_capabilities.json`, [AI connection configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models), [Microsoft MAI Connection Compatibility Fix](https://github.com/microsoft/simplechat/blob/34df8404ab9e20e51ffaf9d98ea40d75a18570e8/docs/explanation/fixes/MICROSOFT_MAI_MODEL_CONNECTIONS_FIX.md))
+
+### **(v0.261.408)**
+
+#### Bug Fixes
+
+*   **Excel Comment Contents And Correct Thread Counts**
+    *   Supplies actual native comment records and saved cell context to chat instead of only counts and shortened relevance excerpts. Reviewer requests remain separate from worksheet values.
+    *   Distinguishes genuine legacy notes, threaded roots/replies, and identifiable compatibility copies so mirrored comments do not inflate counts.
+    *   Existing retained originals can be inspected without re-uploading; missing formula caches remain unavailable rather than becoming zero.
+    *   (Ref: `functions_excel_accessibility.py`, `functions_excel_inventory.py`, `functions_search_service.py`, `route_backend_chats.py`, `docs/explanation/fixes/EXCEL_COMMENT_CONTENT_AND_TABLE_HEADERS_FIX.md`)
+
+#### New Features
+
+*   **Scalable, Table-Aware Saved Excel Inspection**
+    *   Discovers independent named tables and ordinary cell blocks with their own ranges, title/header rows, and source coordinates across worksheets.
+    *   Keeps compact document metadata while full native inventories use private, revision-bound pages. Analytical selection and durable replay retain table/range/header context.
+    *   Adds saved properties, links/validation, readable chart/object content, and configured Office-image analysis with available Excel anchors. Formulas, macros, and external links are never executed/refreshed.
+    *   (Ref: `excel_workbook_reader.py`, `tabular_processing_plugin.py`, `functions_tabular_generated_exports.py`, `docs/explanation/features/EXCEL_NATIVE_INSPECTION.md`)
+
+#### User Interface Enhancements
+
+*   **Workbook Citation Tables And Bounded Record Navigation**
+    *   Identifies the selected worksheet/table and actual header/row locations, with table selection, record paging, record jumps, keyboard navigation, and retryable selection errors.
+    *   Uses workbook/CSV evidence labels instead of image wording and keeps the originally cited passage independent of preview navigation.
+    *   (Ref: `EnhancedCitationViewer.tsx`, `route_enhanced_citations.py`, `docs/guides/inspect-excel-workbooks.md`)
+
+#### Breaking Changes
+
+*   **Legacy Queued Workbook Replay Requires Restart**
+    *   Pending workbook computations using v1 worksheet-header descriptors no longer resume under changed table/header semantics.
+    *   **Migration**: Start a new computation to pin the intended worksheet/table/range and header. Existing completed exports are unchanged; CSV replay compatibility is retained.
+    *   (Ref: `functions_tabular_generated_exports.py`, versioned workbook source descriptors)
+
+### **(v0.261.392)**
+
+#### Bug Fixes
+
+*   **Retrieval, Narrative/XML Fidelity, Default System Prompt, And Inline Citation Restoration**
+    *   Fixed a regression where `default_system_prompt` was omitted whenever `mixed_source_handoff`, chat-uploaded file/image messages, or other system augmentation messages were present in `conversation_history_for_api`.
+    *   Restored `build_search_augmentation_system_prompt(retrieved_content)` in mixed-source chat turns so full narrative and XML chunks, document metadata citations, and `(Source: ..., Page: ...) [#citation_id]` inline citation markers are no longer replaced solely by the 1,024-byte JSON envelope preview.
+    *   Hydrated workspace-backed chat file upload text (`file_content_source: "workspace"`) from indexed chunks in `_refresh_workspace_linked_history_message` when Content Screening is off, and removed the 50 KB history preview truncation for workspace-backed non-tabular chat uploads.
+    *   Added automatic fallback from `query_type="semantic"` to vector + BM25 keyword hybrid search (`query_type="simple"`) in `hybrid_search` when Azure AI Search Semantic Ranker monthly free quota is exhausted, while keeping the persisted service-health warning active.
+    *   Added resolution for bracketed full and 8-character hex prefix chunk citation IDs (`[8ed56431_1]`, `[15dce0d4_2; 8ed56431_2]`) in V2 `citations.ts`, Classic `chat-citations.js`, and `functions_citation_tracking.py`.
+    *   (Ref: `route_backend_chats.py`, `functions_mixed_source_orchestration.py`, `functions_search.py`, `functions_citation_tracking.py`, `citations.ts`, `chat-citations.js`, [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md), [#1855](https://github.com/microsoft/simplechat/issues/1855))
+
+### **(v0.261.390)**
+
+#### New Features
+
+*   **Word Document Review Comment Extraction (`.docx`, `.docm`, `.doc`, `.dotx`)**
+    *   Added local extraction of review comments from modern OOXML Word documents (`.docx`, `.docm`, `.dotx`) and legacy Word 97–2003 binary OLE documents (`.doc`), which were previously omitted by Azure Document Intelligence and `docx2txt` or flattened without metadata in piece tables.
+    *   OOXML extraction parses `word/comments.xml`, `word/commentsExtended.xml`, and `word/document.xml` to capture comment authors, initials, timestamps, resolved states, threaded replies, quoted anchor text (`w:commentRangeStart`/`w:commentRangeEnd`), and reading-order word offsets. Legacy `.doc` extraction parses the MS-DOC File Information Block (`FibRgLw97` `ccpAtn`, `PlcfandTxt`, `PlcfandRef`, `GrpXstAtnOwners`, and annotation bookmarks) while keeping raw annotation streams separate from body text.
+    *   Workspace ingestion merges each comment thread into the document chunk containing its anchored text, and direct chat uploads, `.docm` processing, M365 extraction, and content screening include the extracted comments.
+    *   (Ref: `functions_office_media.py`, `functions_content.py`, `functions_documents.py`, `route_frontend_chats.py`, [Word Comment Extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORD_COMMENT_EXTRACTION.md), [#1850](https://github.com/microsoft/simplechat/issues/1850))
+
+### **(v0.261.385)**
+
+#### Bug Fixes
+
+*   **Orchestration Unfound Source Information And Linked PDF Coverage Handling**
+    *   Fixed an issue where source-grounded orchestration requests failed with `completeness_incomplete` (`"The answer did not satisfy the requested requirements within its correction allowance."`) when the searched document or linked URL did not contain the requested item or setting. `compose` and task completeness verification now treat an evidence-backed response that clearly states the searched content does not contain the requested information, reports the inspected page/source coverage, and summarizes what the content covers as a completed answer.
+    *   Added `application/pdf` extraction support to Source Review and `url_fetch` using PyMuPDF (`fitz`), tracking total and inspected PDF page counts (`[Page X of Y]`) and surfacing `source_coverage` metadata when `document_search` or `document_analyze` returns empty matches.
+    *   (Ref: `functions_source_review.py`, `functions_orchestration_adapters.py`, `functions_orchestration_result_runtime.py`, `functions_orchestration_composition.py`, `functions_task_completeness.py`, [Orchestration Unfound Source Coverage Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_UNFOUND_SOURCE_COVERAGE_FIX.md))
+
+### **(v0.261.381)**
+
+#### User Interface Enhancements
+
+*   **Standardized Durable Workflows With Legacy Upgrade Option**
+    *   Removed the **Durable execution** toggle when creating new workflows or editing already-durable workflows in the V2 workflow editor, ensuring all new and durable workflows always save with durable execution enabled.
+    *   Preserved existing legacy non-durable workflows when edited without upgrading, while retaining the **Durable execution** upgrade switch in **Execution** (and automatic upgrade when task approval is enabled) until the legacy workflow is saved as durable.
+    *   (Ref: `WorkflowEditorDialog.tsx`, `workflowEditor.ts`, `functions_workflow_assist_editor.py`, `docs/admin/workflow.md`)
+
+### **(v0.261.379)**
+
+#### Bug Fixes
+
+*   **Mixed-Mode Conversation History Ordering And Superseded Saved-Memory Handling**
+    *   Fixed `sort_messages_by_thread` so unthreaded orchestration turns (`user_orchestration_*` and `assistant_orchestration_*`) are interleaved chronologically with threaded manual chat turns based on each thread's earliest timestamp rather than placing all orchestration turns before all manual turns.
+    *   Clarified saved `Instruction Memory`, `Fact Memory`, and orchestration composition/planning prompts so updated profile memories supersede earlier assistant prefixes, names, call signs, and roles without quoting, contrasting, or flagging the earlier values as note inconsistencies during consistency checks.
+    *   (Ref: `functions_chat.py`, `functions_fact_memory_context.py`, `functions_orchestration_composition.py`, `functions_orchestration_planner.py`, [Mixed-Mode History Order and Superseded Memory Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MIXED_MODE_HISTORY_ORDER_AND_SUPERSEDED_MEMORY_FIX.md))
+
+### **(v0.261.378)**
+
+#### Bug Fixes
+
+*   **V2 Chat Orchestration Unseeded Agent Availability And Catalog Ranking Fix**
+    *   Fixed an issue where V2 chat orchestration turns without a manually pinned composer agent (`seeds.agent: null`) dropped `agent_invoke` whenever `user_settings.settings.enable_agents` had been persisted as `false` (for example after saving any user setting when `enable_agents` was not yet stored). V2 orchestration now evaluates `agent_invoke` using admin capability settings, governance, scope/group membership, and optional `seeds.agent` narrowing rather than the Classic `/chats` composer toggle.
+    *   Updated `update_user_settings()` to default missing `enable_agents` to `True`, ranked agents and external sources named in `request_text` ahead of unnamed entries before applying the 25-item workflow planning catalog cap, and preserved `group` scope metadata when background chat upload ingestion completes.
+    *   (Ref: `functions_settings.py`, `route_backend_orchestration.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_external_sources.py`, `functions_orchestration_workflow_context.py`, `functions_documents.py`, [Orchestration Unseeded Agent Availability Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_UNSEEDED_AGENT_AVAILABILITY_FIX.md))
+
+### **(v0.261.333)**
+
+#### New Features
+
+*   **Optional Private Monitoring In Commercial And Government**
+    *   Deployment administrators can opt into Azure Monitor Private Link Scope (AMPLS) for Application Insights and Log Analytics in either cloud. The option defaults off and requires private networking; when enabled, monitoring ingestion and queries use private-only access.
+    *   Bicep/AZD, Terraform, and Azure CLI support cloud-specific monitoring DNS and existing-zone reuse. AMPLS reuses Blob DNS, and Government's additional ADX zone is handled separately from the five-zone private endpoint DNS group.
+    *   (Ref: `enableAzureMonitorPrivateLink`, `ENABLE_AZURE_MONITOR_PRIVATE_LINK`, `azureMonitorPrivateNetworking.bicep`, [Azure Monitor Private Link](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/AZURE_MONITOR_PRIVATE_LINK.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+
+#### Bug Fixes
+
+*   **Redis Private Endpoints And Cloud DNS Corrections**
+    *   Private Bicep/AZD deployments now create the appropriate Managed or classic Redis private endpoint. Redis remains reachable during bootstrap, and the final `azd up` hook disables public access after configuration succeeds. Separate provision/deploy workflows must perform equivalent final lockdown.
+    *   Commercial Video Indexer uses `privatelink.api.videoindexer.ai`, while unsupported Government private endpoint creation remains disabled. Government Key Vault now uses `privatelink.vaultcore.usgovcloudapi.net` across all three deployers.
+    *   (Ref: `privateNetworking.bicep`, `redisCache.bicep`, `privateDNSZones.json`, `deployers/azure.yaml`, [Private Endpoint And DNS Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/DEPLOYER_PRIVATE_ENDPOINT_DNS_FIX.md), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+
+#### Documentation And Architecture
+
+*   **Expanded Visio Architectures And Deployment Network References**
+    *   Updated `artifacts/architecture.vsdx` and `artifacts/private_endpoints.vsdx` with Azure Container Registry, Key Vault, platform networking, compact subnet sizing, monitoring DNS, and Commercial/Government service distinctions, including Managed versus classic Redis.
+    *   Cloud-specific tables distinguish fresh script-created networks from a compact existing-network reference, showing CIDRs, total and Azure-usable addresses, delegation, service placement, and growth space. The compact segmented reference is not automatically created by existing-VNet reuse.
+    *   Added a Visio companion and deployment guidance covering AMPLS capacity, shared-DNS impacts, bootstrap lockdown, and cloud limitations. Diagram labels do not override the documented service/private-endpoint availability requirements.
+    *   Deployer version: **1.0.34**. Live-cloud connectivity and monitoring validation remain deployment checks.
+    *   (Ref: `artifacts/architecture.vsdx`, `artifacts/private_endpoints.vsdx`, [Diagram Network Reference](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/artifacts/PRIVATE_ENDPOINTS_NETWORK_REFERENCE.md), [Enterprise Networking](https://microsoft.github.io/simplechat/guides/enterprise-networking/), [#1765](https://github.com/microsoft/simplechat/issues/1765))
+
+### **(v0.261.315)**
+
+#### New Features
+
+*   **Create And Edit Workspace Identities In V2**
+    *   Personal users can create and edit reusable identities directly in My Workspace. Group and public workspace identity authoring continues to use the native shared editor, so authorized managers do not need to visit classic pages.
+    *   Personal edits and deletes require the version opened by the editor. A stale save keeps the draft available to rebase, while stored credentials remain server-side and unchanged secrets are preserved.
+    *   (Ref: `functions_personal_identity_access.py`, `route_backend_personal_identities_scoped.py`, `IdentityWorkbenchSection.tsx`, [V2 Workspace Identities](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKSPACE_IDENTITIES.md), [#1722](https://github.com/microsoft/simplechat/issues/1722))
+
+### **(v0.261.309)**
+
+#### New Features
+
+*   **Plans Can Wait For A Quick Saved Workflow And Use Its Result**
+    *   With **Wait For Quick Workflows In Chat** on, a chat plan that starts one of the user's saved personal workflows can wait for the run and use its result in the same answer, for example "run my sales digest, then compare its totals with the Q3 report in my workspace". Before, the planner dropped any run step whose result another step needed, and the result arrived later as a separate chat post.
+    *   The server decides whether a plan waits, from the saved workflow and the settings, never from the model. It waits only for a quick workflow: personal, durable execution on, one to five tasks, no For each or Repeat until, no approval, Microsoft 365 run-as user, File Sync or review publication, and not a hand-off or structured workflow. Only answer-writing steps may read the result, and every step must be able to run without the user's sign-in. The server checks again when the run starts and on every check while the plan waits.
+    *   A plan waits at most **Wait for a workflow from chat** (default 300 seconds, range 60-1800), and always keeps enough of its run time to write the answer. A run that finishes in time reaches the answer through the existing workflow results reader, which checks access again and marks the content as untrusted. A failed or cancelled run says so, and the steps that needed its result don't run. A run still going when the wait ends is posted to the chat by the existing post-back when it finishes.
+    *   One compare-and-set write on the run's delivery record decides whether the answer or the post-back delivers the result, so it reaches the chat once. Each check while waiting confirms that the conversation is still private and the user's, the setting is still on, and the workflow is still the user's and still quick. A failed check ends the wait and leaves delivery to the post-back's own rules.
+    *   Off by default, and with it off planning and execution are unchanged. A plan that starts a workflow still always waits for the user's approval, and hand-off workflows are never waited for.
+    *   (Ref: `functions_orchestration_workflow_run_wait.py` `SAVED_WORKFLOW_RUN_WAIT_KIND` and `quick_run_eligibility`, `functions_orchestration_workflow_runs.py` `resume_workflow_run_wait`, `functions_workflow_chat_delivery.py` `apply_plan_wait_consume`, `functions_orchestration_continuation.py`, [Chat Orchestration Workflow Run Wait](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT.md))
+
+#### User Interface Enhancements
+
+*   **The Plan Card Names The Workflow It Waits For, And The Run Card Says When A Result Was Used**
+    *   While a plan waits for a saved workflow, its progress line names the workflow and how long the plan waits, such as `Waiting for "Sales digest" to finish (up to 5 min).`, instead of "Waiting for results".
+    *   A run whose result a plan used says **Its results were used in a chat answer.** on its card under the answer, because there is no posted result to jump to. No bell notification is sent for it.
+    *   Workflow names are shown as text.
+    *   (Ref: `orchestrationPlan.ts` `describeRunProgress`, `workflowRunStatus.ts` `workflowFinishedResultsText`, `WorkflowRunCard.tsx`)
+
+### **(v0.261.308)**
+
+#### New Features
+
+*   **Repeat a Chat Plan on a Schedule**
+    *   With **Repeat Chat Plans On A Schedule** on (`enable_workflow_plan_replay`, off by default; it needs Chat Orchestration and personal workflows), a finished orchestrated answer offers **Repeat on a schedule**. The card freezes the plan that just ran and shows the request, how dates are handled, the shortest allowed interval, the step cap and every step with its capability before anything is saved. Saving creates a paused personal workflow unless the user turns the schedule on.
+    *   Each run replays the frozen plan as the person who saved it, in the workflow's own conversation, never the chat it came from. The plan is SHA-256 hashed when it's saved and checked again before every run, and the model never adds, removes or rewrites a step. Each run also checks again that the setting, Chat Orchestration, every step's capability, and every document, group and public workspace the plan reads are still available to that person. A refused run fails with a fixed reason before any step runs.
+    *   Only steps that are safe to repeat are allowed: Search documents, Analyse documents, Compare documents, Merge documents, Inspect spreadsheets, Prepare content and Generate image. Web search, page fetches, deep research, actions, agents, workflow steps, steps that wait for a file or result, and plans that asked the user a question are refused, with a reason for each step. A run is limited to 8 steps and 15 minutes, and the schedule follows the chat-created workflow minimum interval and quota.
+    *   The run inspector shows a typed result for each run: the orchestration run, each step's status, the final response and its image or file artifacts. The V2 workflow editor shows the frozen steps read-only; the name, schedule and alerts stay editable. The Classic workflow page sends these workflows to V2.
+    *   A saved workflow starts with one **Run failed** alert rule, so a refused or failed scheduled run isn't missed: it sends a high-severity notification to the bell, never a pop-up, with the fixed reason. The card says so before saving, and the rule stays editable under **Alerts**.
+    *   Part of #1550, refs #1543.
+    *   (Ref: `functions_workflow_plan_replay.py`, `functions_workflow_runner.py`, `route_backend_orchestration.py` `/api/v2/orchestration/runs/<run_id>/plan-replay`, `PlanReplaySaveCard.tsx`, `WorkflowEditorDialog.tsx`, `WorkflowRunHistory.tsx`, [Workflow plan replay](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_PLAN_REPLAY.md))
+
+### **(v0.261.306)**
+
+#### Bug Fixes
+
+*   **Consistent V2 Scope Response Contract**
+    *   Scope confirmation now uses the same response tuple format for successful reads and error paths, resolving the CodeQL mixed-tuple-returns finding without changing status codes, response bodies, or no-store behavior.
+    *   (Ref: `route_backend_v2.py` `v2_scope`, `test_v2_scope_and_bootstrap_timings.py`)
+
+### **(v0.261.305)**
+
+#### Bug Fixes
+
+*   **V2 Group Switching No Longer Rebuilds All Startup Data**
+    *   A group switch now confirms the saved selection through a lightweight scope read instead of waiting for the complete startup payload. Current-access checks, sign-in checks, and read-only recovery after an uncertain save remain in place.
+    *   An overlapping startup refresh cannot restore the previous selection. Startup and scope reads bypass the browser's HTTP cache.
+    *   Startup requests now report per-phase timing so the remaining first-load bottleneck can be measured; first-load optimization is a separate follow-up.
+    *   (Ref: `route_backend_v2.py`, `bootstrapStore.ts`, `groupWorkspaceStore.ts`, [V2 Group Switch Latency Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_GROUP_SWITCH_LATENCY_FIX.md), [#1725](https://github.com/microsoft/simplechat/issues/1725))
+
+### **(v0.261.304)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Approvals In A Plan Are Decided In The Chat**
+    *   With Orchestrate on, a SharePoint or OneDrive step that had to read more of a file than a quick read covers stopped for the user's extended-analysis approval and only linked to **Approvals**. The user had to decide there, come back and retry. The stop wasn't about access: a quick read covers 3 downloads, a 25 MB file and 12,000 tokens of file content, and the per-source preference defaults to **Ask**.
+    *   The stopped message now shows the approval itself. It says why the step stopped, from the approval's recorded counts, and offers **Allow this time**, **Always allow for SharePoint** (or OneDrive) and **Quick read only**. A choice is saved through the approvals API, and the plan continues straight away. An approval already decided in Approvals offers **Continue**. Other approvals still link to Approvals.
+    *   The step's failure now carries its pending approval's id. Only an id in the shape the application mints is kept, and the approvals API still checks the signed-in user.
+    *   (Ref: `M365ApprovalInlineCard.tsx`, `OrchestrationRecoveryNotice.tsx`, `functions_orchestration_schema.py` `build_failure`, `lib/orchestration.ts`, [Orchestration M365 Approval and Retry Flow Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_M365_APPROVAL_RETRY_FLOW_FIX.md))
+
+*   **Retrying A Microsoft 365 Stop Needs No Confirmation, And A Confirmation Closes When The Retry Starts**
+    *   A **Use an action** step that stopped for Microsoft 365 sign-in, approval or policy is retried without "Retry this failed step?". It ran only its one Microsoft 365 action, and a plan step can only read Microsoft 365 data. The server decides this when it prepares the retry. Agent steps, and action steps that failed for other reasons, still ask.
+    *   A confirmation that is still needed now closes as soon as the retry is admitted. Before, it stayed open and busy until the whole retry finished.
+    *   (Ref: `functions_orchestration_recovery.py` `_stopped_without_effects`, `orchestrationController.ts` `launchSavedPlan`)
+
+*   **A Retry's Answer Replaces The Stopped Attempt**
+    *   After a successful retry, the stopped attempt's "The request could not be completed." message stayed in the thread, the answer carried a "Saved execution attempt - Attempt 2" box, and the stopped attempt was sent to the model on every later turn.
+    *   The retry's answer now replaces the attempt it retried in the thread, including after a reload. The stopped attempt is left out of the model's history, conversation exports and the **Documents** drawer, but stays stored. A completed retry shows no attempt notice, and **Message details** offers **View previous attempt** and **Review saved attempt**.
+    *   (Ref: `functions_orchestration_attempts.py`, `functions_orchestration_context.py`, `route_backend_chats.py` `build_conversation_history_segments`, `route_backend_conversation_export.py`, `MessageList.tsx`, `MessageInspector.tsx`, `conversationGeneratedFiles.ts`)
+
+### **(v0.261.303)**
+
+#### New Features
+
+*   **Microsoft 365 Files, Emails and Events as Citations**
+    *   Answers that use SharePoint or OneDrive files, emails or calendar events through a Microsoft 365 action now cite them like workspace documents, in chat with an agent and in Orchestrate mode. An orchestrated SharePoint answer that used to end with plain "Source: … (SharePoint file 20170010188.pdf)" text now cites the file after each claim.
+    *   In V2 a chip shows the file name or the email's or event's subject. Clicking it opens a source card with the item's details and **Open in SharePoint**, **Open in OneDrive** or **Open in Outlook**, which opens the item with the reader's own sign-in. The classic chat links the cited title to the item.
+    *   The Documents pane gains **SharePoint & OneDrive**, **Email** and **Calendar** sections listing every cited item, and every file whose content was read, with **Open online** instead of a download. Only the conversation owner sees them.
+    *   Email and event lists always use the same layout: a header such as "10 most recent emails, all unread, newest first:" and one numbered line per item with the subject in bold, the sender or time span and the citation. Times are written in the reader's browser time zone.
+    *   Each item gets a deterministic `m365-` id and a bounded record; only an `https` link from Microsoft Graph becomes a link, and no message body or file content is stored. Records come only from the Microsoft 365 actions themselves and are captured before the tool result is truncated, so output from any other tool that merely looks like a Graph result never becomes a Microsoft 365 citation or link. They are carried by shared conversations and exports and count as Microsoft 365 data when a conversation is shared.
+    *   Workflow answers are cited the same way. When a turn returns more than a message keeps, the cited items are kept first, and an item Microsoft 365 returns with an unusual value is simply left uncited instead of failing the tool.
+    *   (Ref: `functions_m365_citations.py`, `msgraph_plugin.py`, `functions_m365_retrieval.py`, `plugin_invocation_logger.py`, `route_backend_chats.py`, `functions_workflow_runner.py`, `functions_orchestration_adapters.py`, `functions_orchestration_execution.py`, `M365CitationChip.tsx`, `ConversationDrawer.tsx`, `chat-citations.js`, [Microsoft 365 Source Citations](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/M365_SOURCE_CITATIONS.md))
+#### Bug Fixes
+
+*   **Orchestrated Runs Reported Failure While Their Work Was Still Running**
+    *   A plan waiting on a long tabular analysis could reply "The request could not be completed. Saved step inputs changed." while the analysis was still running. The plan panel kept showing the step as **Waiting for results** and the answer as **In progress**, and offered no retry. A saved run's checkpoints were bound to a fingerprint of the whole settings document, so any settings save, including the Cosmos DB throughput autoscale recording a scale action, made the waiting run, and later retries of failed runs, look like their inputs had changed.
+    *   The fingerprint now leaves out storage metadata and the runtime state background tasks save. A configuration change by an administrator still stops saved work from being reused.
+    *   A run that fails or is stopped while a step is waiting shows that step as **Not finished** and its deliverable as **Not delivered**, and offers **Retry from failed step**, which runs the waiting step again and reuses completed ones.
+    *   Runs saved before this version can't be retried after the upgrade; ask again.
+    *   (Ref: `functions_settings_runtime_state.py`, `functions_orchestration_checkpoints.py`, `functions_orchestration_recovery.py`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`, [Orchestration Runs Failing While Their Work Was Still Running Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_SETTINGS_WRITE_RECOVERY_FIX.md))
+
+*   **Files Built From Web, Agent or Action Results Failed Without a Reason**
+    *   An orchestrated file whose content came from web search, linked pages, deep research, an agent or an action rendered, then failed with only "This file could not be created." and no retry. Publishing it rechecked its sources through a new service that didn't have the user's sign-in. Publication now uses the rendering service that ran the attempt, which has it.
+    *   A file that still can't be checked without a sign-in, such as one prepared in the background, says so. A failed file now explains why it could not be created. When a failed file can't be retried on its own, the chat offers **Retry from failed step**.
+    *   (Ref: `functions_orchestration_artifacts.py` `render_attempt_scope`, `functions_orchestration_rendering.py`, `functions_orchestration_output_store.py`, `OrchestrationRecoveryNotice.tsx`, [Orchestration Files From External Results Failing Without a Reason Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX.md))
+
+### **(v0.261.302)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Sign-In No Longer Fails With `m365_auth_state_invalid`**
+    *   Reconnecting Microsoft 365 for chat could fail seconds after the user signed in, leaving raw JSON in the popup. The session store wrote the whole session back at the end of every request, so the request that finished last won. In V2, the startup-data refresh that runs when the window regains focus took about five seconds, loaded the session before the connect call saved the pending sign-in, and wrote its stale copy back afterwards.
+    *   A request now saves only the session keys it changed, merged into the latest stored copy, and a request that changed nothing no longer writes its copy back. A session deleted during a request stays deleted. This also stops overlapping requests from dropping token-cache refreshes, the Microsoft 365 CSRF token and other session writes.
+    *   V2 skips the focus refresh while one is running or one started in the last 15 seconds.
+    *   Sign-in callbacks show a result page instead of JSON. In a popup it reports back to the page that opened it and closes; opened as a full page, it continues on success or explains the error with a way to try again.
+    *   (Ref: `functions_session_store.py`, `app.py`, `m365_connection_result.html`, `route_backend_m365.py`, `bootstrapStore.ts`, [#1714](https://github.com/microsoft/simplechat/issues/1714), [Microsoft 365 Connection Session Race Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/M365_CONNECTION_SESSION_RACE_FIX.md))
+
+*   **Workflow Connections Create Their Own Encryption Key**
+    *   **Connect for workflows** failed with "Configure Key Vault and a dedicated workflow encryption-key secret" unless an operator had created a key and set `M365_WORKFLOW_TOKEN_KEY_SECRET_NAME`. SimpleChat now creates one deployment-wide key in the configured Key Vault the first time someone connects, and checks for it whenever an administrator saves settings. The app setting still overrides the secret name, so existing keys keep working.
+    *   This needs Key Vault secret storage on and the application identity allowed to create secrets. **Connect for workflows** is disabled with an explanation until Key Vault secret storage and a Key Vault name are configured.
+    *   Workflow sign-in now returns through `/getAToken`, which the app registration already lists, so no extra redirect URI is needed.
+    *   (Ref: `functions_m365_connections.py` `ensure_m365_workflow_encryption_key`, `workflow_connection_readiness`, `route_frontend_authentication.py`, `route_frontend_admin_settings.py`, `route_backend_v2.py`, [#1604](https://github.com/microsoft/simplechat/issues/1604))
+
+*   **Chat Connection Status Matches What Chat Can Use**
+    *   The chat connection card said "Sources saved for this session: none" while chat was reading mail, OneDrive and SharePoint, because it listed only sources from an explicit reconnect. It now lists the sources the current sign-in can use, in both V2 Settings and classic Profile.
+    *   (Ref: `functions_m365_connections.py` `read_chat_connection`, `profile-m365.js`, `M365Cards.tsx`)
+
+*   **Microsoft 365 Links Stay in V2**
+    *   Connect, reconnect and approval links in V2 chat, workflow cards and Approvals opened the classic Profile and Approvals pages. They now open V2 Settings at the Microsoft 365 section and V2 Approvals, and connecting for workflows in V2 uses a popup, like chat, instead of leaving the page.
+    *   (Ref: `m365Links.ts`, `m365Connect.ts`, `M365Cards.tsx`, `SettingsPage.tsx`, `OrchestrationM365Notice.tsx`, `WorkflowProposalCard.tsx`, `WorkflowRunCard.tsx`, `PendingActionsPanel.tsx`, `PausedRequestsPanel.tsx`)
+
+### **(v0.261.301)**
+
+#### New Features
+
+*   **Chat With the Control Center Dashboard**
+    *   The V2 Control Center Dashboard's **Chat with this dashboard** opens a new chat with Orchestrate on and a prompt that describes the dashboard's dates and token filters, ready to read, change and send. The prompt travels in the page's navigation state, never the URL, so a link can't put text in anyone's composer, and a reload doesn't apply it again.
+    *   When something is missing, a checklist marks each requirement **Ready** or **Needs set-up** and says what to do: agents on, Chat Orchestration on, action access for orchestration, a Control Center action, and the User or Admin app role. Administrators get a link straight to each setting; dashboard readers are told what to ask for. **Check again** rechecks after a change.
+    *   (Ref: `DashboardChat.tsx`, `composerDraftHandoff.ts`, `Composer.tsx`, `functions_control_center_dashboard_chat.py`, `GET /api/v2/control-center/dashboard/chat-readiness`, [Control Center Action](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CONTROL_CENTER_ACTION.md))
+
+*   **Control Center Action**
+    *   A new read-only, global-only action type answers usage questions in chat from the dashboard's own data: sign-ins and daily, weekly and monthly active users, conversations, uploads, processing failures, and token use by day, model, usage type, user, group or public workspace, plus the most active users, groups and workspaces. Answers come back as rows orchestration can chart and match the dashboard for the same dates.
+    *   Only people who can view the Control Center dashboard see it in chat, and it checks their roles again on every call. Scheduled workflow runs, which have no signed-in session, are refused. It needs no connection settings; create it under **Admin Settings › Agents & Actions › Global Actions**.
+    *   (Ref: `control_center_plugin.py`, `functions_control_center_dashboard.py`, `functions_action_catalog.py`, `functions_governance.py` `GLOBAL_ONLY_ACTION_TYPES`, [Control Center action reference](https://microsoft.github.io/simplechat/reference/actions/control-center/))
+
+#### User Interface Enhancements
+
+*   **Control Center Dashboard Reorganized and Explained**
+    *   The dashboard reads top to bottom as **Directory**, **Sign-ins**, **Conversations and documents**, **Token usage** and **Most active**. Every figure says what it counts: daily, weekly and monthly active users name the end date and window and count each person once, replacing the bare "unique users" label.
+    *   The token filters now sit inside **Token usage**, say they change only that section, and have **Clear filters**. Before, they sat above the whole page, so choosing a user seemed not to change the sign-in, conversation and upload charts.
+    *   Top token consumers and the most active rankings show names, with a user's email, instead of IDs. The ID is shown on hover, and a ranked group or workspace that was deleted says so.
+    *   Sign-ins and conversations have their own charts, and empty ranges say so instead of drawing a flat line.
+    *   (Ref: `DashboardSection.tsx`, `DashboardParts.tsx`, `functions_control_center_dashboard.py` `resolve_entity_names`, [V2 Control Center Dashboard Usability Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_CONTROL_CENTER_DASHBOARD_USABILITY_FIX.md))
+
+*   **Admin Settings Deep Links and Action Type Links**
+    *   `/admin/settings/<section>` opens V2 Admin Settings on one section, and `/admin/actions/new?type=<type>` starts a new global action of that type, so other pages can link to the exact setting they need.
+    *   (Ref: `App.tsx` `AdminSettingsSectionRoute`, `ActionEditorPage.tsx`)
+
+#### Bug Fixes
+
+*   **Chat With These Trends Failed With "User Not Authenticated"**
+    *   The classic trends chat endpoint read a session key the application never sets, so it answered HTTP 401 for every administrator, and past that it wrote a malformed conversation that V2 then linked to a page that doesn't exist. The endpoint and the classic page's unreachable chat modal were removed; **Chat with this dashboard** replaces them.
+    *   (Ref: `route_backend_control_center.py`, `control_center.html`, `control-center.js`, [V2 Control Center Dashboard Usability Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_CONTROL_CENTER_DASHBOARD_USABILITY_FIX.md))
+
+*   **Dashboard Drill-Through Opened the Wrong Records**
+    *   Clicking a sign-in point on the combined chart opened conversation records, and clicking any segment of a stacked bar opened the first series at that date, such as personal uploads or chat tokens. A click now opens the series under the pointer, or the whole day when the click is beside a stack.
+    *   Token drill-throughs keep the token filters, and dashboard readers no longer see links into Users, Groups or Activity Logs, which they can't open.
+    *   (Ref: `DashboardSection.tsx`, `ui_tests/test_v2_control_center_dashboard.py`)
+
+### **(v0.261.300)**
+
+#### Bug Fixes
+
+*   **Orchestrated SharePoint and OneDrive Actions Find Documents Again**
+    *   With Orchestrate on, a **Use an action** step with a Microsoft 365 SharePoint or OneDrive action never searched or read any file. Every file function refused the call with `model_context_unavailable` before reaching Microsoft Graph, because the step had no model token budget. Chat binds that budget through the selected agent, and a plan step has no agent. The step still reported completed, so the answer said the documents couldn't be searched, while the same agent in chat found them. Production telemetry for the reported run showed one `search_files` refusal for `spo` with that code.
+    *   A file step now measures what it reads against the model it runs on, the same way chat does with the agent's model. The model's token limits come from the model catalog or Model Endpoints.
+    *   (Ref: `functions_orchestration_actions.py` `_build_file_action_model`, `_action_model_budget`, `functions_orchestration_m365.py` `file_step_filter`, [Orchestration M365 File Action Evidence Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_M365_FILE_ACTION_EVIDENCE_FIX.md))
+
+*   **Deeper File Analysis Finishes in a Plan After Approval**
+    *   In a plan, `analyze_file` stopped for the user's extended-analysis approval. After the user approved and retried, it failed with "Microsoft 365 access for this step could not be confirmed", because analysis took its model only from a chat agent. Every retry failed the same way.
+    *   Analysis now runs on the step's own model, for that step's request only. A retry after the approval reuses the captured file and completes.
+    *   (Ref: `functions_m365_agent_continuation.py` `get_m365_analysis_model`, `m365_step_model_binder`, `functions_m365_analysis_runtime.py`)
+
+*   **File Steps Fail Clearly Instead of Reporting Missing Documents**
+    *   A SharePoint or OneDrive step whose model has no verified token limits now stops before reading anything, with the new `m365_model_limits_required` failure. Its message says to have an admin set the model's limits in Model Endpoints, then ask again.
+    *   File evidence that can't be saved or read for the conversation now stops the step with the new `m365_evidence_unavailable` failure. Previously both reached the model as findings, so the step completed with a misleading answer.
+    *   Bounded-coverage outcomes, such as a full context window or a request's file limits, are still reported as findings.
+    *   (Ref: `functions_orchestration_m365.py` `result_refusal`, `failure_code`, `functions_orchestration_schema.py` `FAILURE_MESSAGES`, `M365_STEP_FAILURE_CODES`)
+
+### **(v0.261.299)**
+
+#### New Features
+
+*   **AI Assist In The Admin Review Center**
+    *   An optional assistant suggests reviews for user feedback and safety violations in the V2 Review center. **Ask AI** in a record's editor analyzes it and fills the unsaved draft, marking each field it changed and offering **Undo**. **Triage with AI** on the workbenches' bulk bar sends the checked records ten at a time, each user's records together, with progress and **Cancel**, and stores a suggested review on each; records that get none stay checked. A new **AI suggestions** page in each section lists them with what each would change and why, and shows in full, under **Visible to the user**, the text each saves that its user can read. Any eligible reviewer can approve them one at a time or together, edit the user's notification first, or dismiss them.
+    *   The model never writes or acts. Its answers are checked on the server against a strict schema, with one correction round, and approving a suggestion runs the same save as a hand-written review: a warning is sent when it is approved, and a suspension or block creates an approval request for a second reviewer. Suspensions and blocks are never part of **Approve all**, the confirmation counts the warnings and requests an approval sets off and the reviews that save text a user can read, and the queue never requests again a suspension or block the violation already records.
+    *   Records are read on the server by id and shown to the model under request-local handles, without ids, names or email addresses; email addresses and GUIDs in the text are replaced and long text is shortened. A model call only ever covers one user's records, so text one user wrote can't steer what the model writes for another user; records it doesn't reach in time are answered `deferred` and sent again by the browser. Text a user can read is refused when it is too long or repeats a long passage of another record in the request. Policy is enforced by the server: never Escalate, no warning or restriction over AI-generated content, and never a weaker action than one already applied. When the model service's content filter declines a group, each record is retried alone, so the others still get suggestions.
+    *   A stored suggestion carries a fingerprint of the fields it was based on, and for a violation its request and warning state, so one whose record changes afterwards reads as out of date and can only be dismissed. Storing, applying or dismissing a suggestion doesn't refuse a reviewer's open editor: the lists and record reads return the fingerprint, editors send it with their version, and a save whose fingerprint still matches goes ahead on the current version. Approvals and dismissals are recorded in the admin activity log and credited to the suggestion, and one whose record can't be read fails on its own without stopping the rest of the request.
+    *   New settings on **Security > Access & Roles**: **Enable AI Assist in the Review Center** (`enable_admin_review_ai_assistant`, off by default) and **Review Guidance for the AI Assistant** (`admin_review_ai_guidance`, up to 2,000 characters, sent only to the model). Each reviewer can send 60 assist requests per 10 minutes. While it is off, no suggestion can be made, applied or dismissed.
+    *   New APIs: `POST /api/admin/review/feedback/assist` and `POST /api/admin/review/safety/assist`. Bulk `update` operations accept `suggestion_id`, `dismiss_suggestion` is a new bulk operation, the review lists and their `/ids` routes accept `ai=pending`, the `/ids` routes return each record's user as `owners`, and record saves accept `fingerprint` alongside `etag`.
+    *   (Ref: `functions_review_assist.py`, `functions_review_assist_runtime.py`, `functions_review_center.py`, `route_backend_feedback.py`, `route_backend_safety.py`, `ReviewAskAiPanel.tsx`, `useReviewTriage.ts`, `SuggestionsQueue.tsx`, `lib/reviewSuggestions.ts`, `lib/reviewAssistApi.ts`, [AI Assist in the Admin Review Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ADMIN_REVIEW_AI_ASSISTANT.md))
+
+*   **Feedback Themes**
+    *   Feedback reviews have a **Theme**: Accuracy, Citations, Retrieval, Formatting, Tone, Speed, Safety, Praise or Other. Reviewers set it in the editor, or approving an AI suggestion sets it. The feedback dashboard counts the period's feedback by theme and how much is not classified yet, each theme opens the filtered list, and the queue filters by theme. Users never see the theme.
+    *   (Ref: `route_backend_feedback.py` `theme`, `theme_mix`, `unthemed_count_in_window`, `FeedbackDashboard.tsx`, `FeedbackEditorPage.tsx`, `FeedbackWorkbench.tsx`)
+
+### **(v0.261.298)**
+
+#### New Features
+
+*   **Admin Review Center**
+    *   The V2 Feedback Review and Safety Violations pages are replaced by one **Review center**, opened from a single account menu entry when either section is open to you. A rail lists each section's pages: a **Dashboard**, a workbench, and for safety the **Unchecked chat content** queue. Section access follows the same roles and feature switches as the server: FeedbackAdmin or Admin with user feedback on, SafetyViolationAdmin or Admin with content safety or screening on. A user with neither section sees a clear not-available state.
+    *   Dashboards cover the last 7, 30 or 90 days. Feedback shows feedback awaiting review, negative feedback, the acknowledgement rate, archived feedback, feedback per day by rating and the oldest feedback awaiting review. Safety shows open violations, remediation awaiting approval, users restricted now, warnings sent and acknowledged, unchecked chat content, violations per day by category, severity and action breakdowns, and repeat users. Every figure opens the workbench filtered to what it counts, and every chart offers a data table.
+    *   Workbenches list records beside the selected record's detail, with search (including the user's name), filters, page and selection in the address. Check rows, Shift+click a range or select every matching record (up to 500), then act on all of them: Acknowledge, Archive, Restore or Delete feedback; Set status, Archive, Restore or Delete violations; recheck unchecked messages one after another. Each record is changed as its own save would change it, and the report names every record that could not be changed and why.
+    *   Records open in full-page editors with **Back**, a prompt before discarding unsaved changes, and **Reload** when the record changed underneath. The feedback editor records who reviewed it and can notify the user with the response. The violation editor prefills the notification, offers 24-hour, 7-day, 30-day or custom suspensions, and shows the approval request and warning acknowledgment.
+    *   New and extended APIs: list `search` and filters with display names, `GET /feedback/review/ids` and `GET /api/safety/logs/ids`, `days` on both stats endpoints (existing fields unchanged), `GET /api/safety/logs/<id>`, and `POST /feedback/review/bulk` and `POST /api/safety/logs/bulk` (up to 100 operations, per-item results). Exports now take the list filters. The old V2 addresses redirect; the classic pages are unchanged.
+    *   (Ref: `pages/review/`, `components/review/`, `CategoryRail.tsx`, `DashboardParts.tsx`, `lib/reviewAccess.ts`, `lib/reviewCenter.ts`, `functions_review_center.py`, `route_backend_feedback.py`, `route_backend_safety.py`, [V2 Admin Review Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_REVIEW_CENTER.md))
+
+*   **Approvals Dashboard And Safety Remediation Category**
+    *   The V2 Approvals rail adds a **Dashboard**: requests waiting on you and those expiring within 24 hours, your own pending requests, decisions in the last 7, 30 or 90 days by outcome, pending requests by type, and the oldest waiting on you. Each figure opens the list filtered through its address. **All requests** is still where the page opens.
+    *   A **Safety remediation** category lists warn, suspend and block requests for the Admin, ControlCenterAdmin and SafetyViolationAdmin roles, and **Group requests** no longer includes them.
+    *   `GET /api/approvals/stats` counts only the requests `GET /api/approvals` shows the caller.
+    *   (Ref: `ApprovalsPage.tsx`, `ApprovalsDashboard.tsx`, `GenericApprovalsPanel.tsx`, `functions_approvals.py` `summarize_visible_approvals`, `route_backend_control_center.py`)
+
+#### Bug Fixes
+
+*   **Denied And Expired Remediation Requests Unlock Their Violation**
+    *   Denying a suspend or block request, or letting it expire, left its violation pending for good: it could not be edited or deleted. The violation is now released as denied or expired when the request is decided, and any violation still waiting on a request that was decided or no longer exists is settled the next time it is listed or opened. A request that is still pending keeps its violation locked.
+    *   (Ref: `functions_approvals.py` `deny_request`, `functions_safety_remediation.py` `release_safety_log_after_approval_decision`, `reconcile_pending_safety_logs`, [Safety Remediation Approval State Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **An Applied Suspension Or Block Is Not Requested Twice**
+    *   Saving a violation whose suspension or block was already applied or requested, for example to change only its status or notes, created another approval request. A new request is now created only when the action changes or the reviewer asks to request it again (`reissue`); otherwise the save reports `remediation_already_applied` or `remediation_unchanged`.
+    *   Both the classic **Safety Violations** review and the V2 violation editor offer **Request this suspension again** (or block) whenever the violation already records that action and no request is waiting, including after a request was denied, expired or failed. Until it is ticked they say where the last request stands and send no notification or restore time; ticking it sends the new ones with the request. The classic dialog no longer offers a restore time that has passed.
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, `admin-safety-violations.js`, `admin_safety_violations.html`, `SafetyEditorPage.tsx`, [Safety Remediation Approval State Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **Overlapping Safety Saves Leave One Consistent Request**
+    *   A suspension or block saved while another reviewer's warning was being sent, or while another suspension or block was saved, could be recorded over the other save: the violation could read as applied while its request still waited for approval, a warning could go untracked, or a request could stay approvable with nothing linked to it. The request is now recorded only on the violation as the save read it. Otherwise the save is refused with `409 record_changed`, and its request is withdrawn with its notices removed.
+    *   An approved warn, suspend or block request is carried out only while its violation waits on it, so a request that couldn't be withdrawn still changes nothing.
+    *   (Ref: `route_backend_safety.py`, `functions_approvals.py` `withdraw_approval_request`, `functions_safety_remediation.py` `safety_remediation_state`, `safety_log_awaits_request`, `route_backend_control_center.py` `_execute_safety_violation_request`, [Safety Remediation Approval State Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+*   **Review Saves No Longer Overwrite Concurrent Changes**
+    *   Safety and feedback review saves replaced the whole record, so a warning acknowledged while a reviewer was saving could be lost. Saves, archives and deletes are now conditional on the stored version and write only their own fields.
+    *   A save that names the version it read (`etag`), as the V2 editors do and bulk operations can, is written on that version or not at all. A conflict is refused with `409 record_changed` rather than merged onto the newer version, which the V2 editors offer to reload. This covers PATCH, archive and the bulk `update` and `archive` operations.
+    *   (Ref: `functions_safety_remediation.py` `write_safety_log_updates`, `functions_review_center.py` `replace_review_record`, `route_backend_feedback.py`, [Safety Remediation Approval State Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SAFETY_REMEDIATION_APPROVAL_STATE_FIX.md))
+
+### **(v0.261.297)**
+
+#### New Features
+
+*   **Access Restricted Screen For Suspended And Blocked Users**
+    *   A user whose access an administrator suspended or blocked can still sign in, but every page now opens an **Access restricted** screen instead of a bare "Access Denied" error. It shows the notice the user was sent, whether access returns on its own and when (in the user's own time zone), the safety violation reference, and **Sign out**. Once the suspension ends or access is restored, the screen offers **Continue**.
+    *   V2 pages go to `/v2/access-restricted` and classic pages to `/access-restricted`. API calls get `403 {"error": "access_restricted", "message", "restriction", "restricted_url"}` with the caller's own restriction, and the V2 interface follows it to the screen from any page, including when a restriction is applied while a tab is open.
+    *   An approved safety suspension or block now stores the notice with the restriction, using the same title and message as the notification. Control Center restrictions carry no notice and show generic text; restoring access from Control Center clears it.
+    *   The screen's routes require sign-in but not an unrestricted account, describe only the signed-in user's own restriction, and are exempt from the Terms of Use gate so a restricted user is never bounced between the two. Idle-session timeout still applies. Accounts with the Admin role are still never restricted.
+    *   (Ref: `functions_access_restriction.py`, `functions_authentication.py` `user_required`, `get_user_access_restriction`, `route_access_restriction.py`, `access_restricted.html`, `AccessRestrictedPage.tsx`, `apiClient.ts`, [Access Restricted Sign-In Screen](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ACCESS_RESTRICTED_SIGN_IN_SCREEN.md))
+
+*   **Safety Warnings Must Be Acknowledged**
+    *   A warning from a safety reviewer now opens a dialog, **A warning from your administrators**, the next time the user opens the V2 interface, and appears again in every tab and on every device until they select **I understand**. Escape and clicks outside the dialog don't dismiss it.
+    *   Reviewers see **Warning acknowledged** with the date, or **Not yet acknowledged**, on the violation, and users see the same state in **Settings > Violations**. Warnings sent before this version are never shown again.
+    *   A reviewer can warn about the same violation again. The user then has to acknowledge the newer warning, even in a tab where they acknowledged the earlier one, and an acknowledgment is only recorded against the warning the user read: one replaced while on screen is answered with the newer warning instead.
+    *   New routes `GET /api/safety/warnings/pending` and `POST /api/safety/warnings/<id>/acknowledge` return and change only the caller's own warnings. Bootstrap carries the pending count, so a user with no warnings makes no extra request.
+    *   (Ref: `functions_safety_remediation.py`, `route_backend_safety.py`, `route_backend_v2.py` bootstrap `safety_warnings`, `SafetyWarningDialog.tsx`, `useSafetyWarningRuntime.ts`, `ViolationsTab.tsx`, [Safety Remediation Actions Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
+
+#### Bug Fixes
+
+*   **Safety Warnings Are Sent Without A Second Reviewer**
+    *   In a deployment with one administrator, **Warn user** created an approval request that nobody could approve, because a requester can never approve their own request, so the warning was never sent. A warning restricts nothing, so it is now sent as soon as the reviewer saves the review, and recorded in the activity log. Saving the record again, for example to resolve it, doesn't send it twice.
+    *   Two saves that overlap, such as a double-click or two reviewers at once, send it once. A save claims the violation with a write conditional on the version it read before anything is sent, and the other save is refused with `409 safety_warning_in_progress`. While a warning is being sent the violation reads **Sending**, can't be changed or deleted, and never counts as a warning to acknowledge. A claim left by a save that stopped is released after five minutes. The classic page also disables **Save Review** while its request is in flight.
+    *   **Suspend user** and **Block user** still create an approval request that another eligible reviewer must approve. A **Warn User** request created before this version still completes when approved.
+    *   The review's guidance text in both interfaces now describes which actions wait for a second reviewer.
+    *   (Ref: `route_backend_safety.py` `update_safety_log`, `functions_safety_remediation.py` `claim_safety_warning_send`, `record_safety_warning_send`, `route_backend_control_center.py` `_execute_safety_violation_request`, `AdminSafetyViolationsPage.tsx`, `admin-safety-violations.js`, [Safety Remediation Actions Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SAFETY_REMEDIATION_ACTIONS_FIX.md))
+
+#### Breaking Changes
+
+*   **Escalate Removed As A Safety Action**
+    *   **Escalate** was a label with no workflow behind it. It can no longer be chosen in either interface, and the API rejects a change to `Escalate` with 400. Records that already carry it keep it, are labelled **Escalated (legacy)**, and can still be saved. `escalate_count` remains in the statistics; the V2 "Escalated or blocked" tile is now **Blocked**.
+    *   **Migration**: None required. Resolve or re-action legacy escalated records as needed.
+    *   (Ref: `route_backend_safety.py`, `AdminSafetyViolationsPage.tsx`, `ViolationsTab.tsx`, `admin_safety_violations.html`, `my_safety_violations.html`, `profile.html`)
+
+*   **Access-Restriction Responses Changed**
+    *   API calls from a restricted user now return `403` with `"error": "access_restricted"` and a structured `restriction`, instead of `"error": "Access Denied"` with the reason as `message`. Browser page requests are redirected to the Access restricted screen instead of returning a plain-text 403.
+    *   **Migration**: Integrations that matched the old `Access Denied` error string should check for `access_restricted` instead.
+    *   (Ref: `functions_authentication.py` `access_restricted_response`)
+
+### **(v0.261.296)**
+
+#### User Interface Enhancements
+
+*   **Open Groups and Public Workspaces From User Settings**
+    *   In V2 **User Settings**, every row on the **Groups** and **Public** tabs now has **Open** next to **Set active**, so you can go straight to a workspace you own or use instead of only making it active.
+    *   **Open** goes to the workspace by its ID, like **Open** in the group and public directories. Opening a group also makes it your active group, because a group's pages work in the active group. Opening a public workspace leaves your active one unchanged.
+    *   On narrow screens the row's buttons wrap below the workspace name, so the name and role badge are no longer squeezed.
+    *   (Ref: `WorkspaceListTab.tsx`, `lib/workspaces.ts` `WorkspaceKind.openPath`, [V2 User Settings Redesign](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_USER_SETTINGS_REDESIGN.md), `ui_tests/test_v2_settings_workspace_open.py`)
+
+### **(v0.261.295)**
+
+#### New Features
+
+*   **Workflow Hand-Off Card In V2 Chat**
+    *   An answer whose plan handed large work off to a one-time workflow now shows a **Workflow hand-off** card, so users can accept a hand-off in the browser. The card says what the workflow covers, such as "200 documents" or "up to 500 best-matching documents", the workspaces a search reads, each task and the model or agent it runs on, and when the offer expires. Workflow, task, agent and workspace names render as plain text, and instructions and document ids are never shown.
+    *   **Accept** asks you to confirm, then creates the workflow and starts its one run. **Edit** opens the prepared workflow in the workflow editor, and **Save** asks you to confirm, then creates the edited workflow and starts its run. If the server refuses the edit, the editor stays open with your draft and lists what to change, and a draft with URL Access on is refused before anything is sent. Saving an untouched draft creates the same workflow and isn't recorded as an edit. **Decline** asks you to confirm and creates nothing. A hand-off whose workflow exists but whose run didn't start offers **Start its run**.
+    *   Once its run is queued, the card follows it through the tab's workflow run tracker, with **Cancel run**, **Retry**, **Review and approve**, **Reconnect Microsoft 365** and **Open run** as they apply, and the outcome is posted back into the chat as for any run started from chat. A run that paused because more documents matched than the hand-off may review says so and offers **Cancel run**.
+    *   Each refusal reads as a sentence, never a bare code or "Forbidden". A refused accept offers **Try again** only when the same accept can still succeed: while another accept is in progress, or when the workflow was created but its run couldn't be queued or started, which retries that same run. Hand-offs that couldn't be loaded offer **Try again** to read them again.
+    *   The card appears in private personal chats, under an answer whose plan completed a hand-off step, in place of the proposal and started-workflows cards. Hand-off itself stays off by default, behind **Hand Off Large Work From Chat**.
+    *   (Ref: #1549, #1543, `WorkflowHandoffCard.tsx`, `workflowHandoffs.ts`, `MessageList.tsx`, `WorkflowRunCard.tsx`, [Chat Orchestration Workflow Hand-off](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md#the-v2-hand-off-card), [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/#workflow-hand-offs-v2-interface))
+
+#### User Interface Enhancements
+
+*   **Hand-Off Plans Always Wait For Approval In V2**
+    *   The plan card says when a plan hands work off to a one-time workflow, so it always waits for your approval, and that approving it only prepares the workflow. V2 makes any plan with an enabled hand-off step wait for approval, so a countdown or Auto never runs it by itself, even if the server's approval-floor marker is missing.
+    *   The Run view labels the step **Hand off large work** and puts what it prepares in words: the workflow's name, what it reviews, such as "3 named documents" or "a search of 2 workspaces, the 50 best matches", and its task titles. The tasks' instructions, the document and workspace references, the content filter and the tags aren't shown.
+    *   (Ref: `OrchestrationWorkflowHandoffNotice.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `orchestrationPlan.ts`)
+
+### **(v0.261.293)**
+
+#### Bug Fixes
+
+*   **Orchestrated Charts From an Action Are Shown Again**
+    *   With Orchestrate on, a request such as "Plot BatteryVoltage1 over the last 15 minutes" could be planned as a single Gather step that ran the action, with no Reason step to write the answer. The action drew the chart, but only an answer step places charts, so the chart was dropped. The reply said only "The requested content is prepared. No downloadable files were created.", the plan panel listed the chart as delivered, and Retry wasn't offered.
+    *   A chart an action or agent step draws is now always shown, where the answer places it or after the answer, the same way generated images are.
+    *   The answer step now receives such a chart as its placement token instead of a second copy of the chart's data. The retrieved rows are still sent in full.
+    *   (Ref: `functions_orchestration_deliverables.py` `gathered_charts`, `show_gathered_charts`, `functions_orchestration_execution.py` `_finalize`, `functions_orchestration_composition.py` `_model_inputs`, [Orchestration Action Chart Not Delivered Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_ACTION_CHART_NOT_DELIVERED_FIX.md))
+
+*   **Gathered Results Are Always Read by a Reason Step**
+    *   Before 0.261.139 every plan ended with an Answer step, so everything a plan gathered was written up. Since then the planner adds an answer step only when it chooses to, and it was told an action could deliver a chart on its own.
+    *   While planning, every Gather step except a `workflow_run` step (**Run workflows**) must now feed the answer, a file or a generated image, and every planned chart or diagram must reach the answer or a file. A plan that breaks either rule gets the planner's one correction round with the server's explanation. Plans saved before this version still open and run.
+    *   A saved plan that gathered without answering now says so and asks the user to ask again, instead of "The requested content is prepared."
+    *   (Ref: `functions_orchestration_deliverables.py` `_require_shown_work`, `functions_orchestration_planner.py`, [Orchestration Deliverables](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Undelivered Charts Are Reported and Can Be Retried**
+    *   A chart or diagram the user asked for that the answer doesn't show is now listed as not delivered, with the reason, and the run is partial with the new `visual_not_delivered` failure.
+    *   **Retry from failed step** runs the step that draws the chart again, along with every step computed from it. Rerunning an action or agent step repeats its calls, so that retry asks for confirmation first.
+    *   The V2 plan panel uses the server's check of each chart and diagram after a run, instead of the status of the step that makes it.
+    *   (Ref: `functions_orchestration_deliverables.py` `visual_delivery`, `functions_orchestration_recovery.py` `redraw_step_ids`, `deliverable_states`, `OrchestrationDeliverables.tsx`, `orchestrationPlan.ts`)
+
+*   **Faster Saving of Large Gathered Results**
+    *   A structured step result was saved as one record per JSON token. The reported 202 KB action result took 258 storage pages and about 200 of the step's 231 seconds.
+    *   Results are now saved in 16,384-character records, so the same result takes a few pages. Results saved before this version still read.
+    *   (Ref: `functions_orchestration_results.py` `_value_records`)
+
+### **(v0.261.292)**
+
+#### Bug Fixes
+
+*   **V2 Control Center Dashboard, Users and Groups Load Again**
+    *   The Dashboard showed "Failed to retrieve dashboard insights.", and Users and Groups showed "Unable to retrieve users." and "Unable to retrieve groups." Cosmos DB rejected their queries with HTTP 400. The azure-cosmos Python SDK cannot run cross-partition `GROUP BY` or `COUNT` over `DISTINCT` values, and the Users sort used a two-property `ORDER BY` that needs a composite index the `user_settings` container does not have.
+    *   The affected queries now use shapes the SDK supports. Distinct values and counts are aggregated in the application, the Groups inventory streams narrow projections, and Users orders by one property at a time, listing accounts without a recorded sort value last. Existing deployments need no index change or App Maintenance step.
+    *   The login heatmap now totals each UTC weekday and hour across the whole period instead of showing a single date's count. The Users CSV export now reports a storage failure as an error instead of returning a file with only the header row.
+    *   A compatibility test scans every V2 Control Center query so these shapes cannot return.
+    *   (Ref: `route_backend_control_center.py`, `functions_control_center_groups.py`, `test_v2_control_center_cosmos_query_compatibility.py`, [V2 Control Center Cosmos Query Compatibility Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_CONTROL_CENTER_COSMOS_QUERY_COMPATIBILITY_FIX.md))
+
+#### Breaking Changes
+
+*   **V2 Control Center Data Health Removed**
+    *   The Data health section has been removed, together with the activity-log backfill APIs that only it used: `GET /api/admin/control-center/migrate/status` and `POST /api/admin/control-center/migrate/all`. The classic Control Center had already stopped calling them, and normal application workflows record activity themselves.
+    *   **Migration**: None required. A bookmark to the old Data health page now opens the Dashboard.
+    *   (Ref: `ControlCenterPage.tsx`, `route_backend_control_center.py`, `functions_activity_logging.py`, [Activity Log Migration Prompt Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
+
+### **(v0.261.291)**
+
+#### Bug Fixes
+
+*   **Orchestrated Ask an Agent Steps Run Again**
+    *   With Orchestrate on, every Ask an agent step failed with "This step's agent or action isn't available to you right now", in personal and shared conversations, while the same agent answered with Orchestrate off.
+    *   Cosmos DB returns stored agents as a subclass of a dictionary, and the step's access check accepted only a plain dictionary. Stored agents are now read back as plain dictionaries, and the check accepts either while still requiring the exact agent the user can reach. No setting or data change is needed.
+    *   When a step's web, linked-page, deep research, agent, action or memory source is refused, `[ORCHESTRATION_EXTERNAL_SOURCES] A step's source was refused.` now names the check that failed in `sc_reason`.
+    *   (Ref: `functions_orchestration_external_sources.py`, `functions_agent_delegation.py` `_canonical_agent`, [#1699](https://github.com/microsoft/simplechat/issues/1699), [Orchestration Agent Document Type Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_AGENT_DOCUMENT_TYPE_FIX.md))
+
+### **(v0.261.290)**
+
+#### Bug Fixes
+
+*   **V2 Sidebar Links Opened the Classic Interface**
+    *   Every primary link in the V2 left rail opened the classic page at the same path instead of the V2 page. This covered Chats, Agents, My Workspace, Group Workspaces, Public Workspaces, Approval requests and Content review. The rail also never highlighted the open page.
+    *   Rail links now stay relative to `/v2`, so each one opens its V2 page without a reload and is highlighted.
+    *   A functional test now flags any router link built from the page origin in the V2 source, and a UI test clicks each rail link.
+    *   (Ref: `Sidebar.tsx` `safeNavHref`, [#1698](https://github.com/microsoft/simplechat/issues/1698), [V2 Sidebar Navigation Links Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_SIDEBAR_NAV_LINKS_FIX.md))
+
+### **(v0.261.289)**
+
+#### Bug Fixes
+
+*   **Picked Agents Pass the Agents Setting in Orchestrate**
+    *   An Ask an agent step for an agent the user picked, or tagged with @, was refused when the user's own agents setting was off, the agents button on the classic chat page. V2 has no control for it, so many V2 users have it off.
+    *   Picking an agent now counts as permission to use that agent, as it does in chat. Its scope, membership, governance and enabled state are still checked, and the setting still applies to agents the user didn't pick.
+    *   These steps still failed at a later check until 0.261.291.
+    *   (Ref: `functions_orchestration_external_sources.py` `_seeded_agent`, `test_orchestration_seeded_agent_preference_fix.py`, [Orchestration Selected Agent With Agents Turned Off Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_SELECTED_AGENT_DISABLED_PREFERENCE_FIX.md))
+
+### **(v0.261.288)**
+
+#### New Features
+
+*   **Ask AI in the Agent and Action Editors**
+    *   The V2 agent and action editors for personal, group and global agents and actions now have an **Ask AI** panel, matching the workflow editor. Describe what you want and the assistant fills in the unsaved draft, highlighting each changed field, with **Jump to** and **Undo this change** for every turn. It never saves and never sees or enters keys or other credentials.
+    *   In the agent editor it can set the name, description, instructions, model, assigned actions, token limit, reasoning effort and knowledge. In the action editor it can choose the action type and fill in its configuration, capabilities and sign-in method.
+    *   The agent assistant can draft up to three new actions for the agent. They are listed under **New actions from Ask AI** and created only when the agent is saved. One that still needs something, such as an endpoint, blocks the save and can be completed with **Finish in action editor**, which returns to the agent with the action assigned.
+    *   Administrators can turn each panel off with **Enable Ask AI in the Agent Editor** and **Enable Ask AI in the Action Editor** in Agents and Actions settings. Both are on by default.
+    *   (Ref: `functions_editor_assist.py`, `POST /api/agents/assist`, `POST /api/actions/assist`, `EditorAskAiPanel.tsx`, `agentEditorAssist.ts`, `actionEditorAssist.ts`, `AgentActionPicker.tsx`, `workspaceEditorDrafts.ts`, [Ask AI in the Agent and Action Editors](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/AGENT_ACTION_AI_ASSISTANT.md))
+
+### **(v0.261.287)**
+
+#### New Features
+
+*   **V2 Terms of Use Page**
+    *   V2 users who must accept the Terms of Use now see a V2 page at `/v2/terms-of-use` instead of being sent to the classic interface. Accepting returns them to the V2 page they were opening; declining signs them out to the configured destination.
+    *   Acceptance, versioning, recurrence, redirect safety, and audit logging are shared with the classic page. A V2 tab whose acceptance lapses while open is sent to the terms page on its next request.
+    *   (Ref: `app.py` `build_terms_of_use_url`, `/api/v2/terms-of-use` routes in `route_backend_v2.py`, `TermsOfUsePage.tsx`, [V2 Terms of Use and Approval Requests](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_TERMS_AND_APPROVALS.md))
+
+*   **V2 Approval Requests Page**
+    *   **Approval requests** in the V2 sidebar opens a full-page view laid out like Admin Settings: a collapsible category rail, the request list, and a detail pane with the decision controls.
+    *   Covers everything the classic page does: all requests, group requests, Microsoft 365 approvals, content screening (when enabled), outgoing Microsoft 365 actions, waiting requests with resume or connect-and-resume, and admin agent template approvals.
+    *   Each request has its own address. Notification links and classic bookmarks open the matching request, and the Admin Settings agent template link opens the V2 queue.
+    *   (Ref: `ApprovalsPage.tsx`, `components/approvals/`, `approvalsApi.ts`, `notificationLinks.ts`, `Sidebar.tsx`, `v2ApprovalsRailCollapsed` user setting)
+
+### **(v0.261.286)**
+
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   Public Workspace list, detail, status, bulk-status and export APIs return stable validation messages rather than exception text.
+    *   Preserves authorization and HTTP status behavior; adds sensitive-error regression coverage.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+### **(v0.261.285)**
+
+#### Bug Fixes
+
+*   **Public Workspace Validation Error Safety**
+    *   List, detail, bulk status, individual status, and export validation failures return stable messages instead of exception text, preserving HTTP 400 and input bounds.
+    *   (Ref: `route_backend_control_center.py`, `test_control_center_safe_exception_responses.py`, [Control Center Validation Error Safety](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+#### New Features
+
+*   **V2 Control Center Activity Logs**
+    *   Adds URL-filtered activity investigations, deterministic keyset paging, a bounded histogram and activity-type facets, saved browser views, density controls, and escaped JSON detail drawers with related entity/approval links.
+    *   CSV export streams the same filters, escapes spreadsheet formulas and caps exports at 10,000 activity records. Summary charts disclose sampling above 5,000 matching records.
+    *   Existing deployments must apply the expected activity-log composite index through App Maintenance and wait for index transformation; legacy activity browsing remains unchanged.
+    *   (Ref: `ActivityLogsSection.tsx`, `functions_control_center_activity.py`, `functions_cosmos_indexing.py`, `route_backend_control_center.py`, [V2 Control Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONTROL_CENTER.md))
+
+### **(v0.261.284)**
+
+#### New Features
+
+*   **V2 Control Center Public Workspace Management**
+    *   Adds query-level search/status/owner filters, server sorting and pagination, bounded cross-page bulk status changes, and injection-safe filtered CSV export.
+    *   Reuses detail tabs for ownership, supported manager roles/CSV, status history, retention, recent activity and document totals. Missing recorded metrics remain unavailable, not zero.
+    *   Preserves existing approval semantics and native membership permissions; public retention cannot reset custom values to defaults through its existing save API.
+    *   (Ref: `PublicWorkspacesSection.tsx`, `GroupDetailDrawer.tsx`, `functions_control_center_public_workspaces.py`, [V2 Control Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONTROL_CENTER.md))
+
+### **(v0.261.283)**
+
+#### Bug Fixes
+
+*   **V2 Control Center Validation Error Safety**
+    *   Users and Groups APIs return stable validation messages instead of exception text, preventing internal failure details from reaching the browser.
+    *   (Ref: `route_backend_control_center.py`, [Control Center Validation Error Safety](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_CONTROL_CENTER_VALIDATION_ERRORS_FIX.md))
+
+### **(v0.261.282)**
+
+#### New Features
+
+*   **V2 Control Center Group Management**
+    *   Adds server-filtered group inventory, sortable usage and activity, cross-page bulk status updates with required reasons for locking/inactivation, and filtered CSV export.
+    *   Group drawers include membership search/CSV import, supported member controls, ownership requests, status history, retention, recent activity with JSON/export, and document summaries.
+    *   Deletion and ownership changes remain approval-gated. Existing group membership requirements for role changes, removal and retention are preserved.
+    *   (Ref: `GroupsSection.tsx`, `GroupDetailDrawer.tsx`, `functions_control_center_groups.py`, `route_backend_control_center.py`, [V2 Control Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONTROL_CENTER.md))
+
+### **(v0.261.280)**
+
+#### New Features
+
+*   **V2 Control Center User Management**
+    *   Adds filtered, sortable user administration with cached usage metrics, account detail and activity, cross-page bulk access/upload updates, and server-side CSV export.
+    *   Document deletion requests require a reason and are submitted for approval; dashboard drill-through filters and selected-user links are preserved.
+    *   (Ref: `UsersSection.tsx`, `route_backend_control_center.py`, [V2 Control Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONTROL_CENTER.md))
+
+*   **Guided Tours and Latest Features in V2**
+    *   Chat and Personal Workspace have step-by-step guided tours, started from a help button in the page header or with **Start now** in User Settings. Tours skip controls that are not on screen, support the keyboard, and respect reduced motion.
+    *   A new **Help and guidance** group in Preferences turns tours off one by one, or all at once with **Show tour buttons**. That switch is shared with the classic tutorial buttons.
+    *   A **Latest Features** shortcut appears in the V2 navigation rail when the Support menu offers it. Hiding it lasts until the next release, and the setting is shared with the classic interface.
+    *   (Ref: `lib/tours.ts`, `GuidedTour.tsx`, `TourLauncher.tsx`, `LatestFeaturesLink.tsx`, `GuidanceCards.tsx`, `_build_latest_features_nav`, `tutorialVisibility`, [V2 User Settings Redesign](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_USER_SETTINGS_REDESIGN.md))
+
+#### Bug Fixes
+
+*   **Dashboard Date-Range Error Safety**
+    *   Dashboard summary and insights APIs now return a generic validation message for invalid date ranges instead of returning exception text.
+    *   (Ref: `route_backend_control_center.py`, `DASHBOARD_INVALID_RANGE_ERROR`)
+
+### **(v0.261.279)**
+
+#### Bug Fixes
+
+*   **MCP Fingerprint Import Cycle**
+    *   Shared MCP fingerprint metadata normalization now lives in a dependency-neutral module, avoiding cyclic imports during action loading and notification delivery.
+    *   (Ref: `functions_mcp_fingerprint_metadata.py`, `functions_mcp_operations.py`, `functions_mcp_tool_pinning.py`)
+
+#### New Features
+
+*   **Fact Memory Workbench and Microsoft 365 Cards in V2 User Settings**
+    *   Fact memory is now one workbench: add, search, filter, edit, and delete (with confirmation) instructions and facts.
+    *   Microsoft 365 sharing, chat connection, workflow connection, and workflow authorizations match the classic page, including CSRF-protected writes and confirmed revocations.
+    *   (Ref: `FactMemoryBench.tsx`, `M365Cards.tsx`, `PreferencesTab.tsx`)
+
+*   **V2 Control Center Dashboard**
+    *   Adds period-based summary metrics, correct group and public-workspace status counts, login/activity/token charts, token filters, CSV export, and chat-with-trends.
+    *   Aggregates use activity-log and workspace data with a 90-second cache. Metrics without retained historical snapshots are identified as current state instead of presenting misleading period deltas.
+    *   Dashboard readers can access the dashboard APIs without receiving management capabilities.
+    *   (Ref: `route_backend_control_center.py`, `DashboardSection.tsx`, [V2 Control Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONTROL_CENTER.md))
+
+*   **Feedback and Safety Review in V2**
+    *   Administrators and designated reviewers can review user feedback and safety violations in V2, with filtering, statistics, exports, detail editing, and archive management. Feedback reviewers can retest prompts; safety reviewers can manage remediation requests and recheck unchecked chat messages with confirmation before potentially removing saved or shared replies.
+    *   Reviewer links appear in the account menu when the corresponding feature is enabled and the signed-in user has the configured administrator or reviewer role. Existing backend authorization remains authoritative.
+    *   (Ref: `AdminFeedbackReviewPage.tsx`, `AdminSafetyViolationsPage.tsx`, `Sidebar.tsx`, [Feedback Review](https://microsoft.github.io/simplechat/guides/admin-review-feedback/), [Safety Violation Review](https://microsoft.github.io/simplechat/guides/admin-review-safety-violations/))
+
+### **(v0.261.278)**
+
+#### New Features
+
+*   **Voice, Audio and Retention in V2 User Settings**
+    *   Completion sounds with preview and mute, spoken reply voice, speed, and auto-play, microphone permission status, and personal retention for conversations and documents.
+    *   (Ref: `PreferencesTab.tsx`, `lib/speechPlayback.ts`, `/api/retention-policy/user`)
+
+*   **V2 Control Center Foundation**
+    *   Adds the permission-aware V2 Control Center pane, reusable management primitives, and a manually invoked activity-log data-health check and backfill.
+    *   The classic page no longer scans for migration status on every visit; the retained backfill skips existing activity events and uses stable IDs for reruns.
+    *   (Ref: `ControlCenterPage.tsx`, `functions_authentication.py`, `route_backend_v2.py`, [V2 Control Center](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONTROL_CENTER.md), [Activity Log Migration Prompt Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ACTIVITY_LOG_MIGRATION_PROMPT_FIX.md))
+
+#### Bug Fixes
+
+*   **Personal Retention Default Value**
+    *   Choosing the organization default for personal retention is now accepted.
+    *   (Ref: [Personal Retention Default Value Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/PERSONAL_RETENTION_DEFAULT_VALUE_FIX.md))
+
+### **(v0.261.277)**
+
+#### User Interface Enhancements
+
+*   **V2 User Settings Follows the Admin Settings Design**
+    *   A collapsible section rail remembered per user, full-width settings cards, and an **On this page** index on every tab. Preferences are grouped instead of listed, and the Violations tab is always listed.
+    *   (Ref: `SettingsPage.tsx`, `SettingsCard.tsx`, `v2UserSettingsRailCollapsed`)
+
+*   **Agent Editor No Longer Shows GUIDs**
+    *   The agent editor for personal, group and global agents no longer shows internal identifiers. The header shows the agent's own icon, such as the Microsoft 365 logo, and its description instead of a stable ID.
+    *   Model & connection › Current selection lists the deployment, model, connection name and provider (for example "Azure OpenAI") instead of endpoint and model IDs.
+    *   Action choices, knowledge workspaces and documents no longer show IDs. Workspaces show their type, and documents show their workspace, file name and tags.
+    *   (Ref: `AgentEditorPage.tsx`, `AgentModelFields.tsx`, `AgentActionPicker.tsx`, `AgentKnowledgeFields.tsx`, [Agent Editor Internal ID Exposure Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/AGENT_EDITOR_INTERNAL_ID_EXPOSURE_FIX.md))
+
+#### Bug Fixes
+
+*   **Feedback Tab Loads in V2**
+    *   The Feedback tab failed with "too many values to unpack". The user's own feedback now loads.
+    *   (Ref: [Feedback My Routes Filter Unpack Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/FEEDBACK_MY_FILTER_UNPACK_FIX.md))
+
+### **(v0.261.276)**
+
+#### New Features
+
+*   **Action Configuration Pane Cleanup**
+    *   The V2 action editor now hides empty configuration sections, removes ad hoc custom fields, keeps unknown legacy values in Advanced JSON, and moves connection checks into Authentication where credentials are visible.
+    *   Action-specific configuration now reflects the actual supported settings: Document Search scopes and summary targets, Microsoft 365 capability switches and read-only Graph endpoint, OpenAPI spec-derived base URL and operation switches, MCP server templates and tool fingerprint approval, and Yamcs reverse proxy authentication.
+    *   (Ref: `ActionEditorPage.tsx`, `ActionConfigurationFields.tsx`, `ActionAuthentication.tsx`, `DocumentSearchActionConfiguration.tsx`, `McpActionConfiguration.tsx`, `OpenApiActionConfiguration.tsx`, [Action Configuration Pane Cleanup](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ACTION_CONFIGURATION_PANE_CLEANUP.md))
+
+#### Bug Fixes
+
+*   **Action Catalogue Deduplication and Legacy Type Hiding**
+    *   Databricks no longer appears multiple times in the new-action picker, SQL actions display as SQL Database with schema discovery included, and legacy/internal-only types are hidden from new-action creation while existing actions remain editable.
+    *   (Ref: `route_backend_plugins.py`, `functions_workspace_authoring.py`, action reference docs)
+
+#### User Interface Enhancements
+
+*   **Safer Action Validation and Review Badges**
+    *   MCP actions now require discovery approval before saving new or changed server manifests, runtime calls block changed tools, and Actions/Agents lists flag drift with a "Tools changed — review" badge.
+    *   OpenAPI actions show the chosen spec file name, offer explicit operation enablement, and reject disabled operations before an HTTP request is sent.
+    *   (Ref: `functions_mcp_tool_pinning.py`, `mcp_plugin_factory.py`, `openapi_plugin.py`, `ActionsSection.tsx`, `AgentsSection.tsx`)
+
+*   **V2 Admin Help Group Matches the Classic Page**
+    *   **Support** now offers the Menu Name, the Send Feedback destination and its Support Recipient Email, nested under the Support menu switch. The card reads **Needs configuration** while Send Feedback is on with no recipient, and the empty recipient field is marked **Required**. A malformed address is refused beside the field instead of being cleared, and turning the menu on no longer switches Send Feedback off.
+    *   **Send Feedback** has an Overview and the **Report a Bug** and **Request a Feature** forms. They prefill your name and email, check each field, record the submission, and open a text-only email draft to the SimpleChat team, with a link to open it again. The overview explains how this differs from your users' own Send Feedback and links to the Support settings.
+    *   **User-Facing Latest Features** lists every announcement by release, with a share checkbox, **Share all** and **Hide all**, and a preview of exactly what users see, including screenshots and the shortcuts your unsaved choices would show. It stays editable while Support is off, so you can prepare announcements before publishing. A **Publication** notice says whether users can reach the page and links to the Support settings.
+    *   **Admin Latest Features** is now a V2 card marked **New**, and the Help category carries the same marker. Each release opens to details, why it matters, rollout notes, screenshots, and shortcuts. Shortcuts jump to the matching V2 card, or open the classic tab when V2 does not show it yet. Page search finds announcements by their content.
+    *   The **Registered** / **Unregistered** release notifications badge now sits beside the version in V2 and opens the registration dialog.
+    *   (Ref: `admin_settings_fields.py`, `functions_support_latest_features.py`, `GET /api/v2/admin/latest-features`, `AdminSettingsPage.tsx`, `SendFeedback.tsx`, `LatestFeaturesVisibility.tsx`, `AdminLatestFeatures.tsx`, `ReleaseNotificationsBadge.tsx`, [V2 Admin Help Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_HELP_SETTINGS.md))
+
+### **(v0.261.275)**
+
+#### New Features
+
+*   **Backup & Recovery in V2 Admin Settings**
+    *   The Backup & Recovery group no longer shows "No settings match". Each of its nine sections now has a V2 card with the same capabilities as the classic page: a Start Here readiness checklist with guides, on-demand full and partial backups, the schedule and retention window, backup storage and encryption, a six-step migration wizard, a backup inventory with restore, the Cosmos DB editor, and job history.
+    *   Backup settings join the page's Save bar and save after the other Admin Settings. Queueing a backup, running retention cleanup, reviewing or queueing a restore, and starting a migration save pending Backup & Recovery changes first; retrying or resuming a job never does. When unsaved Enhanced Citations or Key Vault settings would change how an action is checked, the action offers **Save all and continue**.
+    *   Restore and migration queue only from a current, passing review, with typed confirmations for overwrite restores and mirror migrations. Cosmos DB editor saves are ETag-guarded, and leaving the page with unsaved work asks first.
+    *   (Ref: `components/admin/dataManagement/`, `dataManagementStore.ts`, `dataManagement.ts`, `dataManagementLogic.ts`, `AdminSettingsPage.tsx`, `admin_settings_fields.py`, [V2 Admin Backup & Recovery](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_BACKUP_RECOVERY.md))
+
+#### Bug Fixes
+
+*   **Backup Inventory & Restore Label**
+    *   The navigation label showed a literal `&amp;` on both the classic and V2 admin pages. It now reads "Backup Inventory & Restore".
+    *   (Ref: `admin_settings_nav.py`, `docs/_data/app_surface.yml`)
+
+### **(v0.261.274)**
+
+#### New Features
+
+*   **Scale Settings in V2 Admin Settings**
+    *   The V2 Scale group now covers everything the classic page offers. Redis Cache has its connection settings, an access key field that becomes the Key Vault secret name with Key Vault authentication, and **Test Redis connection**. Redis Metrics shows health and capacity with an inline, read-only Redis Explorer, and Conversation Cache has its TTL and the last 15 minutes of cache activity.
+    *   DAI Metrics shows the always-on index components, backfill progress, and read and cache metrics. Its diagnostics, batch sizes, and backfill actions appear only while **Document Access Index diagnostics** (`enable_dai_debug`) is on under **Operations › Logging & Health › Debug Logging**, matching the classic page, which shows them only while that flag is set.
+    *   Cosmos Maintenance shows indexing and stale cache status and runs its tasks on demand. Cosmos DB Throughput adds the resource, guardrails, access validation, and manual scaling, and Cosmos Metrics is a container workbench where each container's policy is edited in place and saved with the page.
+    *   Applying indexes, deleting stale cache documents, resetting the backfill, and scaling or converting throughput each ask for confirmation first. A scale states the current RU/s and the target the server will most likely choose.
+    *   Saves enforce the classic throughput rules, with each error beside the value that caused it, and report any RU/s value the server rounds. Container policy saves keep the automation's own timestamps, so a page loaded before a scale cannot reset a cooldown.
+    *   (Ref: `admin_settings_fields.py`, `functions_cosmos_throughput.py`, `route_backend_v2.py`, `AdminSettingsPage.tsx`, `CosmosThroughputConsole.tsx`, `CosmosContainerMetrics.tsx`, `RedisMonitoringPanel.tsx`, `DocumentAccessIndexPanel.tsx`, [V2 Admin Scale Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_SCALE_SETTINGS.md))
+
+#### User Interface Enhancements
+
+*   **Settings Cards Show What Depends on Them**
+    *   A section other sections rely on now lists them under **Used by**. Redis Cache, for example, lists Conversation Cache, Redis Metrics, and File Sync. The list follows the same rules as the prerequisite notices on those cards, and each entry moves the page to that section.
+    *   A field's label can follow another setting, and a prerequisite can apply to one configuration only. The schema descriptors are `label_variants` and `requires.when`.
+    *   (Ref: `SettingsSection.tsx`, `adminSections.ts`, `adminFields.ts`, `admin_settings_fields.py`)
+
+### **(v0.261.271)**
+
+#### New Features
+
+*   **Global Agents and Global Actions in V2 Admin Settings**
+    *   Admin Settings › Agents & Actions now lists the organisation's global agents and actions. From the lists you can create, edit, enable, disable and delete them, and choose the default agent. Each change saves on its own rather than through the settings save bar, and Admin Settings asks before opening an editor would drop settings you have not saved.
+    *   Agents and actions open in the same full-page editors My Workspace uses. A global agent's assigned knowledge is limited to public workspaces, its actions are the global actions, and **New action** creates one and attaches it to the agent you came from. Action connection tests and MCP tool discovery run in the global scope.
+    *   **Start from a template** opens a new agent with the approved gallery in view, and **Publish as template** adds a global agent's recipe to the gallery straight away. Agent Template Approvals now links to the approvals queue.
+    *   The separate **Global agent delegation** card is gone. A Call agent action is now an ordinary global action: create it under Global Actions with the **Call agent** type, which lists only global agents as targets, then attach it in a global agent's editor.
+    *   Thirteen admin-only routes under `/api/v2/admin/agents` and `/api/v2/admin/actions` serve the editors through the shared authoring engine, with masked credentials, global Key Vault names, case-insensitive name checks, and revision checks that refuse to overwrite another administrator's save. The classic page can still edit and delete agents and actions saved in V2.
+    *   (Ref: `route_backend_v2_admin_agents_actions.py`, `functions_global_editor_access.py`, `functions_workspace_authoring.py`, `functions_global_agents.py`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminGlobalEditorPages.tsx`, `agentWorkbench.ts`, `actionWorkbench.ts`, `test_v2_admin_global_agents_actions.py`, [V2 Admin Global Agents and Actions](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
+#### Bug Fixes
+
+*   **Choosing a Settings Category Starts at Its Top**
+    *   Choosing a category in the V2 Admin Settings rail, or in the category list on a phone, kept the scroll position of the category you left, so leaving Knowledge near its end opened Security near its end. A category now always opens at its first section, including when you choose the one already shown, and the **On this page** list marks that section.
+    *   (Ref: `AdminSettingsPage.tsx` `selectCategory`, `test_v2_admin_global_agents_actions.py`, [V2 Admin Category Scroll Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_CATEGORY_SCROLL_RESET_FIX.md))
+
+*   **Call Agent Targets Come From the Action's Workspace**
+    *   The V2 Call agent target picker always listed the signed-in person's personal targets. It now asks for the targets of the workspace the action belongs to: global agents for a global action, and for a group action the group's agents plus any permitted global ones, which matches what the server accepts when the action is saved.
+    *   (Ref: `CallAgentActionConfiguration.tsx`, `/api/plugins/agent-targets`)
+
+#### User Interface Enhancements
+
+*   **Agent and Action Editors Share the Admin Settings Design**
+    *   The full-page agent and action editors, the same ones in My Workspace, group workspaces and Admin Settings, are now laid out as Admin Settings is. Each section is a card headed by an icon, its title and what it holds. Settings are rows with the label and help beside the control on a wide screen, stacked on a narrow one. A setting others depend on, such as **Restrict to assigned knowledge** or **Track secret expiration**, is highlighted with the settings it controls indented beneath it, and collapsible groups and panels match Admin Settings.
+    *   The section list on the left stays, now with an icon per section, and marks the section in view. Choosing a section, or arriving through **Start from a template**, keeps that section in view while lists above it finish loading, until you scroll or start editing.
+    *   The Global Agents and Global Actions lists now match AI Connections: an Enabled or Disabled badge, a Default agent badge, and icon buttons to make an agent the default, enable or disable, edit, and delete.
+    *   (Ref: `EditorLayout.tsx`, `WorkspaceEditorFrame.tsx`, `theme.css` `.editor-field`, `AgentFields.tsx`, `ActionFields.tsx`, `GlobalAgentsManager.tsx`, `GlobalActionsManager.tsx`, `AdminListPill.tsx`, [V2 Admin Global Agents and Actions](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md))
+
+### **(v0.261.270)**
+
+#### Bug Fixes
+
+*   **Orchestrate Action and Agent Steps Work Again, Including Microsoft 365**
+    *   With **Orchestrate** on, "what are my emails" failed with "A required retained result is unavailable or changed" in personal and shared chats, while the same request worked with Orchestrate off. Agent and action steps now trust the signed-in session the way manual chat does: access to the conversation, run and exact agent or action is checked, and the step runs without comparing configuration. Web search, linked-page reading and deep research keep their configuration checks.
+    *   Local agents now run as plan steps. An agent that uses Microsoft 365 actions gets a Microsoft 365 request for its own actions, with the same read-only and signed-in-user rules as an action step.
+    *   An @agent or @model tag in an Orchestrate message now chooses that agent or model, like the pickers do.
+    *   Editing an agent or action no longer invalidates results it already produced. A result stays readable until the user loses access to that agent or action.
+    *   (Ref: #1660, #1661, `functions_orchestration_external_sources.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_adapters.py`, `functions_orchestration_m365.py`, `agent_delegation_runtime.py`, `Composer.tsx`, [Session-Trusted Action and Agent Steps Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_SESSION_TRUSTED_ACTION_AGENT_STEPS_FIX.md))
+
+*   **Orchestrate Respects Shared Conversations**
+    *   In a shared conversation with Orchestrate on, a message that addresses only people, such as "@person hey", is now posted to them instead of being sent to the model, as it is with Orchestrate off.
+    *   Only the person who started the shared conversation plans in it. Their question and the run's answer are posted to the shared thread, where every participant sees them arrive. Plans run in a hidden conversation with the shared conversation's ID and workspace lock instead of a private copy, and earlier private copies no longer appear in conversation lists. Other participants' requests are answered the classic way.
+    *   Reopening the shared conversation, and its images, summaries, exports, uploads and Microsoft 365 action cards, keep using the shared conversation for every participant. An answer that finishes later, for example after a waiting step, updates its shared copy. Nothing is posted once the person who started the conversation has left it, and deleting the shared conversation deletes its plans.
+    *   Asking for your own Microsoft 365 data in a shared conversation is now your consent to share what that request reads, in chat and in plans, recorded in your audit history without a prompt. Sharing earlier answers' history and workflow Run as approvals still ask.
+    *   (Ref: #1659, `functions_orchestration_collaboration.py`, `route_backend_orchestration.py`, `collaboration_models.py`, `route_backend_conversations.py`, `functions_m365_approvals.py`, `functions_m365_runtime.py`, `mentions.ts`, `chatStore.ts`, [Shared Conversations Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_SHARED_CONVERSATIONS_FIX.md))
+
+### **(v0.261.269)**
+
+#### New Features
+
+*   **V2 Operations Settings Match the Classic Page**
+    *   All seven Operations sections are now described in V2 Admin Settings, so none fall back to guessed switches named after their settings keys. Automatic Data Refresh, Health Check, and API Documentation appear in V2 for the first time.
+    *   Automatic Data Refresh shows the next refresh in the schedule's timezone and in yours, when it last ran, and what a change would schedule before you save. **Use my timezone** sets the schedule to your browser's zone, and V2 refuses a time or timezone it cannot read instead of quietly falling back to the default.
+    *   Debug and file processing logs nest their automatic turnoff under the switch it belongs to, state each unit's limit, and show the turnoff time in your own timezone. Turnoff times are now stored in UTC; timers set before the upgrade still end when they were meant to.
+    *   Control Center Access shows who can open the dashboard and the management features under the switches as they stand, unsaved changes included, with role values to copy.
+    *   Health Check and API Documentation list each endpoint as a full, copyable address for the deployment, with its sign-in requirement and whether it answers now. Application Insights global logging and Swagger say when a restart is still needed, and Application Insights reports whether its connection string is set.
+    *   File Process Logging can delete stored logs by age or all at once, after a confirmation that states exactly what will be removed.
+    *   **Document Access Index diagnostics** (`enable_dai_debug`) can now be switched on from Debug Logging, with a description and a link to the DAI Metrics card it affects. The classic page has no control for it, and V2 previously showed it only as an unexplained "Dai debug" switch.
+    *   (Ref: `admin_settings_fields.py`, `functions_logging_timers.py`, `functions_control_center_schedule.py`, `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminOperations.ts`, `test_v2_admin_operations_settings.py`, [V2 Admin Operations Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_OPERATIONS_SETTINGS.md))
+
+*   **In-App Setup Guides for Operations**
+    *   The classic page's role setup, health check configuration, and "Why enable Swagger?" dialogs are available from the matching V2 section headers, with values to copy and a link to the documentation.
+    *   The V2 guides correct three statements the classic dialogs make: health checks return the server time as text or a two-field JSON status, not per-dependency results or HTTP 503; Swagger is open to any signed-in user, not only admins; and ControlCenterAdmin does not also require the Admin role.
+    *   (Ref: `components/admin/guides/`, `docs/admin/operations.md`)
+
+#### Bug Fixes
+
+*   **ControlCenterDashboardReader Described Correctly in App Role Requirements**
+    *   The app role registry said the dashboard reader role only worked alongside the ControlCenterAdmin requirement. It works on its own, and the description now says so.
+    *   (Ref: `admin_app_roles.py`, `control_center_required`)
+
+### **(v0.261.268)**
+
+#### Bug Fixes
+
+*   **Metadata and Tag Saves on Large Documents Finish Immediately**
+    *   Saving tags, titles, authors, file names, or classification no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Saves on large documents no longer time out with "invalid JSON" errors in the personal, group, or public workspaces.
+    *   The search index update sends only the changed fields instead of re-reading every chunk with its embedding and writing it back one chunk at a time. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with a similar drop in Cosmos write-fence operations, which sharply reduces Search and Cosmos load for everyone on the server.
+    *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
+    *   Group and public metadata edits through the V2 explorer no longer fail with "propagation incomplete" on documents with more than one search chunk.
+    *   What users will notice: saves and tag changes finish right away, and a brief notice says that search and chat results will reflect the change once the search index finishes updating. That usually takes seconds, and up to a minute or two on very large documents. Failed or interrupted updates retry automatically until every chunk matches the document, so chat tag filters and citation titles converge instead of staying partly stale.
+    *   When the background sync finishes, it clears cached search results for the document's workspace and for every user or group with an approved share, so a search that ran during the sync does not keep returning the old values for the search cache lifetime (5 minutes by default).
+    *   (Ref: `update_document()`, `run_document_search_metadata_sync()`, `background_tasks.py`, document metadata routes and native document APIs, `documentOperations.ts`, [Document Search Metadata Sync Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657, #1658, #1673)
+
+*   **Group Document Sharing Changes Reach Search**
+    *   Approving, removing, or revoking a group share through the classic workspace now updates the search index. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
+    *   Revocations are enforced in the search index before they are saved. When the index cannot apply a sharing change, users get a clear, retryable error instead of a silent success.
+    *   Personal share approvals and unshares also update the search index before they are saved.
+    *   Approving a share that is already approved now repairs its search access, so a share whose search update failed can be completed by approving it again.
+    *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, `reproject_document_search_acl()`, group and personal sharing routes, `functions_group_document_collaboration.py`, #1657)
+
+### **(v0.261.267)**
+
+#### User Interface Enhancements
+
+*   **Collapsible Category List in V2 Admin Settings**
+    *   The category list on the left of V2 Admin Settings can now collapse to a strip of icons, as the workspace section rail does, giving its width to the settings cards. **Collapse** sits at the top of the list. Collapsed, each icon still switches category, shows its name as a tooltip, and is announced by name to screen readers.
+    *   The choice is remembered per administrator in a new `v2AdminRailCollapsed` user preference, kept separate from the workspace section rail and the main navigation so collapsing one leaves the others alone. Narrower windows keep the category drop-down.
+    *   (Ref: `AdminSettingsPage.tsx`, `userSettings.ts`, `route_backend_users.py`, `test_v2_admin_settings_rail_collapse.py`, `ui_tests/test_v2_admin_settings_rail_collapse.py`, [V2 Admin Settings Rail Collapse](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_SETTINGS_RAIL_COLLAPSE.md))
+
+### **(v0.261.265)**
+
+#### User Interface Enhancements
+
+*   **Enhanced Extraction Leads Its Own Admin Section**
+    *   In V2 Admin Settings, **Enable Enhanced extraction** now leads a new **Enhanced Extraction** section under Knowledge › Document Extraction instead of sitting in a collapsed group of the Document Intelligence card. The extraction mode, Auto sample pages, formula extraction and the Azure AI Content Understanding connection sit beneath it and are hidden while it is off, so Content Understanding can no longer be filled in while it could never run. Document Intelligence now holds only its connection.
+    *   The section names the engine Enhanced extraction will use with the settings on screen: Azure AI Content Understanding, or Document Intelligence Layout with the reason. The Content Understanding connection opens on its own while Enhanced is on and no endpoint is set.
+    *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `SettingsSection.tsx`, `EnhancedExtractionEngine.tsx`, `enhancedExtraction.ts`, [V2 Enhanced Extraction Admin Section](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ENHANCED_EXTRACTION_ADMIN_SECTION.md))
+
+#### Bug Fixes
+
+*   **Turning On Enhanced Extraction in V2 Now Takes Effect**
+    *   Turning Enhanced extraction on in V2 left the extraction mode on Standard, so new uploads never used Enhanced and Content Understanding never ran. Turning it on now moves a Standard mode to Auto, as the classic page always has. The change shows on screen before saving, and the server applies it to a save that omits the mode. An explicit Standard choice is kept.
+    *   Content Understanding settings are hidden in Azure clouds that do not offer it, matching the classic page, through a new `content_understanding_supported` runtime flag. V2 cards now receive runtime flags, so settings gated on one, including the Inbound MCP settings, are no longer dropped by the card's own visibility check.
+    *   The Document Intelligence connection test sends the extraction mode only while Enhanced is on, so with Enhanced off it tests Read, which is what documents then use.
+    *   (Ref: `on_enable`, `_apply_enable_defaults`, `applyEnableEffect`, `route_backend_v2.py`, `test_v2_admin_enhanced_extraction_section.py`, `ui_tests/test_v2_admin_enhanced_extraction_section.py`)
+
+### **(v0.261.264)**
+
+#### Bug Fixes
+
+*   **Video Indexer Deploys Outside the App Region and Works Without Manual Role Grants**
+    *   Azure Video Indexer is not offered in every region. The azd, Terraform, and Azure CLI deployers now accept a separate Video Indexer region (`VIDEO_INDEXER_LOCATION`, `param_video_indexer_location`, `$param_VideoIndexerLocation`) and pair it with a storage account in that region. Previously, enabling Video Indexer in a region such as North Central US failed the whole deployment. The azd preprovision hook now stops before provisioning and lists the supported regions.
+    *   Deployer-created Video Indexer accounts now grant the App Service identity **Video Indexer Account Contributor** (**Contributor** in Azure Government and custom clouds), so video processing works without adding a role by hand.
+    *   Post-provision configuration writes the Video Indexer settings only when the deployment created the account, and records the account's own region. Previously, any provision without Video Indexer blanked the account name and ID and reset the location, which left **AI Video Intelligence** showing *Needs configuration*.
+    *   Terraform now reads the Video Indexer identity from the azapi 2.x `output` object directly instead of passing it through `jsondecode()`.
+    *   (Ref: #1666, `videoIndexer.bicep`, `setVideoIndexerPermissions.bicep`, `postconfig.py`, `validate_azd_prerequisites.py`, `main.tf`, `deploy-simplechat.ps1`, deployer version 1.0.33, [Video Indexer Deployment Region and Permissions Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/VIDEO_INDEXER_DEPLOYMENT_REGION_AND_PERMISSIONS_FIX.md))
+
+### **(v0.261.263)**
+
+#### User Interface Enhancements
+
+*   **Search Result Cache Explained Under Azure AI Search**
+    *   V2 Admin Settings now shows the workspace search result cache in a **Search result cache** group under **Knowledge › Search Index › Azure AI Search**. The group explains what is cached, what forces a fresh search, and why the cache should stay on. Previously the fallback scan matched the word "search" and placed it under Web Search as a bare switch labelled with its key, `enable_search_result_caching`.
+    *   **Cache lifetime (seconds)** can now be changed, from 60 to 3,600 seconds with a default of 300. It appears only while caching is on. Caching stays on by default, and a value an administrator saved as off is kept.
+    *   (Ref: `admin_settings_fields.py`, `test_search_result_cache_admin_setting.py`, `test_v2_admin_search_result_cache.py`, [Search Result Cache Admin Setting Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SEARCH_RESULT_CACHE_ADMIN_SETTING_FIX.md))
+
+### **(v0.261.262)**
+
+#### User Interface Enhancements
+
+*   **Media Galleries in V2 Replies**
+    *   Two or more images or clips in a row now show as a gallery of tiles, three to a row, each with its caption underneath, instead of one full-width card each. A short caption line above an image or clip becomes its caption. In a list, the clip and still at the end of each item sit side by side under the item's text. A single image keeps its full-width card, and recordings keep their player bar.
+    *   A clip tile shows its first frame and length, and plays where it is. **View larger** continues it in the viewer.
+    *   Grouping happens on the parsed markdown: raw HTML stays disabled and react-markdown's URL checks still apply to every image and link.
+    *   (Ref: `mediaGallery.ts`, `MediaGallery.tsx`, `MediaTiles.tsx`, `AssistantMarkdown.tsx`, [V2 Media Galleries and Viewer](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_MEDIA_GALLERIES_AND_VIEWER.md))
+
+*   **Media Viewer**
+    *   Opening an image or clip shows it large, with **Previous** and **Next** buttons and the arrow keys stepping through the gallery, its position ("3 of 15"), View at actual size, Download and Open in a new tab. Focus returns to the tile when it closes.
+    *   (Ref: `MediaViewer.tsx`, `mediaDownload.ts`, `useMediaDownload.ts`)
+
+*   **Drawer Media Section Groups Images, Videos and Audio**
+    *   The Documents drawer now lists media under **Images**, **Videos** and **Audio** with counts. Clips show as tiles with their first frame instead of text rows, and images and clips open one viewer across all of them, with **Show in conversation** to scroll to the message.
+    *   Recordings play in the drawer, with play, stop, seek, volume, speed, Download and Show in conversation.
+    *   (Ref: `DrawerAssets.tsx`, `ConversationDrawer.tsx`, `InlineAudioPlayer.tsx`)
+
+*   **Download for Recordings, Clips and Images**
+    *   Recordings, clips and images can be saved from the player and the viewer, under the file name in their link. When a host does not let the page read its files, the file opens in a new tab instead, where the browser can save it. An expired link reports that it has expired.
+    *   (Ref: `mediaDownload.ts`, `InlineAudioPlayer.tsx`, `MediaViewer.tsx`)
+
+#### Bug Fixes
+
+*   **Escape in a Drawer Dialog No Longer Closes the Drawer**
+    *   Pressing Escape in a dialog opened from the conversation drawer, such as a document preview or the media viewer, also closed the drawer. Escape now closes only the dialog, and a second Escape closes the drawer.
+    *   (Ref: `ConversationDrawer.tsx`, `test_v2_media_galleries.py`)
+
+### **(v0.261.261)**
+
+#### Bug Fixes
+
+*   **Always-On Tabular Switches Removed From V2 Admin Settings**
+    *   V2 Admin Settings no longer shows an unlabelled **Tabular search shared preflight** switch under Workspaces › Files & Sharing › Shared Conversation File Approvals. It landed there only because its key contains the word "shared". It also no longer shows `enable_tabular_analyze_durable_preflight` or `enable_tabular_hierarchical_analysis` under Other capabilities.
+    *   All three flags send exhaustive row-by-row requests against CSV and XLSX files to a durable background job that covers every row, instead of a foreground answer that truncates. They are always on: settings loading resets them to on every time, so the switches reverted after every save. Behavior is unchanged, and the `SIMPLECHAT_DISABLE_TABULAR_PARITY_DURABLE_PREFLIGHT` environment variable is still the emergency off switch.
+    *   The capability placement test now fails if any flag that settings loading resets is drawn as a switch, or if a guessed switch lands in the Workspaces group.
+    *   (Ref: `admin_settings_fields.SUPPRESSED_CAPABILITY_KEYS`, `TABULAR_PARITY_DURABLE_PREFLIGHT_ACTIVE_DEFAULTS`, `test_v2_admin_capability_placement.py`, [V2 Admin Tabular Preflight Switch Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_TABULAR_PREFLIGHT_SWITCH_FIX.md))
+
+### **(v0.261.260)**
+
+#### Bug Fixes
+
+*   **V2 Web Search Test Uses the Saved Foundry Connection**
+    *   **Test web search** in V2 Admin Settings reported "Foundry Project Endpoint is required", "Foundry API Version is required" and "Foundry Agent ID is required" for a saved connection whose values were on screen. The Foundry connection is saved inside `web_search_agent`, but the test read each field as a top-level setting, so it only worked before the values were saved. It now reads the saved values, including a service principal's authentication type and masked client secret, which the server swaps for the stored secret.
+    *   The same fix shows **Managed Identity Type**, or the service principal fields, for the saved authentication type, and marks a saved connection as configured. Clearing a saved client secret now shows the removal warning and **Undo**.
+    *   The **Document action capabilities** card now shows the chat and workflow limits for Analyze, Comparison and Merge while that action is enabled. The section card used to hide them once the setting was saved.
+    *   (Ref: `adminFields.ts` `readSettingValue` and `buildConnectionTestPayload`, `adminSections.ts`, `ConnectionTest.tsx`, `SettingsSection.tsx`, `AdminSettingsPage.tsx`, `test_v2_admin_nested_setting_reads.py`, [V2 Admin Web Search Nested Settings Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_WEB_SEARCH_NESTED_SETTINGS_FIX.md))
+
+### **(v0.261.259)**
+
+#### Bug Fixes
+
+*   **Rejected Group Conversation Invites Stop Before History Reads**
+    *   Converting an existing group conversation now verifies every invited participant against the group's current membership before preparing Microsoft 365 publication evidence or reading the conversation transcript. An identity outside the group is still rejected without changing any records, but the rejection now happens before message history is queried.
+    *   The document collaboration regression fixture now exposes the current workflow-alert safety contract, so its sharing and repair checks reach their assertions instead of stopping during module import.
+    *   (Ref: #1651, `ensure_group_collaboration_for_legacy_conversation`, `test_group_collaboration_source_storage_fix.py`, `test_group_document_collaboration.py`, [Group Collaboration Invitee Validation Order Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_COLLABORATION_INVITEE_VALIDATION_ORDER_FIX.md))
+
+### **(v0.261.258)**
+
+#### User Interface Enhancements
+
+*   **V2 Admin Settings Use the Full Width**
+    *   Admin Settings now fills the screen instead of a 768px column. On wide screens an **On this page** list sits beside the cards with each section's status (Configured, Needs configuration, Off, or Prerequisite missing), a count of sections that need attention, and a marker for the section you are reading. Select an entry to jump to it.
+    *   Every section uses the card the Agents settings introduced: an icon from the navigation, a larger title, and stronger group boundaries. The switch a section depends on is highlighted, and settings that only apply while a switch is on are indented beneath it. That nesting is read from the field schema, so it appears in every section that declares it.
+    *   On a wide card each setting's label and description sit beside its control, and independent switches pair up in two columns. Narrow screens and larger text sizes keep the stacked layout.
+    *   (Ref: `AdminSettingsPage.tsx`, `SettingsSection.tsx`, `SettingsIndex.tsx`, `adminSections.ts`, `fields.tsx`, `theme.css`, [V2 Admin Settings Layout and Hierarchy](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_SETTINGS_LAYOUT_AND_HIERARCHY.md))
+
+*   **Model Catalog Workbench in V2**
+    *   The V2 Model Catalog is now drawn natively as a workbench. Each profile is one line, with its name, publisher, and the number of global models connected to it, and the list and the selected profile scroll separately.
+    *   A profile's detail is split into **Overview**, **Capabilities**, **Connections**, and **Evidence** tabs, with **Favorite** and **Priority** in its header. Selecting the connected-model count opens the Connections tab, and **Open in AI Connections** opens that model's connection editor with the model outlined.
+    *   The admin catalog response now includes each linked model's connection and model ids. The classic catalog is unchanged.
+    *   (Ref: `ModelCatalogManager.tsx`, `ModelCatalogDetail.tsx`, `ModelCatalogEditor.tsx`, `modelCatalog.ts`, `ModelConnectionsManager.tsx`, `route_backend_models.py`, [V2 Model Catalog Workbench](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_MODEL_CATALOG_WORKBENCH.md))
+
+#### Bug Fixes
+
+*   **V2 Admin Settings Links Scroll to Their Target**
+    *   **Go to setting** in App Role Requirements and other links between settings cleared the search and category but never scrolled, because they looked up an id the cards no longer rendered. They now scroll to the section and focus its heading, keep the current category when it already shows the target, and respect reduced motion.
+    *   (Ref: `AdminSettingsPage.tsx`, `test_v2_admin_settings_layout.py`, [V2 Admin Section Jump Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_SECTION_JUMP_FIX.md))
+
+### **(v0.261.257)**
+
+#### Bug Fixes
+
+*   **Deleted Messages No Longer Come Back As Masked**
+    *   With **Enable Conversation Archiving** on, a message deleted in the V2 chat no longer reappears as "This message is masked", either right after the delete or when the conversation is opened again. Deleted messages are left out wherever messages are shown, copied, searched or sent to the model: the message list, attempt switching, retry and edit, forks, sharing a conversation, conversation search, the inbound MCP message tool, conversation summaries and chat history. Their archived copies are kept as before.
+    *   Delete, retry, edit, attempt switching and both mask actions treat a deleted message as gone, so its fail-safe mask can't be cleared. Shared conversations that already hold copies of deleted messages hide them, with no data migration.
+    *   (Ref: #1649, `functions_message_deletion.py`, `route_backend_conversations.py`, `route_backend_chats.py`, `functions_collaboration.py`, `chatStore.ts`, `deletedMessages.ts`, [Deleted Messages Shown as Masked Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md))
+
+*   **Deleting An Answer No Longer Brings Back An Earlier Attempt**
+    *   Deleting only the latest answer of a retried turn re-activated the lowest-numbered earlier attempt, so an old question and answer showed beside the latest question. Another attempt now takes over only when the active attempt's question is deleted, a deleted attempt is never chosen, and only one attempt stays active. This applies whether or not archiving is on.
+    *   The V2 attempt control counts the attempts that remain, so it reads "2/2" rather than "3/2" after one is removed.
+    *   (Ref: #1649, `_promote_remaining_thread_attempt`, `threads.ts`, [Deleted Messages Shown as Masked Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SOFT_DELETED_MESSAGES_SHOWN_AS_MASKED_FIX.md))
+
+### **(v0.261.256)**
+
+#### Bug Fixes
+
+*   **One Progress Indicator While Orchestrate Runs a Plan**
+    *   Once a plan started running, the V2 chat showed **Thinking** in a reply bubble above the plan card, which was already showing the run's progress. The plan card is now the only indicator while a plan runs, and the answer appears when it arrives. Run notices, such as a saved-memory warning, are still under the finished answer's reasoning steps.
+    *   A chat reply sent while a plan waits in the same conversation still shows **Thinking**, and **Stop** works as before.
+    *   (Ref: `MessageList.tsx`, `chatStore.ts` `orchestrationSurface`, `executeSavedPlan`, `selectActiveTurnRunInFlight`, `test_v2_orchestration_streaming_bubble.py`, `test_v2_orchestration_streaming_surface.mjs`, [Orchestration Duplicate Thinking Indicator Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_RUN_DUPLICATE_THINKING_INDICATOR_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Orchestrate Says What It's Doing**
+    *   While Orchestrate plans a question, the reply bubble now says **Planning** instead of **Thinking**.
+    *   The running plan card's status line names the work instead of a bare role. It shows "Starting", then each step's kind of work and title, such as "Gathering: Read quarterly reports", then "Preparing the answer" once every step has settled. "Waiting for results" is unchanged.
+    *   (Ref: `describeRunProgress` in `orchestrationPlan.ts`, `OrchestrationPlanCard.tsx`, `test_v2_orchestration_run_progress_status.mjs`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md#stream-events))
+
+### **(v0.261.253)**
+
+#### Bug Fixes
+
+*   **Workflow Reply Shown Once in the Conversation It Created**
+    *   An agent workflow that creates a conversation and posts its opening message there through the Simple Chat action no longer shows the same findings twice. Once the run's full reply, with its maps and sources, is mirrored into that conversation, the run's own post (labelled "posted through an agent") is left out of the thread in the classic and V2 chat views. The post stays stored and stays in the conversation's AI history.
+    *   The workflow's own conversation, **Workflow: *name***, is hidden from the chat list the first time a run delivers its result into a conversation it created. It still records every run, and opens from the workflow alert's **Show more** links or the "show hidden conversations" toggle. If you show it again, later runs leave it visible.
+    *   Messages people write are never hidden, and agent posts made outside a workflow run are unaffected. Conversations created before this version keep both messages until a new run delivers into them.
+    *   (Ref: `functions_workflow_runner.py`, `sharedMessage.ts`, `MessageList.tsx`, `chat-messages.js`, `chat-collaboration.js`, `test_workflow_reply_replaces_agent_posted_message.py`, [Workflow Reply Replaces the Agent-Posted Message Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_REPLY_REPLACES_AGENT_POSTED_MESSAGE_FIX.md))
+
+### **(v0.261.252)**
+
+#### Bug Fixes
+
+*   **Workflow Hand-Off Reports Re-Prove Their Lineage**
+    *   The workflow result reader now re-proves a chat hand-off's report with the shared node lineage authorizer before it describes or excerpts it, as the reader's general path does for each task row. Each consumed-input receipt must chain to a real parent result of the run, with matching hashes and references, so a report whose inputs don't check out is no longer posted to chat.
+    *   A malformed receipt or a damaged parent result is refused with `workflow_result_invalid`, and a missing parent with `workflow_result_not_found`, the same codes the general path uses. The check runs for descriptor-only reads, such as re-checking a stored chat context, as well as excerpt reads. It walks the saved workflow, so an edited or re-enabled workflow still fails closed before anything is read.
+    *   Hand-off stays off by default, behind **Hand Off Large Work From Chat**.
+    *   (Ref: #1549, #1543, follow-up to #1640, `functions_workflow_result_reader.py`, `authorize_workflow_node_result_read`, `test_workflow_handoff_result_reader.py`, [Workflow Hand-off Result Lineage Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_HANDOFF_RESULT_LINEAGE_FIX.md))
+
+*   **Hand-Off Off-Golden Fixture Recaptured**
+    *   The fixture behind `test_orchestration_workflow_handoff_off_golden.py`, which checks that planning is unchanged when hand-off is unavailable, was captured on 0.261.233, before file merging (#1641) changed the planner's content, so 4 of its 10 cases failed on V2.
+    *   It's now recaptured on unmodified V2 at 0.261.248, taken unchanged from the Phase 7a branch's last commit, and the test passes 10 of 10. Planning itself didn't change.
+    *   (Ref: #1640, #1641, `test_orchestration_workflow_handoff_off_golden.py`, `test_support/orchestration_workflow_handoff_off_golden.json`, [Workflow Hand-off Result Lineage Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_HANDOFF_RESULT_LINEAGE_FIX.md#recaptured-hand-off-off-golden))
+
+### **(v0.261.251)**
+
+#### New Features
+
+*   **Live Status For Workflows Started From V2 Chat**
+    *   Under a plan's answer, each workflow the plan started now shows its run's current status (Queued, Running, Needs you, Completed, Partly completed, Failed, Timed out or Cancelled), with the step it's on, the time elapsed, why it's waiting and where its results went. A status V2 can't read with certainty shows **Status unavailable** with only **Open run**, never a guess.
+    *   **Check now** reads the chat's runs straight away and shows when they were last checked. **Cancel run** asks you to confirm, then asks the run to stop. **Retry** resumes the same failed durable run after a fresh read of its runtime and never starts a new run; when the server refuses, for example because the workflow changed or another run is in progress, the card says why. **Review and approve** opens the run in Workflows, where the step's prompt and choices are shown; nothing is approved from the chat. **Reconnect Microsoft 365** opens the connection in your profile.
+    *   Shown in private personal chats while `allow_user_workflows` and `enable_chat_orchestration_workflow_runs` are both on. With either one off, the started-workflow links show as before and no status is requested.
+    *   (Ref: #1546, #1543, #1610, `WorkflowRunCard.tsx`, `WorkflowRunLinks.tsx`, `workflowRunStatus.ts`, `workflowRunActions.ts`, `useWorkflowRunAction.ts`, `workflowEditor.ts`, [Workflow result delivery to chat](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2))
+
+*   **One Workflow Run Tracker Per Browser Tab**
+    *   V2 checks chat-started runs from the app shell, on any page, with one request per check to the batched status route, never one per run, so the chat list, the bell and the run card stay current. It checks first after 15 seconds, then less often up to every 5 minutes, pauses while the tab is hidden unless desktop notifications are on, and stops once nothing is in flight. A new plan answer, the run card or **Check now** starts it again, and it stops when the session ends.
+    *   When a run's results are posted while the page is open, the open chat reloads its messages once any reply in progress finishes, without replacing a source you already chose. Another chat gets its unread dot, and the bell count refreshes. The server's one bell notification is the only one, and a desktop notification, if you've turned them on, shows only while you aren't looking at the page.
+    *   The first check after the page loads records what was already posted, so reloading never announces a result, marks a chat unread or notifies again.
+    *   (Ref: `workflowRunTracker.ts`, `useWorkflowRunTracker.ts`, `workflowRunTrackerStore.ts`, `chatStore.ts`, `App.tsx`, [Workflow result delivery to chat](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_WORKFLOW_RESULT_DELIVERY.md#v2-experience-6b-2))
+
+*   **Follow Up, Retry And Open Run On Posted Workflow Results**
+    *   A message a workflow run posted to its chat now ends with its own actions. **Follow up** makes a posted result or saved analysis the source of your next question in the same chat, while **Use Workflow Results In Chat** is on and the result is still available. **Open run** opens the run in Workflows. A note that the run failed offers **Retry workflow run** only while a fresh check says the same run can still be resumed.
+    *   The chat's own **Retry** and **Edit** are hidden on these messages, since the server refuses both. If a refusal still comes back, its message is shown.
+    *   (Ref: `WorkflowDeliveryFooter.tsx`, `workflowDelivery.ts`, `MessageActions.tsx`, `MessageList.tsx`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/#results-posted-to-the-chat))
+
+*   **Next Run And Last Run On The Recurring-Workflow Card**
+    *   The card for a workflow created from a chat proposal now shows when it runs next, or **Due now**, and its newest run's status and time, or **No runs yet**. **Open latest results** opens the newest completed or partly completed run, and **Follow up** opens a new chat about the newest run chat can answer from.
+    *   The card reads these once when it's shown and doesn't keep checking. If the read fails, it says "Run details aren't available right now."
+    *   (Ref: `WorkflowProposalRunSummary.tsx`, `WorkflowProposalCard.tsx`, `workflowEditor.ts`)
+
+*   **Workflow Notifications Open The Run In V2**
+    *   In V2, a notification that links to a run on the classic workflow activity page now opens that run in the Workflows run history when the link and the notice agree on the workflow, the run and its workspace: personal, or a group with its id. Microsoft 365 notices, and notices whose link and details disagree or don't say which workspace, keep their classic link.
+    *   A workflow alert, or a notice that a run's results couldn't be posted to its chat, that has no link of its own but names its run and workspace now opens that run. Previously it had no link.
+    *   (Ref: `notificationLinks.ts`, `workflowRunLink.ts`, `workflowAlertNotices.ts`, [V2 Notifications Bell](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_NOTIFICATIONS_BELL.md))
+
+#### User Interface Enhancements
+
+*   **Running Tag In The V2 Chat List**
+    *   A small spinner beside a chat shows that a workflow it started is still running or its results are being posted, labelled for example "Running Weekly digest" or "Running 2 workflows". It uses what the tracker already knows, so the list sends no requests of its own, and it gives way to the unread dot once the results arrive.
+    *   (Ref: `WorkflowRunningTag.tsx`, `ConversationRail.tsx`)
+
+*   **Workflow Results Notices And Alert Cards**
+    *   The bell labels notices about a run whose results couldn't be posted to its chat as **Workflow results**.
+    *   A workflow alert card that names its run now offers **Open run**, which opens the same place **Open workflow** did. Alerts without a run keep **Open workflow**.
+    *   (Ref: `notifications.ts`, `WorkflowAlertCard.tsx`, `workflowAlertNotices.ts`, [V2 Workflow Alert Notices](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKFLOW_ALERT_NOTICES.md))
+
+### **(v0.261.250)**
+
+#### New Features
+
+*   **Hand Off Large Chat Requests To A One-Time Workflow**
+    *   When a request is too big for one chat plan, such as "review every contract in the Legal workspace and list the ones that renew this year", the planner can hand it to a one-time durable workflow. The workflow reviews each document with Analyze inside a For each, collects every finding and writes one report.
+    *   The user approves the plan, then accepts, edits or declines a hand-off card. Accepting creates the workflow turned off, so it never runs on a schedule, and queues exactly one durable run. The workflow id and the run's request id come from the hand-off, so a retry, a second tab or a crash finds the same workflow and run instead of making new ones. When the run finishes, workflow result delivery posts the report back into the conversation.
+    *   New admin setting **Hand Off Large Work From Chat** (`enable_chat_orchestration_workflow_handoff`), off by default because a hand-off starts background work that keeps running with the user's access after the chat turn ends. It requires Chat Orchestration, personal workflows, Propose Workflows From Chat, Run Workflows From Chat and Use Workflow Results In Chat, and hand-offs are offered only in the user's own private conversations. New limit **Hand-Offs From Chat Per User Per Day** (`chat_orchestration_max_workflow_handoffs_per_day`), 1 to 100, default 5. Hand-off workflows don't count toward Workflows Created From Chat Per User.
+    *   A hand-off covers at most 25 named documents, or 2,000 documents from a workspace query, lower if the administrator's loop item limit is lower. A query that matches more pauses before reviewing anything.
+    *   When hand-off is offered, the planner prompt lists the plan's limits, and a plan over its step or document budget fails with `plan_budget_exceeded`, whose repair message suggests handing the work off. With the setting off, planning is unchanged.
+    *   New requester-only routes under `/api/v2/orchestration/runs/<run_id>/workflow-handoffs` read a plan's hand-offs, accept one as proposed or edited, decline one, and read its editor draft. The V2 hand-off card is a separate change; until it ships, users can't accept a hand-off in the browser, so leave the setting off.
+    *   (Ref: #1549, #1543, `functions_orchestration_workflow_handoffs.py`, `functions_orchestration_workflow_handoff_decisions.py`, `functions_workflow_handoff_builder.py`, `functions_workflow_drafts.py`, `functions_workflow_runtime.py`, `functions_workflow_result_reader.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Hand-off](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_HANDOFF.md))
+
+### **(v0.261.248)**
+
+#### Bug Fixes
+
+*   **Merge Code Passes CodeQL Analysis**
+    *   CodeQL flagged import cycles and small code-quality issues in the new merge code. The code that the PDF, Word, PowerPoint and workbook assemblers share moved to `functions_document_merge_core.py`, so no assembler imports `functions_document_merge.py`, the module that loads them. Each assembler still loads only when its kind of file is merged.
+    *   The workflow runner imports the upload function for merged files along with its other upload functions. Cleanup errors that are deliberately ignored now say why, the workbook check for NaN uses `math.isnan`, and the merge tests no longer call helpers with side effects inside `assert`, use both `import` and `from ... import` for one module, or close results by hand.
+    *   Merges behave exactly as before.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_core.py`, `functions_document_merge_workbook.py`, `functions_tabular_merge.py`, `functions_workflow_runner.py`, [Phase 4](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md#document-merge-engine))
+
+### **(v0.261.247)**
+
+#### Bug Fixes
+
+*   **Large Merges Spill To The Container's Scratch Directory**
+    *   A merge keeps its data in memory up to 16 MiB for an assembled PDF, Word document, deck or workbook, and 8 MiB of rows for a spreadsheet merge. Larger merges now spill into `/sc-temp-files`, the directory the container image creates for scratch files, like file renders and downloads since 0.261.233. Before, they used the platform temp directory (`/tmp` in the image), which also works.
+    *   Where `/sc-temp-files` doesn't exist or can't be written, such as on a development machine, merges still use the platform temp directory, and never the working directory. Spilling doesn't change the merged file.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_temp_files.py`, `test_file_merge_scratch_dir.py`, [Phase 7](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#where-merges-spill-to-disk))
+
+### **(v0.261.246)**
+
+#### User Interface Enhancements
+
+*   **Chat Asks Whether Merged Spreadsheets Share One Sheet**
+    *   Merging several CSV or Excel files into one Excel file can mean every row on one sheet or each file on its own sheet. When a request such as "merge these files into one Excel file" doesn't say which, V2 chat now asks first, with two choices: **All rows on one sheet** or **Each file on its own sheet**. Before, it assumed one sheet.
+    *   It doesn't ask when the request already decides the layout. CSV output holds one table. Words like "stack the rows", "one table" or "a sheet per file" also decide it, as do a saved preference or an earlier answer. Choosing **Decline** puts every row on one sheet and the plan says so.
+    *   The question is offered only while **Merge spreadsheets**, **Merge documents** and **Create a file** are all available, so a deployment that narrows out **Merge documents** keeps stacking rows. Workflows that chat proposes for repeated merges ask the same question.
+    *   The planner's general rule to prefer a stated assumption over a question now names its exceptions: capability guidance, deliverables facts and workflow instructions that say to ask.
+    *   (Ref: #1619, `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, [Phase 7](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#one-sheet-or-a-sheet-per-file), [Merge files](https://microsoft.github.io/simplechat/guides/merge-files/#one-sheet-or-a-sheet-per-file))
+
+### **(v0.261.245)**
+
+#### New Features
+
+*   **Merge PDFs, Word Documents, Decks And Workbooks In Chat**
+    *   V2 chat orchestration can join whole documents in a chat turn, without a workflow: "combine these contracts into one PDF" plans a **Merge documents** step (`document_merge`) and a file to create. It joins PDFs into one PDF, Word documents into one Word document or PowerPoint decks into one deck, or puts CSV and Excel files on separate sheets of one workbook, with the same deterministic engine and options as workflow merges. No model reads or rewrites the files.
+    *   The merge step checks the merged file and retains only a description of it: the kind, options, files in order, and the file's size and SHA-256. Rendering with the new `assembled_document_v1` profile reads only that merge's own files, with current access checked again, assembles them again, and delivers the file only if it is byte-for-byte identical. A file that changed in between fails as `output_source_changed` and nothing is uploaded.
+    *   The plan card says what a document merge creates and lists only the settings that differ from the defaults. Plans must name the kind, use only that kind's settings, and render the merge in its own format. Failures use application-owned messages, including the new `document_merge_active_content`.
+    *   Merges stay governed by **Enable Merge** and the Merge chat file limit; deployments with a narrowed orchestration capability list must add **Merge documents**. The planner now proposes merge workflows only for scheduled, synced or very large merges.
+    *   (Ref: #1619, `functions_document_merge_assembly.py`, `functions_orchestration_document_merge.py`, `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `functions_orchestration_rendering.py`, `functions_generated_office_adapters.py`, `functions_generated_export_registry.py`, `orchestrationMerge.ts`, [Phase 7](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md), [Merge files](https://microsoft.github.io/simplechat/guides/merge-files/#merge-pdfs-word-documents-decks-or-workbooks))
+
+#### Bug Fixes
+
+*   **Hostile Files Can't Make A Merged File Run Programs Or Read Server Files**
+    *   Word documents with fields that start other programs (DDE or DDEAUTO) are refused, however the field code is split, nested, cased or encoded, in the body, headers, footers or notes. The first document's link to its template is removed so Word never fetches it, and other linked content is reported.
+    *   PowerPoint click and hover actions that start a program or run a macro are removed from every merged deck, including the first, in every part declared as Office XML whatever its name or encoding; web links are kept.
+    *   Word, PowerPoint and Excel packages with an XML part that declares a document type, which Office Open XML forbids and which is how a part asks a parser to read other files, or that is written or declared in an encoding other than UTF-8 or UTF-16, are refused before any library parses them, in document merges and in spreadsheet merges of `.xlsx` and `.xlsm` files. Parts are chosen by name and by declared content type, and only each part's prolog is read, within a fixed budget per package.
+    *   A storage fault while a merged file's originals are read again for delivery now stays retryable instead of reading as a screening hold.
+    *   Verified that 100 files of 1,000 rows merge in one workflow run, that merged CSV and Excel files never carry a live formula, and that the merge modules import without loading any Office or PDF library.
+    *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge_pptx.py`, `functions_ooxml_package_guard.py`, `functions_document_merge.py`, `functions_tabular_merge.py`, `functions_orchestration_rendering.py`, [Phase 7 hardening](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_7_CHAT_DOCUMENTS.md#hardening))
+
+*   **Word Merges With Lists Give The Same File Every Time**
+    *   docxcompose gave every list it copied from a later document a random ID, so a Word merge whose later documents had ordinary bulleted or numbered lists produced different bytes on each run. A retried workflow Word merge could attach a second copy, and a chat merge of such documents could never be delivered. The ID is now derived and unique within the document, so each document's list still restarts and the same documents always give the same file.
+    *   (Ref: #1619, `functions_document_merge_docx.py`, [Phase 5](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_5_WORD.md))
+
+### **(v0.261.244)**
+
+#### New Features
+
+*   **Merge PowerPoint Decks In Workflows**
+    *   A workflow **Merge files** task can use **Combine PowerPoint decks** as its **Merge type**: the slides of PowerPoint decks are appended, in order, into one deck with code and no model, choosing files the same four ways as every merge. Every merge type is now available in workflows.
+    *   **PowerPoint formatting** keeps each deck's layouts, masters and themes (reusing identical ones) or places every slide on the first deck's matching layout and theme. **Create one section per deck** groups each deck's slides under its file name. Pictures, media, charts with their workbooks, diagrams, tables and speaker notes come along.
+    *   The first deck decides the slide size, and a deck with a different size is reported; embedded fonts of later decks and slide comments aren't carried over. Encrypted, damaged, oversized and macro-enabled decks are refused, and a merge assembles up to 2,000 slides from at most 300 MB of decks.
+    *   The same decks always produce the same bytes, so a retried task reuses the file it attached, and errors name only the file. Run activity reports slides per deck.
+    *   Chat can propose PowerPoint merges (blueprint `merge.kind` `pptx`, with `formatting` and `sections`).
+    *   (Ref: #1619, `functions_document_merge_pptx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, [Phase 6](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_6_POWERPOINT.md), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/#merge-files-in-a-workflow))
+
+### **(v0.261.243)**
+
+#### New Features
+
+*   **Merge Word Documents In Workflows**
+    *   A workflow **Merge files** task can use **Combine Word documents** as its **Merge type**: Word documents are appended, in order, into one Word document with code and no model, choosing files the same four ways as every merge.
+    *   **Word formatting** keeps each document's look, copying a style that shares a name but looks different under a new name, or uses the first document's styles for all of them. **Page break between documents** and **Add source headings** are optional. Styles, numbering, images, tables, footnotes and shapes come along; comments don't, and the merged document uses the first document's headers, footers and page setup.
+    *   The same documents always produce the same bytes, so a retried task reuses the file it attached. A Word merge reads at most 300 MB of documents; encrypted, damaged and macro-enabled files are refused, and errors name only the file.
+    *   Chat can propose Word merges (blueprint `merge.kind` `docx`, with `formatting`, `page_breaks` and `source_headings`), and the `merge_options_invalid` repair hint now lists the options each kind takes.
+    *   Adds the `docxcompose` 2.2.0 dependency (MIT).
+    *   (Ref: #1619, `functions_document_merge_docx.py`, `functions_document_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, `functions_orchestration_planner.py`, `requirements.txt`, [Phase 5](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_5_WORD.md), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/#merge-files-in-a-workflow))
+
+### **(v0.261.242)**
+
+#### New Features
+
+*   **Merge PDFs And Build Workbooks In Workflows**
+    *   A workflow **Merge files** task now has a **Merge type**. **Combine PDFs** joins PDFs, in order, into one PDF with a bookmark for each file (keeping each file's own bookmarks beneath it); **One workbook, a sheet per file** puts each CSV or Excel file on its own sheet of one Excel workbook, named after the file. **Combine rows (CSV/Excel)** is the existing row merge.
+    *   Both use the same four ways to choose files as row merges (selected files in order, every matching file, recent files, or the files File Sync changed), authorize every file again, run with code and no model, and attach one file to the run. A workflow can assemble up to 10,000 pages or 500 sheets; a PDF merge reads at most 300 MB of PDFs, because every source stays in memory until the merged PDF is written.
+    *   PDF pages are copied unchanged; encrypted PDFs are refused rather than decrypted, and scripts and actions that could run code, open files or programs, or submit forms are removed wherever they appear (open actions, page, link and form-field scripts, XFA forms), while links to pages and to web and email addresses are kept. Workbooks keep Excel cell types and number formats, copy CSV values as text so codes keep their leading zeros, never evaluate text that looks like a formula, and remove control characters Excel can't store. The same files always produce the same bytes, so a retried task reuses the file it attached. Library errors are reported by file name only, never with text from the file. The task's answer lists the files merged and anything left out or removed.
+    *   Chat can propose PDF and workbook merges: the workflow blueprint's `merge` field gains `kind` (`tabular`, `workbook` or `pdf`), with the new draft code `merge_format_invalid`, and the proposal card describes each kind, for example "Merges every PDF in your personal workspace into one PDF with code. No model runs."
+    *   Merging PDFs or workbooks directly in a chat turn, without a workflow, is planned with Word and PowerPoint for a later release.
+    *   (Ref: #1619, `functions_document_merge.py`, `functions_document_merge_pdf.py`, `functions_document_merge_workbook.py`, `functions_workflow_merge.py`, `functions_document_actions.py`, `functions_workflow_drafts.py`, [Phase 4](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_4_PDF_WORKBOOKS.md), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/#merge-files-in-a-workflow))
+
+### **(v0.261.241)**
+
+#### New Features
+
+*   **Merge Files As A Workflow Task**
+    *   A V2 workflow task can now merge many CSV and Excel files into one CSV or Excel file with code: choose **Merge files** as the task's **Document action**. It suits merges too big for one chat turn, such as a year of weekly exports, and merges that should happen on their own, every week or whenever a synced folder gets a new export. A workflow merges up to 100 files and 1,000,000 rows by default, using the existing Merge workflow limits.
+    *   **Files to merge** can be files chosen in the editor, in an order the owner sets; every CSV and Excel file in the workflow's workspace; files added or changed in a recent window (60 minutes by default); or the files File Sync added or changed in that run. Files found when the run starts are merged in file-name order, and more matching files than the limit fail the task rather than merging only some.
+    *   The task takes the same column, sheet, duplicate and sort settings as a chat merge, and an output format and file name. Every file is authorized again as the workflow's owner and read through the access boundary, no model runs, and one file is attached to the run's conversation, even when a durable run resumes.
+    *   Files found at run time that are unavailable or aren't spreadsheets are skipped and named in the task's answer; a run with nothing to merge says so without creating a file. Merge failures, such as a selected file that's gone or columns that don't fit, are shown on the task in terms of the owner's files and aren't retried. A durable run repeats an interrupted merge instead of pausing for review, and reuses the file it already attached when the bytes are the same.
+    *   A save that breaks a merge rule now says why, naming the task by position, for example "Workflow task 2: Select at least two files to merge." The editor learns from the server whether Merge is on and how many files a run may merge, so it doesn't offer **Merge files** while an administrator has Merge off and checks the file limit before saving.
+    *   Chat can propose a workflow with a merge task when a user asks for a recurring merge. The blueprint gains a `merge` task field, with new repairable draft codes `merge_unavailable`, `merge_inputs_required`, `merge_trigger_required`, `merge_options_invalid` and `merge_runner_invalid`, and a merge task never needs the default model.
+    *   (Ref: #1619, `functions_workflow_merge.py`, `functions_workflow_runner.py`, `functions_document_actions.py`, `functions_personal_workflows.py`, `functions_workflow_editor.py`, `functions_workflow_drafts.py`, `functions_orchestration_workflows.py`, `functions_orchestration_planner.py`, [Phase 3](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_3_WORKFLOWS.md), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/#merge-files-in-a-workflow), [Merge files](https://microsoft.github.io/simplechat/guides/merge-files/))
+
+#### User Interface Enhancements
+
+*   **Merge Files In The V2 Workflow Editor And Proposal Card**
+    *   The V2 workflow editor's **Merge files** action offers **Files to merge**, **Merge order** with **Up** and **Down**, **Output format**, **Output file name**, the recent window, and **More merge options** for column matching, aliases, sheets, header row, incompatible files, the source column, duplicates and sorting. The **Analysis mode** choice no longer appears for actions that don't analyze.
+    *   A proposed workflow's card describes a merge task as code that runs no model, for example "Merges the input files below, in order, into one Excel file with code. No model runs.", and lists its files under "Files to merge, in order".
+    *   The classic workflow editor doesn't open a workflow with a Merge files task, which it can't represent, and points to V2 instead; Run and Cancel still work there.
+    *   (Ref: `application/v2_ui/src/lib/workflowEditor.ts`, `WorkflowTaskFields.tsx`, `WorkflowFileSyncFields.tsx`, `workflowProposals.ts`, `WorkflowProposalCard.tsx`, `static/js/workspace/workspace_workflows.js`)
+
+### **(v0.261.240)**
+
+#### New Features
+
+*   **Merge Spreadsheets Whose Columns Differ**
+    *   V2 chat merges can now reconcile files whose columns don't match. A merge can keep every column from every file (a file without a column leaves it blank), keep only a listed set of columns, treat differently named headers as one column (for example `cust_id` and `CustomerID` as `Customer ID`), or leave out and report the files or sheets that don't fit instead of failing.
+    *   Merges can also read headers below a title row, merge every visible sheet of each workbook with a **Source Sheet** column, remove duplicate rows (identical rows, or rows with the same key columns, keeping the first or last copy), and sort by up to three columns as text, numbers or dates (up to 250,000 rows).
+    *   When the user asks chat to line the columns up, the plan inspects the files, a **Prepare content** step prepares a column mapping with the new `tabular_column_mapping_v1` profile, and the merge validates that mapping again before code applies it. No model copies or rewrites rows, and the merge report lists mapped, left-out and low-confidence columns.
+    *   Merged columns that some files lack are retained as nullable and render as blank cells. A merge that leaves out files says so in its limitations and step summary.
+    *   New fixed failure messages cover settings that can't be combined, an invalid prepared mapping, missing duplicate or sort columns, and merges where nothing fits; the "different columns" message now suggests the new options.
+    *   (Ref: #1619, `functions_tabular_merge.py`, `functions_orchestration_merge.py`, `functions_orchestration_adapters.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_services.py`, [Phase 2](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_2_RECONCILIATION.md), [Merge files in chat](https://microsoft.github.io/simplechat/guides/merge-files/))
+
+*   **Inspect Spreadsheets In V2 Chat**
+    *   A new Gather capability, **Inspect spreadsheets** (`tabular_inspect`), reads the sheet names, column headers, row counts and a few sample rows of CSV or Excel files, and reports which files share the same columns, which columns look like the same thing under different names, likely title rows, and a suggested merge policy. A file that can't be read is reported instead of stopping the step, and no model is used.
+    *   It answers questions such as "what columns do these files have?" and prepares merges whose columns differ. The **Enable Merge** switch and its chat file limit govern it, and it appears in the orchestration Capabilities list.
+    *   (Ref: #1619, `run_tabular_inspect`, `inspect_tabular_sources`, `admin_settings_fields.py`, [Phase 2](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_2_RECONCILIATION.md))
+
+#### User Interface Enhancements
+
+*   **Merge Settings In Words On The Plan Review**
+    *   The V2 plan review now states merge and inspection settings in plain words, such as "Keep every column from every file" or "Remove rows with the same Customer ID, keeping the last", leaves out values that only repeat a default, and shows column and sheet names as plain text.
+    *   (Ref: `application/v2_ui/src/lib/orchestrationMerge.ts`, `OrchestrationRunView.tsx`)
+
+### **(v0.261.239)**
+
+#### New Features
+
+*   **Merge Spreadsheets In V2 Chat**
+    *   V2 chat orchestration can now combine two or more CSV or Excel files that share the same columns into one table and deliver it as a CSV or Excel file, for example "merge these three regional sales files into one Excel file". It is a new Reason capability, **Merge spreadsheets** (`tabular_merge`), alongside Analyze and Compare; a following **Create a file** step renders the result.
+    *   Code appends the rows, not a model: every row is copied exactly in the order the files are listed, values stay text so codes such as `007` keep their leading zeros, and a **Source File** column records where each row came from. Columns may appear in any order in each file; files whose columns differ are not merged, and nothing is created.
+    *   Files can be selected, or found by a search step whose source set the merge binds. Every file is authorized again and read through the screening-aware byte reader, at the revision the plan approved. CSV encodings and delimiters are detected, Excel values become canonical text (ISO dates, `TRUE`/`FALSE`), and encrypted or damaged workbooks are refused.
+    *   A new **Merge** entry under **Document Action Capabilities** turns the feature on or off (on by default) and sets how many files and merged rows one chat request may merge (10 files, 250,000 rows by default) and, for upcoming workflow merges, the workflow limits (100 files, 1,000,000 rows).
+    *   Merge failures reach users only as fixed, application-owned messages, such as "The selected files don't all have the same columns, so nothing was merged."
+    *   (Ref: #1619, `functions_tabular_merge.py`, `functions_orchestration_merge.py`, `functions_orchestration_adapters.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_executor.py`, `functions_document_actions.py`, [V2 File Merge](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE.md), [Phase 1](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_FILE_MERGE_PHASE_1_SPREADSHEETS.md), [Merge files in chat](https://microsoft.github.io/simplechat/guides/merge-files/))
+
+*   **Exact-Schema CSV And Excel Exports**
+    *   Two new generated-file profiles, `exact_tabular_records_v1` (CSV) and `exact_tabular_workbook_v1` (XLSX, optional sheet name), export every retained column in its retained order. They let a plan deliver a table whose columns are only known when it runs, such as a merge of files a search found, without the planner having to name the columns.
+    *   (Ref: `functions_generated_export_registry.py`, `functions_structured_file_renderers.py`, `functions_generated_office_adapters.py`, [Generated File Export Framework](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GENERATED_FILE_EXPORT_FRAMEWORK.md))
+
+### **(v0.261.238)**
+
+#### Bug Fixes
+
+*   **Microsoft 365 Actions Now Work In Chat Orchestration Plans**
+    *   A plan step that used a Microsoft 365 action, such as "what are my latest emails", never read Microsoft 365 data. The step reported completed, and the answer said the data couldn't be retrieved. No Microsoft Graph request was made.
+    *   Each plan step runs in its own request context, and Microsoft 365 functions require a Microsoft 365 execution context on that request. Classic chat and workflows create one, but orchestration never did, so every call was refused with `m365_context_required`. The plugin returned the refusal as a function result, and the step reported it as findings.
+    *   An action step now gets its own Microsoft 365 request as the signed-in user. It selects only the step's saved action, checks delegated sign-in before the model or Microsoft Graph is called, and records the request so sharing the conversation waits for it. A retried step reuses the request, so an approval given after the first attempt applies.
+    *   Plans only read Microsoft 365 data: send mail, calendar invitation and mark-as-read functions aren't loaded. Shared conversations are refused before any Microsoft 365 work.
+    *   A sign-in, approval or authorization refusal now stops the step with `m365_sign_in_required`, `m365_approval_required`, `m365_unavailable`, `m365_shared_conversation` or `m365_read_only`. Each message says what to do next. Ordinary Microsoft Graph outcomes, such as nothing found, are still reported as findings.
+    *   `[MS_GRAPH_PLUGIN] Microsoft 365 operation could not complete.` now logs the refusal code as `sc_failure_code` and the source as `sc_resource`. A stopped step logs `[ORCHESTRATION_M365] A Microsoft 365 step stopped.`
+    *   (Ref: `functions_orchestration_m365.py`, `functions_m365_runtime.py`, `functions_orchestration_actions.py`, `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `functions_m365_transport.py`, `test_orchestration_m365_actions.py`, [Orchestration Microsoft 365 Action Context Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_M365_ACTION_CONTEXT_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Connect Microsoft 365 From A Failed Plan Step**
+    *   When a V2 plan step stops for Microsoft 365 sign-in, the run details show **Connect Microsoft 365** for the sources the step needs. It opens the Profile reconnect sign-in in a pop-up. When it finishes, select **Retry from failed step**.
+    *   A step that stopped for approval links to Approvals instead.
+    *   (Ref: `v2_ui/src/lib/m365Connect.ts`, `OrchestrationM365Notice.tsx`, `OrchestrationRecoveryNotice.tsx`, `test_v2_orchestration_m365_recovery.py`, [Microsoft 365 data and approvals](https://microsoft.github.io/simplechat/guides/microsoft-365-conversation-data/))
+
+### **(v0.261.237)**
+
+#### Bug Fixes
+
+*   **Orchestration Runs No Longer Fail When Settings Are Read During A Save**
+    *   A chat orchestration run could finish every step and still end as **Partially completed** with "A required retained result is unavailable or changed." It affected runs that kept web search, linked-page, deep research, agent, action or Fact Memory results, and retrying could fail the same way.
+    *   Orchestration rechecks a kept result's access with the current admin settings, and that check requires exactly a `dict`. Settings read from the shared Redis copy were a `dict`, but settings read from Cosmos DB came back as the SDK's `CosmosDict` type, so the check refused them. Cosmos serves the read while any settings save is in progress, such as the Cosmos throughput autoscale saving its status, when the shared copy is repaired or unreachable, and on every read when Redis is off.
+    *   The settings store now returns a plain `dict` from every read and write, whichever backend served it. The orchestration check is unchanged. No setting or deployment change is needed.
+    *   (Ref: `app_settings_store.py`, `functions_orchestration_external_sources.py`, `test_app_settings_store_plain_dict_reads.py`, [Orchestration Settings Document Type Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_SETTINGS_DOCUMENT_TYPE_FIX.md))
+
+### **(v0.261.236)**
+
+#### User Interface Enhancements
+
+*   **V2 Chat Rail Scrolls As One Panel**
+    *   On the V2 chat page, everything between **New chat** and the theme and account controls now scrolls as one panel, as the classic sidebar does. As you read down the conversation list, the navigation and any **External Links** or **Custom Pages** groups move out of view, and **Search chats** stays right under **New chat**. The list gets nearly the whole rail: a 720-pixel-tall window with two external links went from two visible conversations to twelve.
+    *   The held search box gets a solid backing and an edge only while it is held, so the rail looks as it did at rest. Searching while it is held no longer makes the box jump. Keyboard focus on a conversation is never hidden under it. The next page of conversations now loads just before you reach the end of the list.
+    *   The collapsed icon strip and other pages are unchanged.
+    *   (Ref: #1642, `Sidebar.tsx`, `ConversationRail.tsx`, `test_v2_sidebar_conversation_scroll.py`, [V2 Sidebar Conversation Scroll Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_SIDEBAR_CONVERSATION_SCROLL_FIX.md))
+
+*   **V2 Workflow Alerts Pop Up From The Bell**
+    *   Workflow alert notices now hang from the notification bell instead of **My Workspace**. With the rail expanded, the notice drops down from the bell the way the bell's panel does, hanging past the rail's edge so most of **New chat** stays clickable. When the rail is collapsed or on a phone, it flies out beside the bell.
+    *   An alert that needs acknowledgment still never covers anything in the expanded rail. It now takes a row of its own right under the rail's header, pointing up at the bell and pushing **New chat** and the navigation down, instead of a space under **My Workspace**. As a flyout it still steps aside from focus it would cover.
+    *   The notice comes right after the bell in the tab order. Because the bell never scrolls, a notice can no longer be carried off screen with the navigation.
+    *   Timers, claims, the tuck into the bell, the alert card and the announcements are unchanged.
+    *   (Ref: #1642, `NotificationBell.tsx`, `WorkflowAlertNotice.tsx`, `test_v2_workflow_alert_notices.py`, [V2 Workflow Alert Notices](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKFLOW_ALERT_NOTICES.md))
+
+### **(v0.261.235)**
+
+#### New Features
+
+*   **Must-Acknowledge Workflow Alerts, Alert Sounds, Sizes And Team Delivery**
+    *   Each workflow alert rule can now require acknowledgment. Such an alert keeps coming back after a refresh, in every tab and on every device, whatever its age, until someone selects **Acknowledge** or opens it. It is shown ahead of other alerts. Closing it only shrinks it: V2 keeps its notice under **My Workspace**, in room of its own so it never covers the items below, and classic keeps a banner with **Review** at the bottom of the page. Mark read, Dismiss and **Mark all read** never acknowledge an alert.
+    *   A rule can play a sound once, or repeat it every five seconds until the alert is acknowledged. Three tones, chosen by severity, were synthesized for SimpleChat and are served locally. One tab per browser plays, shared between classic and V2: several repeating alerts sound as one tone, the most urgent one's, and **Play once** chimes once per browser, not once per tab or refresh, with alerts that arrive together chiming once in the most urgent tone. When the browser blocks sound, the alert offers **Enable sound** until a sound plays.
+    *   A rule can choose a size: small (the usual pop-up), medium (the full alert opens straight away) or large (full screen, for wall displays).
+    *   In a group workflow, a rule can alert everyone in the group. The run raises one shared alert, and any current member can acknowledge it for everyone; the bell then shows "Acknowledged by *name* at *time*". Members other than the owner see a simpler alert with the severity, workflow, matched rules and **Open** to what the run created in the group.
+    *   When several rules match, each option takes the strongest value any matched rule asked for. A model-evaluated rule that asks for a stronger option is still evaluated when a deterministic rule matched at a higher severity.
+    *   New admin setting **Enable Workflow Alert Sounds** (`enable_workflow_alert_sounds`, on by default). Each device has its own **Play alert sounds** switch, and V2 **Preferences** adds an **Alert monitor** switch that checks for workflow alerts every 30 seconds, even in a background tab, for operations screens.
+    *   New route `POST /api/notifications/<notification_id>/acknowledge`, open only to the alert's recipients. `GET /api/notifications/workflow-alerts` now also returns pending alerts that need acknowledgment and team alerts from the user's groups, with `complete` and `sounds_enabled`. Read, dismiss and acknowledge writes are now conditional on the stored version, so concurrent writes to a shared alert can't drop each other.
+    *   Both the V2 and classic workflow editors have the new options, and both mirror the server's reviewed validation messages.
+    *   (Ref: #1634, `functions_workflow_alerts.py`, `functions_notifications.py`, `route_backend_notifications.py`, `functions_workflow_runner.py`, `WorkflowAlertEditor.tsx`, `workflowAlertStore.ts`, `workflowAlertSound.ts`, `PreferencesTab.tsx`, `notifications.js`, `workflow-alert-sound.js`, `workspace_workflows.js`, [Workflow Alert Acknowledgment](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_ALERT_ACKNOWLEDGMENT.md))
+
+### **(v0.261.234)**
+
+#### Bug Fixes
+
+*   **Clearer Messages When A Saved Result Can't Be Used**
+    *   Errors about saved and generated results no longer say that source access could not be confirmed. Since saved results stopped re-checking their source documents, most of these errors mean something else, and the message now says which kind of problem it is.
+    *   A source document that can't be read now, or that changed while it was read: "A source document for this analysis is no longer available or has changed." Only reading an uploaded document as an input can raise this.
+    *   A conversation, workflow or run that no longer exists or isn't yours: "The conversation, workflow or run that holds this result no longer exists or isn't available to you."
+    *   A saved result whose earlier result, record or loop and Repeat state is missing or changed: "This saved result can't be used because something it depends on is missing or has changed."
+    *   Workflow task errors, a task result that couldn't be saved, a paused loop item, saved analysis explanations, Analyze saves, the Analyze publication check and the workflow progress view now show the matching message. Placeholders in chat history for an unavailable saved analysis or saved workflow output no longer mention access confirmation.
+    *   Error codes and HTTP statuses are unchanged, apart from two internal codes for a message or workflow binding mismatch (`analysis_message_unavailable` and `analysis_workflow_unavailable`) that map to the same response codes as before.
+    *   (Ref: #1621, `functions_analysis_access.py`, `functions_workflow_runner.py`, `functions_workflow_flow_runner.py`, `route_backend_chats.py`, `route_backend_workflows.py`, `test_analysis_unavailable_message_families.py`, [Saved-Result Error Messages Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ANALYSIS_RESULT_UNAVAILABLE_MESSAGES_FIX.md))
+
+### **(v0.261.233)**
+
+#### Bug Fixes
+
+*   **Orchestration File Generation Fix**
+    *   Chat orchestration could no longer create downloadable files. A request such as "create a csv showing the states and their capitals" planned correctly and prepared its rows, then the file step failed with "This file could not be created." Every CSV, JSON, XML, YAML, TXT and Markdown file failed this way. Word and PDF files rendered, but downloading any orchestration-generated file used the same failing step, so those downloads would have failed too.
+    *   Two changes interacted to cause this. Since the OneNote extractor was added to the container image, `/app` has been owned by root, while the app runs as a non-root user with `/app` as its working directory. The file renderer and the verified download stream created their scratch files in the working directory, so the operating system refused them. The refusal was reported as `output_access_denied`, a code meant for access refusals, and the real cause wasn't logged.
+    *   Scratch files now go to `/sc-temp-files` when it's writable, and otherwise to the platform temp directory, never to the working directory. The image creates `/app` for the runtime user again. The OneNote extractor binary is added after that and stays root-owned.
+    *   For a failed attempt, the `[ORCHESTRATION_EXECUTOR] A file render attempt finished.` event now also records `sc_error_type`, `sc_error_cause_type` and `sc_error_errno`, so a file-system error can be told apart from an access refusal. Messages and paths aren't logged.
+    *   (Ref: #1623, `functions_temp_files.py`, `functions_structured_file_renderers.py`, `functions_simplechat_operations.py`, `functions_orchestration_rendering.py`, `Dockerfile`, [Orchestration File Render Permission Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_FILE_RENDER_PERMISSION_FIX.md))
+
+### **(v0.261.232)**
+
+#### Breaking Changes
+
+*   **Saved Chat, Analyze And Orchestration Results Take Their Container's Access**
+    *   Results built from documents are no longer checked against those documents again. This covers chat AI replies and their stored citations, tool results in history, saved Analyze results, orchestration files and results, generated chat files, and conversation and tabular exports. They stay available to everyone who can open their conversation or orchestration run, even after a source document is deleted, re-uploaded or held for content screening.
+    *   Chat history no longer replaces a whole AI reply with "Source content is unavailable pending document screening and review." when a document it cited changes. A workspace attachment shown in history is still replaced while its document is held or unavailable.
+    *   One input check stays. Search retrieval, document selection (including chat uploads), file bytes and previews, opening a cited document, and orchestration or Analyze steps that read documents still need current access to an uploaded document, and the document must not be held. After such a read is refused, the model fence still blocks later model calls in that request or step.
+    *   A follow-up orchestration step that reads documents named by an earlier run reads their current version instead of failing. Version checks still protect a read in progress, such as a resumed Analyze checkpoint.
+    *   Container, lineage and integrity checks are unchanged. Nothing is withdrawn after the fact, and no data migration runs: results that earlier versions withheld when they were read become visible again. Error messages now name the conversation or saved result instead of source access.
+    *   **Migration**: none. Deployments that relied on source re-checks to hide existing results from people who can open their conversation should review shared conversations; opening the full cited document still requires access.
+    *   (Ref: #1621, `content_screening/access.py`, `functions_saved_analysis.py`, `functions_orchestration_results.py`, `functions_orchestration_source_access.py`, `functions_orchestration_executor.py`, `route_backend_chats.py`, `route_enhanced_citations.py`, `functions_tabular_generated_exports.py`, `OrchestrationOutputs.tsx`, `test_saved_results_container_access_chat_orchestration.py`, [Upload-Only Content Screening](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/UPLOAD_ONLY_CONTENT_SCREENING.md))
+
+### **(v0.261.231)**
+
+#### Breaking Changes
+
+*   **Saved Workflow Results No Longer Re-check Their Source Documents**
+    *   Saved and generated workflow results now take their access from the workflow, run and group they belong to. Deleting, re-uploading or holding a document a run used no longer hides or fails its task results, node results, structured execution history, For each and Repeat history, run history previews, or chat answers about a workflow result.
+    *   A later task can read an earlier task's output after that output's source changed. Runs no longer pause with "A collected source changed." or "The Repeat state's original sources are no longer available." for generated output.
+    *   Checks that stay: a workflow still refuses a held or inaccessible uploaded document when it reads it as an input (For each document items, document selections, reference inputs, File Sync and other configured sources), and that held input still blocks its own task's model call. Each task now gets its own model fence, so a held input can't block a later task. Container checks are unchanged: you need access to the workflow, group results stay limited to group members, and someone else's run still answers like a missing one. Forged or mismatched results are still refused.
+    *   Opening a saved workflow's Flow no longer fails when one referenced document is missing, held or outside your access. That source is marked "Not available to you right now" on its own row, and the rest of the definition shows.
+    *   API changes: a result that fails its lineage or hash check now answers 409 instead of 403 on task result pages ("The saved result or requested page is unavailable.") and execution history ("This saved execution record could not be verified."). Flow and execution history 403 messages no longer mention sources. Activity streams end with `activity_unavailable` instead of `source_access_denied`. Chat follow-ups report a lineage failure as `workflow_result_invalid`. `source_snapshot_changed` is always `false` and kept for older clients.
+    *   **Migration**: none. Nothing is migrated or withdrawn; results saved before this version are read the same way.
+    *   (Ref: #1621, `functions_workflow_node_results.py`, `functions_workflow_results.py`, `functions_workflow_inspection.py`, `functions_workflow_result_reader.py`, `functions_saved_analysis.py`, `functions_workflow_runner.py`, `content_screening/access.py`, `route_backend_workflows.py`, `WorkflowDefinitionInspector.tsx`, [Workflow Saved Result Source Re-check Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_SAVED_RESULT_SOURCE_RECHECK_FIX.md))
+
+### **(v0.261.230)**
+
+#### Bug Fixes
+
+*   **Workflow Run History No Longer Fails When A Source Document Changes**
+    *   A workflow's run history no longer returns "Run history is unavailable because source access could not be confirmed." when one of its runs used a document that was later deleted or re-uploaded. The run list, a run's task results, the live run activity view and the last-run preview in the workflow list now take their access from the workflow, not from the documents each run used.
+    *   A task no longer fails right after saving its output with "Saved task output was withheld because its source access could not be confirmed."
+    *   Container checks are unchanged: you still need access to the workflow, group runs still require group membership, and a run from another workflow still answers as not found.
+    *   This is the first step of limiting content screening to uploaded documents. Some per-task previews and structured workflow execution history still re-check sources until the next step.
+    *   (Ref: #1613, #1621, `route_backend_workflows.py`, `functions_workflow_runner.py`, [Workflow Run History Source Re-check Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_RUN_HISTORY_SOURCE_RECHECK_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Approvals Page Screening Notice Only When Screening Is On**
+    *   The content screening notice at the top of **Approval Requests** now appears only while content screening is enabled, and reads in plain language: "To review uploaded documents that content screening is holding, open Content review."
+    *   Each content screening request still has its own **Open content review** link, so documents held before screening was turned off stay reachable.
+    *   (Ref: `templates/approvals.html`, `test_content_screening_classic.py`)
+
+#### Breaking Changes
+
+*   **Generated Documents Are No Longer Screened**
+    *   Content screening now checks only documents that enter a workspace by a user upload (personal, group or public, including a file attached in chat and saved to a workspace) or File Sync. Files the SimpleChat agent action saves to a workspace and artifacts published into a workspace get no screening marker, are processed normally while screening is on, and are skipped by scan jobs.
+    *   Each generated document version carries a server-managed `screening_exemption` field that is set when the version is created. Clients can't set it: the document APIs reject any `screening` field, no update path accepts one, and responses never include it. A document that already has a screening marker stays screened.
+    *   Publishing an artifact to a group or public workspace no longer reserves a screening scan for its destination, so approval hands it straight to processing. A destination that was held by screening before this version can't be approved; cancel the request and publish the artifact again.
+    *   **Migration**: None. Existing documents keep their screening state, and nothing already screened or held is released.
+    *   (Ref: #1621, `content_screening/contracts.py`, `content_screening/service.py`, `content_screening/jobs.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_artifact_publication.py`, `functions_artifact_publication_readiness.py`, [Upload-Only Screening Intake Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
+*   **Metadata Edits No Longer Hold Screened Documents Again**
+    *   Editing a released document's title, abstract, keywords, authors, classification or tags now applies directly. The document stays available and no new scan starts, so the group and public document metadata APIs return `updated` (200) instead of `queued` (202).
+    *   Metadata the model generates after a document is released also applies directly, without a new hold.
+    *   A rename still can't change a screened file's extension. Tag edits on a screened document update the document and its search chunks but no longer rewrite the released file's blob metadata, so downloads of that file keep working.
+    *   In the V2 Documents explorer, saving a screened document's metadata now shows **Metadata saved.**, and the document stays in the list with the edit shown. The explorer no longer removes it with "Screening is queued". A save is confirmed only by an `updated` 200 receipt; any other receipt, including a `queued` 202 one, keeps the draft.
+    *   (Ref: #1621, `functions_documents.update_document`, `content_screening/access.py`, `functions_group_document_management.py`, `functions_public_document_management.py`, `route_backend_group_documents.py`, `route_backend_public_document_management.py`, `documentOperations.ts`, `DocumentExplorer.tsx`, [Upload-Only Screening Intake Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/UPLOAD_ONLY_SCREENING_INTAKE_FIX.md))
+
+### **(v0.261.229)**
+
+#### Breaking Changes
+
+*   **Microsoft 365 Workflow Run As Approval Only When Someone Else Authored The Revision**
+    *   A workflow revision saved by its own Run as user now runs as them without a separate approval, including on its first run. SimpleChat records an approved, audited Run as authorization for that exact revision and connection, sends no notification, and never shows it as pending. Before, every edit asked the Run as user to approve again, even their own.
+    *   Approval is still required when someone else is responsible for what runs: someone else saved the current revision, `modified_by` is missing, or someone else changed an agent or action the workflow uses after the Run as user's save. A new connection or connection generation asks again for a revision someone else saved.
+    *   Conversation audience changes no longer ask for Run as approval again; the authorization still records the audience. Source-sharing approvals and the runtime checks that guard runs and deliveries already in progress are unchanged.
+    *   Explicit decisions still win. A denial or cancellation recorded for a run still stops that run. Revoking a Run as authorization in Profile revokes every approved authorization for that revision, which then waits for approval even if its Run as user saved it. That holds when the revocation overlaps a run recording a new authorization, or is interrupted: a run that finds an authorization the revocation missed revokes it instead of using it.
+    *   Raw edits of workflows, agents and actions in the Data Management Cosmos DB editor now record the administrator as the last author, so an edited record can't run as someone else without asking them.
+    *   The V2 workflow proposal card, the editor's **Saving requires re-approving Run as** note, the AI assistant's `run_as_reapproval` warning, the Run as help text in both editors, and the classic Profile and Approvals labels follow the new rule.
+    *   **Migration**: None. Existing approvals keep working. A workflow its Run as user saved last is authorized automatically the next time it needs a new authorization. To require approval for such a revision, revoke its authorization in Profile. An authorization revoked before this release still withdraws only itself, so other approvals of that revision keep working, but that revision is never authorized automatically.
+    *   (Ref: #1621, `functions_m365_approvals.py`, `functions_m365_execution.py`, `functions_m365_workflow_binding.py`, `functions_m365_runtime.py`, `functions_m365_data_lifecycle.py`, `functions_data_management.py`, `functions_orchestration_workflow_proposals.py`, `functions_workflow_assist.py`, `WorkflowProposalCard.tsx`, `WorkflowChangeTracking.tsx`, [Run as approval for a revision you saved](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/M365_RUN_AS_SELF_AUTHORED_APPROVAL.md))
+
+### **(v0.261.228)**
+
+#### User Interface Enhancements
+
+*   **V2 Workflow Alerts Lead With One Open Button**
+    *   The full workflow alert now shows just what's needed to act: why it came, its summary, and a large green **Open** button next to **Dismiss**. Open goes to the conversation the workflow created, or else to the conversation it posted into, its run or the workflow, and marks the alert read.
+    *   **Mark read** is gone from alerts that have somewhere to open, because Open marks the alert read and takes you there. When one workflow raised several alerts together, Open and Dismiss act on all of them. An alert with nothing to open still offers Mark read.
+    *   The detail, the pills for the alert's enrichments, trigger, runner and agent, and the other ways in (other links, **Open workflow** and **Ask about this**) are under **Show more**.
+    *   Open's green keeps its text at 4.5:1 contrast or better in the light and dark themes.
+    *   (Ref: #1624, `WorkflowAlertCard.tsx`, `workflowAlertStore.ts`, `theme.css`, [V2 Workflow Alert Notices](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKFLOW_ALERT_NOTICES.md))
+
+### **(v0.261.227)**
+
+#### New Features
+
+*   **Workflow results posted back to chat**
+    *   When a chat orchestration plan starts one of the user's saved durable personal workflows, the server can now post the run's terminal outcome back into the same private chat after the run finishes, even hours later.
+    *   The behavior is gated by **Use Workflow Results In Chat** (`enable_chat_workflow_results`), checked when the run starts and again when delivery happens, in addition to the existing Run Workflows From Chat gates.
+    *   Delivery is exactly once per durable runtime generation: one deterministic chat message, one unread mark, and one bell notification. If the chat can no longer receive the post, the server posts nothing and sends one workflow notification with a run link instead.
+    *   A new owner-only status route, `GET /api/v2/orchestration/workflow-runs/status`, gives 6b-2 the batched run-card contract. Retry/Edit on delivery messages are refused with fixed 400 codes.
+    *   (Ref: #1546, #1543, `functions_workflow_chat_delivery.py`, `functions_workflow_chat_delivery_worker.py`, `functions_workflow_chat_delivery_status.py`, `functions_orchestration_workflow_runs.py`, `functions_workflow_runtime.py`, `route_backend_orchestration.py`, `route_backend_conversations.py`, [Workflow result delivery to chat](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_WORKFLOW_RESULT_DELIVERY.md))
+
+### **(v0.261.226)**
+
+#### Bug Fixes
+
+*   **V2 New Chat Always Starts A Clean Conversation**
+    *   Clicking **New chat** while chat orchestration was planning or running no longer carries the old turn into the new chat. Before, the new chat kept the previous turn's **Thinking** bubble and a **Stop** button that did nothing. Its empty state never appeared and it wouldn't send until the page was reloaded.
+    *   The previous conversation's plan, run or reply keeps going in the background and is there when you reopen it. If you reopen it while its turn is still running, it shows as working, with **Stop**.
+    *   Clicking **New chat** while the first message of a new chat is still creating its conversation no longer lets that message take over the new chat. The message is still sent, and its conversation appears in the list. Clicking **New chat** while a conversation is loading now shows the empty state instead of loading placeholders.
+    *   **Chat** on selected workspace documents or on a tag, and **Start chatting** on the home page, now always open a brand-new conversation, as the classic interface does. The documents or tag arrive as context in the new chat instead of being added to whichever conversation was last open. Text you've typed but not sent stays in the message box.
+    *   (Ref: #1617, `chatStore.ts`, `orchestrationController.ts`, `DocumentExplorer.tsx`, `TagsSection.tsx`, `HomePage.tsx`, [V2 New Chat Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_NEW_CHAT_RESET_FIX.md))
+
+### **(v0.261.225)**
+
+#### New Features
+
+*   **Photos and Facts on V2 Map Points**
+    *   A point an agent puts on a map can now carry a photo of the place and labelled facts about it, such as a reading's time, a transponder ID or a lane. Hovering the point in the V2 chat shows the photo, its caption and the facts with the point's label and description. Clicking keeps them open, and clicking the photo opens it full size in the image viewer.
+    *   A point without a photo shows its facts on their own, so a reading with no camera image still shows when and where it was taken.
+    *   **List what the map shows** includes each point's facts and a thumbnail of its photo, for keyboard and screen reader users.
+    *   The details open on whichever side of the point has room, and pinned details move the map so all of them are visible.
+    *   Agents send `image_url`, `image_caption` and `fields` with each point in `locations_json`. Only `https` photo links are kept; any other link is left out, and the action tells the agent how many it dropped. Photos load without a referrer, and captions and facts are only ever written as text. The classic chat still shows a point's label and description only.
+    *   (Ref: #1609, `azure_maps_openlayers_plugin.py`, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, [V2 Interactive Maps](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INTERACTIVE_MAPS.md))
+
+### **(v0.261.224)**
+
+#### Bug Fixes
+
+*   **Maps From Agents Load Their Tiles Again**
+    *   Tool results are redacted before they are stored with a reply, and the redaction treated the Azure Maps tile proxy token as a secret. Every stored map lost its token, so maps drew their markers and paths on blank tiles in both the classic and the V2 chat.
+    *   The token in SimpleChat's own tile template is now kept. It is encrypted with the app's secret key, expires, and only works on SimpleChat's signed-in tile proxy. Every other `token=` value and every other secret in a tool result is still redacted.
+    *   Maps stored before this fix keep the redacted token and still show no tiles. Run the request again to get a map with tiles.
+    *   (Ref: #1609, `plugin_invocation_logger.py`, [Azure Maps Tile Token Redaction Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md))
+
+### **(v0.261.223)**
+
+#### New Features
+
+*   **Interactive Maps in the V2 Chat**
+    *   A reply that used the Azure Maps action now shows its map under the text in the V2 chat, as the classic chat does. It opens fitted to every marker, path and area, and can be panned, zoomed and expanded to full screen.
+    *   Hovering a marker, path or area shows its label and description; clicking keeps them open until you click elsewhere or press Escape. **List what the map shows** lists everything on the map as text for keyboard and screen reader users.
+    *   The mouse wheel zooms only with Ctrl (Cmd on a Mac), so scrolling a conversation never zooms a map by accident.
+    *   OpenLayers 10.6.1, the build the classic chat already uses, is vendored into the V2 app and loaded only when a reply has a map. No CDN assets are added and the Content-Security-Policy is unchanged.
+    *   Map text is only ever written as text, and tiles are only loaded through SimpleChat's tile proxy.
+    *   (Ref: #1609, `InlineMapCard.tsx`, `lib/inlineMaps.ts`, `vendorAssets.ts`, [V2 Interactive Maps](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INTERACTIVE_MAPS.md))
+
+#### Bug Fixes
+
+*   **Maps in Older Replies and Group Conversations Load Their Tiles**
+    *   The message endpoints the V2 chat reads, including the one for group conversations, returned maps with their original tile token, which expires after four hours. Older maps drew their points on blank tiles.
+    *   Both endpoints now reissue the token when the conversation is opened, as the classic route already did.
+    *   (Ref: #1609, `functions_azure_maps.py`, `route_backend_conversations.py`, `route_backend_collaboration.py`)
+
+*   **Legacy Map Blocks Hidden From V2 Replies**
+    *   Older replies that stored a `{{map:...}}` block in their text showed it as raw JSON in the V2 chat. The block is now hidden, as in the classic chat, and the map is drawn from the tool result.
+    *   (Ref: #1609, `stripLegacyMapBlocks` in `lib/inlineMaps.ts`, `MessageList.tsx`)
+
+### **(v0.261.222)**
+
+#### New Features
+
+*   **Inline Audio and Video Players in the V2 Chat**
+    *   A link to an audio file in a reply, such as a recording an action returned, now plays in place as a compact player. Collapsed, it shows play/pause, the title and elapsed and total time; expanded, it adds a seek slider, stop, volume and mute, playback speed and an open-in-new-tab link.
+    *   A link to a video file renders as a card with the browser's own controls, including fullscreen. Starting one recording or clip pauses any other.
+    *   Media that cannot play, for example an expired signed link or a host the page does not allow, shows a short notice and a link instead of a broken player.
+    *   (Ref: #1611, `InlineAudioPlayer.tsx`, `InlineVideoCard.tsx`, `lib/inlineMedia.ts`, [V2 Inline Media and Agent-Posted Messages](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_MEDIA_AND_AGENT_MESSAGES.md))
+
+*   **External Media Sources in the Content-Security-Policy**
+    *   The new `CSP_MEDIA_SRC_ORIGINS` app setting lets administrators list the `https://` origins whose audio and video may play inline, for example an action's media host. The origins are added to `media-src`.
+    *   Only bare `https://` origins (with an optional leading `*.` label and port) are accepted. Anything else is ignored and logged, so the setting cannot widen the policy beyond media. Empty by default, which keeps media same-origin.
+    *   (Ref: #1611, `csp_media_sources.py`, `config.py`)
+
+#### User Interface Enhancements
+
+*   **Image Cards in Chat Replies**
+    *   Images in a reply's markdown appear as captioned cards with a bounded height. Selecting one opens the image viewer for the full-size view, saving and opening in a new tab.
+    *   (Ref: #1611, `InlineImageCard.tsx`, `AssistantMarkdown.tsx`)
+
+*   **Agent-Posted Messages Render as Formatted Text**
+    *   A message an agent posts into a personal or shared conversation through the Simple Chat action is now marked as agent-authored markdown. The V2 chat renders it like the agent's own replies, with headings, tables, links, images and players, in the neutral bubble and labeled "posted through an agent". Messages people type are unchanged.
+    *   (Ref: #1611, `functions_simplechat_operations.py`, `MessageList.tsx`, `sharedMessage.ts`)
+
+### **(v0.261.221)**
+
+#### Bug Fixes
+
+*   **GPT-6 Sol Agents With Actions Send Reasoning Effort None**
+    *   Agents with actions on `gpt-6-sol` failed unless their Reasoning Effort was set to None by hand. Chat Completions accepts function tools for this model only with `reasoning_effort: none`, and with no effort set the model applied its own default and rejected the tools.
+    *   `gpt-6-sol` is now in the model catalog with a Chat Completions tool rule for Azure and direct OpenAI. An agent with tools and no effort set now sends `none`. Another explicit effort fails before the request with "This model's Chat Completions tools require Reasoning Effort None." instead of a provider error.
+    *   The record also carries the verified limits (1,050,000 context, 922,000 input, 128,000 output, counting reasoning tokens) and the reasoning efforts none, low, medium, high and xhigh.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Sol Chat Completions Tools Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GPT6_SOL_CHAT_COMPLETIONS_TOOLS_FIX.md))
+
+### **(v0.261.220)**
+
+#### Bug Fixes
+
+*   **GPT-6 Astra Limits And Reasoning Efforts In The Model Catalog**
+    *   `gpt-6-astra` now has verified token limits for Azure and direct OpenAI: 1,050,000 context, 922,000 input and 128,000 output, counting reasoning tokens. File evidence and workflow budgets work without limits entered in Model Endpoints, and limits entered there still take precedence.
+    *   Its reasoning efforts are low, medium, high and xhigh. Chat now sends the selected effort; before, with no policy, it sent no effort and the model used its default. None and other unsupported selections are sent as Low. Agents still send their saved effort as is.
+    *   Azure Chat Completions rejects function tools for this model at every effort it accepts, so agents with actions can't run on it yet. The catalog records this in its notes. #1606 tracks a Responses API path and an early, clear error.
+    *   (Ref: #1606, `model_capabilities.json`, [GPT-6 Astra Model Catalog Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GPT6_ASTRA_MODEL_CATALOG_FIX.md))
+
+### **(v0.261.219)**
+
+#### Bug Fixes
+
+*   **GPT-6 Models Use Reasoning Model Request Parameters**
+    *   Requests to GPT-6 deployments failed whenever a response length was set: "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead." Every workflow run on a GPT-6 agent failed on its first model call once token limits were configured.
+    *   GPT-6 is now recognized alongside GPT-5, by name prefix and as a family name anywhere in a deployment or display name. Response length is sent as `max_completion_tokens`, and no temperature is sent. Workflow budgets, chat, prompt variables, content screening and orchestration all follow the shared policy.
+    *   (Ref: #1605, `model_endpoint_clients.py`, [GPT-6 Reasoning Model Parameters Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GPT6_REASONING_MODEL_PARAMETERS_FIX.md))
+
+### **(v0.261.218)**
+
+#### Bug Fixes
+
+*   **Scheduled Workflow Runs Act As Their Owner**
+    *   A scheduled run had no signed-in session, so the runner created one that held only the owner's object ID. Groups and conversation messages the run created showed that ID instead of the owner's name, and the run then wrote the ID over the owner's stored display name. The runner now uses the owner's stored display name and email. A manual run keeps the signed-in session, as before.
+    *   The SimpleChat action's `add_user_to_group` now accepts `user_id`. Given with an email or display name, it adds the user without a directory lookup, as the REST members route already does. Scheduled runs have no delegated token for Microsoft Graph, so they couldn't add members before.
+    *   Group conversation invites first match each identifier against the group's current owner and members, by user ID, email or display name. An identifier that matches no member, or more than one, still goes to the directory lookup.
+    *   (Ref: `functions_workflow_runner.py`, `functions_simplechat_operations.py`, `simplechat_plugin.py`, [Workflow Background Identity Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_BACKGROUND_IDENTITY_FIX.md), [SimpleChat action](https://microsoft.github.io/simplechat/reference/actions/simplechat/))
+
+### **(v0.261.217)**
+
+#### New Features
+
+*   **Read Saved Workflow Results From Chat Orchestration**
+    *   Chat orchestration can now read the stored result of one of your own finished personal workflow runs while it answers, for example "what did my Monday email digest workflow say this week?" or "compare yesterday's and today's run of my contract review workflow". A plan step names the workflow and reads its latest finished run, or the newest run that finished on a day you name in your own time zone, optionally only a completed, failed or cancelled one. The workflow isn't re-run, and a plan reads at most two results.
+    *   The new capability, **Read workflow results** (`workflow_results`), is read-only with no approval floor, so a plan that uses it follows the user's approval mode. It's offered only while **Use Workflow Results In Chat** (`enable_chat_workflow_results`) is on, to users who may use personal workflows, in their own private conversations, and only for workflows in the request's workflow catalog. The step checks all of this again when it runs. With the setting off, which is the default, planning is unchanged.
+    *   The planner and the plan name a workflow by a per-request handle, never by its ID. The server picks the run with bounded queries on the user's own runs and reads it through the Phase 6a result reader, which authorizes the run again. At most 24 KB of each run's result, from up to 8 of its outputs, reaches the answer, only as fenced, untrusted notes and never as a cited source. Failed and cancelled runs are reported by their status and time only, and a run still in progress is reported without any of its output.
+    *   The answer adds a server-written **Saved workflow results:** note, with Phase 6a's line for each run it used and the reason for each result it didn't read, and no IDs. The answer stores `workflow_result_contexts`, so Phase 6a's masking withholds it, on the same reads that withhold Follow up answers, once a result it used is no longer available or the chat is no longer the owner's private chat. Each result is authorized again while the answer is written and twice more before it's published. If one changed, the answer is replaced with "A workflow result this answer used changed or is no longer available, so the answer was not saved. Ask again to read the current result."
+    *   Later turns never reuse a read: result aliases skip any run whose plan reads a workflow result, and a new attempt or revised plan runs its reads and the steps built on them again instead of reusing an earlier answer. A plan edit that breaks a results rule is refused, and the previous plan stays.
+    *   Admins can keep it out of plans by clearing **Read workflow results** in the orchestration Capabilities list. Group workflows, structured (version 3) runs and runs that saved an analysis can't be read from a plan, and a plan never waits for a run it starts to finish.
+    *   (Ref: #1546, #1543, `functions_orchestration_workflow_results.py`, `functions_orchestration_registry.py`, `functions_orchestration_workflow_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_composition.py`, `functions_orchestration_services.py`, `functions_orchestration_recovery.py`, `route_backend_orchestration.py`, [Chat Orchestration Workflow Results](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_RESULTS.md), [Ask about workflow results](https://microsoft.github.io/simplechat/guides/ask-about-workflow-results/#ask-orchestrate-about-workflow-results))
+
+#### Bug Fixes
+
+*   **Group Document Uploads With Enhanced Citations**
+    *   With Enhanced Citations on, every document uploaded to a group workspace failed with "Document processing failed." That included Word and Markdown documents an agent or workflow saved to a group. The upload's own status update changed the document record's etag between the read and the guarded write, so the write always saw a conflict.
+    *   The status is now posted before the record is read. A change made by anyone else during the upload is still rejected.
+    *   (Ref: `functions_documents.py`, [Group Document Blob Upload Etag Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_DOCUMENT_BLOB_UPLOAD_ETAG_FIX.md))
+
+*   **Call Agent Actions Save Again**
+    *   Saving any Call agent action, whether personal, group or global, failed with "Invalid plugin configuration." The manifest check rejected the server-owned `scope_id` field that binding to a collection adds, so agents couldn't delegate to other agents.
+    *   `scope_id` is now accepted. The server always sets it from the authorized collection, and every other extra field is still rejected.
+    *   (Ref: `functions_agent_delegation.py`, [Call Agent Action Save Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/CALL_AGENT_ACTION_SAVE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Saved Workflow Results In The V2 Run View**
+    *   A plan step that reads a saved workflow's result shows **Workflow**, the workflow's own name, and **Run**, the run it reads in words, such as **Latest run**, **Latest completed run** or **Run finished on 2025-06-02**, in place of its raw arguments. The name is shown as text, never markup, and a selector the card doesn't recognize shows **Run details unavailable**.
+    *   (Ref: `OrchestrationRunView.tsx`, `orchestrationWorkflowResults.ts`, `orchestrationPlan.ts`, `orchestration.ts`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/#saved-workflow-results-in-a-plan))
+
+### **(v0.261.216)**
+
+#### Bug Fixes
+
+*   **Log Injection CodeQL Alerts Fixed**
+    *   Cleared the 19 open `py/log-injection` CodeQL alerts. The search cache logs and the workflow run cancellation error logs now pass identifiers and exception text through `sanitize_log_message`, so an ID containing a line break can no longer start what looks like a separate log entry. Ordinary values are logged exactly as before, and the cancellation errors keep their traceback.
+    *   The admin plugin settings route no longer logs the request body. It was logged before validation, so a field the route then rejects, such as an API key, was written to the log as sent. The route now logs `[PLUGINS] Received plugin settings update request.` with the number of fields.
+    *   `sanitize_log_message` already removed line breaks with a regular expression, which CodeQL doesn't recognize. It now also calls `replace` for them after the regex, which changes nothing at run time but lets CodeQL see that `log_event` output has none. Its output is unchanged.
+    *   (Ref: #1543, `functions_appinsights.py`, `utils_cache.py`, `route_backend_workflows.py`, `route_backend_plugins.py`, [Log Injection CodeQL Alerts Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/LOG_INJECTION_CODEQL_ALERTS_FIX.md))
+
+### **(v0.261.215)**
+
+#### Bug Fixes
+
+*   **Draft Workflow Instructions Follows The AI Workflow Assistant Setting**
+    *   Turning off **Enable AI Workflow Assistant** now stops personal AI drafting of workflow task instructions everywhere, not just in the V2 editor. Before, only the V2 editor's **Draft with AI** button was hidden; the classic workspace's **Draft Workflow Instructions** button and direct calls to `/api/workflows/draft-instructions` still drafted instructions.
+    *   The route now refuses a personal request with 403 `workflow_assistant_disabled`, the same answer the **Ask AI** route gives, before any model call. Personal workflows that are off and a missing `WorkflowUser` role keep their existing answers, which still come first.
+    *   The classic workspace's personal workflow modal hides its **Task Brief** box and **Draft Workflow Instructions** button when the assistant isn't available to the signed-in user, using the same role-aware check as the V2 editor. **Task Instructions** stays, so instructions can still be written by hand.
+    *   Group workflows aren't affected. Their **Draft Workflow Instructions** button follows the group workflow settings.
+    *   (Ref: #1548, #1543, `route_backend_workflows.py`, `route_frontend_workspace.py`, `workspace.html`, `is_workflow_assistant_enabled_for_user`, [Workflow Draft Instructions Assistant Gate Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_DRAFT_INSTRUCTIONS_ASSISTANT_GATE_FIX.md))
+
+### **(v0.261.214)**
+
+#### New Features
+
+*   **Workflow Results In Chat**
+    *   Ask chat about the stored result of one of your finished personal workflow runs without running the workflow again. The answer uses only that run's saved output, with every other source off, and ends with a server-written line that names the run, such as "_This answer uses the stored result of the Weekly digest run of Mon Jun 2, 2025, 9:02 AM CDT. The workflow was not re-run._" Later questions in the same chat keep using the run.
+    *   The run's output is given to the model as untrusted data, never as instructions. An answer sees at most 48 KB of excerpts from up to 8 task outputs, starting with the last task's, and says when it saw only part of the result. An Analyze task's saved analysis is explained the way **Ask about this analysis** explains it. Tools are off, and the question and answer are screened like other chat turns.
+    *   The selection is bound to a SHA-256 digest of the run's stored outputs and checked again on every question, so an answer never comes from a result other than the one selected. A changed result asks the user to select the run again.
+    *   Works only in the owner's private personal chats. In V2, and wherever chat history, search and export already withhold saved analyses, an answer is withheld once its result can't be confirmed for the chat's owner, for example after the run is deleted, after access to one of its sources is lost, or while storage can't be read. Once a chat is shared or converted to a collaboration, its Follow up answers are hidden for everyone, you included. The original chat's stored messages are unchanged. The collaboration's copies are stored with these answers withheld, and the chat's saved summary is cleared on both chats. Single-message Word, PowerPoint and email exports check the result too. Orchestration history skips these answers. A few older reads that only the chat's owner can reach, such as classic chat's message list, still show the owner an answer whose result is no longer available, as they do for saved analyses.
+    *   New admin setting **Use Workflow Results In Chat** (`enable_chat_workflow_results`) in **Workflow** settings, off by default. It needs **Enable Personal Workflows** and follows **Require WorkflowUser App Role**; chat orchestration isn't required. A new requester-only route, `GET /api/user/workflows/<workflow_id>/runs/<run_id>/result-context`, returns the run's public descriptor. Store references never reach the browser.
+    *   Personal workflows only. Structured workflow runs, named outputs, output formats, Retry and Edit aren't supported yet: the server refuses a retry or edit of a Follow up question or answer. There's no retention setting, so a result stays available until its run is deleted. Letting orchestration read workflow results, the `workflow_results` capability, follows in a later release.
+    *   (Ref: #1546, #1543, `functions_workflow_result_reader.py`, `functions_workflow_result_followup.py`, `functions_workflow_result_masking.py`, `route_backend_chats.py`, `route_backend_workflows.py`, `route_backend_conversations.py`, `route_backend_conversation_export.py`, `functions_saved_analysis.py`, `functions_collaboration.py`, `functions_orchestration_context.py`, `route_backend_v2.py`, [Workflow Results In Chat](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_WORKFLOW_RESULTS_FOLLOW_UP.md), [Ask about workflow results](https://microsoft.github.io/simplechat/guides/ask-about-workflow-results/))
+
+#### User Interface Enhancements
+
+*   **Ask In Chat And Ask About This In V2**
+    *   **Ask in chat** on a completed run in a personal workflow's run history, and **Ask about this** in a workflow alert, open a new V2 chat with that run selected. The composer shows "Answering from the Weekly digest run of Mon, Jun 2, 9:02 AM — not re-running the workflow" with a remove button, and turns other sources and **Orchestrate** off.
+    *   A run that can't be asked about as selected removes the notice and says why, rather than falling back to an ordinary chat answer. Choosing a source, uploading a file, turning on **Orchestrate** or switching chats also removes it.
+    *   (Ref: `workflowResults.ts`, `workflowResultFollowUp.ts`, `chatStore.ts`, `Composer.tsx`, `WorkflowResultChip.tsx`, `WorkflowRunAskInChat.tsx`, `workflowAlertNotices.ts`, `conversationUrl.ts`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/#workflow-results-in-chat-v2-interface))
+
+### **(v0.261.213)**
+
+#### New Features
+
+*   **Ask AI Tab In The V2 Workflow Editor**
+    *   The V2 workflow editor's side panel has a new **Ask AI** tab, after **Changes**, that edits a personal workflow from a plain-language request, such as "run this at 7 AM on weekdays and only alert me when something is urgent". It calls the AI workflow assistant endpoint added in 0.261.208 and never saves. Each answer is applied to the draft as one AI change, with the same highlights, **Previously:** values, per-field **Revert** and **Changes** list as your own edits, and the first save asks you to review the AI changes.
+    *   Open it with the footer's **Ask AI** toggle, or with a task's **Ask AI** button to ask about that task. Quick actions explain the workflow, tighten task instructions, add a schedule, alert only when urgent, or check what's needed to run. Type `#` to attach up to 20 documents; tags and whole workspaces aren't offered, because a workflow refers to documents. The browser's time zone is sent when the schedule editor offers it, and the 2,000-character limit is counted the way the server counts it, so an emoji counts as one.
+    *   The editor is locked while a request runs, and **Cancel request** stops it with nothing changed. An answer that changes the draft gets a card listing what changed, taken from the editor's own comparison of the draft that was sent with the answer, with **Jump to**, the documents read as context, any warnings, and **Undo this change**, which reverts the turn except fields edited since. Follow-up requests include the earlier completed turns and what became of their changes.
+    *   When the saved workflow changed after the editor opened, the draft is kept and **Reload workflow** is offered. `Retry-After` is honored with "You can send again in N s.", and a failed, cancelled or timed-out request changes nothing and can be retried against the current draft.
+    *   The tab appears only when **Enable AI Workflow Assistant** is on, for a personal workflow the editor can change. Group workflows, read-only editors and workflows with an active run don't offer it. It also works on a workflow proposal opened from chat with **Edit**.
+    *   Replies, errors, warnings, document names and the admin's rate-limit message are shown as plain text, never as HTML or Markdown. The side panel is an ARIA tab list, the thread is a live log, and Escape closes the panel and returns focus to its toggle.
+    *   The conversation lives only in the page. Nothing is stored on the server or in the browser, so reloading starts over. Reopening a saved workflow in the same page shows its earlier turns, marked as coming from an earlier editing session.
+    *   The shared assist thread gained opt-in options for the tab: counting by code points, holding its thread while the editor is open, a custom cancelled message, documents-only `#` references and a reply wrapper. All are off by default, so the chat's image, chart, diagram and plan editors are unchanged. Because the editor holds its thread, using it never clears a chat's idle image or plan editor conversation.
+    *   (Ref: #1548, #1543, `WorkflowAskAiTab.tsx`, `useWorkflowAssist.ts`, `workflowAssist.ts`, `codePoints.ts`, `workflowAssistStore.ts`, `assistThreadStore.ts`, `WorkflowEditorDialog.tsx`, [AI Workflow Assistant](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_AI_ASSISTANT.md#the-ask-ai-tab), [V2 Shared Assist Thread](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_SHARED_ASSIST_THREAD.md#options-for-the-workflow-editor), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/#ask-ai-to-change-a-workflow))
+
+*   **Draft With AI For Workflow Task Instructions**
+    *   A task with empty instructions in the V2 workflow editor has **Draft with AI**. It drafts instructions from the workflow's name and description and the task's name, adds them as one undoable AI change, and moves focus to them. Instructions longer than the editor's 12,000-character limit aren't added, and the message says so.
+    *   It uses the route behind the classic editor's **Draft Workflow Instructions** button, and it's offered only where **Ask AI** is. The classic button is unchanged.
+    *   (Ref: #1548, `useWorkflowAssist.ts`, `WorkflowTaskFields.tsx`, `/api/workflows/draft-instructions`, [AI Workflow Assistant](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_AI_ASSISTANT.md#draft-with-ai))
+
+### **(v0.261.212)**
+
+#### New Features
+
+*   **Saved Workflows Started From Chat**
+    *   With **Run Workflows From Chat** on, a chat orchestration plan can start one of the requester's own saved personal workflows. "Run my weekly digest now" queues the same durable run that **Run** in Workflows does, and the answer lists each workflow as started, already started or not started, with the reason.
+    *   The new `workflow_run` step names the workflow by a request-local handle from the workflow planning context. Workflows the request names are listed first, then those with durable execution on. A plan starts at most three workflows, each once. A step that still breaks the rules after one repair is dropped, and the answer says why.
+    *   A plan that starts a workflow always waits for the user to run it, whatever approval mode they chose. The floor holds on every path that saves a plan, including plan editor revisions and manual edits, and a saved plan that lost it is refused when it's run.
+    *   The plan starts the run and links to it. It never waits for the run or reads its results. The run's id comes from the plan's first attempt and the step, so a retry, a second tab or a crash links the run instead of starting another.
+    *   Only personal workflows with durable execution on can be started, from a conversation that's private to the requester. A workflow waiting for a Microsoft 365 approval or sign-in isn't started again, and a background continuation links a run that already exists but never starts a new one. A storage error fails the step instead of reporting the workflow as deleted, and a failed start is retried only when the user selects **Retry**.
+    *   The executor and recovery now read which capabilities act outside the plan from the capability registry instead of a hard-coded list. The queue and the step share one formula for a durable run's id, `workflow_run_id_for_request`, and a run started from chat records the chat step that started it in `chat_invocation`.
+    *   (Ref: #1551, #1543, `functions_orchestration_workflow_runs.py`, `functions_orchestration_workflow_context.py`, `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_planner.py`, `functions_workflow_runtime.py`, [Chat orchestration workflow runs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_RUNS.md))
+
+*   **Run Workflows From Chat Setting**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Capabilities** adds **Run Workflows From Chat** (`enable_chat_orchestration_workflow_runs`) to the classic and V2 admin pages. It's off by default, because it lets a conversation start work that acts outside it. It's independent of **Propose Workflows From Chat**, and it also needs Chat Orchestration, personal workflows and, when the capability list is narrowed, **Run workflows**.
+    *   With it off, planning is unchanged. A golden test captured before this change pins the stored planning context, its reads, the planner's messages, the repair message, the degraded plan and the capability resolution, with the setting off and workflow proposals on.
+    *   (Ref: `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+#### User Interface Enhancements
+
+*   **Saved Workflows On The V2 Approval Card**
+    *   A plan that starts saved workflows says on its approval card that it always waits for you to run it, and lists each workflow with its trigger. A paused workflow is marked **Paused**, with a note that starting it here runs it once without turning it back on. Auto approval and the countdown never start such a plan.
+    *   The run view shows a **Workflow** row for each run step, and the recovery dialog says a workflow that already started is linked again, never started twice.
+    *   (Ref: `OrchestrationWorkflowRunNotice.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationRunView.tsx`, `OrchestrationRecoveryNotice.tsx`, `orchestrationPlan.ts`, `orchestrationController.ts`)
+
+*   **Started Workflows Links In The V2 Chat**
+    *   Under the answer, **Started workflows** lists each run the plan started, with the workflow's name and the run's status when the message loaded. **Open run** opens the workflow in Workflows with its run history open at that run. A deleted workflow, or a run that's no longer in its history, shows as unavailable.
+    *   The links come from a requester-only route that writes nothing. When the requester can no longer start workflows from chat, the conversation isn't private any more, or content review removed the response, each link shows as unavailable without the workflow's name, and no workflow or run is read.
+    *   (Ref: `WorkflowRunLinks.tsx`, `orchestrationWorkflowRuns.ts`, `MessageList.tsx`, `workflowRunLink.ts`, `route_backend_orchestration.py`, `functions_orchestration_workflow_run_links.py`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/#workflow-runs-v2-interface), [Trigger a workflow](https://microsoft.github.io/simplechat/guides/trigger-a-workflow/#run-a-workflow-from-chat))
+
+### **(v0.261.210)**
+
+#### Bug Fixes
+
+*   **Images Without OCR Text Are Now Indexed From Their Vision Description**
+    *   Fixed text-free images, such as a photo of an empty room, ending with no search chunk, no title and nothing chat could use, even though the AI vision model had described them. When OCR finds no text, the vision description is now indexed as the image's chunk, so the image is searchable and final metadata extraction runs as usual.
+    *   Document Intelligence Layout output that is only page-number or page-break annotations, such as a stray `<!-- PageNumber="J" -->` read from floor tape, no longer counts as image text. Header and footer text still does. Failed or empty vision analyses are never indexed.
+    *   Image chunks are now embedded from the same text that is stored, including the vision description, instead of from the OCR text alone. When the description pushes a page that fits past the limit of a non-legacy embedding model, including an image whose only text is its description, the embedding input is cut to the limit and the stored chunk keeps the whole description.
+    *   With Enhanced extraction, a standalone image that the Content Understanding document analyzer returns nothing for is now described by the Content Understanding image analyzer before falling back to Document Intelligence Layout, for workspace uploads and images uploaded straight into a chat. The image analyzer's `Summary` field is now read, which also replaces the `![image](pages/1)` placeholder that images embedded in DOCX and PPTX files were indexed with.
+    *   The multi-modal vision model is now called through the AI connection that hosts it, instead of always using the primary GPT connection, which returned 404 for a model deployed on another connection. The model's chat and image support are checked on that connection first, and Test Vision Analysis uses the same connection as ingestion.
+    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
+
+*   **Uploaded Files Show What Was Extracted Instead Of "File content not found"**
+    *   Opening a file uploaded into a conversation, including an image, showed "File content not found" whenever the upload was stored as a workspace document. The preview now shows what ingestion extracted: the engine that read the file and why, the AI vision analysis, the title and summary, and the indexed text that search and chat read. It explains when a file is still processing, when processing failed, or when nothing from it was indexed. The classic file popup shows the same text.
+    *   A cited image in V2 chat now shows **What was extracted from this image**, the passage the assistant was given, beneath the picture.
+    *   (Ref: #1583, `route_backend_documents.py`, `functions_chat_upload_extraction.py`, `ChatUploadExtraction.tsx`, `ChatFilePreview.tsx`, `EnhancedCitationViewer.tsx`, [V2 Chat Upload Extraction and Image Card Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_CHAT_UPLOAD_EXTRACTION_AND_IMAGE_CARD_FIX.md))
+
+*   **Image Generation Uses The gpt-image API Version By Default**
+    *   The default Azure OpenAI image generation API version is now `2025-04-01-preview`, the newest dated Azure OpenAI API version and the one documented for gpt-image-1, gpt-image-1.5 and gpt-image-2. The previous `2024-12-01-preview` default predates gpt-image support.
+    *   A saved legacy image version or AI connection image profile still holding the previous default is upgraded automatically when settings load, and a blank legacy value is filled in. Any other saved version is kept, and APIM image versions are never changed because the gateway defines them. Unmigrated legacy direct Images settings with no version also use the new default; an unmigrated APIM route with no version keeps sending `2024-12-01-preview`.
+    *   (Ref: `functions_settings.py`, `functions_image_api_route.py`, `admin_settings_fields.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Uploaded Images Match Generated Images In V2 Chat**
+    *   An image uploaded into a V2 conversation is now drawn at its own size in a compact card, the same way a generated image is, instead of filling the message column with the picture letterboxed.
+    *   Its actions appear when you point at or tab to the image. **Show sources** opens a panel with what was extracted from it, alongside **Message details**, **Open file preview**, **Use as reference** and **Edit**.
+    *   (Ref: #1583, `MessageList.tsx`, `MessageInspector.tsx`, `MessageActions.tsx`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/))
+
+### **(v0.261.209)**
+
+#### Bug Fixes
+
+*   **Orchestrated Web Search And Deep Research Access**
+    *   In V2 chat, orchestrated web search, linked-page and deep research steps failed with "A required retained result is unavailable or changed." Orchestration looked up each user's app roles in Microsoft Graph on every call, which needs the `Directory.Read.All` application permission that deployments don't grant by default. Classic chat never makes that call.
+    *   Orchestration now trusts the app roles in the signed-in session, as classic chat does. Each access still rechecks conversation ownership and Control Center access restrictions. No Graph permission, deployer change or setting is needed, and a `Directory.Read.All` grant made only for orchestration can be revoked.
+    *   Orchestrated deep research also refused to start whenever query planning or linked-page planning was on, which is the default. Both planners now run within the existing Knowledge limits, each planner request still follows a fresh attestation of the planner model, and a planning-setting change during a run stops the step.
+    *   A step that continues in the background, where there is no signed-in session, now says so and asks the user to send the request again instead of showing the generic message. Step, saved-wait, finalization and content-preparation failure events log the refusal code as `sc_authority_reason`.
+    *   (Ref: #1509, `functions_orchestration_external_identity.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_external_configuration.py`, `functions_source_review.py`, `access_failure`, [Orchestration Web Search and Deep Research Access Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_SESSION_IDENTITY_FIX.md))
+
+### **(v0.261.208)**
+
+#### New Features
+
+*   **AI Workflow Assistant Endpoint**
+    *   The server side of the AI workflow assistant. `POST /api/user/workflows/assist` takes one plain-language instruction, such as "run this at 7 AM on weekdays and only alert me when something is urgent", with the V2 editor's current draft of a personal workflow, and returns a proposed edit for the author to review. The answer is `changed` with the edited draft, `explained` when nothing should change, or `question` when the request is ambiguous. The editor's **Ask AI** tab, which calls it, arrives in a later release, so nothing calls the endpoint yet.
+    *   It can propose a name and description, manual, interval and calendar schedules, alert settings, the runner (only agents and models the author can already use), tasks (add, remove, reorder, instructions and inputs), and documents attached with `#`, placed by intent: shared by every task, used by selected tasks, or one task's document target. When the placement is unclear it asks instead of guessing.
+    *   It never saves anything. It can't turn a workflow on or off, change Run as, approvals, sharing or URL access, or edit identity fields, and it explains rather than editing File Sync triggers or For each and If structure. Group workflows and tag references are refused. Every proposal is checked the way saving checks it, with one chance for the model to correct itself, and a proposal that still fails is discarded. The response warns when saving will need Run as re-approved, when a task the assistant added or changed sends email but isn't run by an agent with the Microsoft 365 action, or when the Microsoft 365 connection is missing.
+    *   The model never sees raw document IDs; each document gets a short handle for the request. The draft, earlier turns and document excerpts are all sent as untrusted material, excerpts are bounded, and telemetry records counts, outcomes and error codes only, never instructions, workflows, replies or document text.
+    *   Requests and the model's replies are read the way the browser reads JSON. `NaN`, `Infinity` and numbers JavaScript can't hold are refused, and a whole number such as `12.0` is checked as the integer the editor would save.
+    *   Each person may have one request running and send 20 requests every 10 minutes, across every app instance. The count is a small per-user document in the settings container, which is the endpoint's only write. If that store is unavailable, the assistant answers 503 rather than running without a limit.
+    *   New admin setting **Enable AI Workflow Assistant** (`enable_workflow_ai_assistant`) in **Workflow** settings, on by default. It has no effect while Enable Personal Workflows is off, and it follows the WorkflowUser role requirement.
+    *   (Ref: #1548, #1543, `route_backend_workflows.py`, `functions_workflow_assist.py`, `functions_workflow_assist_operations.py`, `functions_workflow_assist_editor.py`, `functions_workflow_assist_limits.py`, `functions_workflow_assist_runtime.py`, [AI Workflow Assistant](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_AI_ASSISTANT.md), [Workflow settings](https://microsoft.github.io/simplechat/admin/workflow/#workflow-ai-assistant))
+
+### **(v0.261.207)**
+
+#### New Features
+
+*   **Workflows Proposed From Chat**
+    *   With **Propose Workflows From Chat** on, a chat orchestration plan can handle a recurring request in two parts. It answers the current period once, as a preview, and proposes a personal workflow for the runs to come. "Every Monday at 8, read my email and tell me what I should focus on this week" gets this week's answer and a proposed Monday 08:00 workflow.
+    *   The proposal is a new `workflow_propose` step with a new `workflow` deliverable. The planner describes the workflow as a closed blueprint, naming the requester's agents, File Sync sources, the documents they named in the request and their existing workflows only by request-local handles. The workflow draft service checks the blueprint without writing anything. A blueprint that still breaks the rules after one repair is dropped with everything bound to it, and the rest of the plan runs.
+    *   Nothing is created until the requester decides on the proposal card. Accepting the same proposal twice creates one workflow, a denied proposal can't be accepted, and a proposal expires after 14 days. A workflow the requester deleted comes back only through **Create again**.
+    *   Proposals are personal only and appear only in a conversation that's private to the requester. A task on an agent with Microsoft 365 actions runs as the requester, and accepting never approves Run as. URL Access can't be turned on from chat.
+    *   Four requester-only routes serve the card: status, accept, deny and draft. Accepting records the workflow creation in the activity log, as a save from Workflows does.
+    *   (Ref: #1547, #1543, `functions_orchestration_workflow_context.py`, `functions_orchestration_workflows.py`, `functions_orchestration_workflow_proposals.py`, `route_backend_orchestration.py`, [Chat orchestration workflow proposals](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_WORKFLOW_PROPOSALS.md))
+
+*   **Propose Workflows From Chat Setting**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Capabilities** adds **Propose Workflows From Chat** (`enable_chat_orchestration_workflows`) to the classic and V2 admin pages. It's off by default, because it lets a conversation lead to standing work that runs later, possibly as the user in Microsoft 365. It also needs Chat Orchestration, personal workflows and, when the capability list is narrowed, **Propose workflows**.
+    *   With it off, planning is unchanged. A golden test captured before this change pins the planner's messages, the deliverable brief and the strict-mode error, with the setting off and with it on while proposals aren't available.
+    *   (Ref: `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+*   **Chat Plans Use The Browser's Time Zone**
+    *   The V2 chat sends the browser's time zone with each plan request, so "Monday at 08:00" means 08:00 where the user is. The server accepts only a known zone name. The first plan, regenerate and replan, answers to a question card, plan editor revisions and retries all keep it rather than falling back to UTC.
+    *   When a turn may propose a workflow, its answer is written with the user's local date and time, in the words a calendar workflow's run uses, so the preview and the later runs read "this week" the same way. Every other answer is written exactly as before.
+    *   (Ref: `validated_request_time_zone`, `workflow_answer_time_line`, `functions_orchestration_context.py`, `functions_orchestration_composition.py`, `orchestrationController.ts`)
+
+*   **Personal File Sync In The V2 Workflow Editor**
+    *   The V2 editor for personal workflows can now author the **Monitor File Sync changes** trigger, **Run File Sync before each run** and **Use changed files as Analyze targets**, as the V2 group editor and the classic personal editor already could. A personal workflow whose stored source was deleted can now be fixed in V2.
+    *   The source list says when File Sync isn't enabled for the personal workspace, instead of showing an empty list.
+    *   (Ref: `functions_workflow_file_sync_sources.py`, `route_backend_workflows.py`, `WorkflowEditorDialog.tsx`, [V2 personal workflow File Sync](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PERSONAL_WORKFLOW_FILE_SYNC.md))
+
+#### User Interface Enhancements
+
+*   **Workflow Proposal Card In The V2 Chat**
+    *   A proposed workflow appears as a **Proposed workflow** card under the answer. It shows when the workflow runs, about how often, its alerts, the Microsoft 365 data it uses and whose account it runs as, each task's runner, and each task's full instructions under **Instructions**, as plain text. It also lists similar workflows the user already has.
+    *   **Create & start**, **Create paused** and **Edit** decide it. A manual workflow offers **Create** and says it runs only when started from Workflows. **Edit** opens the proposal in the V2 workflow editor, and Save creates it. **Deny** asks for confirmation, and **Open workflow** goes to the created workflow.
+    *   While the workflow is being created, the card checks back every three seconds for up to two minutes, and waits while the tab is hidden. The plan labels the deliverable **Workflow proposal** and shows a prepared one as **Proposed**. The card is the only place the proposal appears; it's never listed with the answer's files.
+    *   (Ref: `WorkflowProposalCard.tsx`, `workflowProposals.ts`, `orchestrationPlan.ts`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/#workflow-proposals-v2-interface), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/#create-a-workflow-from-chat))
+
+### **(v0.261.205)**
+
+#### Bug Fixes
+
+*   **Workflow Flow Arrows Stay Drawn While The Page Updates**
+    *   The execution arrows in the V2 workflow editor's **Flow** surface disappeared whenever the editor re-rendered without changing the diagram: while saving, after a failed save, or while typing in a field outside the diagram. The read-only Flow view did the same on every runtime poll of a running workflow. The arrows usually came back once React Flow measured the blocks again, but a measurement that arrived between two re-renders could leave them missing, which also made the Flow save-failure UI test flaky.
+    *   The Flow canvas now calls the editor's latest handlers through stable wrappers and keeps each unchanged block's React Flow node between renders, so a re-render that doesn't change the diagram changes nothing on the canvas. A block that does change carries the size React Flow last measured, so its arrows stay drawn while it is measured again, and a block whose selection changes is measured again because its wider border moves its handles.
+    *   Selection, collapse, keyboard navigation, focus requests, dragged positions and change tracking behave as before.
+    *   (Ref: #1573, #1543, `WorkflowFlowCanvas.tsx`, `workflowFlowNodeReuse.ts`, [V2 Workflow Flow Canvas Stable Re-renders Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_WORKFLOW_FLOW_CANVAS_STABLE_RERENDERS_FIX.md))
+
+### **(v0.261.204)**
+
+#### User Interface Enhancements
+
+*   **Simpler Orchestration Progress In The V2 Chat**
+    *   While Orchestrate plans a question, the reply now shows just the reasoning step toggle and **Thinking**. The **Orchestration** progress card that sat above them is gone. It showed "Current step: Building a plan", a percentage, a step count and a progress bar, which repeated the reasoning step, stayed at 45% while the planner worked, and disappeared as soon as the plan arrived.
+    *   While a plan runs, the plan card still shows how many steps are done and which one is running, with **Review** for the full list. The planner's steps are still under the reasoning toggle. Expanding a saved answer's reasoning no longer shows the card either.
+    *   Tabular analysis and agent replies keep their progress cards. Nothing changes on the server.
+    *   (Ref: `activityLanes.ts`, `ThoughtsList.tsx`, `showsCard`, [Orchestration Duplicate Progress Card Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_DUPLICATE_PROGRESS_CARD_FIX.md))
+
+### **(v0.261.203)**
+
+#### New Features
+
+*   **Change Tracking In The V2 Workflow Editor**
+    *   The V2 workflow editor now shows every unsaved change where it happened. A changed field is framed and labeled **Edited**, with **Previously** for the value it had when the editor opened (long values behind **Show more**) and its own **Revert**, so color is never the only cue. Until now a long editing session left no record of what differed from the saved workflow.
+    *   A removed task leaves a **Removed task** row in place with **Restore**, which puts the saved version back in its saved position, and removed flow blocks are listed under **Removed blocks** above the canvas. Changes are keyed by stable task, block and reference IDs, never by position, so a reorder is one **Task order** change instead of an edit to every task. An added task or block carries **Added · by you** and one Revert for the whole item.
+    *   **Changes** in the editor footer opens a side panel. It lists every unsaved change with its before and after values as plain text, its author, **Jump**, which focuses the field or selects the block and switches surface when needed, and **Revert**. Below that it lists this session's steps with **Restore to here**. Reverts and restores are added as new history steps, so nothing is deleted. The panel sits beside the editor on wide screens and takes its place on narrower ones.
+    *   Saving your own edits is still one click. When the workflow runs as a Microsoft 365 account and a change touches a field the server fingerprints, the panel notes that saving requires re-approving Run as. The client's copy of the fingerprint fields has a parity test that fails when it drifts from the server's.
+    *   This is the editor side of the AI workflow assistant. History entries now record whether you, AI assist or a restore made them, with the assist turn, and typing never coalesces across either. `WorkflowAuthoringSession.applyAssist` applies an AI candidate as one attributed step through the normal confirmation path, and refuses Run as, enablement, identity and approval changes. `revertTurn` reverts one turn and reports what it skipped, and a save that includes AI changes first asks you to **Confirm and save**. Nothing calls `applyAssist` until the Ask AI tab ships.
+    *   Read-only editors show none of this, and a new workflow points out only AI assist changes. Group workflows are tracked like personal ones. No backend route, setting or package is added.
+    *   (Ref: #1548, #1543, `workflowChangeTracking.ts`, `workflowRunAsFingerprint.ts`, `workflowAuthoringHistory.ts`, `WorkflowAuthoringHistory.tsx`, `WorkflowChangeTracking.tsx`, `WorkflowEditorDialog.tsx`, [Workflow Editor Change Tracking](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_EDITOR_CHANGE_TRACKING.md), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/#review-your-changes))
+
+#### Bug Fixes
+
+*   **Structured Workflow Alert And File Sync Edits**
+    *   In a structured workflow, changing the alert settings was rolled back with "Workflow edits cannot change saved identity, scope, revision, or runtime metadata." A group workflow's File Sync settings failed the same way. The editor's list of authored fields had neither, so the edit looked like a change to saved identity, and a restore could not bring those settings back.
+    *   Alert and File Sync settings are now authored fields: they apply, follow Undo and Redo, and are covered by Revert and Restore to here. Identity, scope, revision and runtime fields are still refused.
+    *   (Ref: `WorkflowAuthoringHistory.tsx`, `WORKFLOW_AUTHORED_FIELDS`, [Structured Workflow Alert And File Sync Edits Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/STRUCTURED_WORKFLOW_ALERT_FILE_SYNC_EDITS_FIX.md))
+
+### **(v0.261.202)**
+
+#### New Features
+
+*   **Workflow Draft Service For Workflows Proposed From Chat**
+    *   Chat orchestration can now check a proposed workflow exactly as saving it would, without writing anything: no workflow, conversation or notification, and no blob, Key Vault or Microsoft 365 call. The check needs no web request, so orchestration can run it in the background.
+    *   A proposed workflow is a small, closed blueprint: a name, a manual, calendar, interval or File Sync trigger, one to five tasks, alert preferences and a Run as choice. It can't name endpoints, URLs, models, secrets or document ids. Documents, agents and File Sync sources are handles that the server has already chosen for the user, and each is authorized for that user.
+    *   The same blueprint always builds the same workflow. Its results reach the notification bell and never pop up. File Sync workflows wait for the sync and continue only when documents changed. Tasks use the default model unless they name an agent the user can use.
+    *   A refusal carries a stable code, such as `cadence_below_minimum`, `agent_unavailable` or `reference_unknown`, a short message that never repeats the input, and the JSON path to fix, so a model can repair its proposal.
+    *   Accepting a proposal creates its workflow once, paused, even if it's accepted twice. The workflow records where it came from in a server-only `origin` that saves can't set or change, and that notes when the owner first edits the workflow. `origin` isn't part of the Microsoft 365 Run as fingerprint, so it never invalidates an approval.
+    *   Personal and group saves behave exactly as before. The save functions now build a workflow, then store it.
+    *   There's no new screen yet. The V2 workflow assistant (#1548) and orchestration's workflow proposals (#1547) will use the service.
+    *   (Ref: #1545, #1543, `functions_workflow_drafts.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_definitions.py`, `functions_workflow_definition_store.py`, [Workflow draft service](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_DRAFT_SERVICE.md))
+
+*   **Limits For Workflows Created From Chat**
+    *   **Admin Settings > Orchestration > Chat Orchestration > Limits** adds **Workflows Created From Chat Per User**, from 1 to 100 with a default of 20, and **Minimum Schedule Interval For Workflows Created From Chat (seconds)**, from 60 to 86,400 with a default of 3,600 (hourly), in the classic and V2 admin pages.
+    *   The larger of this minimum and **Workflow Minimum Schedule Interval** applies. Calendar schedules always pass. Both limits are checked when a workflow is created from chat; workflows users build themselves are unaffected.
+    *   (Ref: `functions_workflow_limits.py`, `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`, [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+*   **Calendar Workflow Runs Know The Local Date And Time**
+    *   Each run of a workflow with a calendar schedule now tells the model when it started, in the schedule's time zone, for example "Current date and time: Monday, 28 September 2026, 09:00 (America/New_York)". Instructions such as "list this week's to-dos" now mean the week of the run.
+    *   Scheduled runs, catch-up runs and **Run now** all include it, and so does every task of a multi-task workflow. It's never stored in the workflow or its fingerprint.
+    *   Workflows that run by hand or at a fixed interval keep exactly the prompts they had.
+    *   (Ref: `workflow_run_time_context`, `functions_workflow_schedules.py`, `functions_workflow_runner.py`, [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/))
+
+#### Bug Fixes
+
+*   **V2 Editor Keeps A Schedule It Can't Show**
+    *   The V2 editor used to put a schedule of its own in place of a stored one it had no fields for, which only a newer server, a direct write or a record saved before a rule existed can leave. A schedule of another kind showed as every 15 minutes, an unknown calendar frequency such as `fortnightly` as daily, and an unknown interval unit as minutes, so `{unit: 'days', value: 2}` became every 2 minutes. A unit stored as `HOURS` became minutes too, and a value it couldn't read became 15. Saving the workflow for any reason, such as editing its description, stored the substitute.
+    *   Now a workflow opens read-only, says why, and keeps its schedule exactly as stored when the editor can't show that schedule exactly: an unknown kind, frequency, unit or weekly day, a `seconds` or `minutes` unit stored other than exactly (the scheduler runs those as hours), or an interval value that isn't a whole number.
+    *   Only what the server's save canonicalizes changes on save, such as `HOURS` becoming `hours`. A whole-number value the save refuses, such as 0 minutes, is shown as stored and named by validation, which blocks the save until it's corrected. Manual workflows, which don't use a schedule, stay editable.
+    *   (Ref: `workflowScheduleForEditor`, `workflowScheduleSupported`, `normalizeWorkflowSchedule`, `normalizeWorkflowDefinition`, `WorkflowScheduleFields.tsx`, [V2 workflow unsupported schedule fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_WORKFLOW_UNSUPPORTED_SCHEDULE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Schedule Trigger In The V2 Workflow Editor**
+    *   The V2 workflow editor's **Trigger** option for scheduled workflows is now **Schedule** instead of **Interval**, because it offers calendar schedules as well as fixed intervals. Workflows are stored exactly as before, and the classic editor keeps **Interval Schedule**.
+    *   (Ref: `WorkflowEditorDialog.tsx`, [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/), [Trigger a workflow](https://microsoft.github.io/simplechat/guides/trigger-a-workflow/))
+
+### **(v0.261.201)**
+
+#### New Features
+
+*   **`#` Documents And Tags In The Plan Editor's Ask Planner**
+    *   **Ask planner** in the V2 plan editor now offers `#` documents and tags and **Add context**, like the main composer. Type `#` and part of a name, or browse, and the pick becomes a chip. The request carries the chips you leave, and your turn in the thread shows them afterwards.
+    *   The server checks every pick for you when the request arrives. Only documents and tags you can read now are accepted: in your personal workspace, in groups you belong to and in public workspaces you can see, from workspace types that are turned on, and within a scope-locked conversation's workspaces. A document must also have finished processing. At most 20 go with one request, and a plan can gather at most 100.
+    *   Accepted picks are added to that revision's plan inputs, as question-card answers are. The planner sees them as selected, a document search that names no documents of its own searches them, and tags filter that search. If the plan searched everything you can read before, the planner's reply says its searches are now limited to what you attached. The plan's existing sources stay available.
+    *   A pick that can't be used, because it was deleted, is unready, is no longer readable by you or its workspace was turned off, fails the request before the planner runs, with a message that names it by the label you picked. The plan and its chat don't change, and **Edit and resend** brings back your text and chips.
+    *   Picks are part of the request's identity. A retry of the same request is answered from what was stored and never merges them twice, and the same submission id with different picks is refused with 409 `submission_conflict`. Uploads, `/` saved prompts, `@` mentions and whole workspaces aren't offered here, and the diagram, chart and image editors, the main composer and the question card are unchanged.
+    *   (Ref: #1556, #1543, `functions_assist_references.py`, `functions_orchestration_plan_editing.py` `resolve_plan_edit_references`, `functions_orchestration_plan_revisions.py`, `route_backend_orchestration.py`, `planReferences.ts`, `OrchestrationPlanEditor.tsx`, `AssistThread.tsx`, [V2 Shared Assist Thread](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_SHARED_ASSIST_THREAD.md), [Chat interface controls](https://microsoft.github.io/simplechat/reference/chat-controls/), [Review and edit orchestration plans](https://microsoft.github.io/simplechat/guides/review-and-edit-orchestration-plans/))
+
+*   **Workspace Reference Authorizer Without A Conversation**
+    *   `resolve_scope_references` authorizes `#` document and tag references for a user with no conversation and no request state, so AI-assist inputs outside the chat, such as the plan editor now and the workflow assistant later, can share it. It refuses chat attachments, whole workspaces and the chat scope, keeps the question card's readiness checks and count bound, reads no document text, and reports a refusal by the label the user picked and a reason code, never by a title read from the server.
+    *   The question card's own check now runs on the same core. A golden test captured from the previous code holds its results and messages unchanged.
+    *   (Ref: `functions_orchestration_context.py` `resolve_scope_references`, `resolve_elicitation_references`, `functional_tests/test_orchestration_reference_authorizer_golden.py`, `functional_tests/test_orchestration_scope_reference_authorizer.py`)
+
+### **(v0.261.200)**
+
+#### New Features
+
+*   **Shared AI Assist Thread In The V2 Editors**
+    *   The **Ask AI** tab of the diagram, chart and image editors and the **Ask planner** tab of the plan editor now share one conversation thread. Your message joins it the moment you send it and the input clears, instead of both waiting for the server's answer.
+    *   While a request runs, its reply shows **Working…** with the seconds elapsed and a **Cancel** button. A failed or cancelled request stays in the thread with its error, **Retry** and **Edit and resend**, which puts your text back in the input.
+    *   Cancel in the plan editor discards the pending change on the server. In the other editors it stops waiting; if the server finishes the change anyway, the editor recognises it as yours and shows the latest version rather than reporting a conflict.
+    *   The image editor keeps a transcript of this visit's changes, held on the page only and never saved. **Create image from reference** keeps a separate one.
+    *   A thread lives outside its editor, so closing and reopening the editor keeps a running request and any unsent text.
+    *   (Ref: #1552, #1543, `AssistThread.tsx`, `assistThread.ts`, `assistThreadStore.ts`, `assistLimits.ts`, `DiagramEditor.tsx`, `ChartEditor.tsx`, `ImageEditor.tsx`, `OrchestrationPlanEditor.tsx`, [V2 Shared Assist Thread](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_SHARED_ASSIST_THREAD.md))
+
+*   **Client Submission Ids For Assist Requests**
+    *   The diagram, chart and image assist routes, personal and shared, accept an optional `submission_id` and store it on both turns of the exchange. A request without one behaves exactly as before.
+    *   A retry whose id is already stored is answered from what was stored, with `"replayed": true`, without calling the model, writing a second revision or notifying a shared conversation twice. The same id sent with a different instruction is refused with 409 `submission_conflict`, and a malformed id with 400.
+    *   Stored ids let the editor match the message it showed early to the stored turn, so a shared conversation's live update arriving before your reply doesn't show the message twice. Ids are never shown to the model.
+    *   A retry sent while the request it repeats is still running is checked again after the model answers: the image routes check the copy they read after the call, and the personal diagram and chart route checks when its write loses to the first request's. The retry is then replayed or refused rather than storing a second version. An image conflict found after the model call returns the versions that won, and a personal diagram or chart write lost to another change returns 409 with the current revisions instead of a 500 when an id was sent.
+    *   The plan edit route holds its existing `submission_id` to the same format and stores it on the plan's edit chat turns. Because it holds an id to the first request it saw, the plan editor's **Retry** reuses an id only for the identical request, and sends a fresh one after Cancel or a step change instead of being refused for good.
+    *   (Ref: `functions_assist_submissions.py`, `functions_image_edit.py`, `functions_message_block_revisions.py`, `functions_message_image_revisions.py`, `functions_orchestration_plan_editing.py`, `functions_orchestration_plan_revisions.py`, `route_backend_chats.py`, `route_backend_collaboration.py`, `route_backend_orchestration.py`, `planSubmissionIds.ts`, `orchestrationController.ts`)
+
+#### Bug Fixes
+
+*   **Diagram And Chart Editors Closing On Their Own**
+    *   An open diagram or chart editor closed whenever its message changed, for example when a revision was saved. The message's masks were re-parsed on every change, which remounted each diagram and chart, and a diagram returned a different element tree while it re-rendered. Both now keep the editor mounted, so it stays open until you close it.
+    *   (Ref: `AssistantMarkdown.tsx`, `MermaidDiagram.tsx`)
+
+#### User Interface Enhancements
+
+*   **Keyboard, Limits And Announcements In Assist Inputs**
+    *   Enter sends and Shift+Enter adds a line in all four editors, with Ctrl+Enter and ⌘+Enter kept as aliases. The plan editor previously sent only with Ctrl+Enter or ⌘+Enter.
+    *   A counter shows the length against the 2,000-character limit and says how much to remove past it. Over-limit text is refused rather than silently cut off, as the old inputs' `maxLength` did.
+    *   The thread is announced politely to screen readers as a log. The assist inputs reuse the main composer's editor in a restricted mode without uploads, `/` saved prompts or `@` mentions.
+    *   (Ref: `ComposerEditor.tsx` `restricted`, `AssistThread.tsx`, [Chat interface controls](https://microsoft.github.io/simplechat/reference/chat-controls/))
+
+### **(v0.261.199)**
+
+#### New Features
+
+*   **V2 Workflow Alert Notices**
+    *   A workflow alert that needs attention now pops up in V2. A small notice hangs from **My Workspace** in the navigation rail, or flies out beside its icon when the rail is collapsed or on a phone. It never takes focus, so typing isn't interrupted. Until now V2 only counted these alerts in the bell, so a critical alert waited there until someone opened the panel.
+    *   Only pop-up alerts appear: alerts on every run, and alert rules whose delivery is **Pop-up alert**, or **Default for severity** at medium, high or critical. **Notification bell only** alerts never pop up. Only alerts from the last 24 hours pop up, so coming back after a few days doesn't bring a pile of them; older ones stay in the bell.
+    *   Each alert pops up in one V2 tab of the browser, however many are open, claimed through `localStorage` under a Web Lock. A notice waits while its tab is hidden, a dialog or the bell's panel is open, or the phone's navigation menu is open.
+    *   Info, low and medium notices tuck into the bell after eight seconds, pausing while pointed at or focused. High and critical notices stay until opened or closed. Closing a notice tucks it into the bell, where it stays unread, and it doesn't pop up again.
+    *   Opening the notice grows it into the full alert card: why you're seeing it and the rules that matched, the summary and detail, what went wrong for a failed run, enrichment chips, the alert's links, and **Open workflow**, which opens the workflow's list in its personal or group workspace on the run that raised the alert, even when that list is already open. **Mark read**, **Dismiss**, "1 of 3" with **Next**, and **Mark all read** handle the alerts. Closing the card leaves them unread.
+    *   A notice goes away only when a successful read shows its alert was read, dismissed or has aged out. A failed read keeps it, and so does a count of zero, which the server also answers when it can't count; the zero is checked with a read first. A count that rises as the reader comes back to the tab is always read, even right after another read.
+    *   Several alerts from one workflow share one notice with a count, such as "Failed 4 times since 9:40 AM", and the most urgent comes first. Priorities use the V2 theme's colors in light and dark, and are always named in words. Motion animates only transform and opacity, and becomes short fades under reduced motion. Screen readers announce each notice once without interrupting, and a critical alert straight away. Alert text is shown as plain text, and links open only pages on this site.
+    *   Developers can try the notice and card with sample alerts at `/v2/dev/alert-lab` on the Vite dev server, which now also answers page loads at `/v2` with the app. The lab is loaded lazily from inside the development-only branch, so production builds never reference it.
+    *   (Ref: #1553, #1543, `WorkflowAlertNotice.tsx`, `WorkflowAlertCard.tsx`, `workflowAlertStore.ts`, `useWorkflowAlertRuntime.ts`, `workflowAlertClaims.ts`, `workflowAlertNotices.ts`, `WorkflowsSection.tsx`, `AlertLabPage.tsx`, `App.tsx`, `vite.config.ts`, [V2 Workflow Alert Notices](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKFLOW_ALERT_NOTICES.md), [Manage notifications](https://microsoft.github.io/simplechat/guides/manage-notifications/))
+
+#### Bug Fixes
+
+*   **Bounded Workflow Alert Pop-up Query**
+    *   `GET /api/notifications/workflow-alerts` read every workflow alert a user had within the 60-day TTL and filtered it in Python, on every check. The unread, not-dismissed and not-notify-only filters now run in one parameterized Cosmos query, limited with `TOP` and kept within the user's partition. Classic's pop-up gets the same alerts at the same cadence.
+    *   The route accepts an optional `since_hours`, a whole number from 1 to 1440, to return only recent alerts; V2 asks for 24. Any other value is refused with `400` before anything is read. The response shape is unchanged.
+    *   With `since_hours`, a read that fails now answers `500` instead of an empty list, so V2 doesn't take a storage error for "nothing unread" and drop the notice it is showing. Classic doesn't pass `since_hours` and still gets the empty list.
+    *   New workflow alerts record whether their workflow is personal or group, and which group (`workflow_scope` and `workflow_group_id`), so V2's **Open workflow** finds the right list. The group isn't recorded as `group_id`, because classic makes that the active group when a notification is opened.
+    *   (Ref: `functions_notifications.py`, `route_backend_notifications.py`, `functions_workflow_runner.py`, [V2 Workflow Alert Notices](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKFLOW_ALERT_NOTICES.md#server-the-bounded-query))
+
+### **(v0.261.195)**
+
+#### New Features
+
+*   **V2 Notification Bell And Panel**
+    *   The V2 navigation rail has a notification bell beside the application's name. It shows the unread count, up to **9+**, or a dot when the rail is collapsed, and opens a panel of your notifications, newest first: workflow alerts, Microsoft 365 approval requests, "AI responded" notices, document processing results, share requests and the rest. Until now V2 users could only see these on the classic Notifications page.
+    *   Each notification can be opened, marked read or dismissed, and **Mark all read** clears the lot. Chat links open the conversation in V2, workspace and profile links open their V2 pages, and approvals, pending Microsoft 365 actions and workflow activity open in classic until V2 has those pages.
+    *   Links are followed only when they stay on this site and name a page. A link whose path would lead to another site once followed, such as `/.//host`, and an API endpoint however its path is escaped are refused, and a classic page's address is checked again just before it opens. Notification text is shown as plain text, because it can quote email or web content.
+    *   Changes hold. A slow answer from the server can't undo a read, dismissal or **Mark all read** you just made, **Load more** doesn't skip a notification after you dismiss one, and a change the server refuses is put back and the count read again.
+    *   The count refreshes when you return to the tab and every 30 seconds while it is visible, backing off to five minutes while nothing changes. It doesn't poll in a hidden tab, and stops once the session has signed out.
+    *   A reply you watch finish is marked read at once, so it doesn't add to the bell. A reply that finishes while you are in another tab or on another V2 page stays unread, with its "AI responded" notice, until you come back to it.
+    *   (Ref: #1554, #1543, `NotificationBell.tsx`, `NotificationPanel.tsx`, `notificationStore.ts`, `notificationLinks.ts`, `chatStore.ts`, [V2 Notification Bell and Desktop Notifications](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_NOTIFICATIONS_BELL.md), [Manage notifications](https://microsoft.github.io/simplechat/guides/manage-notifications/))
+
+*   **V2 Desktop Notifications**
+    *   **User Settings > Preferences > Desktop notifications** now works. When an administrator has enabled desktop notifications and the preference is on, V2 raises one operating system notification per reply that finishes while the tab is hidden or unfocused. It names the conversation, never the reply, and clicking it opens the conversation.
+    *   The rules and the preference are shared with classic. Completed orchestrated answers notify too. V2 asks for browser permission when you send, when you turn the preference on, or from **Allow notifications**, and treats the preference as off until it has loaded.
+    *   (Ref: `desktopNotifications.ts`, `PreferencesTab.tsx`, `Composer.tsx`, `orchestrationController.ts`, [Desktop Conversation Notifications](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DESKTOP_CONVERSATION_NOTIFICATIONS.md))
+
+### **(v0.261.194)**
+
+#### New Features
+
+*   **Documents Record Where They Came From**
+    *   Documents that a workflow or a chat creates now record their origin on each document version: the workflow and run, or the conversation and message, plus any orchestration run and step. The server derives it only from bindings it already holds (the artifact's source, its workflow or orchestration producer, the publication receipt, and chat-upload metadata), never from client input or model output.
+    *   Origins are recorded for generated artifacts published from chats, orchestrations, workflow saved outputs and workflow runs, and for files uploaded in chat and saved to a workspace. A workflow run that publishes through the chat artifact pipeline is recorded as workflow output. Workspace uploads, File Sync, the external API and SimpleChat action uploads record no origin, and a new version uploaded by hand has none.
+    *   Documents a workflow saves get a removable `workflow` tag. In group and public workspaces it's added only when the publisher can manage tags there; the origin is recorded either way. Chat-created documents get no tag.
+    *   The V2 document details pane shows **Created by *workflow* · run *time*** or **Created in chat · *conversation title***, linking to that run in the workflow history or to the conversation. Readers who can't open the origin, or whose origin was deleted, see only "Created by a workflow" or "Created in a chat", with no names, titles or IDs.
+    *   No client can set or edit an origin. Every guarded document mutation route, including the bearer-token external API, refuses origin fields with `document_origin_server_managed`. Responses carry at most `origin_kind`, and single-document reads can ask for an access-checked `origin_summary` with `origin_summary=1`.
+    *   The personal, group and public document list routes accept `origin_workflow_id`, `origin_run_id` and `origin_conversation_id` filters, applied inside each list's existing parameterized, scoped Cosmos query. No search-index or deployer changes are needed.
+    *   (Ref: #1555, #1543, `functions_document_provenance.py`, `functions_documents.py`, `functions_artifact_publication.py`, `content_screening/access.py`, `route_frontend_chats.py`, `DocumentDetailsPane.tsx`, `WorkflowRunHistory.tsx`, [Document Provenance](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_PROVENANCE.md), [Uploading and managing documents](https://microsoft.github.io/simplechat/guides/upload-and-manage-documents/))
+
+### **(v0.261.193)**
+
+#### New Features
+
+*   **Calendar Schedules For Workflows**
+    *   A scheduled personal or group workflow can now run at a local time instead of at a fixed interval: daily, on weekdays, on chosen days of the week, or on a day of the month, in an IANA time zone. For example, "Mondays 08:00 America/New_York" runs at 12:00 UTC in summer and 13:00 UTC in winter.
+    *   Runs keep their local time through daylight saving changes. A time the clocks skip runs later by the amount skipped (02:30 becomes 03:30 in New York), and a time that happens twice runs once, the first time. A monthly day that a month doesn't have, such as the 31st, runs on that month's last day, including 28 or 29 February.
+    *   Group workflows that monitor File Sync can use calendar schedules too. A missed run still runs once when the scheduler catches up, then waits for the next scheduled time.
+    *   Existing interval workflows keep their stored schedules byte for byte, so their Microsoft 365 Run as approvals stay valid.
+    *   The inbound MCP workflow summary includes each workflow's schedule and a readable label.
+    *   (Ref: #1544, #1543, `functions_workflow_schedules.py`, `functions_personal_workflows.py`, `functions_group_workflows.py`, `functions_workflow_editor.py`, `functions_mcp_server_tools.py`, [Workflow calendar schedules](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_CALENDAR_SCHEDULES.md), [Create a workflow](https://microsoft.github.io/simplechat/guides/create-a-workflow/))
+
+*   **Workflow Minimum Schedule Interval**
+    *   **Admin Settings > Workflow** adds **Workflow Minimum Schedule Interval (seconds)**, from 1 to 86,400, in the classic and V2 admin pages. Its default, 1, allows every interval, as before.
+    *   It's checked only when an interval schedule is created or changed. Workflows already saved on a shorter interval keep running and can be re-saved unchanged. Calendar schedules are never checked.
+    *   A refused save names the minimum, for example "This schedule runs more often than the administrator allows. Choose an interval of at least 5 minutes."
+    *   (Ref: `functions_workflow_limits.py`, `functions_settings.py`, `admin_settings_fields.py`, `route_frontend_admin_settings.py`, `templates/admin/_panes/workflow.html`, [Workflow settings](https://microsoft.github.io/simplechat/admin/workflow/))
+
+#### User Interface Enhancements
+
+*   **Calendar Schedule Fields In The V2 Workflow Editor**
+    *   A new **Repeats** field chooses a fixed interval, daily, weekdays, weekly on chosen days, or monthly on a day of the month, with **Time** and **Time zone** fields. New schedules start in the browser's time zone when the server offers it, otherwise in UTC with a note saying so.
+    *   The editor reads the schedule back, such as "Schedule: Mondays 08:00 America/New_York", and the workflow list shows the same label. The editor checks the server's schedule rules and the administrator's minimum before saving.
+    *   (Ref: `WorkflowScheduleFields.tsx`, `WorkflowEditorDialog.tsx`, `WorkflowsSection.tsx`, `workflowSettings.ts`, `workflowEditor.ts`)
+
+*   **The Classic Editor Sends Calendar Workflows To V2**
+    *   The classic workspace editor edits only fixed intervals, so opening a calendar-scheduled workflow there says "This workflow uses a calendar schedule. Open V2 to edit it without losing its configuration. Run and Cancel remain available here." instead of replacing its schedule. The classic list shows calendar schedules' labels.
+    *   (Ref: `workflowNeedsNativeEditor`, `static/js/workspace/workspace_workflows.js`)
+
+### **(v0.261.192)**
+
+#### New Features
+
+*   **Uploaded Images Display Inline In React V2 Chat**
+    *   A PNG, JPG, BMP, or TIFF image uploaded in chat now appears in the thread as a picture with a full-size viewer, instead of a file-name chip. TIFF images are converted to PNG for display; the original upload is unchanged.
+    *   While a workspace upload is still processing, the card shows **Processing image…** and a local preview when the browser can draw one. An image held for review shows **Unavailable pending review**.
+    *   HEIC and HEIF photos are not converted, so they render only in Safari. Other browsers show the file card with a hint to convert the photo to JPG or PNG.
+    *   Shared (collaborative) conversations keep the file chip.
+    *   (Ref: `functions_image_formats.py`, `route_backend_conversations.py`, `route_enhanced_citations.py`, `route_frontend_chats.py`, `MessageList.tsx`, `chatImagePreview.ts`, [Chat Image Uploads and Reference Images](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_IMAGE_UPLOADS_AND_REFERENCE_IMAGES.md))
+
+*   **Reference Images For Image Generation**
+    *   With **Image** on, pictures you attach, paste, drop, or pick from a workspace are sent to the image model as visual input, not only as their extracted text. Requests such as "make a cartoon of my house" or "turn this map into an architectural diagram" can now use the picture itself.
+    *   **Use as reference** adds any uploaded or generated image in the conversation to the next image request.
+    *   The number of references follows the selected image model: up to 10 for GPT Image models (the SimpleChat limit), 10 for FLUX.2 flex, 8 for FLUX.2 pro, and 1 for MAI Image and FLUX Kontext. Generation-only models keep attachments disabled in Image mode. GPT Image 1 and 1.5 are also asked to preserve reference details closely.
+    *   Every reference is authorized and screened before it is sent. Metadata is stripped and the image is resized for the model. HEIC and HEIF are refused with a clear message, and references are never silently dropped.
+    *   (Ref: `functions_image_references.py`, `functions_chat_image_references.py`, `functions_image_adapters.py`, `functions_image_capabilities.py`, `route_backend_chats.py`, `model_capabilities.json`, `Composer.tsx`, `imageReferences.ts`, [Generate images](https://microsoft.github.io/simplechat/guides/generate-images/))
+
+*   **Edit An Uploaded Image Into A New Image**
+    *   **Edit** on an uploaded image opens the editor as **Create image from reference**. Describe the change and, when the model supports masking, select a region. **Create new image** adds a new AI image to the conversation and leaves the upload unchanged.
+    *   (Ref: `ImageEditor.tsx`, `chatStore.ts`, `route_backend_chats.py`, [V2 Inline Image Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_IMAGE_EDITING.md))
+
+*   **Reference Images And Requested Styles In Orchestrated Image Tasks**
+    *   With **Orchestrate** and **Image** on, planned **Generate image** tasks can use attached and conversation images as references. Review shows each reference on the task, and you can remove it before approving. References are checked again when the task runs, and the images used are recorded as the task's sources.
+    *   Planned images now follow the style you ask for, including photorealistic images, instead of always being illustrations. Every generated image is still captioned **AI-generated image** and is never presented as a real photograph or as found on the web.
+    *   (Ref: `functions_orchestration_context.py`, `functions_orchestration_images.py`, `functions_orchestration_schema.py`, `functions_orchestration_registry.py`, `functions_orchestration_deliverables.py`, `OrchestrationRunView.tsx`, [Review and edit orchestration plans](https://microsoft.github.io/simplechat/guides/review-and-edit-orchestration-plans/))
+
+*   **Vision Chat Models See Images From The Current Message**
+    *   When a vision-capable chat model answers directly, up to four images attached to the current message, or selected as image documents, are sent as pixels alongside their extracted text. Older images stay in the history as text only.
+    *   Agents and models without vision keep the existing text-only behavior. An image that can't be loaded, including HEIC, is skipped without failing the turn.
+    *   (Ref: `functions_chat_vision.py`, `route_backend_chats.py`, [Upload documents in chat](https://microsoft.github.io/simplechat/guides/upload-documents-in-chat/))
+
+### **(v0.261.191)**
+
+#### Bug Fixes
+
+*   **Comparisons Of Table-Heavy Documents No Longer Stop On Quote Formatting**
+    *   A V2 chat comparison of a document with many tables, such as a narrative PDF compared with a CSV, could end **Partially completed**, with the comparison step failing with "The operation did not produce the complete named results declared by the plan." That step writes the comparison as text and never creates a file. It stopped because Analyze had returned only a partial result for the PDF.
+    *   Analyze rejected correctly quoted evidence whenever the quote's formatting differed from the stored text. Document Intelligence stores tables as HTML and keeps line breaks, while models quote tables as readable text. A quote now also matches when it differs only in line breaks or repeated spaces, table or inline markup, entities, emphasis marks, invisible characters, typographic quotes and dashes, Unicode forms, or letter case. It must still be in the chunk it cites, and start and end on whole words and numbers. Paraphrases, partial words and numbers, and changed numbers or symbols are still rejected, and saved evidence is always the exact source text.
+    *   Analyze now records qualifications, such as a unit the text doesn't state, as caveats on the finding, and observations about a slice as notes. Neither makes the result partial, and both appear in the report, as **Caveat:** lines and under **Analysis notes**. In a comparison, each file's preparation step is now asked only for what its own file contributes, and the comparison step does the comparing.
+    *   When a step can't run because an earlier step returned only a partial result, it now reports `input_partial_not_accepted` instead of `result_invalid`, with a message that says so, and its log names the earlier step's capability. A new `Final findings validated` event gives the counts behind a partial Analyze result, and the window page-range debug log no longer prints `None:None`.
+    *   A run that already failed still fails on retry, because the retry reuses the saved partial result. Ask the question again.
+    *   (Ref: #1540, `functions_document_analysis_results.py`, `functions_document_analysis.py`, `functions_orchestration_planner.py`, `functions_orchestration_result_runtime.py`, `functions_orchestration_executor.py`, `docs/reference/logging-tags.md`, [V2 Comparison Analyze Evidence Matching Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_COMPARISON_ANALYZE_EVIDENCE_MATCHING_FIX.md))
+
+### **(v0.261.190)**
+
+#### New Features
+
+*   **Group And Public Workspaces Are Native In V2**
+    *   Group and public workspaces now work in the React V2 interface, on the design of My Workspace. Choosing a workspace on its V2 page selects it, as the classic interface does, and loads its details, your role and the sections you can use without leaving V2.
+    *   Group workspaces cover documents, prompts, actions, agents, connections (identities, file sources and endpoints), workflows, and management: the directory, members, settings, activity and statistics.
+    *   Public workspaces cover the directory, where you choose which workspaces chat uses and save visibility lists, and documents, prompts and management: members, identities and file sources, settings, activity and statistics. Every reader can browse a public workspace's documents, and download them when downloads are enabled; the Owner, Admins and DocumentManagers manage them and approve generated artifacts.
+    *   The workspaces were built in stages from 0.261.127, and each version's entries describe what it added. Deleting a group or public workspace, the legacy document upgrade, managing an inactive group, and chatting with every visible public workspace at once stay in the classic interface.
+    *   (Ref: #1542, #1541, [Use group workspaces in V2](https://microsoft.github.io/simplechat/guides/manage-group-workspaces/), [Use public workspaces](https://microsoft.github.io/simplechat/guides/use-public-workspaces/), [V2 Shared Workspace Context and Group Shell](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_SHARED_WORKSPACE_CONTEXT.md))
+
+#### Bug Fixes
+
+*   **Tabular Steps Work With Re-uploaded CSV And Workbook Files**
+    *   Fixed orchestration runs, such as a PDF-and-CSV comparison, stalling on the tabular step when the CSV or workbook had been re-uploaded under the same name. The step stopped before reading any rows, the run later reported that the step's saved result could not be confirmed (`result_commit_unconfirmed`), and the step kept showing **Reasoning**.
+    *   The tabular step's replay descriptor carries its own schema version, which was compared with the file's revision even after the source's screening provenance had matched. A matching provenance is now authoritative. Sources without provenance keep their existing checks, and a source that really changed still conflicts.
+    *   Revision conflicts now log `sc_authority_reason`, naming the check that failed, without logging document values.
+    *   Merged from the React V2 branch at `01c728bf`, where it shipped as 0.261.143. This branch had already used 0.261.143 for its group details fix, so here the fix carries the merge's version. Its own documentation and tests keep the React V2 branch's number.
+    *   (Ref: `content_screening/access.py`, `docs/reference/logging-tags.md`, [Re-uploaded Tabular Source Revision Conflict Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/REUPLOADED_TABULAR_SOURCE_REVISION_CONFLICT_FIX.md))
+
+### **(v0.261.189)**
+
+Merged from the React V2 branch at `c9faeae0`. These changes shipped there as 0.261.141 and 0.261.142. This branch had already used those numbers for its own changes, so here they carry the merge's version. The version numbers inside their own documentation and tests are the React V2 branch's.
+
+#### New Features
+
+*   **Native OneNote Workspace Uploads In React V2**
+    *   Upload `.one` sections and `.onepkg` notebooks to personal, group, or public workspaces to search and chat with their typed notes and table contents.
+    *   React v2's document explorer shows the shared supported-format catalog and validates both file selection and drag-and-drop.
+    *   Keeps each notebook package as one workspace document while preserving section names, page titles, and subpage context in searchable text and citations.
+    *   Uses a bounded local extractor, with explicit errors for incomplete, unsafe, unsupported, or oversized files. Handwriting, image OCR, embedded attachments, and direct chat attachment uploads are not included.
+    *   **Deployment requirement:** Rebuild the application container, or build the native extractor when running from source. Existing upload limits still apply; larger notebooks may require a higher configured limit, up to the extractor's 128 MiB input ceiling. Updating this source branch does not deploy the application.
+    *   On this branch the V2 group and public document explorers share the personal explorer, so they also show the supported-format catalog and check file types on selection and drag-and-drop.
+    *   Shipped in the React V2 branch as 0.261.142.
+    *   (Ref: #1525, `config.py`, `functions_onenote.py`, `functions_documents.py`, `route_backend_v2.py`, `DocumentExplorer.tsx`, `native/onenote_extractor/`, `Dockerfile`, [Native OneNote Ingestion](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ONENOTE_INGESTION.md))
+
+#### Bug Fixes
+
+*   **Orchestration Compare, CSV And Word Runs Complete**
+    *   Comparing a PDF with a CSV, creating a CSV from a model's answer, and turning an illustrated report into a Word file each produced a correct plan and then failed while running it. They now complete, and their failures are recorded with their reasons.
+    *   Shipped in the React V2 branch as 0.261.141.
+    *   (Ref: [Orchestration Execution Failures Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_EXECUTION_FAILURES_FIX.md))
+
+### **(v0.261.188)**
+
+#### User Interface Enhancements
+
+*   **Dialogs Keep And Return Keyboard Focus**
+    *   Every V2 dialog now moves focus into itself when it opens, keeps Tab inside it, and returns focus to the control that opened it when it closes, including with Escape. Before, closing a dialog left focus on the page body.
+    *   (Ref: `Modal.tsx`, [V2 Workspace Presentation Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+*   **A Failed List Says So, With A Retry**
+    *   In the group and public Prompts, Identities, File sources, Endpoints and Workflows sections, a list that fails to load shows the error with a **Retry** button, announced to screen readers, instead of looking empty with a create button.
+    *   (Ref: `SectionList`, `useSectionResource`, the prompt workbench, [V2 Workspace Presentation Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+*   **Readable Tags, Phones And Larger Text**
+    *   Tag chips pick black or white text for contrast with the tag's colour; the prompt list leaves room for its details at 200% text; group Actions and narrow cards stay usable on a phone; locked overview entries are outlined rather than faded.
+    *   Public workspace wording no longer mentions groups, actions or classic browsing where they don't apply, and a link to a deleted public document says it's gone.
+    *   (Ref: [V2 Workspace Presentation Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_WORKSPACE_PRESENTATION_FIX.md))
+
+### **(v0.261.187)**
+
+#### Bug Fixes
+
+*   **The V2 Directory No Longer Makes Unavailable Workspaces Visible For Chat**
+    *   An inactive public workspace, or one whose status isn't recognized, shouldn't be searched in chat, but public chat checks only which workspaces you've made visible. The V2 directory's switch, **Show all in chat** and **Use this list** could all make such a workspace visible.
+    *   Now the switch can only turn an unavailable workspace off, and the bulk and saved-list actions leave it hidden and say how many they skipped. The server-side check in public chat is a follow-up.
+    *   (Ref: `PublicDirectoryList.tsx`, `PublicDirectoryPage.tsx`, `publicVisibility.ts`, `publicDirectory.ts`, [V2 Public Directory](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_DIRECTORY.md))
+
+### **(v0.261.186)**
+
+#### Bug Fixes
+
+*   **Readers Can Download Public Workspace Documents In V2**
+    *   When downloads are turned on for a public workspace, classic lets every reader download its documents, but V2 offered downloads only to its Owner, Admins and DocumentManagers. V2 now follows classic: anyone who can read the workspace can download, individually or in a batch.
+    *   Changing documents stays with the Owner, Admins and DocumentManagers, and a reader never learns of a generated file still awaiting approval.
+    *   (Ref: `functions_public_document_policy.py`, `functions_public_document_access.py`, `functions_workspace_context.py`, [Public Reader Downloads Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/PUBLIC_READER_DOWNLOADS_FIX.md))
+
+### **(v0.261.185)**
+
+#### New Features
+
+*   **Public Workspace Settings, Activity And Statistics In V2**
+    *   A public workspace's Owner and Admins now manage its settings in V2, under **Manage**: the Owner edits the name, description, color and logo, and the Owner and Admins edit file downloads and retention. They also read its recent activity, and chart and export its statistics, which DocumentManagers can see too.
+    *   New routes name the workspace in the path, under `/api/public-workspaces/<id>/settings` and `/insights`. Writes carry a per-section revision and go through the public workspace guard; a failed read says so instead of returning an empty list. The classic routes are unchanged.
+    *   The group Settings, Activity and Statistics sections are now shared with public workspaces; the group's behaviour and text are unchanged.
+    *   Deleting the workspace still happens on the classic page. Settings explains that it removes only the workspace record, and quotes V2's own count of the workspace's current documents.
+    *   (Ref: `route_backend_public_settings.py`, `functions_public_settings.py`, `functions_public_settings_policy.py`, `functions_public_insights.py`, `WorkspaceSettingsSection.tsx`, [V2 Public Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_SETTINGS.md), [Public Settings APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_SETTINGS_APIS.md))
+
+#### Bug Fixes
+
+*   **Classic Public Statistics Show Storage Correctly**
+    *   The classic manage public workspace page read "2 undefined" for storage past a terabyte, and "NaN undefined" for a missing size, in its statistics and exported CSV. It now writes B to TB, capped at TB, and "0 B" for no size.
+    *   (Ref: `manage_public_workspace.js`, [Classic Public Stats Export Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/CLASSIC_PUBLIC_STATS_EXPORT_FIX.md))
+
+*   **A Malformed Timestamp No Longer Hides The Group Activity Feed**
+    *   One activity record whose timestamp couldn't be converted to UTC made the whole V2 group Activity feed fail. That record now shows without a time, and the rest of the feed is shown.
+    *   (Ref: `functions_group_insights.py`, [Group Activity Timestamp Overflow Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_ACTIVITY_TIMESTAMP_OVERFLOW_FIX.md))
+
+### **(v0.261.184)**
+
+#### New Features
+
+*   **Ask To Manage A Public Workspace's Documents From The V2 Directory**
+    *   A signed-in user who doesn't manage a public workspace can ask to manage its documents from the workspace's row in the V2 directory, and cancel the request while it's pending. The Owner and Admins decide in Members, as before.
+    *   New routes `POST` and `DELETE /api/public-workspaces/<id>/membership/requests` act only on the caller's own request. The directory row reports `membership: "pending"` for the caller, and nothing about anyone else.
+    *   (Ref: `functions_public_membership.py`, `route_backend_public_membership.py`, `functions_public_directory.py`, `PublicDirectoryList.tsx`, [V2 Public Directory](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_DIRECTORY.md), [Public Membership APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_MEMBERSHIP_APIS.md))
+
+*   **Public Directory Visibility Tools In V2**
+    *   **Show all in chat** and **Hide all from chat** set every workspace at once, and saved lists store and reuse a set of visible workspaces, in the classic directory's settings shape. They cover the whole directory, up to 1,000 workspaces, and report what they changed.
+    *   **Chat with visible (classic)** opens classic chat over the visible workspaces, since V2 chat scopes to one public workspace at a time.
+    *   (Ref: `PublicDirectoryVisibilityTools.tsx`, `publicDirectory.ts`, `publicVisibility.ts`, `PublicDirectoryPage.tsx`, [V2 Public Directory](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_DIRECTORY.md))
+
+### **(v0.261.183)**
+
+#### Bug Fixes
+
+*   **Unapproved Public Artifacts Are No Longer Shown To Every Reader**
+    *   A generated file waiting for approval to be published into a public workspace was shown to everyone who can read the workspace, which is every signed-in user: V2 listed it with its title, abstract and tags, counted it, and returned its details and its requester; chat's document picker listed it too.
+    *   Now only the workspace's Owner, Admins and DocumentManagers see it before approval, in a held form marked "Awaiting generated artifact approval". To everyone else it doesn't exist until it's approved.
+    *   The chat document list and its tag counts leave pending artifacts out for everyone, since none can be used in chat until it's approved. Classic chat and the classic workspace page's tag filter use the same routes, so they change too.
+    *   (Ref: `functions_public_document_policy.py`, `functions_public_document_reads.py`, `route_backend_public_documents.py`, [Public Pending Artifact Visibility Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/PUBLIC_PENDING_ARTIFACT_VISIBILITY_FIX.md))
+
+### **(v0.261.182)**
+
+#### New Features
+
+*   **Manage Public Workspace Identities And File Sources In V2**
+    *   A public workspace's Owner, Admins and DocumentManagers now keep its identities and File Sync sources in V2, in the **Identities** and **Sync** sections, when File Sync is enabled for the workspace. They're the group sections, with public rules: writes only while the workspace is active, read-only in locked and upload-disabled workspaces, and nothing for readers.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/identities` and `/file-sources`. Their writes are conditional, stored secrets are never returned, and a source's documents are deleted only when asked, as public documents. The classic routes are unchanged.
+    *   The identity editor offers only the File Sync use, and the source editor says "Use a saved workspace identity".
+    *   (Ref: `route_backend_public_identities_scoped.py`, `route_backend_public_file_sources_scoped.py`, `functions_public_identity_policy.py`, `functions_public_file_source_policy.py`, `identityWorkbench.ts`, `fileSourceWorkbench.ts`, [V2 Public Connections](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_CONNECTIONS.md), [Public Connection APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_CONNECTION_APIS.md))
+
+### **(v0.261.181)**
+
+Merged from the React V2 branch at `d243b0ca`. These changes shipped there as 0.261.134, 0.261.137, 0.261.138, 0.261.139 and 0.261.140. This branch had already used those numbers for its own changes, so here they carry the merge's version. The version numbers inside their own documentation and tests are the React V2 branch's.
+
+#### New Features
+
+*   **Orchestration Plans Deliver What You Asked For**
+    *   A Gather / Reason / Render plan now lists what you asked to receive before its steps: the answer, each file with its format, images with their count, charts, and diagrams. The server checks the list against what it can actually produce. A file must come from a Render task in the same format, so "create a csv of states and capitals" produces the CSV file itself instead of rows in the chat.
+    *   Something that cannot be produced here stays on the list as unavailable, with the server's own reason, such as "This file format is not available for this plan." The planner cannot promise it in a step title, mention it only in an assumption, or call something unavailable that the server can produce. A plan that breaks these rules gets one correction attempt, then fails with a clear message.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Orchestration Deliverables](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images In Orchestrated Answers And Files**
+    *   Images you ask for, such as "an image of each president", are generated as planned tasks when the plan runs. Approving the plan is the consent, and in Run automatically mode your request is. Each image appears inline in the answer with the usual viewer and editor, is captioned as an AI-generated illustration, and is embedded in DOCX, PDF, and PowerPoint files. A plan generates at most four images.
+    *   A file can embed only images its own content was prepared from, with bytes checked against what was generated. Images the planner only suggests remain approval cards.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_images.py`, `functions_orchestration_rendering.py`, `functions_orchestration_bootstrap.py`, `functions_image_generation.py`, [Create files with orchestration](https://microsoft.github.io/simplechat/guides/create-files-with-orchestration/))
+
+#### Breaking Changes
+
+*   **Gather / Reason / Render Is The Only Orchestration Plan Contract**
+    *   The **Gather / Reason / Render harness (preview)** admin setting (`enable_chat_orchestration_harness`) and its server-side admission check were removed. Every new plan uses Gather / Reason / Render whenever **Enable Chat Orchestration** is on. A stored value of the old setting is dropped when settings load or save.
+    *   The earlier phase-based contract (Knowledge / Reasoning / Output phases and a final **Answer** step) was deleted. A saved capability list that still names its Answer capability (`respond`) is read as **Prepare content** (`compose`). The stored list is not rewritten, so runs saved before the upgrade can still be continued or retried, and nothing adds **Create a file** or **Generate images** to a narrowed list.
+    *   Plans saved by the earlier contract no longer open or rerun. Opening, editing, retrying, running or cancelling one shows "This plan was created by an earlier orchestration version and can't be opened or rerun. Start a new request." Such runs are left out of the conversation's run list and the planner's history of earlier runs; deleting the conversation still removes their saved data.
+    *   Orchestrated agent steps now always run under the acquisition checks that previously applied only to Gather / Reason / Render plans. They admit Azure AI Foundry (classic) agents without local actions, workspace knowledge or web sources; other agents, including local Semantic Kernel agents, are refused with a safe failure instead of running unchecked.
+    *   **Migration**: Start a new request for any conversation whose earlier orchestration plan no longer opens. Administrators who narrowed the capability list and want files or images in plans should select **Create a file** and **Generate images**.
+    *   Shipped in the React V2 branch as 0.261.139.
+    *   (Ref: `functions_settings.py`, `functions_orchestration_schema.py`, `functions_orchestration_registry.py`, `route_backend_orchestration.py`, `templates/admin/_panes/chat-orchestration.html`, [Deliverable Planning Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md), [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+#### Bug Fixes
+
+*   **Orchestration Execution And Saved Status Accept Cosmos SDK Responses**
+    *   Fixed valid plans failing before their first step with `context_unavailable`, followed by missing-run responses and repeated **Checking execution status** notices.
+    *   Storage boundaries now normalize Cosmos SDK dictionary responses while retaining ownership checks, conditional ETags, execution leases, and deletion guards. Scheduler recovery can read the saved attempt without resetting its original deadline or silently creating another execution.
+    *   Shipped in the React V2 branch as 0.261.140.
+    *   (Ref: `functions_orchestration_bootstrap.py`, `functions_orchestration_plan_revisions.py`, `functions_orchestration_recovery.py`, `functions_orchestration_output_store.py`, `ORCHESTRATION_COSMOS_RESPONSE_COMPATIBILITY_FIX.md`)
+
+*   **Planner And Execution Failures Have Specific, Safe Diagnostics**
+    *   Planner rejection events now retain the exact deliverables rule and correction-attempt number. Admission and recovery events identify the failing stage, response type, and whether a durable outcome was recorded.
+    *   Application Insights preserves these diagnostic fields and hashed workflow identifiers without logging raw prompts, document content, or provider responses. Required source/output checks and the existing single repair budget remain in place.
+    *   Shipped in the React V2 branch as 0.261.140.
+    *   (Ref: `functions_orchestration_deliverables.py`, `functions_orchestration_planner.py`, `functions_orchestration_execution.py`, `functions_appinsights.py`, `docs/reference/logging-tags.md`)
+
+*   **Writing, Comparison, And File-Only Plans Match Their Deliverable Contract**
+    *   Fixed ambiguous planning guidance that produced answer declarations with both a file format and a quantity. One repair removed the format but then failed on the remaining quantity; the prompt now specifies fields by deliverable kind and asks corrections to check the whole declaration.
+    *   File-only plans can omit `final_response` or use null without inventing an extra answer step. Malformed bindings and declared answers without a valid text producer are still rejected.
+    *   Selected sources now carry server-resolved file types, so a PDF/CSV comparison can use compatible narrative and tabular steps rather than send the CSV to narrative-only comparison. Type mismatches and missing Analyze source bindings are caught during planning and share the existing single correction budget.
+    *   Shipped in the React V2 branch as 0.261.140.
+    *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_plan_editing.py`, `ORCHESTRATION_PLANNER_DELIVERABLE_FIELDS_FIX.md`)
+
+*   **One Planner Carries All Of The Planning Guidance**
+    *   The planner's single prompt now includes the earlier prompt's guidance on choosing agents and actions, searching before analyzing and passing the found sources on, choosing between web search and deep research by cost and need, using conversation, saved memory and earlier runs, writing self-contained step tasks, visuals, and when and how to ask clarifying or file questions.
+    *   A plan the planner writes incorrectly is refused instead of being silently repaired, so an approved plan is exactly the work that runs. The step that writes the chat answer cannot be disabled while editing a plan.
+    *   Shipped in the React V2 branch as 0.261.139.
+    *   (Ref: `functions_orchestration_planner.py`, `functions_orchestration_plan_revisions.py`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md), [Gather / Reason / Render orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ORCHESTRATION_GATHER_REASON_RENDER.md))
+
+*   **Missing Files And Images Are Never Reported As Delivered**
+    *   Fixed orchestrated answers that said "I can't attach a .docx", left "[Insert Image here]" placeholders, or reported success without the requested file. The answer step is told when a later task saves its output as a file, so it writes the finished content.
+    *   A run in which a requested image or file was not produced is reported as incomplete. A deterministic **Delivery notes** list after the answer names what was not delivered or is not available, such as "2 of 3 images were generated."
+    *   A missing image makes the run retryable. The retry reuses the images that were generated, generates the missing one, and writes the answer again with every image. A retry is not offered when it could only send again an image prompt the image service declined; ask again with a different description instead. The chat recovers an attempt that already delivered a file one file at a time, so ask again to regenerate a missing image there.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_recovery.py`, [Deliverable Planning Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **A Large Or WEBP Image No Longer Fails The Whole File**
+    *   Fixed a Word, PDF, or PowerPoint file failing because one generated image was over 4 MB, such as a detailed 1536x1024 illustration, or was a WEBP image. The file now embeds a copy the document format accepts, re-encoded and scaled down only as needed, and the chat keeps the original image.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_rendering.py`, `functions_orchestration_result_contracts.py`, [Orchestration Deliverables](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/ORCHESTRATION_DELIVERABLES.md))
+
+*   **Generated Images Never Offer A Paid Second Approval**
+    *   Fixed a planned image showing as an **Approve** card, which bought a duplicate image when clicked, until the chat loaded it, and fixed an earlier answer losing its images after a retry. Each answer now lists the images it shows, the chat loads them when the run finishes, and a planned image's card shows the image or says it is loading. Approving one through the API returns the saved image instead of generating another. Conversation exports and the classic chat show the same images.
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `functions_orchestration_execution.py`, `functions_orchestration_events.py`, `functions_image_generation.py`, `route_backend_chats.py`, `route_backend_conversation_export.py`, `InlineImageProposal.tsx`, `MessageList.tsx`, `imageProposalSpec.ts`)
+
+*   **Orchestrate Remembers Auto And Pinned Models**
+    *   Fixed the Orchestrate model choice resetting to a specific model whenever you left the chat or opened a new chat, which meant choosing **Auto - choose per step** again on every visit.
+    *   The choice is now saved to your account, so Auto or a pinned model stays selected across chats, reloads, and devices. A model pinned for Orchestrate does not change the model normal chat uses.
+    *   Fixed the normal chat model sometimes snapping back to the model that was selected when the page loaded after you left the chat and returned.
+    *   Shipped in the React V2 branch as 0.261.137.
+    *   (Ref: `Composer.tsx`, `orchestrationModelRouting.ts`, `route_backend_users.py`, [Model Picker Persistence Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_MODEL_PICKER_PERSISTENCE_FIX.md))
+
+*   **Gather / Reason / Render Answers Match What Orchestration Could Already Do**
+    *   Fixed orchestrated requests quietly falling back to legacy plans when **Auto - choose per step** was selected. Legacy plans cannot create files, so "create a csv" or "create a word file" produced inline text instead. With the Gather / Reason / Render harness enabled, Auto requests now plan that work, and each step runs on its own authorized model, which is checked again before the run. Editing or restoring an Auto plan now keeps Auto routing instead of silently dropping it.
+    *   The answer step now receives saved memory and the relevant earlier messages, so follow-ups such as "put those in a table" work. It also includes the charts, Mermaid diagrams, and image proposal cards the planner asks for, and places charts drawn from an action's exact rows.
+    *   Fixed answers refusing well-known facts ("I don't have source evidence... to provide an accurate CSV") and filling reports with "Verify with a reputable source". The planner now declares what each answer may rely on: general knowledge, gathered sources only, or both. When an optional search fails, the answer is still written and says what could not be checked. If another step also fails, retrying the run from its failed step now searches again and rewrites the answer with the results, instead of stopping with "Saved step inputs changed".
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_orchestration_composition.py`, `functions_orchestration_execution.py`, `functions_orchestration_executor.py`, `functions_orchestration_planner.py`, `functions_orchestration_schema.py`, [Deliverable Planning Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Web Search Failures Explain Themselves, Retry Once, And Link Their Sources**
+    *   A failed web search now reports a specific reason, such as a timeout, an HTTP status, or a service that isn't configured, instead of "This operation could not complete." Read-only gathering retries once after a temporary service error.
+    *   Web search results no longer pass raw citation markers such as 【3:1†source】 into answers. Each marker becomes a numbered link to its source, in both ordinary chat and orchestration.
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_web_search_results.py`, `route_backend_chats.py`, `functions_orchestration_adapters.py`, [Deliverable Planning Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Auto Model Routing Plans Data Analysis, Research, And Actions On Common Deployments**
+    *   Fixed Auto refusing whole plans with "No eligible connected model for Structured data analysis" (or Reasoning) when models such as gpt-4o or gpt-4.1 were connected. Few catalog profiles rate those tasks, so when no connected model is rated for a step's task, the step now runs on the capable model best rated for general answering, and its reason says so. Rated models still win, and a model rated unsuitable for the task, an archived profile, or a model without a required capability such as tool calling is never used.
+    *   Fixed every Auto-routed action and deep research step in a Gather / Reason / Render plan being refused by the external-source check, which rebuilt the step's model from the run's empty Auto selection instead of the step's approved binding.
+    *   The answer is now credited to the model that wrote it. A reply that reuses an earlier turn's result keeps the default model rather than borrowing another step's. An Ask-planner revision that cannot be assigned models now reports that no eligible model is available and keeps the previous plan.
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_orchestration_model_routing.py`, `functions_orchestration_external_metadata.py`, `functions_orchestration_plan_editing.py`, [Choose models for orchestration](https://microsoft.github.io/simplechat/guides/model-catalog-routing/), [Deliverable Planning Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+*   **Whole-Run Retries Of Plans With Files Render Their Own Files**
+    *   Fixed a whole-run retry of a Gather / Reason / Render plan ending as failed whenever the new attempt had to render a file that the previous attempt had already created or admitted. The new attempt listed the previous attempt's withdrawn file as its own, tried to reuse a file that was no longer available, or was refused when rendering the same content again.
+    *   Each attempt now owns its files. A retry renders them again from saved content, without calling a model, and the previous attempt's files are shown as superseded. React V2 still offers **Retry from failed step** only for an attempt without files, and **Retry file** for a single failed file is unchanged.
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `functions_orchestration_recovery.py`, `functions_orchestration_services.py`, [Create files with orchestration](https://microsoft.github.io/simplechat/guides/create-files-with-orchestration/), [Deliverable Planning Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_DELIVERABLE_PLANNING_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Plans Show Only What Runs**
+    *   The plan card, plan panel and run view no longer group steps into Knowledge / Reasoning / Output phases or show an **Always runs** answer step. Steps appear in dependency order with their Gather, Reason or Render role.
+    *   A finished run's steps show their real status, such as **Completed** or **Failed**, instead of **Will run**. Opening a plan saved by the earlier contract shows the message above instead of a spinner.
+    *   A run from the earlier contract that a tab was still following, including one restored after a reload, no longer stays **running** and blocks Stop and retries in its conversation. Its recovery notice shows the message above without offering to check or review it.
+    *   Admin capability help now explains that plans need **Prepare content** to write an answer or a file's content and **Create a file** to deliver files.
+    *   Shipped in the React V2 branch as 0.261.139.
+    *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `OrchestrationMapView.tsx`, `OrchestrationRecoveryNotice.tsx`, `orchestrationPlan.ts`, `orchestrationController.ts`, `orchestrationResume.ts`, `orchestrationErrors.ts`, [Review and edit orchestration plans](https://microsoft.github.io/simplechat/guides/review-and-edit-orchestration-plans/), [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/))
+
+*   **You Asked For**
+    *   The plan panel and approval card list what you asked for, each item's state, and the task that produces it. Unavailable items appear in a warning color with their reason. Generate image tasks show their prompt, and the chat loads generated images as soon as the run finishes.
+    *   The Image control's notice now reads "Orchestrate will plan the images you ask for and generate them when the plan runs."
+    *   Shipped in the React V2 branch as 0.261.138.
+    *   (Ref: `OrchestrationDeliverables.tsx`, `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `orchestrationPlan.ts`, `Composer.tsx`, [Review and edit orchestration plans](https://microsoft.github.io/simplechat/guides/review-and-edit-orchestration-plans/), [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/))
+
+*   **Orchestrate Model Picker Under Manual Controls**
+    *   The Orchestrate model picker now sits in the normal model picker's place under **Manual controls**, instead of appearing above the message box, so the toolbar keeps its shape when Orchestrate is switched on.
+    *   **Auto - choose per step** is the default wherever a connected model has a catalog profile rated for general answering. Auto is not offered when no model qualifies, and when an administrator hides Manual controls, Orchestrate uses Auto without a picker.
+    *   Shipped in the React V2 branch as 0.261.137.
+    *   (Ref: `Composer.tsx`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/), [Choose models for orchestration](https://microsoft.github.io/simplechat/guides/model-catalog-routing/))
+
+*   **Planner Model Dropdown In Admin Settings**
+    *   Orchestration → Planner model is now one dropdown on both the V2 and classic Admin Settings pages, replacing four text boxes for the deployment name, model ID, endpoint ID, and provider.
+    *   It lists the same models as the default chat model picker, or the classic deployments when AI Connections are off, and writes the four settings for you. **Use the answer model (default)** keeps planning on whichever model answers.
+    *   A saved planner model that is no longer listed stays selected and is labelled as missing rather than being cleared, and V2 refuses saves the runtime could never resolve.
+    *   Shipped in the React V2 branch as 0.261.137.
+    *   (Ref: `OrchestrationPlannerModelPicker.tsx`, `admin_orchestration_planner_model.js`, `chat-orchestration.html`, `admin_settings_fields.py`, [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/#chat-orchestration-planner-model-section))
+
+*   **See Who Planned The Work**
+    *   The plan panel and approval card now name the model that wrote the plan and how it was chosen. Each answer task shows its answer basis and requested visuals, and optional inputs are labeled.
+    *   Shipped in the React V2 branch as 0.261.134.
+    *   (Ref: `OrchestrationRunView.tsx`, `OrchestrationPlanCard.tsx`, `orchestrationPlan.ts`, [Review and edit orchestration plans](https://microsoft.github.io/simplechat/guides/review-and-edit-orchestration-plans/))
+
+### **(v0.261.180)**
+
+#### Bug Fixes
+
+*   **Public Member Import Lists Only Public Roles**
+    *   The V2 public Members section's CSV import said roles could be user, admin or document_manager, and accepted `user` rows that the server then refused one by one. A public workspace assigns only Admins and DocumentManagers.
+    *   The dialog now says "Roles are admin or document_manager.", and a `user` row is refused when the file is read, before anything is sent. The group import is unchanged.
+    *   (Ref: `groupMembership.ts`, `ImportMembersDialog.tsx`, `MembersSection.tsx`, [Public Member CSV Roles Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/PUBLIC_MEMBER_CSV_ROLES_FIX.md))
+
+### **(v0.261.179)**
+
+#### New Features
+
+*   **Manage Public Workspace Members In V2**
+    *   A public workspace's Owner and Admins now manage its Admins and DocumentManagers in V2, in a **Members** section under **Manage**. They can add members, change roles, remove members, and decide DocumentManager requests, and the Owner can transfer ownership. It's the group Members section, with public rules.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/membership/...`, write conditionally, and record adds, role changes and removals in the activity log.
+    *   The V2 public directory offers **Create** to people allowed to create public workspaces.
+    *   (Ref: `route_backend_public_membership.py`, `functions_public_membership_policy.py`, `MembersSection.tsx`, `PublicMembersSection.tsx`, `functions_public_directory_policy.py`, [V2 Public Members](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_MEMBERS.md), [Public Membership APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_MEMBERSHIP_APIS.md))
+
+#### Breaking Changes
+
+*   **DocumentManagers No Longer See Members' Emails In V2**
+    *   Classic shows every member's email to every member. In V2's public Members section, the Owner and Admins see emails and a DocumentManager sees names and roles only. The server withholds the emails (decision 18). The classic page is unchanged.
+    *   **Migration**: none.
+
+### **(v0.261.178)**
+
+#### User Interface Enhancements
+
+*   **Group Members Can Run Group Workflows In V2**
+    *   Classic, and the server, let every group member run and cancel a group workflow, but V2 offered **Run** and **Cancel** only to workflow managers. Every member of an active group now gets them; creating, editing and deleting stay with the workflow manager roles.
+    *   The workspace context publishes each member's workflow operations from the same policy the routes use, so V2 never offers an action the server would refuse.
+    *   (Ref: `functions_group_workflow_policy.py`, `functions_workspace_context.py`, `WorkflowsSection.tsx`, [V2 Group Workflows](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_WORKFLOWS.md))
+
+### **(v0.261.177)**
+
+#### New Features
+
+*   **Public Workspace Prompts In V2**
+    *   A public workspace's prompts now open in the V2 prompt workbench. Every signed-in user can read and use them. Owners, Admins and DocumentManagers can create, edit and delete them in an active workspace, and a conflicting edit keeps your draft.
+    *   New routes name the workspace in the path, `/api/public-workspaces/<id>/prompts`, so a change can't land in a different workspace from the one on screen.
+    *   **Use in chat** works for a prompt in a public workspace you've hidden from chat. It fetches just that prompt and changes no setting.
+    *   (Ref: `route_backend_public_prompts_scoped.py`, `functions_public_prompt_policy.py`, `lib/promptWorkbench.ts`, `Composer.tsx`, [V2 Public Prompts](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_PROMPTS.md), [Public Prompt APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_PROMPT_APIS.md))
+
+#### Breaking Changes
+
+*   **Classic Public Prompt Changes Need An Active Workspace**
+    *   The classic `/api/public_prompts` create, update and delete routes wrote in any workspace status. They now answer 403 "This public workspace is not accepting prompt changes right now." unless the workspace is active, matching the new routes. Reading is unchanged.
+    *   **Migration**: none. Make the workspace active before changing its prompts.
+
+### **(v0.261.176)**
+
+#### Bug Fixes
+
+*   **Statistics Date Ranges Are Limited To 366 Days**
+    *   The classic group, public workspace and profile statistics accepted any custom range between 2000 and 9998, and the profile route had no bound at all. A range of millions of days made one request take seconds of processing and over a gigabyte of memory, and return a very large response.
+    *   Every statistics route now refuses a custom range longer than 366 days with "Choose a date range of 366 days or fewer.", as the V2 group statistics already did. The profile statistics also refuse dates outside 2000-01-01 to 9998-12-31.
+    *   (Ref: `functions_stats_windows.py`, `route_backend_groups.py`, `route_backend_public_workspaces.py`, `route_frontend_profile.py`, [Statistics Window Span Limit Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/STATS_WINDOW_SPAN_LIMIT_FIX.md))
+
+*   **Public Workspace Role Changes Check Permission First**
+    *   A public workspace role change or ownership transfer looked the member up in the directory before checking that the caller could make the change. It now checks first. A transfer to an older member entry keeps the member's name and email, and Control Center's ownership approvals keep every member.
+    *   (Ref: `route_backend_public_workspaces.py`, `route_backend_control_center.py`, [Public Workspace Writer Safety Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
+### **(v0.261.175)**
+
+#### New Features
+
+*   **A Public Workspace Directory In V2**
+    *   **Public Workspaces** in V2 now opens a directory of every public workspace you can discover, with **All** and **My workspaces** views, search, and paging kept in the address. Open a workspace, or choose which ones your public chat searches with **Visible for chat**, the same setting the classic directory uses.
+    *   It reads a new route, `GET /api/public_workspaces/directory`, which the V2 public workspace picker now uses too. Its rows carry no owner email, unlike the classic list route.
+    *   The directory, public workspace pages, the picker and the chat handoffs use the public workspace names an administrator configures.
+    *   (Ref: `route_backend_public_directory.py`, `functions_public_directory.py`, `PublicDirectoryPage.tsx`, `lib/publicVisibility.ts`, `lib/publicWorkspaceLabels.ts`, [V2 Public Workspace Directory](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_DIRECTORY.md), [Public Directory APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_DIRECTORY_APIS.md))
+
+### **(v0.261.174)**
+
+#### User Interface Enhancements
+
+*   **Content Screening Scans From A Group's Documents**
+    *   A group's Owner, Admins and DocumentManagers now get **Screening scans** in the V2 group Documents section, the same modal personal documents offer. They can scan the group, follow recent scans with cancel, resume and retry, see the policy additions, and open Content review.
+    *   The server decides who sees it: the workspace context publishes the members the screening routes accept, so a member is never offered a control the server would refuse.
+    *   (Ref: `DocumentsSection.tsx`, `ScreeningWorkspaceControls.tsx`, `functions_workspace_context.py`, [V2 Group Document Management](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_DOCUMENT_MANAGEMENT.md))
+
+### **(v0.261.173)**
+
+#### Bug Fixes
+
+*   **Public Workspace Changes No Longer Overwrite Each Other**
+    *   Every classic writer of a public workspace, 27 in all, saved a copy it had read earlier. They covered members, requests, roles, ownership, settings, logo, downloads, retention, tags and seven Control Center actions. So one change could undo another made at the same moment, and a save could bring back a deleted workspace. They now write conditionally, keep unrelated changes, never recreate a deleted workspace, and answer "The public workspace changed while your request was being saved. Try again." when a workspace keeps changing.
+    *   Admins promoted in classic can now see and decide document manager requests, add members and receive ownership. A legacy member entry no longer breaks the members routes, and a role change or ownership transfer keeps the member's name and email.
+    *   Unknown workspace statuses now get the inactive permissions instead of the active ones. Statistics refuse out-of-range dates with a reviewed message instead of failing. The update, download and logo routes answer reviewed messages instead of raw error text, including for an oversized image. Invalid download and retention settings are refused.
+    *   A tag change that loses to a concurrent change answers the coded vocabulary conflict, and metadata edits and bulk tagging save nothing when refused.
+    *   (Ref: `functions_public_workspaces.py`, `route_backend_public_workspaces.py`, `route_backend_public_documents.py`, `route_backend_control_center.py`, `route_backend_retention_policy.py`, [Public Workspace Writer Safety Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/PUBLIC_WORKSPACE_WRITER_SAFETY_FIX.md))
+
+### **(v0.261.172)**
+
+#### Bug Fixes
+
+*   **Ignoring A Browsed File Takes Effect**
+    *   In the V2 group file source editor, **Ignore** sent the file's path under the source's root, but the sync engine tracks each file by its full remote path, so the ignore never matched and the file kept syncing. Folders were also offered Ignore, which the engine can't honour.
+    *   Browse now gives every file its full remote path, built the way the engine builds it for SMB, Azure Files, Azure Blob and OneDrive. **Ignore** and **Restore** send it, and appear on files only.
+    *   (Ref: `functions_file_sync.py`, `FileSourceEditorDialog.tsx`, [File Source Browse Ignore Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/FILE_SOURCE_BROWSE_IGNORE_FIX.md))
+
+### **(v0.261.171)**
+
+#### New Features
+
+*   **Choose What A Group File Source Syncs, In V2**
+    *   The V2 group file source editor now sets the four remaining classic options: the folders and files to sync under the root (picked with Browse or typed), fixed tags for every synced file (with the group's existing tags as suggestions), how folders become tags, and what happens to the SimpleChat copy when a source file is deleted.
+    *   Editing a source keeps all four unless you change them, and a conflict reload merges them like the other fields.
+    *   (Ref: `FileSourceEditorDialog.tsx`, `lib/fileSourceFields.ts`, [V2 Group File Sources](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_FILE_SOURCES.md))
+
+#### Bug Fixes
+
+*   **Browsing A Group File Source Works For SMB Sources**
+    *   V2 Browse sent the source's root as the folder to list, which the server resolves under the root, so every SMB source answered an error. Choosing an entry also overwrote the root.
+    *   Browse now starts at the root, opens folders by their path under it, and never changes the root.
+    *   (Ref: `FileSourceEditorDialog.tsx`, [File Source Browse Path Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/FILE_SOURCE_BROWSE_PATH_FIX.md))
+
+### **(v0.261.170)**
+
+#### Bug Fixes
+
+*   **Editing A Workspace Identity Keeps Its Managed Identity Client ID**
+    *   Editing a workspace identity that signs in with a user-assigned managed identity erased its client ID, in the classic editor and the V2 group editor, so it silently fell back to the default managed identity. Only identities whose client ID was set through the API were affected, since neither editor can set it.
+    *   The identity details now carry the client ID and a service principal's tenant, both non-secret, and both editors send the client ID back unchanged. The classic editor serves personal, group and public workspaces and the admin global identities, so all of them are fixed.
+    *   (Ref: `functions_workspace_identities.py`, `lib/identityFields.ts`, `workspace-identities.js`, [Identity Credential Round Trip Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/IDENTITY_CREDENTIAL_ROUND_TRIP_FIX.md))
+
+### **(v0.261.169)**
+
+#### Bug Fixes
+
+*   **Sharing And Publication Decisions Stay Bound To Their Workspace**
+    *   The V2 document collaboration adapters built their requests for the workspace they were created for, but checked the server's receipt against the caller's scope as it was when the receipt arrived. A caller that changed its scope object in between would see a confirmed decision rejected as unconfirmed.
+    *   Each adapter now keeps one frozen copy of its scope for the request, the receipt check and the public review's workspace name. The V2 Documents sections already created a new scope for each workspace, so nothing changes for users today.
+    *   Found by the full comparison of the React V2 base branch's tests against this branch, which also aligned three tests that had gone stale on this branch.
+    *   (Ref: `lib/documentCollaboration.ts`, `test_v2_group_document_collaboration.mjs`, [Document Collaboration Bound Scope Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/DOCUMENT_COLLABORATION_BOUND_SCOPE_FIX.md))
+
+### **(v0.261.168)**
+
+#### Bug Fixes
+
+*   **Refused Group Tag Edits Save Nothing**
+    *   A metadata edit or bulk tag in a group saved the documents before it checked the group's tag definitions. If someone changed the group's tags at that moment, the request was refused with "Refresh and retry", although the documents had already been saved.
+    *   The definitions are now written first, so a refused edit saves nothing, and a refused bulk tag reports one conflict for the whole batch.
+    *   (Ref: `functions_group_document_management.py`, [Group Tag Definitions First Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_TAG_DEFINITIONS_FIRST_FIX.md))
+
+#### User Interface Enhancements
+
+*   **A Refused Upload Says Why**
+    *   A group or public workspace manager who drops files where uploads are disabled, or into a locked workspace, is now told why instead of getting a generic message.
+    *   (Ref: `lib/documentAccessCopy.ts`, `DocumentExplorer.tsx`, [Shared Workspace Document Access Copy Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SHARED_WORKSPACE_DOCUMENT_ACCESS_COPY_FIX.md))
+
+### **(v0.261.167)**
+
+#### Bug Fixes
+
+*   **A Lost Group Tag Change Says What Happened**
+    *   When a group's tags changed while someone was creating, recolouring or renaming a tag, the answer depended on timing. A change caught early said "The group's tags or permissions changed. Refresh and retry." A change that landed during the write said "The resource changed. Refresh and retry the operation.", with no code.
+    *   Both now answer 409 with the first sentence and `error_code: vocabulary_conflict`. The final vocabulary step of a rename or delete, and bulk tagging, report the same sentence and code.
+    *   (Ref: `functions_group_document_management.py`, [Group Tag Vocabulary Conflict Code Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_TAG_VOCABULARY_CONFLICT_CODE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Shared Workspaces Say Who Can Add Documents**
+    *   An empty group or public Documents section no longer tells a viewer who can't upload to "Use the classic workspace to manage files", which couldn't help them either. It says who can add documents, or why no one can right now: uploads disabled, a locked workspace, or a status that doesn't allow it.
+    *   A viewer with no document operations who tries a change is told the same way, rather than being sent to classic. Public workspaces now say "public workspace" instead of "group".
+    *   (Ref: `lib/documentAccessCopy.ts`, `DocumentExplorer.tsx`, `DocumentsSection.tsx`, [Shared Workspace Document Access Copy Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SHARED_WORKSPACE_DOCUMENT_ACCESS_COPY_FIX.md))
+
+### **(v0.261.166)**
+
+#### User Interface Enhancements
+
+*   **Call Agent Copy Matches What You Can Do**
+    *   In a group's **Actions** section, the **Call agent** introduction promised a choice even when the manager below it was read-only, as it is for members and when group actions are off. It now describes the agents and triggers instead, and offers the choice only when you can make it.
+    *   (Ref: `GroupWorkspacePage.tsx`, [Group Call Agent Read-Only Copy Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_CALL_AGENT_READ_ONLY_COPY_FIX.md))
+
+### **(v0.261.165)**
+
+#### New Features
+
+*   **Group Settings, Activity And Statistics In V2**
+    *   Group owners and admins can manage a group's profile, logo, file downloads and retention, read its recent activity, and chart and export its statistics in the V2 group workspace, under **Manage** beside Members.
+    *   The server decides who sees what and which controls work, and a locked control says why. Unsaved edits survive switching browser tabs and conflicting saves, a failed save keeps them, and **Discard changes** puts an editor back to the saved settings.
+    *   Statistics reuse the personal charts and export dialog. The export writes the classic group CSV column for column.
+    *   Deleting a group is still finished on the classic page, from a **Delete this group** section in Settings that shows how many documents remain.
+    *   (Ref: `GroupSettingsSection.tsx`, `GroupActivitySection.tsx`, `GroupStatisticsSection.tsx`, `lib/groupSettings.ts`, `lib/groupStats.ts`, `functions_workspace_context.py`, [V2 Group Settings, Activity and Statistics](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_SETTINGS.md))
+
+#### User Interface Enhancements
+
+*   **Manage Group (Classic) Only Where It's Still Needed**
+    *   The group header's **Manage group (classic)** button now appears only in an inactive group or one whose status isn't recognized. Everything else it offered is native in V2.
+    *   (Ref: `GroupWorkspacePage.tsx`, [V2 Group Settings, Activity and Statistics](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_SETTINGS.md))
+
+### **(v0.261.164)**
+
+#### Bug Fixes
+
+*   **V2 Shows A Failure's Sentence, Not Its Code**
+    *   When a request failed with a code and a sentence, V2 showed the code, for example `document_propagation_incomplete`. It now shows the sentence, such as "The operation changed stored data, but required cleanup or propagation is incomplete. Refresh before retrying."
+    *   This covers document management, File Sync and collaboration refusals, the Microsoft 365 pending actions, the terms-of-use gate and CI bearer authentication. Failures whose message is already a sentence are unchanged.
+    *   (Ref: `lib/apiClient.ts`, [V2 Fixture Parity Findings Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Deleting A Document Names The Conversation That Needs It**
+    *   When a conversation depends on a document, the V2 delete confirmation now names the conversation and links to it in V2 chat, in a new tab.
+    *   Only the conversation's id or a link to this site is used, never a link to another site or to classic chat, and the title is always shown as text.
+    *   (Ref: `lib/documentOperations.ts`, `DocumentDialogs.tsx`, [V2 Fixture Parity Findings Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Batch Downloads Keep The Server's Archive Name**
+    *   Downloading several group or public documents at once saved `documents.zip`. It now saves `group-documents.zip` or `public-documents.zip`, the names the server gives.
+    *   A single document keeps its own file name, and personal downloads are unchanged.
+    *   (Ref: `lib/documentOperations.ts`, `DocumentExplorer.tsx`, [V2 Fixture Parity Findings Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+*   **Group Agents Offer Only Group Knowledge**
+    *   The V2 group agent editor offered public knowledge sources, which a group agent never keeps. It now offers only the group's own knowledge. Personal agents are unchanged.
+    *   (Ref: `lib/agentWorkbench.ts`, [V2 Fixture Parity Findings Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_FIXTURE_PARITY_FINDINGS_FIX.md))
+
+### **(v0.261.163)**
+
+#### Bug Fixes
+
+*   **Classic Group Statistics Export Downloads Again**
+    *   On the classic **Manage group** page, exporting statistics showed "Failed to export group stats." and downloaded nothing whenever **Storage Usage** was ticked, which it is by default. The export called a byte formatter the page never had.
+    *   The export now downloads its CSV. Storage sizes read like the public workspace export's, for example "1.5 KB", and nothing else in the file changes.
+    *   (Ref: `static/js/group/manage_group.js` `exportGroupStats`, [Classic Group Stats Export Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/CLASSIC_GROUP_STATS_EXPORT_FIX.md))
+
+### **(v0.261.162)**
+
+#### Bug Fixes
+
+*   **Searching Your Groups Ignores Case And Matches Descriptions**
+    *   Searching your own groups was case-sensitive and matched names only, so "research" didn't find "Research Group" and a word from a group's description found nothing. It affected the V2 group picker, the V2 Settings **Groups** tab, the classic **My Groups** page and the profile page's **Groups** tab.
+    *   The search now ignores case and matches a group's name or description, as the group directory and the admin group search already did. An empty search still lists all your groups, and paging is unchanged.
+    *   (Ref: `functions_group.py` `search_groups`, `GET /api/groups`, [Group Picker Search Casefold Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_PICKER_SEARCH_CASEFOLD_FIX.md))
+
+### **(v0.261.161)**
+
+#### Bug Fixes
+
+*   **SimpleChat Agent Tools Explain A Group That Keeps Changing**
+    *   When adding a group member or marking a group inactive couldn't be saved because the group kept changing, the agent got a generic "unexpected" error and the application logged an error with a traceback.
+    *   The tools now answer with the same message every group route uses, "The group changed while your request was being saved. Try again.", and the code `group_write_conflict`. Nothing was saved, so the request can be repeated. The log entry is a warning with no group data.
+    *   (Ref: `simplechat_plugin.py`, [SimpleChat Agent Group Output Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SIMPLECHAT_AGENT_GROUP_OUTPUT_FIX.md))
+
+### **(v0.261.160)**
+
+#### Bug Fixes
+
+*   **The Last Group Writers No Longer Overwrite Concurrent Changes**
+    *   Control Center's activity refresh, group status change, add member and ownership approvals, the classic tag routes, the SimpleChat agent's inactive marker, and the legacy bulk model endpoint save each saved a copy of the group read earlier. Any of them could undo a change made in between, and one that saved after a deletion brought the group back. Control Center's refresh, which runs nightly by default, did this to every group.
+    *   Each now applies its change to the group as it currently is, never recreates a deleted group, and refuses a group that keeps changing with one shared message: "The group changed while your request was being saved. Try again."
+    *   Ownership approvals are re-checked when approved: a request whose owner has since changed is refused, and approving the same request twice no longer marks it failed. An approval that can't be applied because the group keeps changing asks for a new request, since a failed approval can't be approved again.
+    *   The bulk endpoint save deletes superseded Key Vault secrets only after the save commits, and never one the saved endpoints still use. A failed Key Vault delete no longer fails the save.
+    *   (Ref: `route_backend_control_center.py`, `route_backend_group_documents.py`, `functions_documents.py`, `functions_simplechat_operations.py`, `functions_group.py`, `route_backend_models.py`, [Group Residual Writers Write Safety Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_RESIDUAL_WRITERS_WRITE_SAFETY_FIX.md))
+
+*   **SimpleChat Agent Tools No Longer Return The Stored Group**
+    *   The create group, add member and mark inactive tools answered the model with the whole stored group, including member emails, pending requests and, with Key Vault storage off, inline model endpoint credentials.
+    *   They now answer only the group's ID, name and status.
+    *   (Ref: `simplechat_plugin.py`, [SimpleChat Agent Group Output Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SIMPLECHAT_AGENT_GROUP_OUTPUT_FIX.md))
+
+*   **Classic Group Requests Refuse Malformed Input Cleanly**
+    *   The group download setting treated the string "false" as true, a retention save with a non-JSON body answered 500, and a statistics date at the calendar's edge failed the request.
+    *   Each now answers 400 with a clear message and changes nothing.
+    *   (Ref: `route_backend_groups.py`, `route_backend_retention_policy.py`, `functions_stats_windows.py`, [Group Classic Request Gaps Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_CLASSIC_REQUEST_GAPS_FIX.md))
+
+### **(v0.261.159)**
+
+#### Bug Fixes
+
+*   **Held Documents No Longer Offer Ordinary Actions In Their Details**
+    *   The V2 documents Details pane showed Chat, Download, Tag, Edit, Extract, Share and Delete for a document held by content screening. Most were disabled, but Share was live, so a held file in My Workspace could be shared from the pane.
+    *   A held document's details now explain the hold and offer only the cleanup its workspace allows: Delete where a group or public workspace permits it for that document, and the group sharing review where it's available. A personal held document offers no action; the hold is resolved in Content review.
+    *   Documents that are only blocked from chat, such as a shared group document awaiting approval, keep their other permitted actions.
+    *   (Ref: `DocumentDetailsPane.tsx`, [Held Document Details Actions Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_HELD_DOCUMENT_DETAILS_ACTIONS_FIX.md))
+
+### **(v0.261.158)**
+
+#### Bug Fixes
+
+*   **V2 Admin Settings No Longer Wait On The Update Check**
+    *   Fixed V2 Admin Settings showing only loading placeholders, with the version banner reading "Checking for updates...", until the server finished checking GitHub for a newer release. When the daily cached check had expired, the settings response waited for the releases page to download and be parsed, and an unreachable GitHub held the page for at least the full timeout.
+    *   The update check is now its own admin-only request, `GET /api/v2/admin/update-status`, sent at the same time as the settings. Settings appear and can be edited and saved as soon as they load, and only the version banner waits for the check. A failed check still shows "Unable to check for application updates." without affecting the settings.
+    *   Classic Admin Settings is unchanged.
+    *   Merged from the React V2 branch, where it shipped as 0.261.133. This branch had already assigned 0.261.133 to native public document management, so here the fix carries the merge's version.
+    *   (Ref: `route_backend_v2.py`, `AdminSettingsPage.tsx`, `adminFields.ts`, [Administration](https://microsoft.github.io/simplechat/admin/), [Update Check Non-Blocking Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_UPDATE_CHECK_NON_BLOCKING_FIX.md))
+
+### **(v0.261.157)**
+
+#### Bug Fixes
+
+*   **Group Profile And Logo Edits Refused When The Group's Status Isn't Recognized**
+    *   The native group settings routes let the owner of a group with an unrecognized status change its name, description, color and logo, although the rest of the workspace treats such a group as unavailable. Those edits are now refused unless the group is active or has uploads disabled, with a message that says the status isn't recognized.
+    *   Downloads, retention and the settings, activity and statistics reads are unchanged.
+    *   (Ref: `functions_group_settings_policy.py`, `functions_group_settings.py`, [Group Settings Unknown Status Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_SETTINGS_UNKNOWN_STATUS_FIX.md))
+
+### **(v0.261.156)**
+
+#### Bug Fixes
+
+*   **Editing A File Source No Longer Erases Its Tenant**
+    *   Saving a group file source in V2 that signs in with a service principal, even just to rename it, removed its stored tenant ID, so the next sync signed in to the wrong tenant. The editor also showed **Tenant ID** empty. The tenant is now shown and kept.
+    *   Editing a source in either the V2 or the classic editor also removed a managed identity's client ID set through the API. It's now kept too.
+    *   If a source was affected, open it, enter the tenant ID again, and save.
+    *   (Ref: `sanitize_file_sync_source`, `fileSourceFields.ts`, [File Source Credential Round Trip Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/FILE_SOURCE_CREDENTIAL_ROUND_TRIP_FIX.md))
+
+### **(v0.261.155)**
+
+#### New Features
+
+*   **V2 Group Members**
+    *   Group workspaces in V2 have a **Members** section, under a new **Manage** group in the navigation. Everyone in the group can see who belongs to it and leave; owners and admins manage it there.
+    *   Owners and admins can add members from the directory, import them from a CSV file in the classic format, change roles, remove members, and approve or reject requests to join. Several members can be changed or removed together, with each member's result shown. The owner can transfer ownership.
+    *   The page offers only what the server allows each person, and shows the server's message when a change is refused. A request someone else already handled is reported as handled, not as an error.
+    *   Members isn't available in inactive groups; **Manage group (classic)** still covers them, and group settings.
+    *   (Ref: `GroupMembersSection.tsx`, `groupMembership.ts`, `sections.members` in `functions_workspace_context.py`, [V2 Group Members](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_MEMBERS.md))
+
+### **(v0.261.154)**
+
+#### New Features
+
+*   **Group Settings, Activity and Statistics APIs**
+    *   New server routes under `/api/groups/<group_id>/settings` read and change a named group's name, description, color, logo, download setting and retention periods. Routes under `/api/groups/<group_id>/insights` read its activity feed, statistics and document count.
+    *   Each settings section carries a revision, so a save made from an out-of-date copy is refused with a reload instead of overwriting someone else's change. Every write applies to the group as it currently is.
+    *   One policy decides what the caller may do, matching the classic rules. It is published as `settings_management` in the settings read and in the V2 group context. A locked or inactive group's name, description, color and logo can't be changed, as on the classic page.
+    *   The activity feed shows reviewed summaries and members' display names only, never document titles, file names, emails or error text. The statistics match the classic figures, refuse custom ranges over 366 days, and report a storage failure instead of zeros.
+    *   The V2 Settings, Activity and Statistics views that use these routes arrive in a later release.
+    *   (Ref: `functions_group_settings.py`, `functions_group_settings_policy.py`, `functions_group_insights.py`, `route_backend_group_settings.py`, [Group Settings APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_SETTINGS_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Settings Saves No Longer Undo Membership Changes**
+    *   Classic renames and the color, logo, download and retention saves, as well as the administrator's retention force push, saved the whole group without a condition. A save landing just after a membership change could undo it, and a late save could recreate a deleted group. Each now applies to the group as it currently is.
+    *   (Ref: `route_backend_groups.py`, `route_backend_retention_policy.py`, [Group Settings Write Safety Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_SETTINGS_WRITE_SAFETY_FIX.md))
+
+*   **Delete Group Asks For The Group's Documents To Be Removed First**
+    *   The classic manage page's document count always came back as 0, so **Delete group** never asked the owner to remove the group's documents, and they were left behind. The count is now the group's current documents, as its document list shows them.
+    *   (Ref: `get_group_file_count`, `count_current_group_documents`, [Group Document Count Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_DOCUMENT_COUNT_FIX.md))
+
+*   **Group Retention Settings Save Correctly**
+    *   **Using organization default** can be saved again, and saving one retention period keeps the other. Values that aren't a number of days get the existing message instead of being stored as 1 day or failing.
+    *   The route now follows the group workspaces and group retention policy switches.
+    *   (Ref: `update_group_retention_settings`, [Group Retention Settings Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_RETENTION_SETTINGS_FIX.md))
+
+*   **Group Settings Errors No Longer Show Internal Details**
+    *   A failed rename, download or logo save showed the raw Cosmos DB or image library message. It now shows a plain message and logs only the error type. A logo that decompresses to an enormous image is refused instead of failing.
+    *   (Ref: `route_backend_groups.py`, [Group Settings Error Text Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_SETTINGS_ERROR_TEXT_FIX.md))
+
+### **(v0.261.153)**
+
+#### User Interface Enhancements
+
+*   **V2 Group Workspace No Longer Points To Classic For Native Sections**
+    *   Every group workspace section is native, so the navigation and overview no longer label unavailable sections "Classic". An unavailable section shows why it's unavailable instead.
+    *   The Tags classic button and the classic hand-off panel are gone. A section link with an item the section doesn't support, such as `/v2/groups/<id>/prompts/<prompt>`, now opens the section, and a workflow link opens that workflow.
+    *   When group actions are off, **Actions** says so and keeps the Call agent manager, with no classic link.
+    *   Documents' classic link is now **Classic tools**, for upgrading legacy documents, the one classic tool with no V2 equivalent yet.
+    *   (Ref: `GroupWorkspacePage.tsx`, `DocumentsSection.tsx`, `TagsSection.tsx`, [V2 Shared Workspace Context](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_SHARED_WORKSPACE_CONTEXT.md))
+
+### **(v0.261.152)**
+
+#### Bug Fixes
+
+*   **Group Editors Keep Other People's Changes After A Conflict**
+    *   Fixed the group prompt, identity, endpoint and file source editors re-sending your whole draft after a save conflict. That silently undid the other person's changes to fields you never touched.
+    *   Reloading now merges: their changes fill the fields you didn't touch, your edits are kept, and any field you both changed is named, never its value. Secrets are never compared or shown.
+    *   If the item was deleted meanwhile, the editor says so and saves nothing.
+    *   (Ref: `lib/rebaseDraft.ts`, `PromptWorkbench.tsx`, `GroupIdentitiesSection.tsx`, `ModelConnectionsManager.tsx`, `GroupFileSourcesSection.tsx`, [Group Editor Conflict Rebase Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_EDITOR_CONFLICT_REBASE_FIX.md))
+
+### **(v0.261.151)**
+
+#### New Features
+
+*   **Group Membership APIs**
+    *   New server routes under `/api/groups/<group_id>/membership/` list a group's members, paged and searchable, and add, re-role, remove and let members leave. They also list, approve and reject join requests, and transfer ownership, all for a named group rather than the account's active one.
+    *   The member list says what the caller may do: `membership_management` for the group, and `member_actions` on each member. Both come from one policy module that matches the classic rules.
+    *   The owner's role changes only by transfer, and the owner can't be removed or leave. Members can't be added to locked or inactive groups. A new member is looked up in the directory by ID.
+    *   The V2 Members view that uses these routes arrives in a later release.
+    *   (Ref: `functions_group_membership.py`, `functions_group_membership_policy.py`, `route_backend_group_membership.py`, [Group Membership APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_MEMBERSHIP_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Membership Changes No Longer Overwrite Each Other**
+    *   Classic join requests, approvals, adds, removals, role changes and ownership transfers saved the whole group without a condition. So two changes at once could lose one, and a late change could recreate a deleted group. Each now applies to the group as it currently is, and a deleted group stays deleted.
+    *   Joining a group with no pending-request list no longer fails.
+    *   (Ref: `update_group_document_with_etag_guard`, `route_backend_groups.py`, [Group Membership Write Safety Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_MEMBERSHIP_WRITE_SAFETY_FIX.md))
+
+*   **Classic Membership Edge Cases**
+    *   Approving someone who was already a member no longer adds them twice, and every pending request from a user is settled in one decision.
+    *   The owner's role can no longer be changed except by transfer, and a transfer keeps the old owner's name and email.
+    *   The classic bulk remove now reports its successes, and the members list no longer fails on malformed entries.
+    *   (Ref: `route_backend_groups.py`, `add_group_member_for_current_user`, [Group Membership Edge Cases Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_MEMBERSHIP_EDGE_CASES_FIX.md))
+
+*   **User Search Errors No Longer Expose Graph Details**
+    *   `/api/userSearch` returned Microsoft Graph's error body to the browser and had no timeout. Failures now return a fixed message, time out after 20 seconds, and log only the status code.
+    *   (Ref: `route_backend_users.py`, [User Search Error Hardening Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/USER_SEARCH_ERROR_HARDENING_FIX.md))
+
+### **(v0.261.150)**
+
+#### New Features
+
+*   **V2 Group Directory**
+    *   Find, join and create groups in V2 at `/v2/groups/directory`, reached from **Browse all groups** in the group workspaces header or from the screen shown when no group is selected. The **All**, **My groups** and **Discover** views, the search and the page stay in the address.
+    *   Each group shows its name, description, member count, owner's name, and your role or pending request. **Open** goes to a group you belong to. **Request to join** and **Cancel request** update the row from the server's answer, and a conflicting change reloads the list rather than guessing.
+    *   **Create group** appears only when the server allows it, including the **CreateGroups** role rule. It checks the name and description limits the way the server counts them, and then opens the new group.
+    *   (Ref: `GroupDirectoryPage.tsx`, `DirectoryList.tsx`, `CreateGroupDialog.tsx`, `groupDirectory.ts`, [V2 Group Directory](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_DIRECTORY.md))
+
+### **(v0.261.149)**
+
+#### Bug Fixes
+
+*   **Workflow Saves After A Deletion Keep The Draft**
+    *   Fixed a File Sync source deleted while the V2 editor was open. A group workflow's save failed with a 404, which the editor treated as lost access, losing the draft. A personal workflow's save failed with a server error. Both now get a 400 naming the problem, with the draft kept, and a group editor marks the source so it can be removed.
+    *   Fixed a V2 save of a workflow deleted after the editor opened it. The save silently recreated the workflow; it's now refused with a 409 that writes nothing, and the draft stays open to copy.
+    *   (Ref: `WorkflowSourceUnavailableError`, `WorkflowDeletedConflict`, `refuse_save_of_deleted_workflow`, [Workflow Save After Deletion Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_SAVE_AFTER_DELETION_FIX.md))
+
+*   **Workflow Settings Refusals Name The Rule**
+    *   File Sync, schedule and trigger refusals used to share one generic message. Each now has a reviewed message with the code `invalid_workflow_settings`, on both save routes and in the classic editor.
+    *   The V2 editor checks the same rules, with the same messages, before saving personal and group workflows. When File Sync is off for a group, the editor says so, from a new `file_sync_enabled` field on the group File Sync sources route.
+    *   A non-finite schedule value no longer causes a server error.
+    *   (Ref: `lib/workflowSettings.ts`, `WorkflowPublicValidationError`, `route_backend_workflows.py`, [Workflow Settings Reviewed Messages Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_SETTINGS_REVIEWED_MESSAGES_FIX.md))
+
+*   **Read-Only Workflow Editors No Longer Request Run As Accounts**
+    *   A group member's read-only workflow editor asked for the run-as accounts, which only workflow managers may list, and showed a load error. It now shows only whether an account is selected, and requests nothing.
+    *   (Ref: `WorkflowMicrosoft365RunAs.tsx`, [Workflow Run As Read-Only View Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_RUN_AS_READ_ONLY_VIEW_FIX.md))
+
+### **(v0.261.148)**
+
+#### Bug Fixes
+
+*   **Public Publication Decisions Open The Document**
+    *   Fixed the notification a member gets when a public workspace manager approves or rejects their generated file. It linked to `/v2/public-workspaces/<id>/documents`, a path the V2 app doesn't serve, so it opened the V2 home page. It now opens `/v2/public/<id>/documents` with the document named.
+    *   A new check fails if any backend link points to a V2 path that the V2 router doesn't serve. Notifications sent before the fix keep their old link.
+    *   (Ref: `functions_public_document_publication.py`, `test_public_workspace_notification_links_fix.py`, [Public Document Decision Link Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/PUBLIC_DOCUMENT_DECISION_LINK_FIX.md))
+
+### **(v0.261.147)**
+
+#### New Features
+
+*   **Native Group File Sources In V2**
+    *   The group workspace's **File sources** section is native in V2. Owners, Admins and DocumentManagers list the group's SMB, Azure Files and Azure Blob Storage sources, and in an active group create, edit, delete and sync them.
+    *   The editor tests the connection and browses the remote location before saving. It can bind one of the group's reusable identities, and while browsing a saved source it can ignore or restore a path.
+    *   Deleting asks whether to keep the documents the source brought in. The section reports the counts, and says plainly when documents were deleted even though the source couldn't be removed.
+    *   A save made after someone else changed the source keeps your draft. Refusals such as a sync that's already running show the server's reviewed message.
+    *   (Ref: `GroupFileSourcesSection.tsx`, `FileSourceEditorDialog.tsx`, `fileSourceWorkbench.ts`, [V2 Group File Sources](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_FILE_SOURCES.md))
+
+### **(v0.261.146)**
+
+#### New Features
+
+*   **Group Directory APIs**
+    *   New server routes back the native V2 group directory:
+        *   `GET /api/groups/directory` lists every group you can discover, paged, sorted and searchable, with your membership in each and whether you may create a group;
+        *   `POST /api/groups/directory` creates a group;
+        *   `POST` and `DELETE /api/groups/<group_id>/join-request` ask to join a group, and cancel that request. Cancelling is new.
+    *   The listing never returns an owner's email or ID, or any member's entry. The membership arrays are reduced to the caller's own entries in the database.
+    *   Group creation is decided by one policy that the directory also reports, so the page can't offer Create to someone the server would refuse. Names are limited to 80 characters and descriptions to 500, with reviewed messages.
+    *   Join requests are written conditionally: a concurrent change is kept, and a group deleted meanwhile is reported as missing, never recreated. Every group status still accepts requests, as before.
+    *   The directory page itself arrives in a later release. The classic Find Group and Create Group flows are unchanged.
+    *   (Ref: `functions_group_directory.py`, `functions_group_directory_policy.py`, `route_backend_group_directory.py`, [Group Directory APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_DIRECTORY_APIS.md))
+
+#### Bug Fixes
+
+*   **Workspace Notification Links Open The Management Page**
+    *   Fixed six notifications that led to a 404. The group created, member added and role changed notifications linked to `/manage_group/<id>`, and the public workspace member added and role changed notifications linked to `/manage_public_workspace`. Neither path is served.
+    *   They now link to `/groups/<group_id>` and `/public_workspaces/<workspace_id>`. Notifications created before the fix keep their old link.
+    *   (Ref: `_build_group_manage_url`, `route_backend_groups.py`, `route_backend_public_workspaces.py`, [Workspace Notification Links Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKSPACE_NOTIFICATION_LINKS_FIX.md))
+
+### **(v0.261.145)**
+
+#### New Features
+
+*   **Native Group Endpoints In V2**
+    *   The group workspace's **Endpoints** section is native in V2. It lists the model connections a group owns for its own agents and workflows. Owners and Admins add, edit, enable or disable, and delete them in an active group, and can discover models and test chat before saving. Everyone else in the group sees a read-only list.
+    *   It reuses the administrator's connection manager through a scope-aware adapter, and talks only to the group's own routes. The administrator-only tests, network policy and notices are not shown in group scope.
+    *   A save made after someone else changed the connection keeps your draft and offers **Reload latest**. A delete refused because an agent or workflow still uses the connection names what uses it.
+    *   Foundry discovery in the group agent editor now works for group-scoped connections, through `POST /api/groups/<group_id>/models/foundry/agents`.
+    *   (Ref: `GroupEndpointsSection.tsx`, `ModelConnectionsManager.tsx`, `createGroupModelConnectionsAdapter`, [V2 Group Endpoints](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_ENDPOINTS.md))
+
+### **(v0.261.144)**
+
+#### New Features
+
+*   **Native Workflow Alert Editing**
+    *   Personal and group workflows can have their alerts set up and changed in the V2 workflow editor: when to alert, a pop-up priority, and up to 20 rules. The rules cover seven kinds of condition, each with a scope, a severity and a delivery.
+    *   Before this, a workflow created or saved in V2 could never get alerts, because the classic editor can't open V2 definitions. The group editor's link to the classic alert editor is removed.
+    *   The editor checks the settings with the server's own rules and messages before saving, and a workflow whose alerts you didn't touch is saved with them unchanged.
+    *   (Ref: `WorkflowAlertEditor.tsx`, `workflowAlerts.ts`, `functions_workflow_alerts.py`, [V2 Workflow Alert Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKFLOW_ALERT_EDITING.md))
+
+#### Bug Fixes
+
+*   **A Removed Task No Longer Blocks Every Save**
+    *   Fixed V2 refusing every save, with a generic "Invalid workflow settings" message, after a task watched by an alert rule was deleted. The editor now marks the rule and says which one to fix.
+    *   Invalid alert settings now get a specific message naming the rule, on both save routes and in the classic editor. Other invalid settings keep the generic message.
+    *   (Ref: `WorkflowPublicValidationError`, `route_backend_workflows.py`, [Removed-Task Save Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKFLOW_ALERT_REMOVED_TASK_SAVE_FIX.md))
+
+*   **Personal Workflows That Analyze Changed Files Can Be Saved In V2**
+    *   Fixed V2 refusing to save a personal workflow whose Analyze task uses the files File Sync changed, a setup the server accepts. It already worked for group workflows from 0.261.141.
+    *   (Ref: `workflowFileSyncProvidesAnalyzeTargets`, [Analyze Changed Files Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md))
+
+### **(v0.261.143)**
+
+#### Bug Fixes
+
+*   **Group Details No Longer Expose The Stored Group Document**
+    *   Fixed `GET /api/groups/<group_id>` returning the stored group document to every member. When Key Vault secret storage is off, that included the plaintext credentials of the group's model endpoints. It also included pending join requests and internal fields.
+    *   The route now returns only what the group management page uses, plus the caller's role. The retention policy is limited to Owners and Admins, as the public workspace details route already does.
+    *   Endpoints, join requests and members remain available from their own routes, with their own permissions.
+    *   (Ref: `route_backend_groups.py`, `build_group_details_payload`, [Group Details Payload Disclosure Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_DETAILS_PAYLOAD_DISCLOSURE_FIX.md))
+
+### **(v0.261.142)**
+
+#### New Features
+
+*   **Group File Source APIs**
+    *   New routes manage a group's File Sync sources for a named group, at `/api/groups/<group_id>/file-sources`. They cover list, create, edit, delete, connection tests, folder browsing, Sync now, run history and ignored paths, without depending on the account's active group.
+    *   If two managers edit the same source, the second save is refused instead of silently overwriting the first. A sync finishing never counts as a change.
+    *   A delete asks explicitly whether to delete the documents the source produced, and reports how many were deleted. It is refused while a sync is running. If the source changes after its documents were already deleted, the response says so instead of claiming nothing happened.
+    *   New credentials only take effect when a save succeeds, and deleting a source removes its stored secrets. The editor options list only the identities a source can actually use.
+    *   The native V2 editor for group file sources arrives in a later release. Until then, group sources are still managed in the classic group workspace.
+    *   (Ref: `route_backend_group_file_sources_scoped.py`, `functions_group_file_source_access.py`, `functions_group_file_source_policy.py`, `functions_file_sync.py`, [Group File Source APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_FILE_SOURCE_APIS.md))
+
+#### Bug Fixes
+
+*   **Sync Now Explains Why It Didn't Start**
+    *   **Sync now** used to answer "Verify the source configuration and try again" when a sync was already queued or running, or when the File Sync concurrent-run limit was reached. It now says which of those happened, in the classic and native workspaces.
+    *   (Ref: `queue_file_sync_source_run`, `FileSyncPublicValidationError`)
+
+### **(v0.261.141)**
+
+#### New Features
+
+*   **File Sync Triggers In V2 Group Workflows**
+    *   Group workflows can use the **Monitor File Sync changes** trigger in the native V2 editor. On a schedule, it syncs the chosen group File Sync sources and runs only when files changed. A manual or interval workflow can also sync its sources first before each run.
+    *   The editor applies the server's rules before saving: one to ten of the group's own sources, and waiting for the sync before continuing only on changes. It flags a source the group no longer offers so it can be removed. The source list is requested for the page's own group, so another tab changing the active group can't swap it.
+    *   An Analyze task can work on the files each sync changed instead of selected documents.
+    *   (Ref: `WorkflowFileSyncFields.tsx`, `workflowEditor.ts`, `route_backend_workflows.py`, [V2 Group Workflows](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_WORKFLOWS.md))
+
+#### User Interface Enhancements
+
+*   **Group Workflow Alert Summary**
+    *   Group workflows show their stored alert settings read-only: when to alert, the pop-up priority and the number of rules. Saving in V2 keeps them unchanged.
+    *   A workflow the classic editor can still open links there to edit its alerts, and warns that saving in V2 converts it. Native alert editing arrives in a later release.
+    *   (Ref: `WorkflowAlertSummary.tsx`, [V2 Group Workflows](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_WORKFLOWS.md))
+
+#### Bug Fixes
+
+*   **Group Workflows That Analyze Changed Files Can Be Saved In V2**
+    *   Fixed V2 refusing to save a group workflow whose Analyze task has no selected documents because File Sync supplies the changed files, a setup the server accepts and the classic editor creates.
+    *   (Ref: `workflowFileSyncProvidesAnalyzeTargets`, `WorkflowTaskFields.tsx`, [Analyze Changed Files Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_GROUP_WORKFLOW_ANALYZE_CHANGED_FILES_FIX.md))
+
+### **(v0.261.140)**
+
+#### New Features
+
+*   **Group Model Endpoint APIs**
+    *   New routes manage one group model endpoint at a time for a named group, at `/api/groups/<group_id>/model-endpoints`. They also run model discovery, model tests and Foundry agent discovery for that group. They don't depend on the account's active group, so switching groups in another tab can't redirect a save.
+    *   Saves change only the one endpoint and write the group document conditionally. A membership change made at the same moment is kept rather than overwritten, and a deleted group is never recreated. If two people edit the same endpoint, the second save is refused.
+    *   A delete is refused while a group agent or workflow still uses the endpoint, and the response lists what uses it. Disabling an endpoint is always allowed.
+    *   The native V2 editor for group endpoints arrives in a later release. Until then, group endpoints are still edited in the classic group workspace.
+    *   (Ref: `route_backend_group_endpoints_scoped.py`, `functions_group_endpoint_access.py`, `functions_group_endpoint_policy.py`, `update_group_document_with_etag_guard`, [Group Model Endpoint APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_MODEL_ENDPOINT_APIS.md))
+
+#### Bug Fixes
+
+*   **Model Endpoint Credentials Stay With Their Own Endpoint**
+    *   Fixed a flaw where a group owner who knew another group's endpoint ID could make their own endpoint use that group's stored key, or overwrite it. Personal endpoints had the same flaw.
+    *   Root cause: these Key Vault secret names are built from the endpoint ID alone, and the save accepted any reference with the right shape.
+    *   A stored reference is now accepted only if it is the endpoint's own, and new keys are always stored under fresh names. Existing keys keep working.
+    *   (Ref: `functions_keyvault.py`, `save_scoped_endpoint_secrets`, [Secret Reference Scope Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MODEL_ENDPOINT_SECRET_REFERENCE_SCOPE_FIX.md))
+
+*   **Personal And Group Endpoints Can No Longer Redirect The Application's Identity**
+    *   Fixed personal and group model endpoints that use managed identity being able to send the application's own token to any host, for any audience, from any of the application's identities. This applied to model discovery and tests, and to saved endpoints used in chat, agents and workflows.
+    *   The endpoint must now be an Azure AI service host in the deployment's cloud, it uses the deployment's own token audience, authority and identity, and the rule is checked when the endpoint is saved and each time it's used.
+    *   Endpoints that use an API key or a service principal, custom connections, and admin-managed global endpoints are unchanged.
+    *   (Ref: `functions_model_endpoint_app_identity.py`, `functions_azure_endpoint_validation.py`, [Application Identity Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MODEL_ENDPOINT_APPLICATION_IDENTITY_FIX.md))
+
+*   **Malformed Catalog Profile ID No Longer Causes A Server Error**
+    *   Fixed saving a model endpoint with a malformed catalog profile ID failing with a server error instead of "Choose a valid catalog profile." This affected every endpoint save, including Admin Settings.
+    *   Root cause: the error the check raises was never imported where it's raised.
+    *   (Ref: `functions_settings.py`, [Catalog Profile Validation Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MODEL_ENDPOINT_CATALOG_PROFILE_VALIDATION_FIX.md))
+
+#### Breaking Changes
+
+*   **Managed Identity On Personal And Group Endpoints**
+    *   A personal or group endpoint that uses managed identity stops working if any of these apply:
+        *   Its host isn't an Azure AI service host in the deployment's cloud, such as an APIM gateway or a proxy.
+        *   It stores a Foundry scope, custom authority or custom cloud.
+        *   The deployment runs in a custom cloud, where no host qualifies.
+    *   A stored managed identity client ID is ignored, and the deployment's default identity is used.
+    *   **Migration**: switch affected endpoints to an API key or a service principal, or ask an administrator to add a global endpoint. For endpoints that relied on a user-assigned identity, grant the deployment's default identity access instead.
+    *   (Ref: [Configure model endpoint identity](https://microsoft.github.io/simplechat/guides/model-endpoint-identity-setup/), [Application Identity Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MODEL_ENDPOINT_APPLICATION_IDENTITY_FIX.md))
+
+### **(v0.261.139)**
+
+#### New Features
+
+*   **Native Group Identities**
+    *   Group workspace identities can now be listed, created, edited and deleted from the native group workspace. These are the reusable credentials that group File Sync sources and group actions use. Previously the group Identities section sent users to the classic interface.
+    *   Owners, admins and document managers manage identities while the group is active. Ordinary members don't see them, as in the classic workspace.
+    *   If two managers edit the same identity, the second save is refused and the draft is kept. A delete is refused while a File Sync source or an action still uses the identity, and the editor lists what uses it.
+    *   Stored secrets are never shown. A new secret value only takes effect when the save commits, so a refused save never changes the credential in use.
+    *   The group action editor can now use a reusable group identity. Someone who can't list the group's identities sees an existing binding as kept, without an error.
+    *   (Ref: `route_backend_group_identities_scoped.py`, `functions_group_identity_access.py`, `functions_group_identity_policy.py`, `identityWorkbench.ts`, [V2 Group Identities](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_IDENTITIES.md), [Group Identity APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_IDENTITY_APIS.md))
+
+### **(v0.261.138)**
+
+#### New Features
+
+*   **Native Group Agents**
+    *   Group agents can now be listed, opened, created, edited and deleted from the native group workspace, in the same collection and editor as personal agents. Previously the group Agents section sent users to the classic interface.
+    *   Owners and admins can change group agents while the group is active; with the owner-only setting, only the owner can. Everyone else in the group sees read-only details and can use the group's agents in chat.
+    *   Everything the editor loads is resolved for the group: the model list (the global connections the member may use, and the group's own when allowed), the group's documents for assigned knowledge, the group's actions, Call agent targets, and instruction drafting. A group page never reads the member's personal agents, endpoints, knowledge or identities.
+    *   "Use in chat" opens the agent in its own group, whichever group the account last selected. A stale link names the group instead of silently choosing another agent.
+    *   Agents created in the classic group workspace keep their stored credentials when edited in V2, and the reverse.
+    *   If two managers edit the same agent, the second save is refused rather than silently overwriting the first, and the editor keeps the draft.
+    *   When group agents are turned off or restricted, the section is left out of the group's navigation, as in the classic workspace.
+    *   The template gallery's submit button on a group agent follows the same rule as the template service, so it is offered only when a submission would be accepted.
+    *   Foundry discovery is not offered for group-scoped Foundry connections yet; global connections discover as before, and project fields can be entered manually.
+    *   (Ref: `route_backend_group_agents_scoped.py`, `functions_group_agent_access.py`, `functions_group_agent_policy.py`, `agentWorkbench.ts`, [V2 Group Agents](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_AGENTS.md), [Group Agent APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_AGENT_APIS.md))
+
+#### Bug Fixes
+
+*   **Native Group Action Changes Were Missing From the Activity Log**
+    *   Creating, editing or deleting a group action from the native V2 group workspace (0.261.137) recorded no activity event, while the classic workspace records one for every change.
+    *   Native group action changes now record the same events, with the group, as the classic routes do. The new native group agent routes do the same.
+    *   (Ref: `functions_workspace_authoring.py` `log_committed_group_editor_change`, `functions_group_action_access.py`, [Group Action APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_ACTION_APIS.md))
+
+*   **File Sync Runs Undid Changes Made While They Were Running**
+    *   Fixed a File Sync run overwriting a manager's changes made while it was running. When the run finished, an edit to the source was lost, a source or schedule that had been turned off was turned back on, a deleted source was recreated and kept syncing, and an ignored path was un-ignored.
+    *   Runs now record only their own results (last run status, counts and the next scheduled time) on the source as it is stored, and the next run follows the schedule as it is now. A deleted source stays deleted, and the run still reports how it went.
+    *   A path ignored while a run was processing it stays ignored, and still records the document the run produced.
+    *   The reverse race is closed too: saving a source no longer erases the result of a run that finished meanwhile, and ignoring a path no longer drops a file's new document, which could make the next run import it again as a duplicate.
+    *   Two managers editing the same source at once are still last-writer-wins. A save that keeps colliding with other writes is refused with a message to reload rather than applied from an outdated copy.
+    *   This affects every File Sync interface, including the classic pages.
+    *   (Ref: `functions_file_sync.py`, `route_backend_file_sync.py`, [File Sync Concurrent Write Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/FILE_SYNC_CONCURRENT_WRITE_FIX.md))
+
+### **(v0.261.137)**
+
+#### New Features
+
+*   **Native Group Actions**
+    *   Group actions can now be listed, opened, created, edited, tested and deleted from the native group workspace, in the same collection and editor as personal actions. Previously the group Actions section offered only the Call agent manager and sent every other action to the classic interface.
+    *   Owners and admins can change and test group actions while the group is active; with the owner-only setting, only the owner can. Everyone else in the group sees a read-only collection and read-only details, with each action's configuration fields shown.
+    *   If two managers edit the same action, the second save is refused rather than silently overwriting the first, and the editor keeps the draft.
+    *   Connection tests from a group editor run in that group, never in whichever group the account last selected.
+    *   Provided (global) actions appear read-only when the administrator merges them into workspaces.
+    *   Unsaved drafts are kept per workspace, so a draft started in one group never appears in another group or in My Workspace.
+    *   Reusable group identities cannot be chosen in the V2 editor yet, and saved MCP preconfigurations are not offered for group actions yet. An action already bound to a group identity keeps that binding.
+    *   The group workspace shows the native collection only when group actions are enabled. A tenant with group agents but not group actions keeps the Call agent manager.
+    *   (Ref: `route_backend_group_actions_scoped.py`, `functions_group_action_access.py`, `functions_group_action_policy.py`, `actionWorkbench.ts`, [V2 Group Actions](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_ACTIONS.md), [Group Action APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_ACTION_APIS.md))
+
+#### Bug Fixes
+
+*   **Group Members Could Use a Group's Stored Credentials in Connection Tests**
+    *   Fixed group connection tests and MCP discovery accepting requests from any group member. Testing a saved group action loads its stored credentials, and an unsaved test that names a group identity resolves that identity's secrets. Either way, a member could use the group's stored credentials against a destination they chose.
+    *   These requests now need the same roles as editing a group action: Owner or Admin, or Owner alone under the owner-only setting. The group MCP preconfiguration list shares the same check.
+    *   The classic interface only ever offered these actions inside the action editor, which only those roles can open, so no supported flow changes.
+    *   Scripts or integrations that run group connection tests must use an account with one of those roles.
+    *   (Ref: `route_backend_plugins.py`, [Group Action Test Role Alignment Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_ACTION_TEST_ROLE_ALIGNMENT_FIX.md))
+
+### **(v0.261.136)**
+
+#### New Features
+
+*   **Native Group Prompts**
+    *   Group prompts can now be read, written, and used from the native group workspace, in the same workbench as personal prompts. The group Prompts section previously sent users to the classic interface.
+    *   Owners, admins, and document managers can create, edit, duplicate, and delete group prompts while the group is active. Everyone else in the group can read prompts, use them in chat, and reword them in the chat composer for a single message; that rewording is never saved to the group's prompt.
+    *   If two managers edit the same prompt, the second save is refused rather than silently overwriting the first, and the editor keeps what was typed.
+    *   "Use in chat" links for group prompts name the group, so a prompt that has been deleted or is no longer accessible is reported clearly instead of silently attaching something else. Existing prompt links keep working.
+    *   Group prompts have no favorites, because a favorite is stored on the prompt and would be shared by everyone in the group. Personal favorites are unchanged.
+    *   (Ref: `route_backend_group_prompts_scoped.py`, `functions_group_prompt_access.py`, `functions_group_prompt_policy.py`, `promptWorkbench.ts`, [V2 Group Prompts](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_PROMPTS.md), [Group Prompt APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_PROMPT_APIS.md))
+
+#### Bug Fixes
+
+*   **Ordinary Group Members Could Change Shared Prompts Through the API**
+    *   Fixed the group prompt create, edit, and delete routes accepting requests from any group member. The classic interface only ever offered those actions to owners, admins, and document managers, but the server did not enforce the same rule, so a member calling the API directly could change or delete the group's shared prompts.
+    *   Those routes now refuse ordinary members, matching the rule public workspace prompts already enforced. Reading and using prompts is unchanged for everyone.
+    *   A refused member is told the change needs an owner, admin, or document manager, rather than being told they are not a member.
+    *   Scripts or integrations that create group prompts must use an account with one of those roles.
+    *   (Ref: `route_backend_group_prompts.py`, [Group Prompt Write Access Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GROUP_PROMPT_WRITE_ACCESS_FIX.md))
+
+### **(v0.261.135)**
+
+#### Bug Fixes
+
+*   **Public Workspace Download Flag Reported Downloads as Disabled**
+    *   Fixed the public workspace document list reporting `file_downloads_enabled: false` for every user, including managers of workspaces where downloads are enabled. The value was fixed at `false` in the read-only browsing release, when there was nothing to download, and was not updated when downloads were added.
+    *   The native explorer was not affected, because it decides whether to offer downloads from the workspace's advertised operations and each document's own action list. Other consumers of the API would have been told downloads were off.
+    *   The flag is now derived from the same policy that decides whether the workspace advertises downloads, so the two cannot disagree.
+    *   (Ref: `route_backend_public_document_reads.py`, `public_document_management_operations`, `test_public_document_read_apis.py`)
+
+### **(v0.261.134)**
+
+#### New Features
+
+*   **Native Public Workspace Artifact Approval**
+    *   When someone asks to publish a generated artifact into a public workspace, reviewers can now approve, reject, or withdraw the request in the native explorer instead of switching to the classic page.
+    *   Each decision is tied to the version of the request the reviewer actually saw. If the document changed in the meantime, the reviewer's input is kept and they are asked to refresh before deciding.
+    *   Only the original requester can withdraw a request, and doing so grants no authority over anyone else's.
+    *   Content screening holds are never released early by an approval; approval only starts screening on the new document.
+    *   (Ref: `functions_public_document_publication.py`, `route_backend_public_document_collaboration.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Public Artifact Approval](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_ARTIFACT_APPROVAL.md), [Artifact Approval APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_DOCUMENT_ARTIFACT_APPROVAL_APIS.md))
+
+#### Bug Fixes
+
+*   **Public Workspace Document Actions Were Unavailable**
+    *   Fixed public workspace documents offering no per-document actions against a real backend. Delete, download, metadata editing, extraction, reprocessing, and bulk tagging were all unavailable, although upload and tag management worked.
+    *   The server returned an empty action list left over from the read-only browsing release, and the explorer only offers actions that list contains. It now computes each document's actions from the user's current permissions.
+    *   The failure blocked actions rather than allowing them, so no data was exposed and every operation was still authorized on the server.
+    *   (Ref: `functions_public_document_reads.py`, `get_public_document_actions`, `test_document_action_hint_seam.py`)
+
+#### Known Limitations
+
+*   **Public Workspace Sharing Is Not Yet Available**
+    *   Public workspace documents cannot yet be shared into other workspaces. The search index used by public workspaces has no field for shared access, so adding it requires an index schema change and a migration for existing deployments. Public workspaces show no share controls until that work is done.
+
+### **(v0.261.133)**
+
+#### New Features
+
+*   **Native Public Workspace Document Management**
+    *   Public workspace documents can now be managed in the native explorer, not just browsed: upload, metadata editing, tags and bulk tagging, permitted downloads, metadata extraction, reprocessing, and revision-aware deletion. Previously every one of these required switching to the classic page.
+    *   Each operation names its workspace directly rather than depending on the account's stored selection, so changing workspaces mid-operation cannot redirect an upload, edit, or deletion, and an older server rejects the request instead of acting in the wrong place.
+    *   Every operation receipt is checked against the workspace that was asked for, so a late or misrouted response cannot be shown as a successful change to the wrong workspace.
+    *   Manager roles keep the content-manager boundary, ordinary members retain read access only, and locked or upload-disabled workspaces keep their existing restrictions. Queued work revalidates permission when it runs rather than trusting the moment it was requested.
+    *   Sharing and generated-artifact approval remain on the classic page and arrive natively in a later release.
+    *   (Ref: `functions_public_document_management.py`, `functions_public_document_policy.py`, `route_backend_public_document_management.py`, `documentOperations.ts`, [V2 Public Document Management](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_DOCUMENT_MANAGEMENT.md), [Management APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_DOCUMENT_MANAGEMENT_APIS.md))
+
+### **(v0.261.132)**
+
+#### New Features
+
+*   **Native Public Workspace Document Browsing**
+    *   Public workspace documents can be browsed in the same native explorer used for My Workspace and group workspaces, instead of only on the classic page. Filtering, sorting, pagination, facets, tags, document details, and version history all behave the way they already do elsewhere.
+    *   Selecting a public workspace navigates by its identifier, and every document request names that workspace directly rather than depending on the account's stored selection. Returned documents are checked against the workspace that was asked for, so a late or misrouted response cannot populate the wrong workspace.
+    *   The workspace is still recorded as the active selection, because chat document scoping and the classic page both read it. That step is deliberately non-blocking: if it fails, browsing still works, because nothing on the page depends on it.
+    *   This release covers browsing only. Upload, metadata editing, tags, downloads, extraction, reprocessing, deletion, and approval remain on the classic page and arrive natively in later releases.
+    *   (Ref: `functions_public_document_reads.py`, `functions_public_document_access.py`, `route_backend_public_document_reads.py`, `documentReadAdapter.ts`, `PublicWorkspacePage.tsx`, [V2 Public Document Browsing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PUBLIC_DOCUMENT_BROWSING.md), [Public Document Read APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PUBLIC_DOCUMENT_READ_APIS.md))
+
+#### Bug Fixes
+
+*   **Charts, Mermaid Diagrams, And Image Proposals In Orchestrated Answers**
+    *   Fixed orchestrated requests such as "Plot BatteryVoltage1 over the last 15 minutes" answering that a plot could not be produced. No orchestration step had a chart tool, the retrieved rows never reached the answer, and the answer step had none of the chart, Mermaid, or image-proposal guidance ordinary chat uses.
+    *   A requested chart is now drawn from the exact rows an action retrieved, by a chart step that can use only the built-in chart tools. Long series are reduced to the 200 points a chart shows while keeping each segment's highest and lowest values, and the chart subtitle states the sampling.
+    *   The answer places those charts, writes Mermaid diagrams, and proposes images when image generation is enabled, including when an image would help but was not requested. Each image is generated only after the user approves its card.
+    *   Saved Instruction memories shape these visuals, so "I don't like charts" stops charts you did not ask for. An explicit request in the current message still wins, and recalled facts never reach the chart step.
+    *   (Ref: `functions_orchestration_visuals.py`, `functions_orchestration_actions.py`, `functions_orchestration_adapters.py`, `functions_chart_operations.py`, [Visual Outputs Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_VISUAL_OUTPUTS_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Image In Orchestrate**
+    *   The composer's Image control now works in Orchestrate, where it asks the answer for at least one image proposal card instead of blocking the message. A status line explains that the images wait for approval.
+    *   (Ref: `Composer.tsx`, [Chat controls](https://microsoft.github.io/simplechat/reference/chat-controls/))
+
+### **(v0.261.131)**
+
+#### New Features
+
+*   **Native Group Document Sharing And Approval Review**
+    *   Share a group document with another group, accept or remove a received share, and approve, reject, or withdraw a pending generated artifact — all inside the native workspace explorer, without switching to the legacy group workspace page.
+    *   A notification opens the exact group and document it refers to, including when that document is not on the current page. A notification that does not match has no navigation or activation side effect, and a link to a denied or deleted document does not silently fall back to another document.
+    *   Decisions are bound to the document revision the reviewer actually saw. A conflicting change keeps the entered target and asks for an explicit refresh instead of resolving itself, and a partial outcome is repaired rather than replayed as a new decision.
+    *   Sharing calls name the group in the URL rather than relying on the account's current selection, so changing groups mid-decision cannot redirect one, and an older server rejects the call instead of acting in the wrong group.
+    *   Approving a generated artifact can start screening on a brand-new destination without that approval being blocked by the destination's own not-yet-started screening reservation. Admission requires recorded proof rather than the absence of evidence, so a scan that ran and was later removed cannot restore eligibility, and the screening hold itself is never released early.
+    *   Removing a share can't be undone by a document update that was already writing the document's search entries. Sharing changes and those updates coordinate on the document itself, and an update carrying an older share list is limited to the document's current shares (0.261.130).
+    *   (Ref: `functions_group_document_collaboration.py`, `functions_group_document_publication.py`, `functions_artifact_publication.py`, `functions_group_document_projection_fence.py`, `route_backend_group_documents.py`, `documentCollaboration.ts`, `DocumentCollaborationDialog.tsx`, [V2 Group Document Collaboration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_DOCUMENT_COLLABORATION.md), [Collaboration APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_DOCUMENT_COLLABORATION_APIS.md), [Projection Coordination](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_DOCUMENT_PROJECTION_COORDINATION.md), #1542)
+
+#### Bug Fixes
+
+*   **Document Payload Redaction No Longer Depends On The Screening Toggle**
+    *   Fixed document list and detail responses returning storage internals when content screening was disabled or a document was never enrolled. Affected values included blob paths and containers, SAS and download URLs, canonical source references, screening provenance, and Cosmos system fields.
+    *   The same document was already redacted correctly whenever screening was enabled, so exposure depended on an unrelated administrative setting rather than on the sensitivity of the field.
+    *   Root cause was a duplicated redaction rule: the unscreened path carried a hand-maintained three-field literal that had fallen behind the full private-field set. Both paths now share one predicate, so they cannot drift apart as new private fields are added.
+    *   The generated-artifact request allow-list was duplicated the same way across the payload serializer and the group projection, where drift would silently drop requester attribution from pending artifact reviews. It is now a single shared constant.
+    *   Group collaboration internals — the sharing ledger, the publication receipt id, and the generated artifact source conversation, message, container, and blob path — are redacted for every caller rather than only in the group browser projection.
+    *   No caller loses a field it could rely on, because every newly redacted field was already absent in screening-enabled deployments. Share rosters remain serialized, because the surfaces that render share status and counts read them directly.
+    *   (Ref: `content_screening/access.py`, `functions_group_document_reads.py`, `is_public_document_field`, `PRIVATE_DOCUMENT_FIELDS`, `GENERATED_ARTIFACT_REQUEST_FIELDS`, [Payload Redaction Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/DOCUMENT_PAYLOAD_REDACTION_SCREENING_TOGGLE_FIX.md))
+
+### **(v0.261.129)**
+
+#### New Features
+
+*   **Microsoft 365 Mail And Calendar History**
+    *   Read my mail can search by words and received dates, and Read my calendar events can read or search any past or future time range. Long histories continue across calls without repeating items.
+    *   Without a range, calendar reads now return occurrences in the next 30 days instead of the calendar's oldest events and recurring series.
+    *   No new Microsoft Graph permission is required. Reads stay limited to the primary mailbox and default calendar, and items removed by retention can't be returned.
+    *   (Ref: `msgraph_plugin.py`, `functions_msgraph_operations.py`, [Microsoft 365 Email](https://microsoft.github.io/simplechat/reference/actions/m365-email/), [Microsoft 365 Calendar](https://microsoft.github.io/simplechat/reference/actions/m365-calendar/), #1523)
+
+*   **Manage Group Documents In V2**
+    *   Group Owners, Admins and DocumentManagers can upload documents and follow their progress, edit metadata and tags, manage the group's tag vocabulary, download when downloads are enabled, extract metadata, reprocess, and delete revisions, in the same explorer. Ordinary members keep read access, without these operations or downloads.
+    *   The server checks each operation against your current role, the group's status, the document's revision and its content screening state. Locked groups are read-only, with downloads controlled separately. Upload-disabled groups allow deletion and reprocessing, but not uploads, edits or metadata extraction. Inactive groups allow none.
+    *   Edits, extraction and reprocessing apply only to a document's current revision, and an edit made against an older copy is refused rather than applied to a newer one. Earlier revisions can only be downloaded or deleted.
+    *   Operations use `/api/groups/<group_id>/documents/...` rather than the account's active group, and queued processing keeps the group it started in. The classic group document routes are unchanged.
+    *   (Ref: `route_backend_group_documents.py`, `functions_group_document_management.py`, `DocumentExplorer.tsx`, [V2 Group Document Management](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_DOCUMENT_MANAGEMENT.md), [Group Document Management APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_DOCUMENT_MANAGEMENT_APIS.md), #1542)
+
+#### Bug Fixes
+
+*   **Microsoft 365 Agent Replies Survive Stream Failures**
+    *   Fixed agents that have OneDrive or SharePoint Online actions, or that run in a workflow, ending with "Stream interrupted: Agent streaming failed". Each streamed chunk ran in a new context, so the Microsoft 365 continuation journal failed when it closed.
+    *   A reply that fails after streaming text is now saved as an incomplete message and appears when the conversation is reopened. Approval and sign-in waits still resume as before.
+    *   The error banner says the partial content was saved only when the server saved it.
+    *   (Ref: `agent_delegation_runtime.py`, `route_backend_chats.py`, `chat-streaming.js`, [Stream Context And Persistence Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/M365_AGENT_STREAM_CONTEXT_PERSISTENCE_FIX.md), #1523)
+
+### **(v0.261.128)**
+
+#### New Features
+
+*   **Browse Group Documents In V2**
+    *   Group Documents uses the same explorer as My Workspace. Search, sort, filter by tag, classification and place, see whole-workspace counts, open a document's details and the revisions you can access, and pass eligible documents to chat, without leaving V2.
+    *   Every read names the group, so the page never shows the documents of a group selected in another tab. Switching groups resets the search and selection, and a slower earlier response can't replace newer details.
+    *   The explorer offers only the sorts, filters and views the server says the group supports. Your display preferences are shared with My Workspace; personal saved views aren't shown as group views.
+    *   The group document list, facets, tags, details and revisions accept one explicit `group_id`. A malformed or repeated one is refused rather than replaced by your active group, a missing group returns 404, and a group you can't view returns 403. Requests without `group_id` behave as before.
+    *   (Ref: `route_backend_group_documents.py`, `functions_group_document_reads.py`, `documentReadAdapter.ts`, `DocumentExplorer.tsx`, [V2 Group Document Browsing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_GROUP_DOCUMENT_BROWSING.md), [Group Document Read APIs](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/GROUP_DOCUMENT_READ_APIS.md), #1542)
+
+### **(v0.261.127)**
+
+#### New Features
+
+*   **Group Workspaces In V2**
+    *   Open your group workspaces in V2 at `/v2/groups`, with the rail and layout of My Workspace. Choosing a group from the picker makes it your active group, as the classic interface does, and loads its details, your role, its status and the sections your role can use. The page opens your active group if you can still view it, and otherwise asks you to choose one.
+    *   Links to a group, or to one of its sections such as `/v2/groups/<group_id>/workflows`, are checked before the page shows that group. The picker keeps your choice while you search or page through your groups.
+    *   Switching groups asks before discarding unsaved edits. A switch you cancel sends nothing, a refused switch keeps the group you had, and an interrupted switch is checked with the server instead of being assumed to have failed. A conversation you already have open keeps its workspace.
+    *   Group workflows and Call agent tools open inside the group page. Sections that weren't native yet linked to their classic pages; every section is native from 0.261.153.
+    *   The page reads its group from `GET /api/v2/workspaces/group/<group_id>` (0.261.126). It requires current membership in that group (being an application admin isn't enough) and never reads or changes your active group. It returns an allow-listed summary of the group, your role and status, and the sections and operations your role allows, with no settings, membership lists, pending requests, endpoint configurations or credentials. A failure is reported as an error, never as an empty workspace.
+    *   (Ref: `route_backend_v2.py`, `functions_workspace_context.py`, `workspaceContext.ts`, `groupWorkspaceStore.ts`, `GroupWorkspacePage.tsx`, `WorkspaceShell.tsx`, [V2 Shared Workspace Context and Group Shell](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_SHARED_WORKSPACE_CONTEXT.md), #1542)
+
+### **(v0.261.123)**
+
+#### New Features
+
+*   **Workflow Authoring Undo And Redo**
+    *   Restore unsaved structured-workflow edits across List and Flow, including common fields, block configuration, unfinished schema text and errors, and Repeat state fields. Redo preserves exact block identities.
+    *   Shared Undo/Redo controls group typing by field visit while text controls retain native undo. Replay that removes blocks or affects references requires fresh confirmation.
+    *   History retains up to 100 actions and 32 MiB of additional accounted data. Old-step eviction is visible; a single oversized edit asks before applying its complete contents and clearing history.
+    *   Failed saves retain the draft, history, and original saved revision. Save success, discard, session changes, and confirmed access loss clear history. Undo never rolls back a saved workflow, execution, or publication.
+    *   (Ref: `WorkflowEditorDialog.tsx`, `WorkflowAuthoringHistory.tsx`, `workflowAuthoringHistory.ts`, [Cross-surface workflow history](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORKFLOW_AUTHORING_UNDO_REDO.md))
+
+### **(v0.261.104)**
+
+#### Bug Fixes
+
+*   **Model-Aware Reasoning Across Chat And Orchestration**
+    *   Fixed plan editing and Auto/Review execution failures caused by unsupported reasoning levels. GPT-5.6 Luna's stale Minimal selection becomes Low with a visible adjustment, while supported None remains explicit.
+    *   Both interfaces use canonical per-model capabilities. Narrow provider compatibility recovery reports Model default rather than claiming the rejected effort was honored; model identity and approval safeguards remain unchanged.
+    *   (Ref: `functions_model_capabilities.py`, `model_endpoint_clients.py`, `functions_orchestration_models.py`, `route_backend_chats.py`, [Reasoning Compatibility Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_REASONING_LEVEL_COMPATIBILITY_FIX.md))
+
+*   **Capability-Aware Planning Without Hidden Shortcuts**
+    *   Selected supported tools and sources are requirements, not a restriction to only those tools. Unchecked controls no longer imply that enabled Web Search or Deep Research is unauthorized.
+    *   Every Orchestrate request reaches the planner, including short questions. Direct answers remain available; no topic rule forces research. Model and discovery failures are surfaced instead of becoming successful answer-only plans.
+    *   Fixed authorized group-agent catalog discovery and preserved original selections separately from model-chosen plan usage. Current capabilities are rechecked before execution.
+    *   Enabled saved memories now inform private-conversation planning, edits, and answers without autosave or embedding backfill. Scope and audience are rechecked before answering, and existing memory citations are preserved.
+    *   (Ref: `functions_orchestration_context.py`, `functions_orchestration_registry.py`, `functions_orchestration_planner.py`, `functions_agent_catalog.py`, [Capability Context Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_CAPABILITY_CONTEXT_FIX.md))
+
+### **(v0.261.102)**
+
+#### New Features
+
+*   **Shared AI Connections Framework**
+    *   Configure a connection and its credentials once, then choose independent chat and image-generation defaults from compatible models on that connection.
+    *   Capability-aware model references and runtime adapters provide extension points for future embeddings, transcription, speech, computer use, and other integrations. Those additional integrations are not enabled by this release.
+    *   (Ref: `functions_ai_connections.py`, `functions_model_capabilities.py`, [AI Connections Framework](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/AI_CONNECTIONS_FRAMEWORK.md), #1436)
+
+#### User Interface Enhancements
+
+*   **One Image Model Picker Across Shared Connections**
+    *   Classic and V2 Admin Settings now use the shared AI Connections catalog instead of maintaining another image endpoint and credential form.
+    *   Existing image settings are imported automatically, preserving the selected model, authentication, image API version, and APIM routing without enabling multi-endpoint chat.
+    *   Model availability, invalidated defaults, and import recovery are explained alongside the controls. Duplicate connection names and deployment names remain distinct through stable references.
+    *   (Ref: `CapabilityModelPicker.tsx`, `ModelConnectionsManager.tsx`, `functions_ai_connection_migration.py`, [Configure AI Connections](https://microsoft.github.io/simplechat/guides/configure-ai-connections/))
+
+#### Bug Fixes
+
+*   **GPT Image Generation Uses The Correct API**
+    *   Compatible GPT deployments use Azure's v1 Responses image tool rather than the older dated Responses contract. Dedicated image deployments retain the Images API.
+    *   Image generation no longer requires a usable text-model configuration. Inline approvals retain the selected deployment when persisting images, and shared image edits preserve rate-limit and configuration-error status codes.
+    *   Provider-specific image-tool availability and deployment requirements still apply; the application does not provision or guess a backing deployment.
+    *   (Ref: `functions_image_generation.py`, `functions_image_api_route.py`, `route_backend_chats.py`, [GPT Image Generation Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/GPT_CHAT_MODEL_IMAGE_GENERATION_FIX.md), #1436)
+
+*   **Connection Changes Preserve Configuration And Capability Boundaries**
+    *   Image-only models are excluded from text-only chat, agent, workflow, and document operations. Unverified model variants do not inherit image-tool support from a name prefix.
+    *   Failed imports and unrelated Classic settings saves retain legacy image settings. Connection duplication preserves image operation profiles, and concurrent imports stage credentials without overwriting another worker's committed value.
+    *   Dated Azure Images requests use API-key authentication independently of a connection's Foundry label, while explicit gateway headers remain supported.
+    *   (Ref: `functions_ai_connection_migration.py`, `functions_keyvault.py`, `route_frontend_admin_settings.py`, `admin_model_endpoints.js`, `functions_model_endpoint_runtime.py`)
+
+### **(v0.261.100)**
+
+#### New Features
+
+*   **Composer-Aware Inline Answers**
+    *   V2 orchestration follow-up questions now support `#` file, tag, and workspace references, `/` saved prompts, and uploads through a compact version of the main composer's editor.
+    *   Single- and multiple-choice selections can include an optional explanation, prompt, or additional sources. File suggestions are not an exhaustive list: a different referenced or uploaded file can answer the question on its own.
+    *   This applies to supported chat file types generally, not only tabular files. Existing upload and workspace permissions still apply.
+    *   (Ref: `ComposerEditor.tsx`, `ElicitationCard.tsx`, `composerDraft.ts`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md))
+
+#### User Interface Enhancements
+
+*   **Upload Progress And Independent Answer Drafts**
+    *   Inline uploads show processing state and retry/remove controls. Finish waits for selected files to be ready rather than continuing without them.
+    *   Paging and navigation within the current browser session preserve each answer's text, references, prompt edits, and variable values. Failed submissions keep the draft available for correction or retry.
+    *   The main composer remains separate, and inline questions do not duplicate its model, agent, web, or voice toolbar.
+    *   (Ref: `chatUploads.ts`, `orchestrationStore.ts`, `AttachedPromptCard.tsx`, [Upload Documents In Chat](https://microsoft.github.io/simplechat/guides/upload-documents-in-chat/))
+
+#### Bug Fixes
+
+*   **Follow-Up Answers Reach The Resumed Task**
+    *   Fixed a client/server mismatch that could ignore inline answers. Replies are now matched to the stored question and checked against its owner, turn, and revision.
+    *   Accepted explanations, filled prompts, and real source references reach both replanning and execution, while original selections and document filters remain intact.
+    *   Retries cannot apply the same answer twice, and declining or cancelling sends no draft answer context.
+    *   (Ref: `orchestrationController.ts`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_runs.py`, `route_backend_orchestration.py`)
+
+### **(v0.261.099)**
+
+#### Bug Fixes
+
+*   **Orchestration Plans Are No Longer Trapped In One Browser**
+    *   Plans looked like they belonged to the device that made them. Opening the same conversation on a laptop after planning on a phone showed an empty orchestration panel, and simply reloading the page lost the run history too. The answer survived, because that is an ordinary chat message, but the plan behind it, its steps and its results appeared to be gone.
+    *   **Nothing was ever actually lost.** Every run has always been stored against the conversation on the server — the planner already reads earlier runs back to avoid repeating work. The V2 interface just never asked for them, so it could only ever show what the current tab happened to remember.
+    *   **The panel is now rebuilt from the server when you open a conversation.** Earlier runs are listed wherever you open them, and any one of them can be expanded to read the steps and results of work you were not present for. A run opened this way is shown as a record and marked as such: it can be read, but not edited or run again, because it has already happened.
+    *   **A plan still waiting for your approval follows you.** It reappears on the new device as a plan you can approve, edit or discard, rather than leaving you to ask the same question twice. A plan that had a countdown is deliberately restored without one, so nothing starts running on a device where nobody was watching. And if you approved it on the first device in the meantime, approving it again is refused rather than doing the work twice — the conversation reloads to show the answer that already exists.
+    *   **A run whose browser went away mid-flight is now shown as interrupted**, instead of vanishing or appearing to still be working.
+    *   The run listing was also tightened while this was added. It now returns only the fields the panel draws, so plan internals, request seeding and the conversation context are no longer sent to the browser as a side effect of listing a conversation's history.
+    *   (Ref: `route_backend_orchestration.py` run detail route and summary projection, `stores/orchestrationStore.ts` hydration, `lib/orchestrationResume.ts`, [Orchestration Run History Hydration Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_RUN_HISTORY_HYDRATION_FIX.md))
+
+### **(v0.261.098)**
+
+#### New Features
+
+*   **Orchestration Can Use Existing Actions Directly**
+    *   Administrators can enable the default-off **Enable Action Access** setting to let knowledge-collection plans choose an accessible personal, group or global action without loading a configured agent and its unrelated actions.
+    *   Each step can make a bounded sequence of calls to its selected action's functions, preserving existing scope settings, governance, function restrictions and action behavior. **Call agent** remains under **Ask an agent**; no output-phase workflow or new read/write policy is introduced.
+    *   The plan shows the selected action's name and scope. Tool results appear under **Sources > Tool calls**, separately from web references.
+    *   Follow-up action tasks retain the resolved subject and authorized conversation references, alongside the conversation-history and prompt-snapshot improvements from the V2 integration branch.
+    *   (Ref: `functions_action_catalog.py`, `functions_orchestration_actions.py`, `functions_orchestration_registry.py`, `OrchestrationRunView.tsx`, [Chat Orchestration Action Access](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_ACTIONS.md))
+
+#### Bug Fixes
+
+*   **Orchestration Preserves Agent Choices And Tool Reporting**
+    *   Available agents now reach plan validation, and retries after an unrenderable clarification retain the caller's capability gates.
+    *   Tool citations use the existing tool-results channel instead of being treated as web sources. Saved usage includes both the answer model and action or agent steps rather than dropping one contribution.
+    *   (Ref: `functions_orchestration_planner.py`, `route_backend_orchestration.py`, `functions_orchestration_events.py`, `chatStore.ts`)
+
+### **(v0.261.096)**
+
+#### New Features
+
+*   **Composer-Aware Inline Answers**
+    *   V2 orchestration follow-up questions now support `#` file, tag, and workspace references, `/` saved prompts, and uploads through a compact version of the main composer's editor.
+    *   Single- and multiple-choice selections can include an optional explanation, prompt, or additional sources. File suggestions are not an exhaustive list: a different referenced or uploaded file can answer the question on its own.
+    *   This applies to supported chat file types generally, not only tabular files. Existing upload and workspace permissions still apply.
+    *   (Ref: `ComposerEditor.tsx`, `ElicitationCard.tsx`, `composerDraft.ts`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md))
+
+*   **Orchestration Can Use Existing Actions Directly**
+    *   Administrators can enable the default-off **Enable Action Access** setting to let knowledge-collection plans choose an accessible personal, group or global action without loading a configured agent and its unrelated actions.
+    *   Each step can make a bounded sequence of calls to its selected action's functions, preserving existing scope settings, governance, function restrictions and action behavior. **Call agent** remains under **Ask an agent**; no output-phase workflow or new read/write policy is introduced.
+    *   The plan shows the selected action's name and scope. Tool results appear under **Sources > Tool calls**, separately from web references.
+    *   (Ref: `functions_action_catalog.py`, `functions_orchestration_actions.py`, `functions_orchestration_registry.py`, `OrchestrationRunView.tsx`, [Chat Orchestration Action Access](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION_ACTIONS.md))
+
+#### User Interface Enhancements
+
+*   **Upload Progress And Independent Answer Drafts**
+    *   Inline uploads show processing state and retry/remove controls. Finish waits for selected files to be ready rather than continuing without them.
+    *   Paging and navigation within the current browser session preserve each answer's text, references, prompt edits, and variable values. Failed submissions keep the draft available for correction or retry.
+    *   The main composer remains separate, and inline questions do not duplicate its model, agent, web, or voice toolbar.
+    *   (Ref: `chatUploads.ts`, `orchestrationStore.ts`, `AttachedPromptCard.tsx`, [Upload Documents In Chat](https://microsoft.github.io/simplechat/guides/upload-documents-in-chat/))
+
+*   **Full-Page Agent And Action Editors In My Workspace**
+    *   Configure personal agents and actions directly in V2, with section navigation instead of popup wizards. Agent authoring includes model connections, knowledge, instructions, capabilities, and templates; action authoring includes the existing connector-specific configuration and authentication workflows.
+    *   **Call agent is a normal action type**, appearing alongside other tools in the Actions collection and the agent's action picker. There is no separate personal delegation section.
+    *   Create an action from an unfinished agent and return to the retained draft. Saving the action does not save the agent prematurely; leaving an unfinished editor asks before discarding changes.
+    *   Provided resources remain read-only, and existing authorized actions can be attached independently of permission to create new actions. Group and administrator management retain their existing interfaces.
+    *   (Ref: `AgentEditorPage.tsx`, `ActionEditorPage.tsx`, `WorkspaceEditorFrame.tsx`, [V2 Workspace Agent And Action Authoring](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKSPACE_AGENTS_ACTIONS.md))
+
+#### Bug Fixes
+
+*   **Follow-Up Answers Reach The Resumed Task**
+    *   Fixed a client/server mismatch that could ignore inline answers. Replies are now matched to the stored question and checked against its owner, turn, and revision.
+    *   Accepted explanations, filled prompts, and real source references reach both replanning and execution, while original selections and document filters remain intact.
+    *   Retries cannot apply the same answer twice, and declining or cancelling sends no draft answer context.
+    *   (Ref: `orchestrationController.ts`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_runs.py`, `route_backend_orchestration.py`)
+
+*   **Orchestration Preserves Agent Choices And Tool Reporting**
+    *   Available agents now reach plan validation, and retries after an unrenderable clarification retain the caller's capability gates.
+    *   Tool citations use the existing tool-results channel instead of being treated as web sources. Saved usage includes both the answer model and action or agent steps rather than dropping one contribution.
+    *   (Ref: `functions_orchestration_planner.py`, `route_backend_orchestration.py`, `functions_orchestration_events.py`, `chatStore.ts`)
+
+*   **Workspace Edits Preserve Existing Configuration**
+    *   Per-record saves retain unedited nested settings, action references, and credentials. Stored secrets stay masked, explicit clearing is distinguished from keeping a value, and conflicting edits are reported rather than silently overwriting another session.
+    *   **Use in chat** refreshes the authorized agent catalogue before starting a new conversation with the chosen agent. Failed refreshes or unavailable agents do not retarget an existing conversation or substitute a manual model.
+    *   (Ref: `functions_workspace_authoring.py`, `workspaceAuthoring.ts`, `workspaceAuthoringApi.ts`, `workspaceEditorDrafts.ts`, `workspaceAgentLaunch.ts`)
+
+### **(v0.261.095)**
+
+#### New Features
+
+*   **Agents Can Call Explicitly Selected Specialists**
+    *   Create a **Call agent** action, choose a local or Foundry-backed target, and attach it to a local agent. The caller supplies a task and relevant context, receives the specialist's result, and continues its own answer without automatically sharing the whole conversation.
+    *   Targets retain their own instructions, model configuration, authorized knowledge, and tools. Calls stay in the same workspace or use permitted global agents, with access checked again when each call runs.
+    *   Nested delegation is bounded by **3 levels, 10 delegated attempts per root turn, and 120 seconds per call**. Self-calls and loops are blocked; cancellation preserves completed child citations and observed usage.
+    *   Delegation works in ordinary and streaming chat, agent workflows, and V2 orchestration. Foundry-backed agents are callable targets; their own tools remain configured in Foundry.
+    *   (Ref: `functions_agent_delegation.py`, `agent_delegation_runtime.py`, `semantic_kernel_plugins/agent_plugin.py`, [Agent Delegation Actions](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/AGENT_DELEGATION_ACTION.md))
+
+#### User Interface Enhancements
+
+*   **Configure Agent Calls In Classic And V2**
+    *   Both interfaces provide scoped target selection and action attachment for personal, group, and global agents. V2 adds focused controls rather than requiring a trip to classic for Call agent configuration.
+    *   V2 supports confirmed deletion of owned Call agent actions, preserves unrelated bindings and configuration, and reports conflicting edits instead of overwriting them. Selecting a group for configuration does not switch the active workspace.
+    *   (Ref: `plugin_modal_stepper.js`, `agent_modal_stepper.js`, `components/agents/AgentDelegationManager.tsx`, `pages/GroupAgentDelegationPage.tsx`, [Call Another Agent](https://microsoft.github.io/simplechat/guides/call-another-agent/))
+
+#### Bug Fixes
+
+*   **Group Workflow Agents Use The Run Actor's Permissions**
+    *   A manually started group workflow now authorizes agent calls as the authenticated member running it, rather than inheriting the workflow creator's access. Scheduled runs without an interactive actor retain the workflow owner's execution identity.
+    *   (Ref: `functions_workflow_runner.py` workflow execution identity capture and agent execution contexts)
+
+### **(v0.261.093)**
+
+#### New Features
+
+*   **Agents Can Call Explicitly Selected Specialists**
+    *   Create a **Call agent** action, choose a local or Foundry-backed target, and attach it to a local agent. The caller supplies a task and relevant context, receives the specialist's result, and continues its own answer without automatically sharing the whole conversation.
+    *   Targets retain their own instructions, model configuration, authorized knowledge, and tools. Calls stay in the same workspace or use permitted global agents, with access checked again when each call runs.
+    *   Nested delegation is bounded by **3 levels, 10 delegated attempts per root turn, and 120 seconds per call**. Self-calls and loops are blocked; cancellation preserves completed child citations and observed usage.
+    *   Delegation works in ordinary and streaming chat, agent workflows, and V2 orchestration. Foundry-backed agents are callable targets; their own tools remain configured in Foundry.
+    *   (Ref: `functions_agent_delegation.py`, `agent_delegation_runtime.py`, `semantic_kernel_plugins/agent_plugin.py`, [Agent Delegation Actions](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/AGENT_DELEGATION_ACTION.md))
+
+#### User Interface Enhancements
+
+*   **Configure Agent Calls In Classic And V2**
+    *   Both interfaces provide scoped target selection and action attachment for personal, group, and global agents. V2 adds focused controls rather than requiring a trip to classic for Call agent configuration.
+    *   V2 supports confirmed deletion of owned Call agent actions, preserves unrelated bindings and configuration, and reports conflicting edits instead of overwriting them. Selecting a group for configuration does not switch the active workspace.
+    *   (Ref: `plugin_modal_stepper.js`, `agent_modal_stepper.js`, `components/agents/AgentDelegationManager.tsx`, `pages/GroupAgentDelegationPage.tsx`, [Call Another Agent](https://microsoft.github.io/simplechat/guides/call-another-agent/))
+
+#### Bug Fixes
+
+*   **Group Workflow Agents Use The Run Actor's Permissions**
+    *   A manually started group workflow now authorizes agent calls as the authenticated member running it, rather than inheriting the workflow creator's access. Scheduled runs without an interactive actor retain the workflow owner's execution identity.
+    *   (Ref: `functions_workflow_runner.py` workflow execution identity capture and agent execution contexts)
+
+### **(v0.261.092)**
+
+#### New Features
+
+*   **A Saved Prompt Is Now Attached To Your Message, Not Pasted Into It**
+    *   Picking a prompt in the V2 interface used to paste its text into the message box, where it stopped being a prompt: nothing marked where the standing instructions ended and your own question began, taking it back off meant finding and deleting the right paragraphs, and fixing a variable meant editing prose in the middle of what you were writing.
+    *   **The prompt now sits in a card above the message box**, collapsed to its name, its workspace, and how many variables still need a value. The box below stays yours to type in.
+    *   **Expand it** to fill in variables and read the prompt exactly as it will be sent. **Edit** adjusts the wording for this one message and marks the card *Edited*, with a **Reset** that restores the saved text — the saved prompt is never touched, so a one-off tweak does not change it for everyone else. **Remove** takes it off without disturbing anything you have typed.
+    *   **The prompt is sent first and your message follows it**, which is the order the two are actually written in. A prompt that needs no further input can be sent on its own, so Send now works with an attached prompt and an empty box.
+    *   **Variables are resolved when you send, not when you pick.** `{{composer}}` — "what you have already typed" — used to resolve to nothing, because picking the prompt is the first thing you do. It now means the message you wrote underneath the card. A prompt that positions your text this way is not also sent it a second time.
+    *   **Sent messages show the prompt as a collapsed row** above your own words, expanding to the full text, so a reply can be understood by someone who did not pick the prompt. Copying and exporting still yield the whole message, and older messages render exactly as they did.
+    *   The separate fill-in dialog is gone, folded into the card. Its safety rules came with it: auto-filled values stay badged and clearable, values from the conversation are still only ever offered as chips you click, and nothing is pre-filled at all in a shared conversation.
+    *   (Ref: `components/chat/AttachedPromptCard.tsx`, `lib/usePromptVariableValues.ts`, `lib/promptRequest.ts`, `lib/messagePrompt.ts`, [Prompt Composer Card](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PROMPT_COMPOSER_CARD.md))
+
+*   **Orchestration Plans Now Read The Prompt You Chose**
+    *   The planner was told a selected prompt's *name* and nothing else. "Quarterly review" says nothing about whether the work involves reading documents, searching the web, or comparing two things, which is exactly what a plan has to decide. It is now given the prompt's wording, capped so a long saved prompt cannot crowd out the rest of the planner's context.
+    *   A selected prompt also now counts as you having pointed at something, alongside a chosen document or agent, so a request carrying one is no longer triaged as a remark to answer off the cuff.
+    *   (Ref: `functions_orchestration_context.py` `_selected_prompt`, `functions_orchestration_planner.py` `triage_request`, `functions_orchestration_schema.py` `build_plan_inputs`)
+
+#### Bug Fixes
+
+*   **Using A Saved Prompt In An Ordinary V2 Chat Recorded Nothing**
+    *   The V2 interface sent `prompt_info` only when orchestration was planning the turn. An ordinary message written with a saved prompt therefore left no record that a prompt had been involved at all — nothing in the message's metadata, and nothing for the conversation export to report. Both send paths now report the prompt through one shared builder.
+    *   (Ref: `stores/chatStore.ts` `sendMessage`, `Composer.tsx` `buildOrchestrationSeeds`, `route_backend_chats.py` `prompt_selection`)
+
+### **(v0.261.091)**
+
+#### New Features
+
+*   **Orchestration Uses The Documents And Tags You Picked**
+    *   The context picker's chips reached a plan only as document ids. A tag chip narrowed a normal chat message and did nothing at all in orchestration, so a plan searched more widely than you had asked it to — the one thing a chip is for.
+    *   **Tags now narrow a plan too, and stay in force for the whole run.** A later step can choose its own search query but cannot widen the shelf you narrowed to. Documents and tags picked together are combined additively, matching the chat path.
+    *   **A document you picked now reaches the planner by name.** It previously arrived as a bare identifier, so the planner could not write "compare the Q3 and Q4 contracts" without being told which document was which, and the plan you were asked to approve listed a row of uuids. The composer sends the names it already had on screen.
+    *   **The plan marks which documents were your choice.** A document you picked and one the planner found are both documents the plan will read, but only the second is a decision worth checking — so the two now look different on the card.
+    *   **A step can act on what an earlier step finds.** A plan could previously only use documents whose ids were known when it was written, so it could not express "search for the relevant contracts, then analyse them" — the planner had to guess which contracts, or not plan it at all. A step can now defer to an earlier searching step instead. The plan says so plainly rather than showing an empty list, and the planner still names documents directly whenever they are already known, because a named document can be approved and a deferred one cannot.
+    *   Names are display only. What a plan may read is still decided from the document ids, so a renamed document is exactly the document it was. Documents that arrive mid-run are re-checked the same way, and still respect the administrator's per-action limit.
+    *   (Ref: `resolve_seeds`, `resolve_candidate_documents`, `RunContext.tags`, `RunContext.step_documents`, `documents_from_step`, `contextDocumentDescriptors`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md), [Chat Context Picker](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_CONTEXT_PICKER.md))
+
+#### Bug Fixes
+
+*   **Plans No Longer Propose Work The User Cannot Do**
+    *   Whether a capability suits *this person, asking this question* — do they hold the app role, does their message actually contain a link, do they have an agent at all — was described for each capability but never consulted when a plan was made. The planner was shown every capability the deployment allowed, so it could propose reading links in a message containing none, or name an agent the user does not have. The step then failed at the point it ran, having promised something in a plan the user had already approved.
+    *   The per-caller checks now run when a plan is built. Because the same resolution feeds the planner and the validator, this narrows what is offered, what is accepted, and what can reach execution.
+    *   Nobody could reach anything they were not entitled to — each capability re-checks its own permission before doing any work — but a plan could describe it, which is its own kind of wrong.
+    *   (Ref: `plan_request(request_context=...)`, `route_backend_orchestration._capability_request_context`, `functions_orchestration_registry` request gates)
+
+*   **Documents Found During A Run Had No Workspace**
+    *   A document discovered by a search step lost the workspace it came from, because the citation dropped `group_id` and `public_workspace_id` even though the search index returns them. Since context chips are grouped by workspace, a found document had no home to be offered back into.
+    *   (Ref: `_citations_from_search_results`)
+
+### **(v0.261.090)**
+
+#### New Features
+
+*   **A Saved Prompt Is Now Attached To Your Message, Not Pasted Into It**
+    *   Picking a prompt in the V2 interface used to paste its text into the message box, where it stopped being a prompt: nothing marked where the standing instructions ended and your own question began, taking it back off meant finding and deleting the right paragraphs, and fixing a variable meant editing prose in the middle of what you were writing.
+    *   **The prompt now sits in a card above the message box**, collapsed to its name, its workspace, and how many variables still need a value. The box below stays yours to type in.
+    *   **Expand it** to fill in variables and read the prompt exactly as it will be sent. **Edit** adjusts the wording for this one message and marks the card *Edited*, with a **Reset** that restores the saved text — the saved prompt is never touched, so a one-off tweak does not change it for everyone else. **Remove** takes it off without disturbing anything you have typed.
+    *   **The prompt is sent first and your message follows it**, which is the order the two are actually written in. A prompt that needs no further input can be sent on its own, so Send now works with an attached prompt and an empty box.
+    *   **Variables are resolved when you send, not when you pick.** `{{composer}}` — "what you have already typed" — used to resolve to nothing, because picking the prompt is the first thing you do. It now means the message you wrote underneath the card. A prompt that positions your text this way is not also sent it a second time.
+    *   **Sent messages show the prompt as a collapsed row** above your own words, expanding to the full text, so a reply can be understood by someone who did not pick the prompt. Copying and exporting still yield the whole message, and older messages render exactly as they did.
+    *   The separate fill-in dialog is gone, folded into the card. Its safety rules came with it: auto-filled values stay badged and clearable, values from the conversation are still only ever offered as chips you click, and nothing is pre-filled at all in a shared conversation.
+    *   (Ref: `components/chat/AttachedPromptCard.tsx`, `lib/usePromptVariableValues.ts`, `lib/promptRequest.ts`, `lib/messagePrompt.ts`, [Prompt Composer Card](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/PROMPT_COMPOSER_CARD.md))
+
+*   **Orchestration Plans Now Read The Prompt You Chose**
+    *   The planner was told a selected prompt's *name* and nothing else. "Quarterly review" says nothing about whether the work involves reading documents, searching the web, or comparing two things, which is exactly what a plan has to decide. It is now given the prompt's wording, capped so a long saved prompt cannot crowd out the rest of the planner's context.
+    *   A selected prompt also now counts as you having pointed at something, alongside a chosen document or agent, so a request carrying one is no longer triaged as a remark to answer off the cuff.
+    *   (Ref: `functions_orchestration_context.py` `_selected_prompt`, `functions_orchestration_planner.py` `triage_request`, `functions_orchestration_schema.py` `build_plan_inputs`)
+
+#### Bug Fixes
+
+*   **Using A Saved Prompt In An Ordinary V2 Chat Recorded Nothing**
+    *   The V2 interface sent `prompt_info` only when orchestration was planning the turn. An ordinary message written with a saved prompt therefore left no record that a prompt had been involved at all — nothing in the message's metadata, and nothing for the conversation export to report. Both send paths now report the prompt through one shared builder.
+    *   (Ref: `stores/chatStore.ts` `sendMessage`, `Composer.tsx` `buildOrchestrationSeeds`, `route_backend_chats.py` `prompt_selection`)
+
+### **(v0.261.089)**
+
+#### New Features
+
+*   **Choose Which Documents A Message Uses, And See The Choice**
+    *   The **Documents** button was previously a plain on/off: it meant "search my documents", with no way to say *which* ones and nothing on screen describing what a message would actually look at.
+    *   **You can now name them three ways.** Type `#` in the message box and search; open the Documents picker and tick them; or select documents in your workspace and press **Chat**. Tags have a chat action of their own now too.
+    *   **A reference shows up in two places on purpose.** It becomes a removable chip above the message box, grouped by workspace, and it stays inside your message as `#[Q3 Contract.pdf]` — rendered as a chip rather than raw brackets — so "compare `#[Q3 Contract.pdf]` against `#[Q2 Contract.pdf]`" still reads as a sentence after it is sent. Removing the chip removes the text, and editing the text retires the chip.
+    *   **The row condenses as it fills.** Up to five references show by name; beyond that each workspace collapses to a count you can open, so a long selection does not push the message box off the screen.
+    *   **The `#` menu searches everywhere at once** — your personal workspace, every group you belong to, and every visible public workspace — plus tags and whole workspaces. A scope that is briefly unavailable no longer empties the menu of everything else.
+    *   **The Documents picker opens upward and has a search box**, which the V2 dropdowns did not, and groups results by workspace. The original "search all my documents" behaviour is still there as the first row.
+    *   Documents and tags chosen together are now combined additively, so a document chip beside an unrelated tag chip no longer matches nothing. Selecting several tags still requires a document to carry all of them.
+    *   (Ref: `lib/chatContext.ts`, `lib/chatContextTokens.ts`, `lib/contextMentions.ts`, `components/chat/ContextChips.tsx`, `components/chat/DocumentPickerPopover.tsx`, [Chat Context Picker](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_CONTEXT_PICKER.md))
+
+#### Bug Fixes
+
+*   **Chat From The Workspace Left The V2 Interface**
+    *   Selecting documents in the V2 workspace and pressing **Chat** performed a full page load into the *classic* chat page, quietly moving the user out of V2 by the action most likely to follow choosing a document. It now opens the V2 composer with those documents already referenced.
+    *   (Ref: `DocumentExplorer.onChat`, `lib/chatContextHandoff.ts`)
+
+*   **Retrying A Tag-Filtered Message Searched More Widely Than The Original**
+    *   The streaming chat path — the one the V2 interface uses — recorded which documents a message searched but not which tags, while the non-streaming path recorded both. Retrying or editing such a message therefore replayed a broader search than the one that produced the original answer, which reads as the assistant answering a different question the second time it is asked.
+    *   (Ref: `route_backend_chats.py` `workspace_search` metadata, `route_backend_conversations._build_replayed_document_context`)
+
+*   **Planned Documents Were Listed As Raw Identifiers**
+    *   Each step of an orchestration plan listed the documents it would read as bare uuids. Deciding whether the planner picked the right document is the entire purpose of showing the plan before it runs, and `8f14e45f-ceea-467a-…` does not support that decision. Steps now list documents by name, falling back to the id only when the document can no longer be read.
+    *   (Ref: `lib/documentTitles.ts`, `components/chat/OrchestrationRunView.tsx`)
+
+### **(v0.261.088)**
+
+#### New Features
+
+*   **Image Generation Can Now Use A Chat Model Where No Image Model Is Available**
+    *   Image generation previously required a dedicated `gpt-image` or DALL-E deployment. A deployment like that is separately approved and is not offered in every subscription or region, so a tenant without one could not switch image generation on at all — the deployment list was filtered to image models, and nothing appeared to select.
+    *   A chat deployment such as `gpt-5.6` can now be selected instead. It has no image endpoint, so SimpleChat asks it through the Responses API's image generation tool rather than the images endpoint, and works out which of the two applies from the model behind the deployment you chose. There is no new setting to configure.
+    *   **Fetch deployments** now lists chat models alongside image models, and excludes embedding deployments, which can produce an image either way.
+    *   A chat deployment offers whole-image regeneration only. Changing part of an image needs the images API, and the editor says so before you paint a region rather than after.
+    *   Existing configurations are untouched. Every deployment that could be selected before still takes the route it always did, including one whose model name was never recorded and one reached through API Management.
+    *   Worth one test generation after selecting a chat deployment: the tool is served by an image model behind the scenes, so a subscription with no image capability at all may still be refused.
+    *   (Ref: `functions_image_api_route.py`, `functions_image_generation.request_generated_image_source`, `/api/models/image`, [Image generation through Responses-capable chat models](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/IMAGE_GENERATION_RESPONSES_MODELS.md))
+
+#### User Interface Enhancements
+
+*   **The Redundant API Management Switch Is Gone From AI Models**
+    *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
+    *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
+    *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](https://microsoft.github.io/simplechat/admin/ai-models/))
+
+#### Bug Fixes
+
+*   **Plans No Longer Propose Work The User Cannot Do**
+    *   Whether a capability suits *this person, asking this question* — do they hold the app role, does their message actually contain a link, do they have an agent at all — was described for each capability but never consulted when a plan was made. The planner was shown every capability the deployment allowed, so it could propose reading links in a message containing none, or name an agent the user does not have. The step then failed at the point it ran, having promised something in a plan the user had already approved.
+    *   The per-caller checks now run when a plan is built. Because the same resolution feeds the planner and the validator, this narrows what is offered, what is accepted, and what can reach execution.
+    *   Nobody could reach anything they were not entitled to — each capability re-checks its own permission before doing any work — but a plan could describe it, which is its own kind of wrong.
+    *   (Ref: `plan_request(request_context=...)`, `route_backend_orchestration._capability_request_context`, `functions_orchestration_registry` request gates)
+
+### **(v0.261.087)**
+
+#### New Features
+
+*   **Choose Which Documents A Message Uses, And See The Choice**
+    *   The **Documents** button was previously a plain on/off: it meant "search my documents", with no way to say *which* ones and nothing on screen describing what a message would actually look at.
+    *   **You can now name them three ways.** Type `#` in the message box and search; open the Documents picker and tick them; or select documents in your workspace and press **Chat**. Tags have a chat action of their own now too.
+    *   **A reference shows up in two places on purpose.** It becomes a removable chip above the message box, grouped by workspace, and it stays inside your message as `#[Q3 Contract.pdf]` — rendered as a chip rather than raw brackets — so "compare `#[Q3 Contract.pdf]` against `#[Q2 Contract.pdf]`" still reads as a sentence after it is sent. Removing the chip removes the text, and editing the text retires the chip.
+    *   **The row condenses as it fills.** Up to five references show by name; beyond that each workspace collapses to a count you can open, so a long selection does not push the message box off the screen.
+    *   **The `#` menu searches everywhere at once** — your personal workspace, every group you belong to, and every visible public workspace — plus tags and whole workspaces. A scope that is briefly unavailable no longer empties the menu of everything else.
+    *   **The Documents picker opens upward and has a search box**, which the V2 dropdowns did not, and groups results by workspace. The original "search all my documents" behaviour is still there as the first row.
+    *   Documents and tags chosen together are now combined additively, so a document chip beside an unrelated tag chip no longer matches nothing. Selecting several tags still requires a document to carry all of them.
+    *   (Ref: `lib/chatContext.ts`, `lib/chatContextTokens.ts`, `lib/contextMentions.ts`, `components/chat/ContextChips.tsx`, `components/chat/DocumentPickerPopover.tsx`, [Chat Context Picker](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_CONTEXT_PICKER.md))
+
+*   **Image Generation Can Now Use A Chat Model Where No Image Model Is Available**
+    *   Image generation previously required a dedicated `gpt-image` or DALL-E deployment. A deployment like that is separately approved and is not offered in every subscription or region, so a tenant without one could not switch image generation on at all — the deployment list was filtered to image models, and nothing appeared to select.
+    *   A chat deployment such as `gpt-5.6` can now be selected instead. It has no image endpoint, so SimpleChat asks it through the Responses API's image generation tool rather than the images endpoint, and works out which of the two applies from the model behind the deployment you chose. There is no new setting to configure.
+    *   **Fetch deployments** now lists chat models alongside image models, and excludes embedding deployments, which can produce an image either way.
+    *   A chat deployment offers whole-image regeneration only. Changing part of an image needs the images API, and the editor says so before you paint a region rather than after.
+    *   Existing configurations are untouched. Every deployment that could be selected before still takes the route it always did, including one whose model name was never recorded and one reached through API Management.
+    *   Worth one test generation after selecting a chat deployment: the tool is served by an image model behind the scenes, so a subscription with no image capability at all may still be refused.
+    *   (Ref: `functions_image_api_route.py`, `functions_image_generation.request_generated_image_source`, `/api/models/image`, [Image generation through Responses-capable chat models](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/IMAGE_GENERATION_RESPONSES_MODELS.md))
+
+*   **Orchestration Can Now Reach Agents, Linked Pages And Deep Research**
+    *   Orchestration could plan around a smaller world than you could reach by hand. Three things sitting in the composer as buttons — your agents, reading the links you pasted, and deep research — were invisible to the planner, so asking for them in plain language got you a plan that quietly did something simpler.
+    *   **Your agents can now be part of a plan.** The planner is shown the agents you can reach and picks one where the question calls for it. Picking an agent yourself still wins outright: a plan built around your choice rather than around a guess at it.
+    *   **Linked pages are read when you paste them.** Only links present in your own message are read — never one a model produced.
+    *   **Deep research is available for questions that need several sources reconciled.** It is the most expensive thing a plan can do, so the planner is told plainly that web search is the cheaper answer to an ordinary factual question.
+    *   Deep research and reading links continue to honour the `DeepResearchUser` and `UrlAccessUser` roles, and agents continue to honour your own agent setting. Orchestration still grants nobody access to anything they could not already reach by hand.
+    *   (Ref: `functions_orchestration_registry.py`, `functions_orchestration_adapters.py`, `functions_orchestration_context.resolve_agent_catalog`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md), [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+*   **A Plan Now Has A Shape: Gather, Then Reason, Then Create**
+    *   Every capability now belongs to an ordered phase — gathering knowledge, reasoning, creating — and a plan moves through them in order. A plan can no longer go looking for something after it has already answered, which used to produce an answer written without the evidence the later step had just found. That was a silently wrong answer rather than a visible failure, which is the worse of the two.
+    *   The third phase is declared but empty. Producing files, placing them in a workspace, sharing and mail come next; they have effects outside the conversation and need an approval story of their own.
+    *   (Ref: `CAPABILITY_PHASES`, `functions_orchestration_schema._enforce_phase_order`)
+
+*   **The Orchestration Settings Are Configurable In The New Admin Interface**
+    *   The new admin interface offered exactly one orchestration setting — the on switch — while the classic interface had sixteen. Approval mode, the countdown, the capability list, every limit and the planner model were all unreachable, so turning orchestration on there meant accepting whatever the defaults happened to be.
+    *   All sixteen are now configurable, grouped as Approval, Capabilities, Limits and Planner Model.
+    *   (Ref: `admin_settings_fields.py`, [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+#### Bug Fixes
+
+*   **Chat From The Workspace Left The V2 Interface**
+    *   Selecting documents in the V2 workspace and pressing **Chat** performed a full page load into the *classic* chat page, quietly moving the user out of V2 by the action most likely to follow choosing a document. It now opens the V2 composer with those documents already referenced.
+    *   (Ref: `DocumentExplorer.onChat`, `lib/chatContextHandoff.ts`)
+
+*   **Retrying A Tag-Filtered Message Searched More Widely Than The Original**
+    *   The streaming chat path — the one the V2 interface uses — recorded which documents a message searched but not which tags, while the non-streaming path recorded both. Retrying or editing such a message therefore replayed a broader search than the one that produced the original answer, which reads as the assistant answering a different question the second time it is asked.
+    *   (Ref: `route_backend_chats.py` `workspace_search` metadata, `route_backend_conversations._build_replayed_document_context`)
+
+*   **Planned Documents Were Listed As Raw Identifiers**
+    *   Each step of an orchestration plan listed the documents it would read as bare uuids. Deciding whether the planner picked the right document is the entire purpose of showing the plan before it runs, and `8f14e45f-ceea-467a-…` does not support that decision. Steps now list documents by name, falling back to the id only when the document can no longer be read.
+    *   (Ref: `lib/documentTitles.ts`, `components/chat/OrchestrationRunView.tsx`)
+
+*   **Documents An Orchestrated Answer Used Now Appear In The Documents Tab**
+    *   A plan would search, find the right material, and cite it correctly in its answer — and the Documents tab would still say "No documents used yet".
+    *   Two separate things were missing. The assistant message was saved without its citations, so the reply carried no citation chips. And the conversation's used-document list was never extended, which is what the Documents tab actually reads: an answer can cite a document perfectly and still show nothing there.
+    *   Web sources and document sources are now kept apart, because they are read differently — a citation with no document behind it used to be dropped silently on its way to document tracking.
+    *   (Ref: `route_backend_orchestration._partition_citations`, `merge_cited_documents_into_conversation`, `chatStore.settleOrchestrationTurn`)
+
+*   **The Plan Bar No Longer Lingers After A Run Finishes**
+    *   A collapsed plan summary stayed pinned in the conversation after its run had settled, competing with the answer it had produced. It is now removed once the run is complete; the full plan remains in the side panel, where it can be reopened.
+    *   (Ref: `OrchestrationPlanCard.tsx`)
+
+#### User Interface Enhancements
+
+*   **The Redundant API Management Switch Is Gone From AI Models**
+    *   **Send requests through API Management** has been removed from the AI Models tab. It belongs to the classic single endpoint, and a connection now carries its own API Management configuration, so the switch was a second control for a route connections never take — and the endpoint, deployment and subscription key it depends on were only settable on the classic admin page anyway.
+    *   The setting itself is unchanged and still applies to the classic endpoint. It is edited on the server-rendered admin page.
+    *   (Ref: `admin_settings_fields.ADMIN_SETTINGS_FIELDS['gpt-config']`, `SUPPRESSED_CAPABILITY_KEYS`, [AI Models](https://microsoft.github.io/simplechat/admin/ai-models/))
+
+### **(v0.261.086)**
+
+#### Bug Fixes
+
+*   **Orchestrated Answers Failed At The Last Step**
+    *   A plan would research correctly and then fail while writing the answer, reporting only "The answer could not be written". The same fault would have stopped document analysis and document comparison, which is every capability that reasons over what was gathered — web search and document search completed because they never call a model.
+    *   The step that writes the answer asks the model through a small function the request supplies, and SimpleChat has a long-standing convention for how that function is called. The orchestration request was supplying one with a different shape, so the call failed the moment a real step reached it.
+    *   Token usage is now also counted for orchestrated runs. It was previously reported as zero — not because the run was free, but because nothing was adding it up.
+    *   (Ref: `route_backend_orchestration._build_invoke_prompt`, `functions_orchestration_adapters.run_respond`, `functions_workflow_runner.invoke_model_prompt`)
+
+### **(v0.261.085)**
+
+#### New Features
+
+*   **Orchestration: Describe What You Want Instead Of Assembling The Request**
+    *   Answering a question well used to depend on choosing correctly before you had seen any results. You had to decide whether to search your documents and which ones, whether to search the web, whether to read the URLs you had pasted, which saved prompt to apply, which agent to use, and which model should answer — all in advance, from a row of controls under the message box.
+    *   **You now just ask.** SimpleChat works out what the question needs, shows you the plan it intends to follow, and runs it. Where an administrator has enabled orchestration the composer opens in it, with the capability toggles and the model, agent and reasoning pickers folded behind **Manual controls** rather than removed; file upload and voice input stay exactly where they are.
+    *   **You decide how much say you want.** A plan can wait for you to read it, run after a countdown you can interrupt, or run immediately. Administrators set the default and can decide whether users may change it.
+    *   **You can narrow a plan before it runs.** Steps can be switched off and documents removed. You cannot add to a plan this way — widening it goes back through planning, so a request never skips the reasoning and the permission check that produced it.
+    *   **Questions are asked in the conversation, as a card.** When the orchestrator genuinely cannot proceed without knowing something, it asks with a short form — choices to pick rather than prose to write — instead of a paragraph you have to answer in the thread. The card speaks the MCP elicitation contract, so an MCP server asking a question later will use the same card.
+    *   **The plan lives in the side panel, next to Contents and Documents.** A Run view shows the current plan with live progress, and a Map view shows every run in the conversation in order, so you can see what has already been searched and produced. Clicking a run jumps the conversation to the turn that produced it.
+    *   **Later turns reuse earlier work.** The planner is shown a bounded summary of what previous turns in the conversation already did, so a follow-up question depends on findings that already exist rather than searching for them again — and you are never asked a question you have already answered.
+    *   Orchestration reaches only capabilities that are already enabled, so it grants no new access to anyone. This release covers document search, document analysis, document comparison, spreadsheet analysis, web search and answering.
+    *   Available in the V2 interface. The classic interface is unchanged. Off by default.
+    *   (Ref: `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_executor.py`, `/api/v2/orchestration/plan`, `/api/v2/orchestration/run`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md), [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+#### Bug Fixes
+
+*   **Enabling A Feature No Longer Requires Reloading The Chat Tab**
+    *   The new interface read its configuration once, when the page first loaded. An administrator who turned a capability on in Admin Settings — which is a different page, usually a different tab — came back to an open chat that still insisted the capability did not exist, with nothing on screen to explain why.
+    *   The configuration is now re-read whenever the tab comes back to the front, so returning from Admin Settings is enough. This applies to every setting, not just the one that surfaced it.
+    *   (Ref: `bootstrapStore.refresh`, `App.tsx` visibility and focus handling)
+
+### **(v0.261.084)**
+
+#### New Features
+
+*   **The Knowledge Settings Are Configurable In The New Admin Interface**
+    *   Knowledge is the largest group in Admin Settings — five tabs and roughly 150 settings covering web search, URL access, deep research, the search index, document extraction, audio and video, and file sync. In the new admin interface it existed only as a couple of dozen bare switches labelled from their internal key names. Every endpoint, key, limit, domain list, model choice and connection test in the group was simply absent, and the page said so with a link back to the classic one.
+    *   All five tabs are now fully configurable there, and each section is laid out to be worked through rather than scanned: **connect, verify, then tune.**
+    *   **Every section leads with its own switch and a status.** A section reports whether it is off, needs configuration, is waiting on something elsewhere, or is ready — so a long page can be skimmed for what still needs attention instead of opened section by section.
+    *   **Detail arrives when it is needed.** Settings cluster into groups that stay collapsed, and the one that needs attention next opens on its own. Searching still reaches everything, including settings inside a collapsed group.
+    *   **Connections can be tested before they are saved**, against the values currently on screen. Both admin interfaces now offer exactly the same set of tests.
+    *   **Prerequisites are stated where they are felt.** File Sync needs Redis Cache, which is configured in a different group; the section now says so, explains the consequence, and links to it, rather than leaving an administrator to turn File Sync on and watch nothing happen.
+    *   (Ref: `admin_settings_fields.py`, `SettingsSection.tsx`, `ConnectionTest.tsx`, `/api/v2/admin/settings/test-connection`)
+
+*   **Image Support Is Read From Real Model Capability Data**
+    *   Whether a model could be used for Multi-Modal Vision Analysis was decided by matching its name against a pattern. That admitted text-only chat variants, said nothing at all about a self-hosted or internally named deployment, and could not be corrected because the rule was in the code.
+    *   Each model on an endpoint now has a **Reads images** setting under **AI Models**, arriving pre-filled from capability data the application already ships. The field says where its answer came from — set here, from the built-in data, or inferred from the name — so the one worth reviewing is obvious.
+    *   The vision model picker offers only models that report image support, and marks one whose support was inferred rather than known.
+    *   (Ref: `functions_model_capabilities.py`, `static/json/model_capabilities.json`, `/api/models/vision-capability`, [AI Models](https://microsoft.github.io/simplechat/admin/ai-models/))
+
+*   **File Sync Workspace Assignments Can Now Be Edited**
+    *   File Sync could be restricted to named groups or public workspaces, but the screens for choosing them were never finished, so the lists could not be set from either admin interface. They are now searchable pickers, shown only while the restriction that uses them is turned on.
+    *   (Ref: `file_sync_allowed_group_ids`, `file_sync_allowed_public_workspace_ids`, `AssignmentPicker.tsx`)
+
+#### Bug Fixes
+
+*   **Admin Credentials Are No Longer Sent To The Browser In Plain Text**
+    *   The classic admin page has always replaced stored keys, connection strings and client secrets with a placeholder before rendering. The settings endpoint behind the new admin interface returned the settings document untouched, so every stored credential was delivered to the browser and visible to anyone who could open the page.
+    *   Credentials are now redacted on the way out and on the way back, and submitting an untouched placeholder is recognised as "no change" rather than being written — so saving an unrelated toggle can no longer overwrite a credential.
+    *   (Ref: `/api/v2/admin/settings`, `admin_settings_fields.py`, `redact_admin_settings_secrets_for_form`)
+
+*   **Two Document Extraction Sections Were Unreachable**
+    *   The **Content Understanding** and **Images Inside Office Files** cards existed but were missing from the settings navigation, so neither admin interface could link to them and neither was documented. Both are now navigable sections in both interfaces.
+    *   (Ref: `admin_settings_nav.py`, [Knowledge settings](https://microsoft.github.io/simplechat/admin/knowledge/#content-understanding-section))
+
+#### User Interface Enhancements
+
+*   **Document Intelligence Is No Longer Inside Out**
+    *   The section opened with a feature toggle and put the endpoint and key that make the feature work at the very bottom, after every option that depends on them. In the new interface the connection comes first, and the settings that need it follow and say so when it is missing.
+    *   (Ref: `document-intelligence-section`)
+
+*   **The Shared Speech Resource Is Explained Before It Is Needed**
+    *   Audio uploads, voice input and voice responses are three separate capabilities that use one Azure Speech resource, and that was explained in a note beneath them. The resource is now configured first, and the long resource ID needed for managed identity can be built from the fields above it instead of typed by hand.
+    *   (Ref: `ai-voice-chat-section`, `ResourceIdBuilder.tsx`)
+
+*   **The Response Completion Sound Moved To Feedback & Alerts**
+    *   It played a local browser sound and required no Azure Speech resource, yet it was the first control in the AI Voice Conversations section. It now sits with the other notification settings under Chat.
+    *   (Ref: `enable_chat_completion_audio_cues`, [Chat settings](https://microsoft.github.io/simplechat/admin/chat/#desktop-notifications-section))
+
+### **(v0.261.083)**
+
+#### New Features
+
+*   **Embeddings And Image Generation Can Be Configured In The New Admin Interface**
+    *   These were the last two sections of AI Models with nothing behind them. Both fell back to scanning the settings document for `enable_*` booleans, so each showed a switch or two and hid everything that actually makes the route work: the endpoint, the authentication method, the subscription and resource group, the API version, the gateway alternative and the deployment in use.
+    *   **Neither has connections, and the interface no longer pretends otherwise.** Chat can draw from several resources at once; embeddings and image generation each have exactly one, or one API Management gateway in front of one. Both are now configured directly, with the direct and gateway routes presented as the alternatives they are — only the selected one is used, so the fields for the other stay out of the way instead of sitting there looking configured.
+    *   **The deployment in use is chosen from a list rather than typed.** **Fetch deployments** asks the resource what it has, and the choice is saved on its own. A deployment the resource no longer reports is dropped from the selection rather than kept, because a request naming it would fail on the next embedding or image call rather than at save time. The list is a cache of the last answer, which is why fetching is a deliberate action and why the interface says so.
+    *   **Fetching reads the saved endpoint, not the one on screen**, since that is how the underlying discovery has always worked. That caveat is now stated next to the button that trips over it.
+    *   (Ref: `admin_settings_fields.py`, `route_backend_v2.py`, `/api/v2/admin/model-selection`, `ModelSelectionPicker.tsx`, `modelSelection.ts`, `embedding_model`, `image_gen_model`)
+
+*   **Stored Credentials Are No Longer Placed In The Page**
+    *   The new admin interface had no way to describe a secret, so a credential declared in a section would have been drawn by the ordinary text control — a live Azure OpenAI key sitting in a readable box, offered to every password manager and form-restore cache on the machine. Secrets are now a field type of their own: masked, excluded from browser autofill, and revealed only on request.
+    *   **The box starts empty whatever is stored, and leaving it empty keeps the stored value.** The new interface saves a section at a time, so an untouched credential still travels with whatever else was edited. Had an empty box meant "empty string", saving an API version would have wiped a working key, and the damage would only have surfaced the next time the service was called. Removal is now its own action, which is the only thing that clears a stored secret.
+    *   (Ref: `admin_settings_fields.py`, `fields.tsx`, `AdminSettingsPage.tsx`, `azure_openai_embedding_key`, `azure_openai_image_gen_key`)
+
+#### Bug Fixes
+
+*   **A Document Extraction Setting Was Appearing Under Image Generation**
+    *   Settings the new admin interface has no description for are placed by matching words in their name against section names. **Analyze images embedded in DOCX and PPTX files** shares the word "image" with Image Generation, so it was filed there — as a bare switch, with no explanation, among settings about producing pictures rather than reading them out of Word and PowerPoint files.
+    *   It now appears under Knowledge, in Document Extraction, alongside the rest of Document Intelligence, and carries the explanation the classic page has always had.
+    *   (Ref: `admin_settings_fields.py`, `enable_office_embedded_image_analysis`, `document-intelligence-section`)
+
+#### User Interface Enhancements
+
+*   **Conditional Settings Follow The Choice They Depend On**
+    *   A setting could previously be shown or hidden by a switch, but not by a choice — the condition was read as true or false, and every non-empty option is true. The API key field, which belongs to key authentication, would therefore have stayed on screen after switching a route to managed identity, next to a note saying it was not being used.
+    *   Conditions now compare the actual value, and a control that sits inside two nested blocks can name both. The Azure OpenAI keys for embeddings and image generation are gated on the direct-connection route *and* on key authentication, so switching either section to API Management now takes the whole direct connection with it, including its key, rather than leaving parts of it behind.
+    *   (Ref: `adminFields.ts`, `isFieldVisible`, `admin_settings_fields.py`, `docs/admin/ai-models.md`)
+
+### **(v0.261.082)**
+
+#### New Features
+
+*   **Embeddings And Image Generation Can Be Configured In The New Admin Interface**
+    *   These were the last two sections of AI Models with nothing behind them. Both fell back to scanning the settings document for `enable_*` booleans, so each showed a switch or two and hid everything that actually makes the route work: the endpoint, the authentication method, the subscription and resource group, the API version, the gateway alternative and the deployment in use.
+    *   **Neither has connections, and the interface no longer pretends otherwise.** Chat can draw from several resources at once; embeddings and image generation each have exactly one, or one API Management gateway in front of one. Both are now configured directly, with the direct and gateway routes presented as the alternatives they are — only the selected one is used, so the fields for the other stay out of the way instead of sitting there looking configured.
+    *   **The deployment in use is chosen from a list rather than typed.** **Fetch deployments** asks the resource what it has, and the choice is saved on its own. A deployment the resource no longer reports is dropped from the selection rather than kept, because a request naming it would fail on the next embedding or image call rather than at save time. The list is a cache of the last answer, which is why fetching is a deliberate action and why the interface says so.
+    *   **Fetching reads the saved endpoint, not the one on screen**, since that is how the underlying discovery has always worked. That caveat is now stated next to the button that trips over it.
+    *   (Ref: `admin_settings_fields.py`, `route_backend_v2.py`, `/api/v2/admin/model-selection`, `ModelSelectionPicker.tsx`, `modelSelection.ts`, `embedding_model`, `image_gen_model`)
+
+*   **Stored Credentials Are No Longer Placed In The Page**
+    *   The new admin interface had no way to describe a secret, so a credential declared in a section would have been drawn by the ordinary text control — a live Azure OpenAI key sitting in a readable box, offered to every password manager and form-restore cache on the machine. Secrets are now a field type of their own: masked, excluded from browser autofill, and revealed only on request.
+    *   **The box starts empty whatever is stored, and leaving it empty keeps the stored value.** The new interface saves a section at a time, so an untouched credential still travels with whatever else was edited. Had an empty box meant "empty string", saving an API version would have wiped a working key, and the damage would only have surfaced the next time the service was called. Removal is now its own action, which is the only thing that clears a stored secret.
+    *   (Ref: `admin_settings_fields.py`, `fields.tsx`, `AdminSettingsPage.tsx`, `azure_openai_embedding_key`, `azure_openai_image_gen_key`)
+
+#### Bug Fixes
+
+*   **A Document Extraction Setting Was Appearing Under Image Generation**
+    *   Settings the new admin interface has no description for are placed by matching words in their name against section names. **Analyze images embedded in DOCX and PPTX files** shares the word "image" with Image Generation, so it was filed there — as a bare switch, with no explanation, among settings about producing pictures rather than reading them out of Word and PowerPoint files.
+    *   It now appears under Knowledge, in Document Extraction, alongside the rest of Document Intelligence, and carries the explanation the classic page has always had.
+    *   (Ref: `admin_settings_fields.py`, `enable_office_embedded_image_analysis`, `document-intelligence-section`)
+
+#### User Interface Enhancements
+
+*   **Conditional Settings Follow The Choice They Depend On**
+    *   A setting could previously be shown or hidden by a switch, but not by a choice — the condition was read as true or false, and every non-empty option is true. The API key field, which belongs to key authentication, would therefore have stayed on screen after switching a route to managed identity, next to a note saying it was not being used.
+    *   Conditions now compare the actual value, and a setting whose condition depends on something already hidden is hidden with it. Switching an embedding or image route to API Management now takes the whole direct connection with it, including its key, rather than leaving parts of it behind.
+    *   (Ref: `adminFields.ts`, `isFieldVisible`, `admin_settings_fields.py`, `docs/admin/ai-models.md`)
+
+### **(v0.261.081)**
+
+#### New Features
+
+*   **The Default Chat Model Can Be Chosen In The New Admin Interface**
+    *   The Chat section of AI Models had nothing in it but a single switch. The default model — the one chat uses when nobody has picked anything, such as on a brand new conversation — could only be set on the classic admin page, even though the connections it selects from had just moved.
+    *   **Only models that can actually serve are offered.** The list is built from enabled models on enabled connections, because a reference to anything else is cleared the moment connections are next saved. Offering a disabled model would have let an administrator choose a value that quietly reverted, with nothing to explain why.
+    *   **A choice that no longer resolves is refused rather than accepted.** Naming a connection that has been deleted, or a model that has been switched off, now comes back with a message saying so. Previously the two failure modes — storing a dangling reference, and silently emptying it — both ended up looking identical: the field simply read as having no default.
+    *   **The saved default is shown for what it currently means.** If the connection or model it named has since gone, the interface says that rather than presenting an empty field as though nothing had ever been set. Opening the page does not rewrite the stored value, so the evidence of what went missing survives.
+    *   The reference is validated by the same rule the classic form uses, so the two interfaces cannot disagree about whether a default is still valid.
+    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/default-model`, `ChatDefaultModel.tsx`, `modelConnections.ts`, `admin_settings_fields.py`, `resolve_default_model_selection`)
+
+#### User Interface Enhancements
+
+*   **Chat Now Says Which Endpoint Is Actually Serving It**
+    *   SimpleChat has two ways to reach a chat model — the connections list, or a single classic endpoint — and only one is in force at a time. Nothing on screen distinguished them. An administrator could add a connection, test it, watch it save, and still be served by the classic endpoint, with no error and nothing to suggest the two were different things.
+    *   The Chat section now names the live route. When it is the classic single endpoint, it links to the page where that endpoint is configured, since those fields are deliberately not duplicated in the new interface.
+    *   It also warns before the switch is thrown: turning connections on is one-way, because the setting is stored as "already on or newly on" and cannot be turned back off afterwards.
+    *   Connections and the settings that depend on them are edited side by side, so they now stay in step with each other. Enabling connections, adding one, or switching a model off is reflected immediately in the model list and in the notice, rather than leaving adjacent parts of one screen describing different states until the page is reloaded.
+    *   **The API Management switch is no longer anonymous.** Settings the new interface has not described are placed by matching their name against section names, and that guess had dropped this one into the Chat section as a bare switch reading "Gpt apim". Beneath a notice explaining which endpoint chat uses, it looked like part of the same explanation — while turning it on actually reaches for an APIM endpoint, deployment and subscription key that can only be set on the classic admin page, so requests would have had nowhere to go. It now says what it does and where the rest of it lives.
+    *   (Ref: `ChatModeNotice.tsx`, `ModelConnectionsManager.tsx`, `modelConnectionsStore.ts`, `enable_multi_model_endpoints`, `enable_gpt_apim`, `docs/admin/ai-models.md`)
+
+### **(v0.261.074)**
+
+#### New Features
+
+*   **Agent Settings Are Now Actually Present In The New Admin Interface**
+    *   The new Admin Settings surface built its Agents tab by scanning the settings document for on/off switches and guessing where each one belonged. Agents are configured with far more than switches, so the result was close to empty: the Agents Configuration section rendered nothing at all, **Enable Agents** was filed under "Other capabilities" because nothing in its name matched the section, and not one of Workspace Mode, the workspace permissions, or the eleven Agents page settings appeared anywhere.
+    *   The Agents tab is now described properly and renders every one of those settings, split into four sections instead of a single crowded card: **Agent Runtime**, **Workspace Agent Permissions**, **Agents Page**, and **Agent Template Approvals**.
+    *   **The settings now say what depends on what.** Enable Agents gates the whole tab. Workspace Mode only appears once agents are on, and the merge behaviour only once Workspace Mode is on — a chain, so a control cannot reappear because an intermediate gate happens to be off. Workspace Agent Permissions is hidden entirely outside Workspace Mode, matching the classic interface.
+    *   **Workspace Mode explains itself.** It reads as a choice between one shared set of agents that administrators curate, and a separate collection for each user and group, rather than as an unexplained switch.
+    *   **The Agents page settings now follow the page they customise.** That page is served behind Enable Agents, so its hero, guidance text and promotion settings are hidden while agents are off instead of offering edits that could not take effect.
+    *   **Promoted agents are chosen from a list rather than edited as JSON.** Agents already promoted are not offered again, and each promotion's time window is set per row.
+    *   Rarely-changed settings are grouped and collapsed rather than laid out flat, and a search opens any collapsed group so a match is never hidden behind it.
+    *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `adminAgents.ts`, `PromotedAgentsEditor.tsx`, `AdminSettingsPage.tsx`)
+
+*   **Action Settings Are Now Present In The New Admin Interface**
+    *   The Actions tab in the new Admin Settings surface showed a single toggle. The Analyze and Document Comparison limits were invisible because they are stored as one nested object rather than as separate settings, and the built-in action toggles had been scattered by the same guesswork that emptied the Agents tab — **Enable Text Action** had ended up under Appearance › Branding because its name contains "text".
+    *   The Actions tab now renders as four sections: **Document Actions**, **Workspace Action Permissions**, **Built-in Actions**, and **Global Actions**.
+    *   **Document action limits are editable again**, with the ranges the application actually enforces (2–300 for chat, 2–1000 for a workflow run) and the workflow limit separated from the chat one. Saving one limit no longer risks the other five, and out-of-range values are clamped by the same code the classic interface uses.
+    *   **Built-in actions are collapsed rather than laid out flat.** They default on and are rarely changed, so they no longer take up the tab; the documentation now says which one is worth a decision — HTTP, the only built-in action that reaches outside the deployment.
+    *   All six built-in action toggles now live together in one section. **Enable Text Action** previously sat alone in the Actions Configuration section, so that section no longer declares any settings and the schema does not describe it. Restoring it would declare `enable_text_plugin` in two places at once. What belongs there is the global actions table, which is still authored in the classic interface.
+
+*   **Inbound MCP Is Fully Configurable In The New Admin Interface**
+    *   The Inbound MCP tab in the new Admin Settings surface showed exactly two switches — **Enable inbound MCP server** and **Enable tool throttles** — and nothing else. The delegated scope, the required Entra roles, the request and throttle limits, and all three allowlists were invisible, which read as "disabled, but throttles are on" with no explanation for either.
+    *   The tab now renders the whole configuration, grouped as **Runtime gate**, **Request limits** and **Allowlists**.
+    *   **Allowlists are edited as rows rather than raw JSON.** Each row pairs the identifier the runtime matches with a description of who it belongs to, and a repeated value is flagged as you type rather than disappearing on save.
+    *   **The lists the runtime actually reads are derived on save**, exactly as the classic interface derives them. Editing an allowlist in the new interface now takes effect; previously the schema had no way to express that one setting produces several, which for an access control list is the worst kind of failure — the screen would show the new restriction while the runtime applied the old one.
+    *   **Turning off "Allow additional tenant IDs" no longer discards the tenants you listed.** It stops admitting them, and turning it back on restores them.
+    *   (Ref: `admin_settings_fields.py`, `functions_mcp_server_config.py`, `EntryListEditor.tsx`, `adminEntries.ts`)
+
+#### Bug Fixes
+
+*   **Tabular Processing Is No Longer Shown As A Toggle That Does Nothing**
+    *   The new interface showed **Tabular Processing** as a live switch under Chat › Processing Thoughts, purely because the word "processing" matched that section. The application recomputes this setting from **Enhanced Citations** on every settings read, so switching it had no effect and the value silently reverted.
+    *   It now appears where it belongs, under Built-in Actions, as a read-only entry that reports its state and names Enhanced Citations as its source. Attempting to set it directly is refused rather than accepted and discarded.
+    *   (Ref: `enable_tabular_processing_plugin`, `is_tabular_processing_enabled`, `admin_settings_fields.py`)
+
+*   **Fact Memory Is Listed With The Actions It Affects Without Moving Its Control**
+    *   Fact memory is a chat capability, but it also decides whether agents get a memory action, so it was missing from any list an administrator would consult when working out what an agent can do.
+    *   It is now mirrored under Built-in Actions as a read-only entry that links to where it is set, while the control that actually sets it stays in Chat.
+    *   (Ref: `enable_fact_memory_plugin`, `fields.tsx`)
+
+*   **Multi-Agent Orchestration Is No Longer Shown As A Switch Under AI Models**
+    *   **Multi-agent orchestration** appeared in the new Admin Settings surface as a live toggle in the AI Models group, which it has nothing to do with. It is written by the orchestration settings API from the chosen orchestration mode, so setting it there did nothing and the value reverted.
+    *   It now sits with the agent runtime settings as a read-only entry that reports the current mode.
+    *   (Ref: `enable_multi_agent_orchestration`, `admin_settings_fields.py`)
+
+*   **Defects Found While Combining The Admin Settings Groups**
+    *   Six efforts described different admin settings groups at the same time, all writing into the same registries. Combining them surfaced four faults that produced code which parsed, imported and ran — three would have shipped silently.
+    *   **Nine settings sections were declared twice.** Python keeps the last definition of a duplicate key, so nothing failed; the new registry integrity test caught it on its first run.
+    *   **A section emptied earlier had quietly gained a new setting.** The Actions Configuration section was emptied when the Text action moved in with the other built-in actions, and the Default Embedding Model action was moved into it afterwards. A check now confirms that emptying a section never takes a setting with it.
+    *   **Fact Memory was declared as editable in two places at once.** It is a chat capability that also decides whether agents get a memory action, so it appears in both surfaces; only the Chat declaration may be the editable one, or which control governs saving depends on declaration order.
+    *   **A test crashed once a duplicate was resolved.** A workflow check read a setting's dependency as a single condition rather than a chain. The chained setting had existed for some time but was masked by a duplicate section declaration; fixing the duplicate made it visible.
+    *   (Ref: [Admin Settings Registry Merge Fixes](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ADMIN_SETTINGS_REGISTRY_MERGE_FIXES.md))
+
+#### User Interface Enhancements
+
+*   **Agent Orchestration No Longer Shows A Choice That Does Not Exist**
+    *   Agent Orchestration offered an Orchestration Type dropdown and a Max Rounds Per Agent field, but the application ships a single orchestration mode; the multi-agent modes are not built into this release. The dropdown therefore had exactly one option and Max Rounds could never be reached.
+    *   The new interface asks the server which modes exist and shows the card only when there is a genuine choice. It will reappear on its own if multi-agent orchestration ships, without another change here.
+    *   (Ref: `OrchestrationCard.tsx`, `/api/orchestration_types`, `get_agent_orchestration_types`)
+
+*   **Agents & Actions Documentation Describes Behaviour Instead Of Restating Labels**
+    *   The Agents entries in the Agents & Actions administration page mostly read "Defines behavior for the related admin workflow", which told an administrator nothing. They now describe what each setting does, what it depends on, and why you would change it — including that the Agents catalog page is unavailable while agents are off, and why promoting an agent exists at all.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
+*   **The Inbound MCP Tab Explains Why It Is Empty**
+    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
+    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
+    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
+
+*   **Inbound MCP Documentation Describes The Access Model**
+    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
+### **(v0.261.071)**
+
+#### New Features
+
+*   **Chat Settings Are Fully Editable In The New Admin Interface**
+    *   The new admin interface builds each settings section from a description of what it contains. Chat had no description, so it fell back to scanning for on/off flags — which meant it could draw switches and nothing else. Every chat setting that was not a switch was simply absent: the conversation history limit, the default system prompt, and the whole Enhanced Citations configuration.
+    *   All eleven Chat sections now render the same controls the classic interface does, across Chat Experience, Feedback & Alerts and Citations.
+    *   **Two switches were invisible even though they are switches**, because their setting names do not begin with `enable_`. Workspace Scope Lock and the ChatFileUploadUser role requirement are now both present.
+    *   **Enhanced Citations came across in full**, including the storage authentication type, the storage credentials, the tabular preview size cap, the large-run confirmation thresholds, and the chunk processing model — plus a **Test storage connection** button. Startup deliberately skips storage checks so an outage cannot stop the application booting, which previously meant a wrong credential was only discovered when a citation failed to open.
+    *   (Ref: `admin_settings_fields.py`, `EnhancedCitationsStorageTest.tsx`, `AdminSettingsPage.tsx`, [V2 Admin Chat Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_CHAT_SETTINGS.md))
+
+*   **Conversation History Summarization Can Be Configured**
+    *   Three settings that control what happens to conversation history — summarizing messages that fall outside the history limit, summarizing recent turns into the document-search query, and how many messages that summary reads — have always been acted on by the chat backend but have never had a control anywhere.
+    *   All three are now editable in both the classic and the new admin interface, under Conversation History.
+    *   (Ref: `chat-experience.html`, `conversation-history-section`, [Chat settings](https://microsoft.github.io/simplechat/admin/chat/))
+
+#### Bug Fixes
+
+*   **Admin Saves No Longer Reset The History Summarization Settings**
+    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
+    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
+    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
+
+*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
+    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
+    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
+    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
+
+*   **Stored Credentials Are No Longer Sent To The Admin Browser**
+    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
+    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
+    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
+    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Settings From Other Areas No Longer Appear Under Chat**
+    *   Undescribed settings are placed by matching their name against section names, and six landed in the wrong group: audio and video file support and chat completion audio cues (Knowledge > Audio & Video), enhanced extraction (Knowledge > Document Extraction), and the embedding model and tabular processing actions (Agents & Actions). Each now appears where it belongs.
+    *   **Four switches that did nothing have been removed.** Tabular processing is derived from Enhanced Citations rather than stored, so toggling it appeared to save and then reverted; the Enhanced Citations mount and two mixed-source rollout flags have no administrator control at all.
+    *   (Ref: `SUPPRESSED_CAPABILITY_KEYS`, `buildCapabilityIndex`, `test_v2_admin_capability_placement.py`)
+
+*   **Settings No Longer Linger After Their Feature Is Switched Off**
+    *   A setting shown only under certain conditions was checked against one other setting, which was not always enough. The Latest Features documentation links toggle stayed on screen with the Support menu switched off, because the condition it was checked against remained satisfied on its own.
+    *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
+    *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
+
+#### Fixes Inherited From The Admin Settings Merge
+
+These three defects came from the Workflow and Workspaces admin settings work and
+were found while merging it. They are recorded separately because they are not
+part of the Chat group feature work.
+
+*   **Enable Chat File Uploads Was Missing From The Admin Page**
+    *   The chat file uploads section was registered twice. Registrations are applied in order and the last one wins, so a later registration holding only the app role requirement replaced the full one — and the **Enable Chat File Uploads** switch disappeared from the page entirely, with nothing reporting an error.
+    *   The two registrations are now one, holding both settings.
+    *   (Ref: `chat-file-uploads-section`, `ADMIN_SETTINGS_FIELDS`)
+
+*   **Six Workflow Settings Were One Reordering Away From Vanishing**
+    *   The Workflow section was also registered twice, with different contents. The complete registration happened to come last, so the page was correct — but the shorter one was dead code, and any change to the order would have silently dropped six Workflow settings.
+    *   (Ref: `workflow-settings-section`, `ADMIN_SETTINGS_FIELDS`)
+
+*   **Group Assignment Pickers Stayed Visible For Disabled Features**
+    *   Three pickers — group workspace file downloads, public workspace file downloads and group workflows — were only checked against the toggle that turns assignment on, not against the capability that owns it. Switching the capability back off left the picker on screen, still offering to assign access to a feature that was no longer available.
+    *   (Ref: `file_download_allowed_group_ids`, `file_download_allowed_public_workspace_ids`, `group_workflow_allowed_group_ids`)
+
+*   **A Duplicate Registration Now Fails The Build**
+    *   Both duplications above were invisible because a repeated registration is not an error — it just replaces the earlier one. A new test reads the settings registry directly and fails on a repeated section, a repeated setting, or an empty section, so the next merge into this file reports the problem instead of quietly losing settings.
+    *   (Ref: `functional_tests/test_admin_settings_fields_registry_integrity.py`)
+
+### **(v0.261.070)**
+
+#### Bug Fixes
+
+*   **Turning Connections Off Said It Worked, And Did Not**
+    *   Enabling connections for chat is one-way — the stored flag is coerced to "already on, or newly requested", so once it is true it stays true. The classic page reflects that by hiding the checkbox after it is enabled. The new admin interface showed an ordinary switch, so turning it off reported a successful save, moved the switch, and changed nothing; chat carried on routing through connections and only a page reload revealed it. The attempt is now refused with an explanation.
+    *   **Enabling connections from the new interface also used to strand a deployment.** The classic page carries the existing single chat endpoint over as the first connection when the flag is first switched on. The new interface skipped that step, so a deployment that enabled connections there was left with an empty model catalog — and, because the flag cannot be turned back off, no way to recover. Both paths now migrate through the same code.
+    *   (Ref: `admin_settings_fields.py`, `build_migrated_model_endpoints_from_legacy`, `_seed_connections_on_first_enable`)
+
+*   **Deleting A Connection Could Break Document Metadata Extraction**
+    *   Metadata extraction can be pointed at a specific model, stored as a reference to a connection and a model within it. Deleting or disabling that connection left the reference naming something that no longer existed, and unlike the chat default — which quietly falls back — extraction raises instead, and its caller only writes the failure to the processing log. Metadata extraction would therefore fail for every subsequently ingested document with nothing visible to say why. That reference is now re-checked whenever connections change, exactly as the chat default already was.
+    *   (Ref: `resolve_metadata_extraction_model_selection`, `_persist_global_model_endpoints`)
+
+*   **A Failed Settings Write Reported Success After The Secrets Were Already Gone**
+    *   Saving a connection removes superseded secrets from Key Vault before writing the settings document. The settings write reports failure by returning a value rather than raising, and that value was not checked — so if the write failed, the interface said the change had been saved while the connection was left referencing a secret that had already been deleted. A failed write is now reported as an error.
+    *   (Ref: `_persist_global_model_endpoints`, `update_settings`)
+
+*   **A Reserved Identity Header Name Is Now Refused Rather Than Silently Dropped**
+    *   The new admin interface accepted any identity header name. A name that collides with a header the model call already sets — `authorization` or `api-key`, for instance — was normalized away to nothing on read, which turned the header off without saying so. Such a name is now rejected at save time with an explanation.
+    *   (Ref: `admin_settings_fields.py`, `normalize_model_endpoint_identity_header_name`)
+
+#### New Features
+
+*   **Model Connections Can Be Managed In The New Admin Interface**
+    *   The AI Models group in the new interface previously showed nothing but a few switches. That was structural rather than cosmetic: no section in the group had a described field schema, so the page fell back to scanning the settings document for `enable_*` booleans — and endpoints, keys, API versions, authentication and model selection are none of those. All of it was invisible.
+    *   **Model endpoints are now presented as connections.** A connection is one Azure OpenAI or Azure AI Foundry resource: where it is, how SimpleChat authenticates to it, and which of its deployed models may be used. The wording and the editing model changed; what is stored did not, so a connection configured in either interface is the same record.
+    *   **Adding a connection now actually saves it.** In the classic interface, adding or editing a model endpoint changed an in-memory list that was serialized into a hidden form field, so nothing was stored until the whole admin settings page was submitted — and a half-filled endpoint looked identical to a saved one. Each connection is now its own resource with its own Save, and the editor says which state it is in.
+    *   **The editor only shows the fields the connection actually uses.** Provider and authentication method together decide what is relevant, derived in one place rather than from several listeners toggling visibility independently. Choosing an API key, for example, hides the subscription and resource group, because an API key cannot reach Azure Resource Manager and those fields would serve no purpose.
+    *   **Validation names the field that is wrong**, next to the control, instead of raising a message that described the problem but not its location.
+    *   **Discovery and testing are part of editing.** *Test connection* checks the credentials resolve, *Discover models* lists the resource's deployments, and each model can be tested individually. Discovered models arrive switched off, because finding a deployment is not the same as choosing to publish it, and re-running discovery does not duplicate a model or overwrite a display name edited by hand.
+    *   **Stored secrets survive an edit.** Keys and client secrets are never returned to the browser; a field whose secret is already stored shows that it exists and stays empty, and leaving it empty keeps the stored value. Deleting a connection removes the secrets it owned from Key Vault.
+    *   Deleting or disabling a connection no longer leaves the default model pointing at something that no longer resolves — chat would otherwise fall back to a different model with no indication that it had. The rule that decides this is now shared with the classic form, so the two interfaces cannot disagree about it.
+    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/model-endpoints`, `modelConnections.ts`, `ModelConnectionsManager.tsx`, `admin_settings_fields.py`, `resolve_default_model_selection`)
+
+#### User Interface Enhancements
+
+*   **AI Models Reads As Connections And Roles**
+    *   The AI Models group conflated two different things: a place models live, and the job a model does. The Model Endpoints tab is now **Connections**, and the Chat Model section is now **Chat**, separating the resource being connected to from the purpose it serves.
+    *   (Ref: `admin_settings_nav.py`, `docs/admin/ai-models.md`)
+
+### **(v0.261.065)**
+
+#### New Features
+
+*   **The Knowledge Settings Are Configurable In The New Admin Interface**
+    *   Knowledge is the largest group in Admin Settings — five tabs and roughly 150 settings covering web search, URL access, deep research, the search index, document extraction, audio and video, and file sync. In the new admin interface it existed only as a couple of dozen bare switches labelled from their internal key names. Every endpoint, key, limit, domain list, model choice and connection test in the group was simply absent, and the page said so with a link back to the classic one.
+    *   All five tabs are now fully configurable there, and each section is laid out to be worked through rather than scanned: **connect, verify, then tune.**
+    *   **Every section leads with its own switch and a status.** A section reports whether it is off, needs configuration, is waiting on something elsewhere, or is ready — so a long page can be skimmed for what still needs attention instead of opened section by section.
+    *   **Detail arrives when it is needed.** Settings cluster into groups that stay collapsed, and the one that needs attention next opens on its own. Searching still reaches everything, including settings inside a collapsed group.
+    *   **Connections can be tested before they are saved**, against the values currently on screen. Both admin interfaces now offer exactly the same set of tests.
+    *   **Prerequisites are stated where they are felt.** File Sync needs Redis Cache, which is configured in a different group; the section now says so, explains the consequence, and links to it, rather than leaving an administrator to turn File Sync on and watch nothing happen.
+    *   (Ref: `admin_settings_fields.py`, `SettingsSection.tsx`, `ConnectionTest.tsx`, `/api/v2/admin/settings/test-connection`)
+
+*   **Image Support Is Read From Real Model Capability Data**
+    *   Whether a model could be used for Multi-Modal Vision Analysis was decided by matching its name against a pattern. That admitted text-only chat variants, said nothing at all about a self-hosted or internally named deployment, and could not be corrected because the rule was in the code.
+    *   Each model on an endpoint now has a **Reads images** setting under **AI Models**, arriving pre-filled from capability data the application already ships. The field says where its answer came from — set here, from the built-in data, or inferred from the name — so the one worth reviewing is obvious.
+    *   The vision model picker offers only models that report image support, and marks one whose support was inferred rather than known.
+    *   (Ref: `functions_model_capabilities.py`, `static/json/model_capabilities.json`, `/api/models/vision-capability`, [AI Models](https://microsoft.github.io/simplechat/admin/ai-models/))
+
+*   **File Sync Workspace Assignments Can Now Be Edited**
+    *   File Sync could be restricted to named groups or public workspaces, but the screens for choosing them were never finished, so the lists could not be set from either admin interface. They are now searchable pickers, shown only while the restriction that uses them is turned on.
+    *   (Ref: `file_sync_allowed_group_ids`, `file_sync_allowed_public_workspace_ids`, `AssignmentPicker.tsx`)
+
+*   **Agent Settings Are Now Actually Present In The New Admin Interface**
+    *   The new Admin Settings surface built its Agents tab by scanning the settings document for on/off switches and guessing where each one belonged. Agents are configured with far more than switches, so the result was close to empty: the Agents Configuration section rendered nothing at all, **Enable Agents** was filed under "Other capabilities" because nothing in its name matched the section, and not one of Workspace Mode, the workspace permissions, or the eleven Agents page settings appeared anywhere.
+    *   The Agents tab is now described properly and renders every one of those settings, split into four sections instead of a single crowded card: **Agent Runtime**, **Workspace Agent Permissions**, **Agents Page**, and **Agent Template Approvals**.
+    *   **The settings now say what depends on what.** Enable Agents gates the whole tab. Workspace Mode only appears once agents are on, and the merge behaviour only once Workspace Mode is on — a chain, so a control cannot reappear because an intermediate gate happens to be off. Workspace Agent Permissions is hidden entirely outside Workspace Mode, matching the classic interface.
+    *   **Workspace Mode explains itself.** It reads as a choice between one shared set of agents that administrators curate, and a separate collection for each user and group, rather than as an unexplained switch.
+    *   **The Agents page settings now follow the page they customise.** That page is served behind Enable Agents, so its hero, guidance text and promotion settings are hidden while agents are off instead of offering edits that could not take effect.
+    *   **Promoted agents are chosen from a list rather than edited as JSON.** Agents already promoted are not offered again, and each promotion's time window is set per row.
+    *   Rarely-changed settings are grouped and collapsed rather than laid out flat, and a search opens any collapsed group so a match is never hidden behind it.
+    *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `adminAgents.ts`, `PromotedAgentsEditor.tsx`, `AdminSettingsPage.tsx`)
+
+*   **Action Settings Are Now Present In The New Admin Interface**
+    *   The Actions tab in the new Admin Settings surface showed a single toggle. The Analyze and Document Comparison limits were invisible because they are stored as one nested object rather than as separate settings, and the built-in action toggles had been scattered by the same guesswork that emptied the Agents tab — **Enable Text Action** had ended up under Appearance › Branding because its name contains "text".
+    *   The Actions tab now renders as four sections: **Document Actions**, **Workspace Action Permissions**, **Built-in Actions**, and **Global Actions**.
+    *   **Document action limits are editable again**, with the ranges the application actually enforces (2–300 for chat, 2–1000 for a workflow run) and the workflow limit separated from the chat one. Saving one limit no longer risks the other five, and out-of-range values are clamped by the same code the classic interface uses.
+    *   **Built-in actions are collapsed rather than laid out flat.** They default on and are rarely changed, so they no longer take up the tab; the documentation now says which one is worth a decision — HTTP, the only built-in action that reaches outside the deployment.
+
+*   **Inbound MCP Is Fully Configurable In The New Admin Interface**
+    *   The Inbound MCP tab in the new Admin Settings surface showed exactly two switches — **Enable inbound MCP server** and **Enable tool throttles** — and nothing else. The delegated scope, the required Entra roles, the request and throttle limits, and all three allowlists were invisible, which read as "disabled, but throttles are on" with no explanation for either.
+    *   The tab now renders the whole configuration, grouped as **Runtime gate**, **Request limits** and **Allowlists**.
+    *   **Allowlists are edited as rows rather than raw JSON.** Each row pairs the identifier the runtime matches with a description of who it belongs to, and a repeated value is flagged as you type rather than disappearing on save.
+    *   **The lists the runtime actually reads are derived on save**, exactly as the classic interface derives them. Editing an allowlist in the new interface now takes effect; previously the schema had no way to express that one setting produces several, which for an access control list is the worst kind of failure — the screen would show the new restriction while the runtime applied the old one.
+    *   **Turning off "Allow additional tenant IDs" no longer discards the tenants you listed.** It stops admitting them, and turning it back on restores them.
+    *   (Ref: `admin_settings_fields.py`, `functions_mcp_server_config.py`, `EntryListEditor.tsx`, `adminEntries.ts`)
+
+#### Bug Fixes
+
+*   **Admin Credentials Are No Longer Sent To The Browser In Plain Text**
+    *   The classic admin page has always replaced stored keys, connection strings and client secrets with a placeholder before rendering. The settings endpoint behind the new admin interface returned the settings document untouched, so every stored credential was delivered to the browser and visible to anyone who could open the page.
+    *   Credentials are now redacted on the way out and on the way back, and submitting an untouched placeholder is recognised as "no change" rather than being written — so saving an unrelated toggle can no longer overwrite a credential.
+    *   (Ref: `/api/v2/admin/settings`, `admin_settings_fields.py`, `redact_admin_settings_secrets_for_form`)
+
+*   **Two Document Extraction Sections Were Unreachable**
+    *   The **Content Understanding** and **Images Inside Office Files** cards existed but were missing from the settings navigation, so neither admin interface could link to them and neither was documented. Both are now navigable sections in both interfaces.
+    *   (Ref: `admin_settings_nav.py`, [Knowledge settings](https://microsoft.github.io/simplechat/admin/knowledge/#content-understanding-section))
+
+*   **Tabular Processing Is No Longer Shown As A Toggle That Does Nothing**
+    *   The new interface showed **Tabular Processing** as a live switch under Chat › Processing Thoughts, purely because the word "processing" matched that section. The application recomputes this setting from **Enhanced Citations** on every settings read, so switching it had no effect and the value silently reverted.
+    *   It now appears where it belongs, under Built-in Actions, as a read-only entry that reports its state and names Enhanced Citations as its source. Attempting to set it directly is refused rather than accepted and discarded.
+    *   (Ref: `enable_tabular_processing_plugin`, `is_tabular_processing_enabled`, `admin_settings_fields.py`)
+
+*   **Fact Memory Is Listed With The Actions It Affects Without Moving Its Control**
+    *   Fact memory is a chat capability, but it also decides whether agents get a memory action, so it was missing from any list an administrator would consult when working out what an agent can do.
+    *   It is now mirrored under Built-in Actions as a read-only entry that links to where it is set, while the control that actually sets it stays in Chat.
+    *   (Ref: `enable_fact_memory_plugin`, `fields.tsx`)
+
+*   **Multi-Agent Orchestration Is No Longer Shown As A Switch Under AI Models**
+    *   **Multi-agent orchestration** appeared in the new Admin Settings surface as a live toggle in the AI Models group, which it has nothing to do with. It is written by the orchestration settings API from the chosen orchestration mode, so setting it there did nothing and the value reverted.
+    *   It now sits with the agent runtime settings as a read-only entry that reports the current mode.
+    *   (Ref: `enable_multi_agent_orchestration`, `admin_settings_fields.py`)
+
+*   **Defects Found While Combining The Admin Settings Groups**
+    *   Six efforts described different admin settings groups at the same time, all writing into the same registries. Combining them surfaced four faults that produced code which parsed, imported and ran — three would have shipped silently.
+    *   **Nine settings sections were declared twice.** Python keeps the last definition of a duplicate key, so nothing failed; the new registry integrity test caught it on its first run.
+    *   **A section emptied earlier had quietly gained a new setting.** The Actions Configuration section was emptied when the Text action moved in with the other built-in actions, and the Default Embedding Model action was moved into it afterwards. A check now confirms that emptying a section never takes a setting with it.
+    *   **Fact Memory was declared as editable in two places at once.** It is a chat capability that also decides whether agents get a memory action, so it appears in both surfaces; only the Chat declaration may be the editable one, or which control governs saving depends on declaration order.
+    *   **A test crashed once a duplicate was resolved.** A workflow check read a setting's dependency as a single condition rather than a chain. The chained setting had existed for some time but was masked by a duplicate section declaration; fixing the duplicate made it visible.
+    *   (Ref: [Admin Settings Registry Merge Fixes](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ADMIN_SETTINGS_REGISTRY_MERGE_FIXES.md))
+
+#### User Interface Enhancements
+
+*   **Document Intelligence Is No Longer Inside Out**
+    *   The section opened with a feature toggle and put the endpoint and key that make the feature work at the very bottom, after every option that depends on them. In the new interface the connection comes first, and the settings that need it follow and say so when it is missing.
+    *   (Ref: `document-intelligence-section`)
+
+*   **The Shared Speech Resource Is Explained Before It Is Needed**
+    *   Audio uploads, voice input and voice responses are three separate capabilities that use one Azure Speech resource, and that was explained in a note beneath them. The resource is now configured first, and the long resource ID needed for managed identity can be built from the fields above it instead of typed by hand.
+    *   (Ref: `ai-voice-chat-section`, `ResourceIdBuilder.tsx`)
+
+*   **The Response Completion Sound Moved To Feedback & Alerts**
+    *   It played a local browser sound and required no Azure Speech resource, yet it was the first control in the AI Voice Conversations section. It now sits with the other notification settings under Chat.
+    *   (Ref: `enable_chat_completion_audio_cues`, [Chat settings](https://microsoft.github.io/simplechat/admin/chat/#desktop-notifications-section))
+
+*   **Agent Orchestration No Longer Shows A Choice That Does Not Exist**
+    *   Agent Orchestration offered an Orchestration Type dropdown and a Max Rounds Per Agent field, but the application ships a single orchestration mode; the multi-agent modes are not built into this release. The dropdown therefore had exactly one option and Max Rounds could never be reached.
+    *   The new interface asks the server which modes exist and shows the card only when there is a genuine choice. It will reappear on its own if multi-agent orchestration ships, without another change here.
+    *   (Ref: `OrchestrationCard.tsx`, `/api/orchestration_types`, `get_agent_orchestration_types`)
+
+*   **Agents & Actions Documentation Describes Behaviour Instead Of Restating Labels**
+    *   The Agents entries in the Agents & Actions administration page mostly read "Defines behavior for the related admin workflow", which told an administrator nothing. They now describe what each setting does, what it depends on, and why you would change it — including that the Agents catalog page is unavailable while agents are off, and why promoting an agent exists at all.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
+*   **The Inbound MCP Tab Explains Why It Is Empty**
+    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
+    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
+    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
+
+*   **Inbound MCP Documentation Describes The Access Model**
+    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
+### **(v0.261.064)**
+
+#### New Features
+
+*   **Chat Settings Are Fully Editable In The New Admin Interface**
+    *   The new admin interface builds each settings section from a description of what it contains. Chat had no description, so it fell back to scanning for on/off flags — which meant it could draw switches and nothing else. Every chat setting that was not a switch was simply absent: the conversation history limit, the default system prompt, and the whole Enhanced Citations configuration.
+    *   All eleven Chat sections now render the same controls the classic interface does, across Chat Experience, Feedback & Alerts and Citations.
+    *   **Two switches were invisible even though they are switches**, because their setting names do not begin with `enable_`. Workspace Scope Lock and the ChatFileUploadUser role requirement are now both present.
+    *   **Enhanced Citations came across in full**, including the storage authentication type, the storage credentials, the tabular preview size cap, the large-run confirmation thresholds, and the chunk processing model — plus a **Test storage connection** button. Startup deliberately skips storage checks so an outage cannot stop the application booting, which previously meant a wrong credential was only discovered when a citation failed to open.
+    *   (Ref: `admin_settings_fields.py`, `EnhancedCitationsStorageTest.tsx`, `AdminSettingsPage.tsx`, [V2 Admin Chat Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_CHAT_SETTINGS.md))
+
+*   **Conversation History Summarization Can Be Configured**
+    *   Three settings that control what happens to conversation history — summarizing messages that fall outside the history limit, summarizing recent turns into the document-search query, and how many messages that summary reads — have always been acted on by the chat backend but have never had a control anywhere.
+    *   All three are now editable in both the classic and the new admin interface, under Conversation History.
+    *   (Ref: `chat-experience.html`, `conversation-history-section`, [Chat settings](https://microsoft.github.io/simplechat/admin/chat/))
+
+#### Bug Fixes
+
+*   **Admin Saves No Longer Reset The History Summarization Settings**
+    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
+    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
+    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
+
+*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
+    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
+    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
+    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
+
+*   **Stored Credentials Are No Longer Sent To The Admin Browser**
+    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
+    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
+    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
+    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Settings From Other Areas No Longer Appear Under Chat**
+    *   Undescribed settings are placed by matching their name against section names, and six landed in the wrong group: audio and video file support and chat completion audio cues (Knowledge > Audio & Video), enhanced extraction (Knowledge > Document Extraction), and the embedding model and tabular processing actions (Agents & Actions). Each now appears where it belongs.
+    *   **Four switches that did nothing have been removed.** Tabular processing is derived from Enhanced Citations rather than stored, so toggling it appeared to save and then reverted; the Enhanced Citations mount and two mixed-source rollout flags have no administrator control at all.
+    *   (Ref: `SUPPRESSED_CAPABILITY_KEYS`, `buildCapabilityIndex`, `test_v2_admin_capability_placement.py`)
+
+*   **Settings No Longer Linger After Their Feature Is Switched Off**
+    *   A setting shown only under certain conditions was checked against one other setting, which was not always enough. The Latest Features documentation links toggle stayed on screen with the Support menu switched off, because the condition it was checked against remained satisfied on its own.
+    *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
+    *   The same problem affected three group assignment pickers — group and public workspace file downloads, and group workflows. Turning the capability off left the picker on screen assigning access for a disabled feature.
+    *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
+
+*   **Workflow Settings Were Declared Twice**
+    *   The Workflow section was registered twice, and only the second registration took effect. The two were not identical, so the first was silently dead — and a reordering would have swapped which one applied, dropping six settings from the page.
+    *   The same duplication had begun to affect chat file uploads, where the second registration was overriding the first and hiding the **Enable Chat File Uploads** switch.
+    *   (Ref: `ADMIN_SETTINGS_FIELDS`, `workflow-settings-section`, `chat-file-uploads-section`)
+
+### **(v0.261.063)**
+
+#### New Features
+
+*   **The Whole Security Group Now Works In The New Admin Interface**
+    *   The new Admin Settings surface renders from a description of each setting. Security had no description, so it fell back to scanning for on/off switches — which meant it could draw switches and nothing else. The Key Vault name, the Content Safety endpoint and key, the idle timeout values, the Front Door URL and the access denied message were all unreachable, and three sections — Permissions, Access Denied Message and Key Vault — rendered as nothing at all, because a section with no switches and nothing described is skipped entirely.
+    *   All six Security tabs are now described in full: **Access & Roles**, **Secrets**, **Content Safety**, **Session**, **Network** and **Rate Limiting**. Every field the classic page submits has a control, and a test keeps the two from drifting apart again.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, `test_v2_admin_security_parity.py`, [Security settings](https://microsoft.github.io/simplechat/admin/security/))
+
+*   **App Role Requirements Reads As A Policy, Not A List Of Switches**
+    *   Role requirements are decided on the tab that owns each feature, which keeps each decision in context but scatters the access policy across seven tabs. The old roster gathered the switches but said nothing about them: a row was a label and a toggle, with no indication of which Entra role to assign or what changed when you flipped it.
+    *   Each row now names the exact app role value to assign — copyable, so it does not get retyped wrong into Entra — and states both halves of the decision: what enforcing it restricts, and who keeps access when it is left off. A count at the top reads the posture at a glance, and the list can be filtered.
+    *   **A requirement that is doing nothing now says so.** Enforcing a role for a feature that is switched off looks like protection and is not, so those rows are marked.
+    *   **One requirement was missing entirely.** The old roster was built by scanning the page for checkboxes named `require_member_of_*`, so `file_sync_personal_require_app_role` never appeared in it. The catalog is built from a declared registry instead, and a test fails if a new role requirement is not registered.
+    *   (Ref: `admin_app_roles.py`, `AppRoleRequirements.tsx`, `test_v2_admin_app_role_registry.py`)
+
+*   **Sections Say Whether They Are Actually Working**
+    *   "Enabled" and "working" are not the same thing for an integration. Content Safety can be switched on with no endpoint, and Key Vault with no vault name, and in both cases the feature silently does nothing — which you would only discover by opening the section and reading every field.
+    *   Section headers now carry **Off**, **Needs configuration** or **On**, so the security posture can be read without opening anything. Content Safety is judged against whichever endpoint its routing choice actually uses.
+
+*   **Key Vault Expiration Reminders And The Tracked Secret Inventory**
+    *   Key Vault secret names written by SimpleChat are content hashes, so an expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. The reminder settings and the inventory that maps that name back to its owner, source action and field are now available in the new interface, including the on-demand sweep.
+
+*   **Test Buttons And Front Door Redirect URIs**
+    *   Content Safety and Key Vault both have inline connection tests again, run against what is currently on screen rather than what was last saved, so a mistake is caught before Save. A broken Content Safety connection blocks chat rather than failing quietly, which makes testing first worth the click.
+    *   The Front Door section derives and shows the two redirect URIs that must be registered on the Entra app registration, each copyable. An unregistered URI is the usual cause of sign-in completing at Microsoft and then failing on the way back.
+
+#### Bug Fixes
+
+*   **Secrets Are No Longer Sent To The Browser By The New Admin Interface**
+    *   The classic admin page replaces stored credentials with a placeholder before rendering, and restores them on save. The new interface's settings endpoint returned the settings document as-is, so opening Admin Settings put every stored key into the page payload — including the Content Safety key, the APIM subscription key, and the Azure Storage account key used to sign document SAS URLs, which no admin template renders as a secret at all.
+    *   Secrets are now redacted, against a wider list than the classic form uses, because this endpoint returns the whole settings document rather than the subset a form draws. A credential field reports whether a value is stored and offers **Replace**; the stored value is never sent, so it cannot be read back out of the browser. Saving without touching a secret leaves it intact, and the connection tests resolve the placeholder on the server.
+    *   **Replace does not stage a deletion.** It only opens the field for entry — leaving it blank keeps what is stored, and a secret is removed only by clearing a value you typed.
+    *   (Ref: `route_backend_v2.py`, `redact_admin_settings_secrets_for_api`, `resolve_admin_settings_secret_value`, `test_v2_admin_settings_secret_redaction.py`)
+
+*   **The Content Safety Connection Test Now Tests The Path Actually In Use**
+    *   The new interface sent the authentication mode under the wrong name, so the endpoint never saw it and always took the key path. On a deployment authenticating with a managed identity, the test reported a failure for a working configuration — or, if a stale key happened to be stored, quietly validated a path that is not the one in use.
+    *   (Ref: `ConnectionTest.tsx`, `_test_safety_connection`)
+
+*   **"Startup App Maintenance" No Longer Appears Under Security**
+    *   `enable_app_maintenance` and `enable_startup_app_maintenance` were showing up in **Security > App Role Requirements**, beside Entra role switches they have nothing to do with. The fallback scan files an undescribed setting by matching word stems, and both matched "app" in `app-role-requirements-section`.
+    *   They are Cosmos maintenance switches — the recurring job that checks index policies, reconciles the document access index and clears stale caches — and now live under **Scale > Cosmos > Cosmos Maintenance** with labels and help text that say what they do. Neither had a control on the classic page at all.
+    *   `enable_key_vault_secret_storage` was likewise being filed under Backup & Recovery by matching "storage", and `enable_key_vault_secret_expiration_reminders` matched nothing and fell into "Other capabilities". Both are now in the Key Vault section where they belong.
+    *   (Ref: `admin_settings_fields.py`, `test_v2_admin_capability_placement.py`)
+
+*   **The Idle Warning Can No Longer Be Set After The Sign-Out It Warns About**
+    *   The classic page silently lowers a warning time that exceeds the sign-out time. The new interface's save now does the same and says so, instead of storing a warning that could never appear.
+
+#### User Interface Enhancements
+
+*   **Long Settings Sections Are Broken Into Labelled Parts**
+    *   Key Vault has eleven controls and a table; as one flat list, its connection settings and its expiration reminder settings read as a single undifferentiated decision. Sections can now declare sub-headings, so Key Vault reads as **Vault connection**, **Expiration reminders** and **Tracked secrets**, and Content Safety as **Connection** and **When a message is blocked**.
+
+*   **Standing Warnings Sit Next To The Control They Apply To**
+    *   Consequences that no label can hold — enabling Key Vault is effectively one-way, and SimpleChat records expiry reminders rather than emailing them — are now shown as callouts beside the switch rather than hidden behind a tooltip or left unsaid.
+
+#### Documentation
+
+*   **Security And Cosmos Maintenance Documentation Rewritten**
+    *   The Security page's section bodies were placeholder text, and several setting descriptions were wrong: the Key Vault name, lead days and scan interval were all described as "the secret credential used when the selected authentication mode requires one". Every section now explains what the capability does and why it matters, and the common tasks and troubleshooting tables cover the failures these settings actually produce.
+    *   (Ref: `docs/admin/security.md`, `docs/admin/scale.md`)
+
+### **(v0.261.062)**
+
+#### Bug Fixes
+
+*   **Multi-Agent Orchestration Is No Longer Shown As A Switch Under AI Models**
+    *   **Multi-agent orchestration** appeared in the new Admin Settings surface as a live toggle in the AI Models group, which it has nothing to do with. It is written by the orchestration settings API from the chosen orchestration mode, so setting it there did nothing and the value reverted.
+    *   It now sits with the agent runtime settings as a read-only entry that reports the current mode.
+    *   (Ref: `enable_multi_agent_orchestration`, `admin_settings_fields.py`)
+
+### **(v0.261.061)**
+
+#### Bug Fixes
+
+*   **Enabling A Feature No Longer Requires Reloading The Chat Tab**
+    *   The new interface read its configuration once, when the page first loaded. An administrator who turned a capability on in Admin Settings — which is a different page, usually a different tab — came back to an open chat that still insisted the capability did not exist, with nothing on screen to explain why.
+    *   The configuration is now re-read whenever the tab comes back to the front, so returning from Admin Settings is enough. This applies to every setting, not just the one that surfaced it.
+    *   (Ref: `bootstrapStore.refresh`, `App.tsx` visibility and focus handling)
+
+*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
+    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
+    *   All three now take effect in the new interface, the classic interface and exported images alike.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Horizontal Bar Charts Scaled The Wrong Axis**
+    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Workflow Instruction Drafting Uses the Selected Metadata Endpoint**
+    *   The Draft Workflow Instructions button now resolves its client and request model through the same metadata extraction model endpoint resolver used by document metadata extraction.
+    *   Workflows and agent instruction drafts no longer send the selected metadata extraction deployment to the legacy global GPT or APIM endpoint when the model is hosted on a configured AI Foundry or multi-endpoint connection.
+    *   (Ref: `resolve_metadata_extraction_client()`, `route_backend_agents.py`, `route_backend_workflows.py`, [Workflow Instruction Model Endpoint Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/WORKFLOW_INSTRUCTION_MODEL_ENDPOINT_FIX.md))
+
+*   **Tabular Analysis Required-Tool Choice Continuation Fix**
+    *   Tabular analysis rounds now switch tool-choice behavior from `required` to `auto` after the initial tool invocation while preserving function allowlists and invocation limits, allowing the model to either request follow-up tools or return its final answer.
+    *   (Ref: `allow_tabular_completion_after_initial_tools()`, `route_backend_chats.py`, `test_tabular_tool_error_retry_and_thoughts.py`)
+
+#### User Interface Enhancements
+
+*   **Orchestration Is On By Default Where It Is Enabled**
+    *   Orchestration previously had to be switched on in the composer before it did anything, which meant a deployment that had enabled it still opened on a row of capability buttons inviting exactly the decisions the planner exists to make.
+    *   Where an administrator has enabled orchestration, the composer now opens in it, with the document, web, model, agent and reasoning controls folded behind **Manual controls** rather than removed. Turning orchestration off restores the classic composer, and anything chosen under the disclosure still constrains the plan.
+    *   (Ref: `Composer.tsx`, `chat_orchestration_show_manual_controls`)
+
+*   **The Inbound MCP Tab Explains Why It Is Empty**
+    *   Inbound MCP is a preview whose settings stay hidden until an App Service application setting is added. Because that flag is not part of the settings document, the new interface could not see it, and simply rendered two unexplained switches.
+    *   The settings API now reports it, and the tab shows what Inbound MCP is, the `ENABLE_MCP_UI` setting that reveals it, and that revealing it does not open the endpoint.
+    *   (Ref: `runtime_flags`, `is_mcp_ui_enabled`, `InboundMcpNotice.tsx`)
+
+*   **Inbound MCP Documentation Describes The Access Model**
+    *   The administration page now states the five checks a request passes before it is served, explains that a source id is a client-supplied header that identifies rather than authenticates, and notes that throttles being on does not mean the endpoint is reachable.
+    *   (Ref: `docs/admin/agents-actions.md`)
+
+*   **Chat Now Says Which Endpoint Is Actually Serving It**
+    *   SimpleChat has two ways to reach a chat model — the connections list, or a single classic endpoint — and only one is in force at a time. Nothing on screen distinguished them. An administrator could add a connection, test it, watch it save, and still be served by the classic endpoint, with no error and nothing to suggest the two were different things.
+    *   The Chat section now names the live route. When it is the classic single endpoint, it links to the page where that endpoint is configured, since those fields are deliberately not duplicated in the new interface.
+    *   It also warns before the switch is thrown: turning connections on is one-way, because the setting is stored as "already on or newly on" and cannot be turned back off afterwards.
+    *   Connections and the settings that depend on them are edited side by side, so they now stay in step with each other. Enabling connections, adding one, or switching a model off is reflected immediately in the model list and in the notice, rather than leaving adjacent parts of one screen describing different states until the page is reloaded.
+    *   **The API Management switch is no longer anonymous.** Settings the new interface has not described are placed by matching their name against section names, and that guess had dropped this one into the Chat section as a bare switch reading "Gpt apim". Beneath a notice explaining which endpoint chat uses, it looked like part of the same explanation — while turning it on actually reaches for an APIM endpoint, deployment and subscription key that can only be set on the classic admin page, so requests would have had nowhere to go. It now says what it does and where the rest of it lives.
+    *   (Ref: `ChatModeNotice.tsx`, `ModelConnectionsManager.tsx`, `modelConnectionsStore.ts`, `enable_multi_model_endpoints`, `enable_gpt_apim`, `docs/admin/ai-models.md`)
+
+#### New Features
+
+*   **Charts Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated chart used to be final. If the model picked a pie where a bar was wanted, put a scale on the axis that flattened the whole story, left the axes unnamed, or got a single number wrong, the only remedy was to ask again — which left a second near-duplicate chart sitting below the first with nothing to say which one was current.
+    *   Every chart now has an **Edit** button. The editor opens beside a live preview with six tabs: **Data**, **Design**, **Axes**, **Source**, **Ask AI** and **History**.
+    *   **The numbers are editable.** A grid of the chart's own labels and series: change any value, rename or add a series, add and remove rows. An emptied cell is a gap rather than a zero, so a line is drawn straight past it instead of dropping to the axis. Scatter and bubble charts get a list of their x/y pairs instead.
+    *   **The chart type can be changed**, but only to a type the data can actually be read as. A scatter chart is not offered a bar chart, and pie, doughnut and polar area appear once a chart has a single series — with the reason given, rather than the option silently missing.
+    *   **The axes can be scaled and named.** An explicit minimum and maximum, start-at-zero, a logarithmic scale for values that span orders of magnitude, and an angle and a limit for category labels too crowded to read. On a horizontal bar chart these correctly apply to the axis that carries the values, which runs along the bottom.
+    *   **Bar width, line thickness, point size, the doughnut hole, gridlines, the legend and its position, stacking and orientation** are all adjustable, along with the chart's title, subtitle and caption.
+    *   **Six changes make one entry in the history, not six.** The whole panel edits a draft that the preview follows, and one save records the lot with a note naming what changed — "Bar width, Value axis" rather than "Edited".
+    *   **Ask AI changes the chart in front of it** without adding anything to the conversation, and is told not to invent numbers: if an instruction asks for values the chart does not have and cannot derive, the data is left alone. A reply that is not a chart is refused rather than stored.
+    *   **Nothing is deleted.** History keeps every version with who made it and what it was; restoring moves a pointer rather than discarding newer ones, and the chart the model originally produced is always kept.
+    *   Exported and emailed charts, and the classic interface, all show the current version with every setting applied — so a conversation looks the same wherever it is read.
+    *   (Ref: `chartEdits.ts`, `ChartEditor.tsx`, `ChartDataGrid.tsx`, `ChartCanvas.tsx`, `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `functions_chart_export.py`, `chat-block-revisions.js`, [V2 Inline Chart Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_CHART_EDITING.md))
+
+*   **Inbound MCP Is Fully Configurable In The New Admin Interface**
+    *   The Inbound MCP tab in the new Admin Settings surface showed exactly two switches — **Enable inbound MCP server** and **Enable tool throttles** — and nothing else. The delegated scope, the required Entra roles, the request and throttle limits, and all three allowlists were invisible, which read as "disabled, but throttles are on" with no explanation for either.
+    *   The tab now renders the whole configuration, grouped as **Runtime gate**, **Request limits** and **Allowlists**.
+    *   **Allowlists are edited as rows rather than raw JSON.** Each row pairs the identifier the runtime matches with a description of who it belongs to, and a repeated value is flagged as you type rather than disappearing on save.
+    *   **The lists the runtime actually reads are derived on save**, exactly as the classic interface derives them. Editing an allowlist in the new interface now takes effect; previously the schema had no way to express that one setting produces several, which for an access control list is the worst kind of failure — the screen would show the new restriction while the runtime applied the old one.
+    *   **Turning off "Allow additional tenant IDs" no longer discards the tenants you listed.** It stops admitting them, and turning it back on restores them.
+    *   (Ref: `admin_settings_fields.py`, `functions_mcp_server_config.py`, `EntryListEditor.tsx`, `adminEntries.ts`)
+
+*   **The Default Chat Model Can Be Chosen In The New Admin Interface**
+    *   The Chat section of AI Models had nothing in it but a single switch. The default model — the one chat uses when nobody has picked anything, such as on a brand new conversation — could only be set on the classic admin page, even though the connections it selects from had just moved.
+    *   **Only models that can actually serve are offered.** The list is built from enabled models on enabled connections, because a reference to anything else is cleared the moment connections are next saved. Offering a disabled model would have let an administrator choose a value that quietly reverted, with nothing to explain why.
+    *   **A choice that no longer resolves is refused rather than accepted.** Naming a connection that has been deleted, or a model that has been switched off, now comes back with a message saying so. Previously the two failure modes — storing a dangling reference, and silently emptying it — both ended up looking identical: the field simply read as having no default.
+    *   **The saved default is shown for what it currently means.** If the connection or model it named has since gone, the interface says that rather than presenting an empty field as though nothing had ever been set. Opening the page does not rewrite the stored value, so the evidence of what went missing survives.
+    *   The reference is validated by the same rule the classic form uses, so the two interfaces cannot disagree about whether a default is still valid.
+    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/default-model`, `ChatDefaultModel.tsx`, `modelConnections.ts`, `admin_settings_fields.py`, `resolve_default_model_selection`)
 
 *   **Opt-In Tabular Model HTTP-Attempt Diagnostics**
     *   Added opt-in environment-variable diagnostics (`SIMPLECHAT_TABULAR_HTTP_DIAGNOSTICS`, `SIMPLECHAT_TABULAR_HTTP_BUDGET_SECONDS`, `SIMPLECHAT_TABULAR_HTTP_MAX_RETRIES`, and `SIMPLECHAT_TABULAR_HTTP_TIMEOUT_SECONDS`) for tabular Azure OpenAI calls.
     *   Records structured `[TABULAR_MODEL_HTTP]` telemetry covering request attempts, retries, elapsed durations, correlation headers, and pre-header transport failures without logging prompts, completions, or credentials.
     *   (Ref: `functions_tabular_model_diagnostics.py`, `functions_model_endpoint_runtime.py`, `route_backend_chats.py`, `docs/admin/operations.md`)
 
-#### Bug Fixes
-
-*   **Workflow Instruction Drafting Uses the Selected Metadata Endpoint**
-    *   The Draft Workflow Instructions button now resolves its client and request model through the same metadata extraction model endpoint resolver used by document metadata extraction.
-    *   Workflows and agent instruction drafts no longer send the selected metadata extraction deployment to the legacy global GPT or APIM endpoint when the model is hosted on a configured AI Foundry or multi-endpoint connection.
-    *   (Ref: `resolve_metadata_extraction_client()`, `route_backend_agents.py`, `route_backend_workflows.py`, [Workflow Instruction Model Endpoint Fix](fixes/WORKFLOW_INSTRUCTION_MODEL_ENDPOINT_FIX.md))
-
-*   **Tabular Analysis Required-Tool Choice Continuation Fix**
-    *   Tabular analysis rounds now switch tool-choice behavior from `required` to `auto` after the initial tool invocation while preserving function allowlists and invocation limits, allowing the model to either request follow-up tools or return its final answer.
-    *   (Ref: `allow_tabular_completion_after_initial_tools()`, `route_backend_chats.py`, `test_tabular_tool_error_retry_and_thoughts.py`)
-
 ### **(v0.261.060)**
 
+#### New Features
+
+*   **Orchestration: Describe What You Want Instead Of Assembling The Request**
+    *   Answering a question well used to depend on choosing correctly before you had seen any results. You had to decide whether to search your documents and which ones, whether to search the web, whether to read the URLs you had pasted, which saved prompt to apply, which agent to use, and which model should answer — all in advance, from a row of controls under the message box.
+    *   **You now just ask.** SimpleChat works out what the question needs, shows you the plan it intends to follow, and runs it. Turning orchestration on hides the capability toggles and the model, agent and reasoning pickers behind a disclosure; file upload and voice input stay exactly where they are.
+    *   **You decide how much say you want.** A plan can wait for you to read it, run after a countdown you can interrupt, or run immediately. Administrators set the default and can decide whether users may change it.
+    *   **You can narrow a plan before it runs.** Steps can be switched off and documents removed. You cannot add to a plan this way — widening it goes back through planning, so a request never skips the reasoning and the permission check that produced it.
+    *   **Questions are asked in the conversation, as a card.** When the orchestrator genuinely cannot proceed without knowing something, it asks with a short form — choices to pick rather than prose to write — instead of a paragraph you have to answer in the thread. The card speaks the MCP elicitation contract, so an MCP server asking a question later will use the same card.
+    *   **The plan lives in the side panel, next to Contents and Documents.** A Run view shows the current plan with live progress, and a Map view shows every run in the conversation in order, so you can see what has already been searched and produced. Clicking a run jumps the conversation to the turn that produced it.
+    *   **Later turns reuse earlier work.** The planner is shown a bounded summary of what previous turns in the conversation already did, so a follow-up question depends on findings that already exist rather than searching for them again — and you are never asked a question you have already answered.
+    *   Orchestration reaches only capabilities that are already enabled, so it grants no new access to anyone. This release covers document search, document analysis, document comparison, spreadsheet analysis, web search and answering.
+    *   Available in the V2 interface. The classic interface is unchanged. Off by default.
+    *   (Ref: `functions_orchestration_registry.py`, `functions_orchestration_schema.py`, `functions_orchestration_context.py`, `functions_orchestration_planner.py`, `functions_orchestration_executor.py`, `/api/v2/orchestration/plan`, `/api/v2/orchestration/run`, [Chat Orchestration](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CHAT_ORCHESTRATION.md), [Orchestration settings](https://microsoft.github.io/simplechat/admin/orchestration/))
+
+*   **The Whole Workspaces Group Is Now Editable In The New Interface**
+    *   The new admin page draws real controls from a description of each settings section. Workspaces had almost no description, so it fell back to scanning for on/off flags — which meant it could show switches and nothing else. Thirteen Workspaces settings had no control anywhere in the new interface, and the Global Identities tab rendered as a blank page.
+    *   **Everything that was missing is now there**: personal, group and public workspace downloads, both "require assignment" rules and the group and public workspace pickers that go with them, the public workspace end-user display name, shared conversation file approvals, the CreateGroups and CreatePublicWorkspaces role requirements, and the owner-only restriction on group agents and actions.
+    *   **The four toggles that were already visible now explain themselves.** They were previously drawn from the flag name alone — "Group creation", with no help text and no indication that it does nothing while group workspaces are off. Each now carries a written explanation of what it does and when you would want it.
+    *   **Settings that do nothing are hidden rather than shown as inert.** Requiring a group assignment only appears once group downloads are enabled, and the group picker only appears once the assignment is required, so what is on screen is what currently has an effect.
+    *   (Ref: `admin_settings_fields.py`, `AssignmentPicker.tsx`, `AdminSettingsPage.tsx`, [V2 Workspaces Admin Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKSPACES_ADMIN_SETTINGS.md))
+
+*   **Every App Role Requirement, Readable In One Place**
+    *   Ten settings in SimpleChat can demand an Entra app role, spread across six tabs. None of them appeared in the new interface at all, because the fallback scan that was drawing those pages could only see on/off capability flags.
+    *   All ten are now on the tab that owns them, and **Security > App Role Requirements** additionally gathers them into one list. Each switch there is the same value as the one on its own tab, not a copy, so changing it in either place is the same change.
+    *   Each entry names the group, tab and section the setting really lives on, and the list reports how many of the ten are currently being enforced — so the deployment's access policy can be read as a whole rather than reconstructed tab by tab.
+    *   (Ref: `collectAppRoleEntries`, `AppRoleRoster.tsx`, `admin_access_roles_roster.js`)
+
+*   **Global Identities Explain What They Are, And Sit Somewhere Sensible**
+    *   Global Identities are saved credentials for the systems SimpleChat connects out to, used by File Sync sources and actions. They were filed under Workspaces, which owns neither, and the tab in the new interface was empty.
+    *   The tab has moved to **Security**, next to Key Vault — which is where each identity's secret is actually stored — and now lists what exists with its sign-in type, alongside a link to the classic page for adding or editing one. Existing links to the tab still work.
+    *   (Ref: `admin_settings_nav.py`, `GlobalIdentitiesList.tsx`)
+
+*   **Action Settings Are Now Present In The New Admin Interface**
+    *   The Actions tab in the new Admin Settings surface showed a single toggle. The Analyze and Document Comparison limits were invisible because they are stored as one nested object rather than as separate settings, and the built-in action toggles had been scattered by the same guesswork that emptied the Agents tab — **Enable Text Action** had ended up under Appearance › Branding because its name contains "text".
+    *   The Actions tab now renders as four sections: **Document Actions**, **Workspace Action Permissions**, **Built-in Actions**, and **Global Actions**.
+    *   **Document action limits are editable again**, with the ranges the application actually enforces (2–300 for chat, 2–1000 for a workflow run) and the workflow limit separated from the chat one. Saving one limit no longer risks the other five, and out-of-range values are clamped by the same code the classic interface uses.
+    *   **Built-in actions are collapsed rather than laid out flat.** They default on and are rarely changed, so they no longer take up the tab; the documentation now says which one is worth a decision — HTTP, the only built-in action that reaches outside the deployment.
+
+#### User Interface Enhancements
+
+*   **Maximum File Size Moved To Knowledge**
+    *   The upload ceiling applies to chat attachments as well as workspace documents, and it is checked before extraction runs, so Workspaces only ever described half of what it does. It now sits in **Knowledge > Document Extraction** beside Chunk Sizes, and its description says plainly that it covers both upload paths.
+    *   (Ref: `max_file_size_mb`, `functions_documents.py`, `route_frontend_chats.py`)
+
+*   **Group Creation Reads The Right Way Round**
+    *   The classic page asks you to tick "Disable Group Creation" to prevent it — a double negative over a setting that is stored as *enable* group creation. The new interface presents it as **Allow Users to Create Groups**, where on means users can create groups.
+    *   The wording also now says what was previously undocumented: switching it off freezes the group list without disabling existing groups, and overrides the CreateGroups role requirement entirely.
+    *   The classic page is unchanged, so nothing about an existing deployment moves.
+    *   (Ref: `enable_group_creation`, `LEGACY_FIELD_NAMES`)
+
+*   **Workspaces, Knowledge And Security Documentation Rewritten**
+    *   The Workspaces admin page described its sections with a repeated sentence that said only which tab they belonged to. It now explains what each workspace type means for who can read a document, how the three group-creation controls stack, and why downloads default to off, with troubleshooting for the cases where a setting appears to have no effect.
+    *   (Ref: `docs/admin/workspaces.md`, `docs/admin/knowledge.md`, `docs/admin/security.md`)
+
 #### Bug Fixes
+
+*   **Turning Connections Off Said It Worked, And Did Not**
+    *   Enabling connections for chat is one-way — the stored flag is coerced to "already on, or newly requested", so once it is true it stays true. The classic page reflects that by hiding the checkbox after it is enabled. The new admin interface showed an ordinary switch, so turning it off reported a successful save, moved the switch, and changed nothing; chat carried on routing through connections and only a page reload revealed it. The attempt is now refused with an explanation.
+    *   **Enabling connections from the new interface also used to strand a deployment.** The classic page carries the existing single chat endpoint over as the first connection when the flag is first switched on. The new interface skipped that step, so a deployment that enabled connections there was left with an empty model catalog — and, because the flag cannot be turned back off, no way to recover. Both paths now migrate through the same code.
+    *   (Ref: `admin_settings_fields.py`, `build_migrated_model_endpoints_from_legacy`, `_seed_connections_on_first_enable`)
+
+*   **Deleting A Connection Could Break Document Metadata Extraction**
+    *   Metadata extraction can be pointed at a specific model, stored as a reference to a connection and a model within it. Deleting or disabling that connection left the reference naming something that no longer existed, and unlike the chat default — which quietly falls back — extraction raises instead, and its caller only writes the failure to the processing log. Metadata extraction would therefore fail for every subsequently ingested document with nothing visible to say why. That reference is now re-checked whenever connections change, exactly as the chat default already was.
+    *   (Ref: `resolve_metadata_extraction_model_selection`, `_persist_global_model_endpoints`)
+
+*   **A Failed Settings Write Reported Success After The Secrets Were Already Gone**
+    *   Saving a connection removes superseded secrets from Key Vault before writing the settings document. The settings write reports failure by returning a value rather than raising, and that value was not checked — so if the write failed, the interface said the change had been saved while the connection was left referencing a secret that had already been deleted. A failed write is now reported as an error.
+    *   (Ref: `_persist_global_model_endpoints`, `update_settings`)
+
+*   **Tabular Processing Is No Longer Shown As A Toggle That Does Nothing**
+    *   The new interface showed **Tabular Processing** as a live switch under Chat › Processing Thoughts, purely because the word "processing" matched that section. The application recomputes this setting from **Enhanced Citations** on every settings read, so switching it had no effect and the value silently reverted.
+    *   It now appears where it belongs, under Built-in Actions, as a read-only entry that reports its state and names Enhanced Citations as its source. Attempting to set it directly is refused rather than accepted and discarded.
+    *   (Ref: `enable_tabular_processing_plugin`, `is_tabular_processing_enabled`, `admin_settings_fields.py`)
+
+*   **Fact Memory Is Listed With The Actions It Affects Without Moving Its Control**
+    *   Fact memory is a chat capability, but it also decides whether agents get a memory action, so it was missing from any list an administrator would consult when working out what an agent can do.
+    *   It is now mirrored under Built-in Actions as a read-only entry that links to where it is set, while the control that actually sets it stays in Chat.
+    *   (Ref: `enable_fact_memory_plugin`, `fields.tsx`)
 
 *   **Safety Violation Date and User Metadata**
     *   Safety violation list and card views now show created dates and target user names, reducing the need to open each violation to identify when it occurred and who it affected.
     *   CSV exports now include a user name column and populate created, last updated, and archived timestamps using existing safety log metadata when older records are missing explicit date fields.
-    *   (Ref: `route_backend_safety.py`, `admin-safety-violations.js`, [Safety Violation Metadata Display Fix](fixes/SAFETY_VIOLATION_METADATA_DISPLAY_FIX.md))
+    *   (Ref: `route_backend_safety.py`, `admin-safety-violations.js`, [Safety Violation Metadata Display Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/SAFETY_VIOLATION_METADATA_DISPLAY_FIX.md))
 
 ### **(v0.261.059)**
 
 #### New Features
 
+*   **The Whole Security Group Now Works In The New Admin Interface**
+    *   The new Admin Settings surface renders from a description of each setting. Security had no description, so it fell back to scanning for on/off switches — which meant it could draw switches and nothing else. The Key Vault name, the Content Safety endpoint and key, the idle timeout values, the Front Door URL and the access denied message were all unreachable, and three sections — Permissions, Access Denied Message and Key Vault — rendered as nothing at all, because a section with no switches and nothing described is skipped entirely.
+    *   All six Security tabs are now described in full: **Access & Roles**, **Secrets**, **Content Safety**, **Session**, **Network** and **Rate Limiting**. Every field the classic page submits has a control, and a test keeps the two from drifting apart again.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, `test_v2_admin_security_parity.py`, [Security settings](https://microsoft.github.io/simplechat/admin/security/))
+
+*   **App Role Requirements Reads As A Policy, Not A List Of Switches**
+    *   Role requirements are decided on the tab that owns each feature, which keeps each decision in context but scatters the access policy across seven tabs. The old roster gathered the switches but said nothing about them: a row was a label and a toggle, with no indication of which Entra role to assign or what changed when you flipped it.
+    *   Each row now names the exact app role value to assign — copyable, so it does not get retyped wrong into Entra — and states both halves of the decision: what enforcing it restricts, and who keeps access when it is left off. A count at the top reads the posture at a glance, and the list can be filtered.
+    *   **A requirement that is doing nothing now says so.** Enforcing a role for a feature that is switched off looks like protection and is not, so those rows are marked.
+    *   **One requirement was missing entirely.** The old roster was built by scanning the page for checkboxes named `require_member_of_*`, so `file_sync_personal_require_app_role` never appeared in it. The catalog is built from a declared registry instead, and a test fails if a new role requirement is not registered.
+    *   (Ref: `admin_app_roles.py`, `AppRoleRequirements.tsx`, `test_v2_admin_app_role_registry.py`)
+
+*   **Sections Say Whether They Are Actually Working**
+    *   "Enabled" and "working" are not the same thing for an integration. Content Safety can be switched on with no endpoint, and Key Vault with no vault name, and in both cases the feature silently does nothing — which you would only discover by opening the section and reading every field.
+    *   Section headers now carry **Off**, **Needs configuration** or **On**, so the security posture can be read without opening anything. Content Safety is judged against whichever endpoint its routing choice actually uses.
+
+*   **Key Vault Expiration Reminders And The Tracked Secret Inventory**
+    *   Key Vault secret names written by SimpleChat are content hashes, so an expiry alert from Azure names something like `sc-a1b2c3` and nothing an operator can act on. The reminder settings and the inventory that maps that name back to its owner, source action and field are now available in the new interface, including the on-demand sweep.
+
+*   **Test Buttons And Front Door Redirect URIs**
+    *   Content Safety and Key Vault both have inline connection tests again, run against what is currently on screen rather than what was last saved, so a mistake is caught before Save. A broken Content Safety connection blocks chat rather than failing quietly, which makes testing first worth the click.
+    *   The Front Door section derives and shows the two redirect URIs that must be registered on the Entra app registration, each copyable. An unregistered URI is the usual cause of sign-in completing at Microsoft and then failing on the way back.
+
+*   **The Whole Workspaces Group Is Now Editable In The New Interface**
+    *   The new admin page draws real controls from a description of each settings section. Workspaces had almost no description, so it fell back to scanning for on/off flags — which meant it could show switches and nothing else. Thirteen Workspaces settings had no control anywhere in the new interface, and the Global Identities tab rendered as a blank page.
+    *   **Everything that was missing is now there**: personal, group and public workspace downloads, both "require assignment" rules and the group and public workspace pickers that go with them, the public workspace end-user display name, shared conversation file approvals, the CreateGroups and CreatePublicWorkspaces role requirements, and the owner-only restriction on group agents and actions.
+    *   **The four toggles that were already visible now explain themselves.** They were previously drawn from the flag name alone — "Group creation", with no help text and no indication that it does nothing while group workspaces are off. Each now carries a written explanation of what it does and when you would want it.
+    *   **Settings that do nothing are hidden rather than shown as inert.** Requiring a group assignment only appears once group downloads are enabled, and the group picker only appears once the assignment is required, so what is on screen is what currently has an effect.
+    *   (Ref: `admin_settings_fields.py`, `AssignmentPicker.tsx`, `AdminSettingsPage.tsx`, [V2 Workspaces Admin Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_WORKSPACES_ADMIN_SETTINGS.md))
+
+*   **Every App Role Requirement, Readable In One Place**
+    *   Ten settings in SimpleChat can demand an Entra app role, spread across six tabs. None of them appeared in the new interface at all, because the fallback scan that was drawing those pages could only see on/off capability flags.
+    *   All ten are now on the tab that owns them, and **Security > App Role Requirements** additionally gathers them into one list. Each switch there is the same value as the one on its own tab, not a copy, so changing it in either place is the same change.
+    *   Each entry names the group, tab and section the setting really lives on, and the list reports how many of the ten are currently being enforced — so the deployment's access policy can be read as a whole rather than reconstructed tab by tab.
+    *   (Ref: `collectAppRoleEntries`, `AppRoleRoster.tsx`, `admin_access_roles_roster.js`)
+
+*   **Global Identities Explain What They Are, And Sit Somewhere Sensible**
+    *   Global Identities are saved credentials for the systems SimpleChat connects out to, used by File Sync sources and actions. They were filed under Workspaces, which owns neither, and the tab in the new interface was empty.
+    *   The tab has moved to **Security**, next to Key Vault — which is where each identity's secret is actually stored — and now lists what exists with its sign-in type, alongside a link to the classic page for adding or editing one. Existing links to the tab still work.
+    *   (Ref: `admin_settings_nav.py`, `GlobalIdentitiesList.tsx`)
+
+*   **Charts Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated chart used to be final. If the model picked a pie where a bar was wanted, put a scale on the axis that flattened the whole story, left the axes unnamed, or got a single number wrong, the only remedy was to ask again — which left a second near-duplicate chart sitting below the first with nothing to say which one was current.
+    *   Every chart now has an **Edit** button. The editor opens beside a live preview with six tabs: **Data**, **Design**, **Axes**, **Source**, **Ask AI** and **History**.
+    *   **The numbers are editable.** A grid of the chart's own labels and series: change any value, rename or add a series, add and remove rows. An emptied cell is a gap rather than a zero, so a line is drawn straight past it instead of dropping to the axis. Scatter and bubble charts get a list of their x/y pairs instead.
+    *   **The chart type can be changed**, but only to a type the data can actually be read as. A scatter chart is not offered a bar chart, and pie, doughnut and polar area appear once a chart has a single series — with the reason given, rather than the option silently missing.
+    *   **The axes can be scaled and named.** An explicit minimum and maximum, start-at-zero, a logarithmic scale for values that span orders of magnitude, and an angle and a limit for category labels too crowded to read. On a horizontal bar chart these correctly apply to the axis that carries the values, which runs along the bottom.
+    *   **Bar width, line thickness, point size, the doughnut hole, gridlines, the legend and its position, stacking and orientation** are all adjustable, along with the chart's title, subtitle and caption.
+    *   **Six changes make one entry in the history, not six.** The whole panel edits a draft that the preview follows, and one save records the lot with a note naming what changed — "Bar width, Value axis" rather than "Edited".
+    *   **Ask AI changes the chart in front of it** without adding anything to the conversation, and is told not to invent numbers: if an instruction asks for values the chart does not have and cannot derive, the data is left alone. A reply that is not a chart is refused rather than stored.
+    *   **Nothing is deleted.** History keeps every version with who made it and what it was; restoring moves a pointer rather than discarding newer ones, and the chart the model originally produced is always kept.
+    *   Exported and emailed charts, and the classic interface, all show the current version with every setting applied — so a conversation looks the same wherever it is read.
+    *   (Ref: `chartEdits.ts`, `ChartEditor.tsx`, `ChartDataGrid.tsx`, `ChartCanvas.tsx`, `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `functions_chart_export.py`, `chat-block-revisions.js`, [V2 Inline Chart Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_CHART_EDITING.md))
+
+*   **Chat Settings Are Fully Editable In The New Admin Interface**
+    *   The new admin interface builds each settings section from a description of what it contains. Chat had no description, so it fell back to scanning for on/off flags — which meant it could draw switches and nothing else. Every chat setting that was not a switch was simply absent: the conversation history limit, the default system prompt, and the whole Enhanced Citations configuration.
+    *   All eleven Chat sections now render the same controls the classic interface does, across Chat Experience, Feedback & Alerts and Citations.
+    *   **Two switches were invisible even though they are switches**, because their setting names do not begin with `enable_`. Workspace Scope Lock and the ChatFileUploadUser role requirement are now both present.
+    *   **Enhanced Citations came across in full**, including the storage authentication type, the storage credentials, the tabular preview size cap, the large-run confirmation thresholds, and the chunk processing model — plus a **Test storage connection** button. Startup deliberately skips storage checks so an outage cannot stop the application booting, which previously meant a wrong credential was only discovered when a citation failed to open.
+    *   (Ref: `admin_settings_fields.py`, `EnhancedCitationsStorageTest.tsx`, `AdminSettingsPage.tsx`, [V2 Admin Chat Settings](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_ADMIN_CHAT_SETTINGS.md))
+
+*   **Conversation History Summarization Can Be Configured**
+    *   Three settings that control what happens to conversation history — summarizing messages that fall outside the history limit, summarizing recent turns into the document-search query, and how many messages that summary reads — have always been acted on by the chat backend but have never had a control anywhere.
+    *   All three are now editable in both the classic and the new admin interface, under Conversation History.
+    *   (Ref: `chat-experience.html`, `conversation-history-section`, [Chat settings](https://microsoft.github.io/simplechat/admin/chat/))
+
+*   **Model Connections Can Be Managed In The New Admin Interface**
+    *   The AI Models group in the new interface previously showed nothing but a few switches. That was structural rather than cosmetic: no section in the group had a described field schema, so the page fell back to scanning the settings document for `enable_*` booleans — and endpoints, keys, API versions, authentication and model selection are none of those. All of it was invisible.
+    *   **Model endpoints are now presented as connections.** A connection is one Azure OpenAI or Azure AI Foundry resource: where it is, how SimpleChat authenticates to it, and which of its deployed models may be used. The wording and the editing model changed; what is stored did not, so a connection configured in either interface is the same record.
+    *   **Adding a connection now actually saves it.** In the classic interface, adding or editing a model endpoint changed an in-memory list that was serialized into a hidden form field, so nothing was stored until the whole admin settings page was submitted — and a half-filled endpoint looked identical to a saved one. Each connection is now its own resource with its own Save, and the editor says which state it is in.
+    *   **The editor only shows the fields the connection actually uses.** Provider and authentication method together decide what is relevant, derived in one place rather than from several listeners toggling visibility independently. Choosing an API key, for example, hides the subscription and resource group, because an API key cannot reach Azure Resource Manager and those fields would serve no purpose.
+    *   **Validation names the field that is wrong**, next to the control, instead of raising a message that described the problem but not its location.
+    *   **Discovery and testing are part of editing.** *Test connection* checks the credentials resolve, *Discover models* lists the resource's deployments, and each model can be tested individually. Discovered models arrive switched off, because finding a deployment is not the same as choosing to publish it, and re-running discovery does not duplicate a model or overwrite a display name edited by hand.
+    *   **Stored secrets survive an edit.** Keys and client secrets are never returned to the browser; a field whose secret is already stored shows that it exists and stays empty, and leaving it empty keeps the stored value. Deleting a connection removes the secrets it owned from Key Vault.
+    *   Deleting or disabling a connection no longer leaves the default model pointing at something that no longer resolves — chat would otherwise fall back to a different model with no indication that it had. The rule that decides this is now shared with the classic form, so the two interfaces cannot disagree about it.
+    *   (Ref: `route_backend_v2.py`, `/api/v2/admin/model-endpoints`, `modelConnections.ts`, `ModelConnectionsManager.tsx`, `admin_settings_fields.py`, `resolve_default_model_selection`)
+
+*   **Agent Settings Are Now Actually Present In The New Admin Interface**
+    *   The new Admin Settings surface built its Agents tab by scanning the settings document for on/off switches and guessing where each one belonged. Agents are configured with far more than switches, so the result was close to empty: the Agents Configuration section rendered nothing at all, **Enable Agents** was filed under "Other capabilities" because nothing in its name matched the section, and not one of Workspace Mode, the workspace permissions, or the eleven Agents page settings appeared anywhere.
+    *   The Agents tab is now described properly and renders every one of those settings, split into four sections instead of a single crowded card: **Agent Runtime**, **Workspace Agent Permissions**, **Agents Page**, and **Agent Template Approvals**.
+    *   **The settings now say what depends on what.** Enable Agents gates the whole tab. Workspace Mode only appears once agents are on, and the merge behaviour only once Workspace Mode is on — a chain, so a control cannot reappear because an intermediate gate happens to be off. Workspace Agent Permissions is hidden entirely outside Workspace Mode, matching the classic interface.
+    *   **Workspace Mode explains itself.** It reads as a choice between one shared set of agents that administrators curate, and a separate collection for each user and group, rather than as an unexplained switch.
+    *   **The Agents page settings now follow the page they customise.** That page is served behind Enable Agents, so its hero, guidance text and promotion settings are hidden while agents are off instead of offering edits that could not take effect.
+    *   **Promoted agents are chosen from a list rather than edited as JSON.** Agents already promoted are not offered again, and each promotion's time window is set per row.
+    *   Rarely-changed settings are grouped and collapsed rather than laid out flat, and a search opens any collapsed group so a match is never hidden behind it.
+    *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `adminAgents.ts`, `PromotedAgentsEditor.tsx`, `AdminSettingsPage.tsx`)
+
 *   **Configurable Content Safety Prompt Category Thresholds**
     *   Administrators can now set Azure AI Content Safety prompt thresholds separately for Violence, Hate, Sexual, and Self-harm.
     *   Each category supports Low (`2`), Medium (`4`), and High (`6`), with Medium as the default to preserve previous behavior.
     *   Higher threshold levels do not override model deployment guardrails.
-    *   (Ref: Content Safety admin settings, `content_safety_category_thresholds`, [Content Safety Block Threshold](features/CONTENT_SAFETY_BLOCK_THRESHOLD.md))
+    *   (Ref: Content Safety admin settings, `content_safety_category_thresholds`, [Content Safety Block Threshold](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/features/CONTENT_SAFETY_BLOCK_THRESHOLD.md))
+
+#### Bug Fixes
+
+*   **Secrets Are No Longer Sent To The Browser By The New Admin Interface**
+    *   The classic admin page replaces stored credentials with a placeholder before rendering, and restores them on save. The new interface's settings endpoint returned the settings document as-is, so opening Admin Settings put every stored key into the page payload — including the Content Safety key, the APIM subscription key, and the Azure Storage account key used to sign document SAS URLs, which no admin template renders as a secret at all.
+    *   Secrets are now redacted, against a wider list than the classic form uses, because this endpoint returns the whole settings document rather than the subset a form draws. A credential field reports whether a value is stored and offers **Replace**; the stored value is never sent, so it cannot be read back out of the browser. Saving without touching a secret leaves it intact, and the connection tests resolve the placeholder on the server.
+    *   **Replace does not stage a deletion.** It only opens the field for entry — leaving it blank keeps what is stored, and a secret is removed only by clearing a value you typed.
+    *   (Ref: `route_backend_v2.py`, `redact_admin_settings_secrets_for_api`, `resolve_admin_settings_secret_value`, `test_v2_admin_settings_secret_redaction.py`)
+
+*   **The Content Safety Connection Test Now Tests The Path Actually In Use**
+    *   The new interface sent the authentication mode under the wrong name, so the endpoint never saw it and always took the key path. On a deployment authenticating with a managed identity, the test reported a failure for a working configuration — or, if a stale key happened to be stored, quietly validated a path that is not the one in use.
+    *   (Ref: `ConnectionTest.tsx`, `_test_safety_connection`)
+
+*   **"Startup App Maintenance" No Longer Appears Under Security**
+    *   `enable_app_maintenance` and `enable_startup_app_maintenance` were showing up in **Security > App Role Requirements**, beside Entra role switches they have nothing to do with. The fallback scan files an undescribed setting by matching word stems, and both matched "app" in `app-role-requirements-section`.
+    *   They are Cosmos maintenance switches — the recurring job that checks index policies, reconciles the document access index and clears stale caches — and now live under **Scale > Cosmos > Cosmos Maintenance** with labels and help text that say what they do. Neither had a control on the classic page at all.
+    *   `enable_key_vault_secret_storage` was likewise being filed under Backup & Recovery by matching "storage", and `enable_key_vault_secret_expiration_reminders` matched nothing and fell into "Other capabilities". Both are now in the Key Vault section where they belong.
+    *   (Ref: `admin_settings_fields.py`, `test_v2_admin_capability_placement.py`)
+
+*   **The Idle Warning Can No Longer Be Set After The Sign-Out It Warns About**
+    *   The classic page silently lowers a warning time that exceeds the sign-out time. The new interface's save now does the same and says so, instead of storing a warning that could never appear.
+
+*   **Workflow Settings Are Reachable In The New Admin Interface**
+    *   The **Workflow** group in the new admin interface was empty. Selecting it showed no controls at all — not a missing toggle here or there, but the whole group. Enabling workflows meant going back to the classic admin page.
+    *   The cause was one thing, not seven. The new admin interface draws a section either from a description of its controls, or by scanning for settings whose names begin with `enable_`. Workflow had no description, and not one of its settings is named that way — they are `allow_user_workflows`, `allow_group_workflows`, `workflow_max_tasks` and so on — so the scan found nothing and the section was dropped for being empty.
+    *   All seven settings are now present: **Enable Personal Workflows**, **Require WorkflowUser App Role**, **Enable Group Workflows**, **Require Group Assignment to Use Workflow**, **Assigned Groups**, **Workflow Agent Action Limit** and **Workflow Task Limit**.
+    *   **Sub-settings stay out of the way until they apply.** The `WorkflowUser` role requirement appears once personal workflows are on, and the group allow list appears once group assignment is required. The two run limits are always shown, because they bound personal and group runs alike.
+    *   (Ref: `admin_settings_fields.py`, `AdminSettingsPage.tsx`, [V2 Admin Workflow Settings Parity](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_WORKFLOW_SETTINGS_PARITY_FIX.md))
+
+*   **Chart Smoothing, Fill And Data Table Settings Now Do Something**
+    *   The chart format has always accepted `smooth`, `fill` and `showDataTable`, and every renderer read them and then ignored them. A chart asking for straight line segments was drawn curved, one asking to be shaded was not, and one asking to keep its numbers private still offered them.
+    *   All three now take effect in the new interface, the classic interface and exported images alike.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Horizontal Bar Charts Scaled The Wrong Axis**
+    *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
+    *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
+
+*   **Admin Saves No Longer Reset The History Summarization Settings**
+    *   Because the three settings above had no input anywhere, every save of Admin Settings wrote them back as off and 10 — whatever they had been set to. An administrator who configured them directly in the database lost the values the next time anyone saved the page for any unrelated reason.
+    *   Adding the controls fixes this. The conversation history limit and the message count are also parsed defensively now, so an empty value keeps the current setting instead of raising an error or snapping to a default.
+    *   (Ref: `route_frontend_admin_settings.py`, [Chat History Summarize Settings Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/CHAT_HISTORY_SUMMARIZE_SETTINGS_RESET_FIX.md))
+
+*   **Enhanced Citations File Downloads No Longer Break After An Admin Save**
+    *   The storage account key used to sign Enhanced Citations file links has no input on the admin page, but the save handler wrote it from the form anyway — so every admin save, for any unrelated reason, replaced it with an empty value and citation downloads started returning a server error.
+    *   The key is now preserved when the form does not carry it, along with the equivalent video and audio storage keys.
+    *   (Ref: `route_frontend_admin_settings.py`, `office_docs_key`, [Enhanced Citations Storage Key Reset Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ENHANCED_CITATIONS_STORAGE_KEY_RESET_FIX.md))
+
+*   **Stored Credentials Are No Longer Sent To The Admin Browser**
+    *   The new admin interface's settings endpoint returned the settings document unchanged, so every stored credential in it — model keys, search and Document Intelligence keys, the Redis key, storage connection strings, and every configured model endpoint's API key and client secret — was delivered to the administrator's browser in cleartext. The classic admin page has always masked these.
+    *   Credentials are now masked the same way in the new interface. A configured value shows as saved and hidden, and can be replaced or cleared but not read back. An untouched field keeps its stored value on save rather than being overwritten by the mask, and erasing one warns before it is removed.
+    *   **Three storage account keys were unmasked on both interfaces.** The key used to sign citation file access links is a live credential and is now masked everywhere.
+    *   (Ref: `admin_settings_secret_utils.py`, `route_backend_v2.py`, `SecretField.tsx`, [V2 Admin Settings Secret Exposure Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_ADMIN_SETTINGS_SECRET_EXPOSURE_FIX.md))
+
+*   **A Reserved Identity Header Name Is Now Refused Rather Than Silently Dropped**
+    *   The new admin interface accepted any identity header name. A name that collides with a header the model call already sets — `authorization` or `api-key`, for instance — was normalized away to nothing on read, which turned the header off without saying so. Such a name is now rejected at save time with an explanation.
+    *   (Ref: `admin_settings_fields.py`, `normalize_model_endpoint_identity_header_name`)
 
 #### User Interface Enhancements
+
+*   **Long Settings Sections Are Broken Into Labelled Parts**
+    *   Key Vault has eleven controls and a table; as one flat list, its connection settings and its expiration reminder settings read as a single undifferentiated decision. Sections can now declare sub-headings, so Key Vault reads as **Vault connection**, **Expiration reminders** and **Tracked secrets**, and Content Safety as **Connection** and **When a message is blocked**.
+
+*   **Standing Warnings Sit Next To The Control They Apply To**
+    *   Consequences that no label can hold — enabling Key Vault is effectively one-way — are now shown as callouts beside the switch rather than hidden behind a tooltip or left unsaid.
+
+*   **Maximum File Size Moved To Knowledge**
+    *   The upload ceiling applies to chat attachments as well as workspace documents, and it is checked before extraction runs, so Workspaces only ever described half of what it does. It now sits in **Knowledge > Document Extraction** beside Chunk Sizes, and its description says plainly that it covers both upload paths.
+    *   (Ref: `max_file_size_mb`, `functions_documents.py`, `route_frontend_chats.py`)
+
+*   **Group Creation Reads The Right Way Round**
+    *   The classic page asks you to tick "Disable Group Creation" to prevent it — a double negative over a setting that is stored as *enable* group creation. The new interface presents it as **Allow Users to Create Groups**, where on means users can create groups.
+    *   The wording also now says what was previously undocumented: switching it off freezes the group list without disabling existing groups, and overrides the CreateGroups role requirement entirely.
+    *   The classic page is unchanged, so nothing about an existing deployment moves.
+    *   (Ref: `enable_group_creation`, `LEGACY_FIELD_NAMES`)
+
+*   **Workspaces, Knowledge And Security Documentation Rewritten**
+    *   The Workspaces admin page described its sections with a repeated sentence that said only which tab they belonged to. It now explains what each workspace type means for who can read a document, how the three group-creation controls stack, and why downloads default to off, with troubleshooting for the cases where a setting appears to have no effect.
+    *   (Ref: `docs/admin/workspaces.md`, `docs/admin/knowledge.md`, `docs/admin/security.md`)
+
+*   **Assigned Groups Are Shown By Name Instead Of Counted**
+    *   The classic admin page could only report "3 groups assigned". Finding out *which* three meant opening a modal and searching for them again, and a group that had since been deleted left an id in the list that nothing on screen ever mentioned.
+    *   In the new interface the assignment is visible: each assigned group appears as a named chip you can remove, search is inline and filters as you type rather than waiting behind a Search button, and an assignment pointing at a group that no longer exists is marked **Not found** so it can be cleared out.
+    *   The list saves with the toggle that gates it, so requiring assignment and choosing the groups is one save rather than two.
+    *   (Ref: `GroupAssignmentField.tsx`, `/api/v2/admin/groups`)
+
+*   **Settings From Other Areas No Longer Appear Under Chat**
+    *   Undescribed settings are placed by matching their name against section names, and six landed in the wrong group: audio and video file support and chat completion audio cues (Knowledge > Audio & Video), enhanced extraction (Knowledge > Document Extraction), and the embedding model and tabular processing actions (Agents & Actions). Each now appears where it belongs.
+    *   **Four switches that did nothing have been removed.** Tabular processing is derived from Enhanced Citations rather than stored, so toggling it appeared to save and then reverted; the Enhanced Citations mount and two mixed-source rollout flags have no administrator control at all.
+    *   (Ref: `SUPPRESSED_CAPABILITY_KEYS`, `buildCapabilityIndex`, `test_v2_admin_capability_placement.py`)
+
+*   **Settings No Longer Linger After Their Feature Is Switched Off**
+    *   A setting shown only under certain conditions was checked against one other setting, which was not always enough. The Latest Features documentation links toggle stayed on screen with the Support menu switched off, because the condition it was checked against remained satisfied on its own.
+    *   Conditions can now be combined, so a setting disappears with the feature that owns it as well as with the option that selects it.
+    *   (Ref: `depends_on`, `isFieldVisible`, `admin_settings_fields.py`)
+
+*   **AI Models Reads As Connections And Roles**
+    *   The AI Models group conflated two different things: a place models live, and the job a model does. The Model Endpoints tab is now **Connections**, and the Chat Model section is now **Chat**, separating the resource being connected to from the purpose it serves.
+    *   (Ref: `admin_settings_nav.py`, `docs/admin/ai-models.md`)
+
+*   **Agent Orchestration No Longer Shows A Choice That Does Not Exist**
+    *   Agent Orchestration offered an Orchestration Type dropdown and a Max Rounds Per Agent field, but the application ships a single orchestration mode; the multi-agent modes are not built into this release. The dropdown therefore had exactly one option and Max Rounds could never be reached.
+    *   The new interface asks the server which modes exist and shows the card only when there is a genuine choice. It will reappear on its own if multi-agent orchestration ships, without another change here.
+    *   (Ref: `OrchestrationCard.tsx`, `/api/orchestration_types`, `get_agent_orchestration_types`)
+
+*   **Agents & Actions Documentation Describes Behaviour Instead Of Restating Labels**
+    *   The Agents entries in the Agents & Actions administration page mostly read "Defines behavior for the related admin workflow", which told an administrator nothing. They now describe what each setting does, what it depends on, and why you would change it — including that the Agents catalog page is unavailable while agents are off, and why promoting an agent exists at all.
+    *   (Ref: `docs/admin/agents-actions.md`)
 
 *   **Admin Settings Slider Contrast**
     *   Admin Settings range sliders now use the same gray tone as an off toggle switch in dark mode, making slider tracks visible against the admin page background.
     *   This includes the Content Safety prompt category threshold sliders, Main Page Logo Size, and document action capability sliders.
     *   (Ref: `content-safety.html`, `branding.html`, `actions.html`, `styles.css`, Admin Settings)
 
+#### Documentation
+
+*   **Security And Cosmos Maintenance Documentation Rewritten**
+    *   The Security page's section bodies were placeholder text, and several setting descriptions were wrong: the Key Vault name, lead days and scan interval were all described as "the secret credential used when the selected authentication mode requires one". Every section now explains what the capability does and why it matters, and the common tasks and troubleshooting tables cover the failures these settings actually produce.
+    *   (Ref: `docs/admin/security.md`, `docs/admin/scale.md`)
+
+### **(v0.261.058)**
+
+#### New Features
+
+*   **Generated Images Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated image used to be final. Changing one meant asking again, which cost another paid generation and added another image to the thread — so refining an image a few times left the conversation full of near-duplicates with no way to tell which was current.
+    *   Every generated image now has an **Edit** button, in the thread, in the full-size viewer, and on an approved image proposal card. The editor opens with four tabs: **Ask AI** for describing a change, **Prompt** for the wording that produced the image, **Controls** for shape, quality and background, and **History** for every version it has had.
+    *   **You can point at the part you want changed.** Select a region with a box or a freehand brush and the change is applied there, leaving the rest of the image alone. The editor reports how much of the image is selected, and says plainly that the selection guides the model rather than fixing every pixel outside it.
+    *   **Masking is not mouse-only.** A nine-region grid selects the same areas from the keyboard, producing exactly the shapes a drag would.
+    *   **Nothing is ever deleted.** History shows every version as a thumbnail with who made it and why, holding **compare** reveals the previous one, and restoring an older version moves a pointer rather than discarding newer ones. The image the model originally produced is always kept.
+    *   **Each change builds on the version you are looking at**, so successive edits accumulate instead of each one starting from the original.
+    *   **If your image model cannot edit, the editor says so.** Region editing needs a `gpt-image` deployment; DALL·E 3 has no editing capability at all. On a model that cannot, the selection tools are hidden and the panel names the model or the API version setting responsible, rather than failing after you have selected a region and waited.
+    *   Works in shared conversations as well as personal ones. Any participant can change an image, each change is attributed, and the edit is written through to the underlying image so the owner and exports see the same version; the other participants see it change as it happens.
+    *   The classic interface shows whichever version is current, so a conversation read in either place shows the same image.
+    *   (Ref: `functions_message_image_revisions.py`, `functions_image_edit.py`, `ImageEditor.tsx`, `ImageMaskCanvas.tsx`, `/api/message/<id>/image-revision`, `/api/collaboration/conversations/<id>/messages/<id>/image-revision`, [V2 Inline Image Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_IMAGE_EDITING.md))
+
+#### Bug Fixes
+
+*   **Images In Shared Conversations Now Display In The New Interface**
+    *   An image in a shared conversation is served from a different address than one in a personal conversation, and the new interface only recognised the personal form. A shared image therefore rendered as "Image unavailable" rather than as a picture.
+    *   (Ref: `images.ts`, `resolveImageSource`, collaboration image URLs)
+
+### **(v0.261.057)**
+
+#### New Features
+
+*   **Generated Files Are Reachable In The New Interface**
+    *   Tabular analysis has always *run* in the new interface — asking a question about a spreadsheet gave a real answer, because the analysis happens on the server. What was missing was everything the analysis produced. A request for an export created the file, said it had created it, and then offered nothing to open it with. The file existed in storage the whole time; nothing in the interface led to it.
+    *   Every file an assistant turn produces now appears as a card beneath the reply, with its row count, where it was saved, what it came from, a preview and a download.
+    *   **This covers more than spreadsheets.** The same cards surface Analyze summaries, document-comparison workbooks and Deep Research ledgers, all of which were equally unreachable.
+    *   A finished row-level export gets a compact card — its name and row count say what it is — with a **View** control that opens the full preview when you actually want it. Longer prose artifacts show their preview inline, and Analyze and comparison outputs keep theirs collapsed so they do not push the reply off screen.
+    *   (Ref: `generatedArtifacts.ts`, `GeneratedArtifactCard.tsx`, `/api/chat_artifacts/download`, [V2 Tabular Analysis](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_TABULAR_ANALYSIS.md))
+
+*   **Long Exports Report Their Progress And Can Be Stopped**
+    *   A large export runs in the background over minutes, checkpointing as it goes. Previously the new interface showed none of this: the run was invisible, and there was no way to restart one the worker had dropped or stop one started by mistake.
+    *   A running export now shows its status, a progress bar, what it is currently doing, throughput and an estimated time remaining, with **Continue** and **Cancel** where the server says those are possible. When it finishes, the progress card is replaced by the files it produced.
+    *   (Ref: `TabularRunStatus.tsx`, `/api/tabular/generated-output/runs/<run_id>`)
+
+*   **Staged Work Shows How Far Along It Is**
+    *   Reasoning steps were drawn as a flat list of sentences. For a tabular analysis — one workbook tool call at a time, for minutes — that is a growing wall of text that reads the same whether the run is working or stuck.
+    *   Work that happens in countable stages now gets a progress card above the steps, naming the current stage and counting completed against total. It stays visible while the run is live without anything needing to be expanded.
+    *   The progress bar never runs backwards, so a new stage starting is never mistaken for lost work.
+    *   (Ref: `activityLanes.ts`, `ThoughtsList.tsx`)
+
+*   **A Confirmation Before An Expensive Row-Level Run**
+    *   Asking for output for every one of several thousand rows is a long, expensive run, and it is as easy to ask for by accident as on purpose. The new interface now says what it is about to do — the row count and the estimated number of batches — and offers to narrow the prompt instead. Declining leaves what you typed exactly where it was.
+    *   Only fires when a prompt asks for row-level output *and* a file *and* names a count over the administrator's thresholds, so ordinary questions are never interrupted.
+    *   (Ref: `tabularRunEstimate.ts`, `enable_tabular_durable_run_confirmation`)
+
+*   **Uploaded Files Can Be Opened**
+    *   A file attached to a conversation showed only its name. Since an attachment is usually the subject of everything said after it, that meant checking the assistant's answers against something you could not see. Clicking the name now opens it — spreadsheets as a table — with **Download original** when the original file is still in storage.
+    *   Personal conversations only, and only where the user workspace is enabled; the name stays inert elsewhere rather than offering a control that cannot work.
+    *   (Ref: `ChatFilePreview.tsx`, `/api/get_file_content`)
+
+*   **Files Awaiting Approval Say So**
+    *   A file generated in a shared conversation is withheld until the conversation's owner releases it. The card now explains that instead of showing a download button that fails, and offers **Approve** and **Deny** to whoever can make the decision.
+    *   (Ref: `GeneratedArtifactCard.tsx`, generated file approvals)
+
+*   **Large Tool Results Are Readable**
+    *   A tabular tool call that matched four thousand rows returned four thousand rows into the message inspector. The result now states how many matched and shows the first few, with controls for twenty-five or all of them.
+    *   (Ref: `agentCitationRows.ts`, `MessageInspector.tsx`)
+
+#### Bug Fixes
+
+*   **Live Reasoning Steps Were All Labelled "Thinking"**
+    *   The new interface read a step's title from a field the server does not send, so every step of a live response was labelled identically until the page was reloaded. Steps now carry the name the server gives them as they arrive.
+    *   (Ref: `chatStore.ts`, thought stream frames)
+
+### **(v0.261.056)**
+
+#### New Features
+
+*   **Generated Images Can Be Changed Where They Are, Instead Of Regenerated**
+    *   A generated image used to be final. Changing one meant asking again, which cost another paid generation and added another image to the thread — so refining an image a few times left the conversation full of near-duplicates with no way to tell which was current.
+    *   Every generated image now has an **Edit** button, in the thread, in the full-size viewer, and on an approved image proposal card. The editor opens with four tabs: **Ask AI** for describing a change, **Prompt** for the wording that produced the image, **Controls** for shape, quality and background, and **History** for every version it has had.
+    *   **You can point at the part you want changed.** Select a region with a box or a freehand brush and the change is applied there, leaving the rest of the image alone. The editor reports how much of the image is selected, and says plainly that the selection guides the model rather than fixing every pixel outside it.
+    *   **Masking is not mouse-only.** A nine-region grid selects the same areas from the keyboard, producing exactly the shapes a drag would.
+    *   **Nothing is ever deleted.** History shows every version as a thumbnail with who made it and why, holding **compare** reveals the previous one, and restoring an older version moves a pointer rather than discarding newer ones. The image the model originally produced is always kept.
+    *   **Each change builds on the version you are looking at**, so successive edits accumulate instead of each one starting from the original.
+    *   **If your image model cannot edit, the editor says so.** Region editing needs a `gpt-image` deployment; DALL·E 3 has no editing capability at all. On a model that cannot, the selection tools are hidden and the panel names the model or the API version setting responsible, rather than failing after you have selected a region and waited.
+    *   Works in shared conversations as well as personal ones. Any participant can change an image, each change is attributed, and the edit is written through to the underlying image so the owner and exports see the same version; the other participants see it change as it happens.
+    *   The classic interface shows whichever version is current, so a conversation read in either place shows the same image.
+    *   (Ref: `functions_message_image_revisions.py`, `functions_image_edit.py`, `ImageEditor.tsx`, `ImageMaskCanvas.tsx`, `/api/message/<id>/image-revision`, `/api/collaboration/conversations/<id>/messages/<id>/image-revision`, [V2 Inline Image Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_IMAGE_EDITING.md))
+
+*   **Act On Several Conversations At Once In The Sidebar**
+    *   Hovering a conversation in the chat sidebar now reveals a checkbox at its left edge. Ticking it starts a selection and a compact bar appears above the list offering **Pin**, **Hide**, **Export** and **Delete** for everything selected. Previously the only thing a selection could do was export, and pinning, hiding or deleting several conversations meant opening the same menu once per row.
+    *   **Ctrl-click adds a conversation and Shift-click selects a run of them**, matching the workspace documents explorer — the two lists now share one implementation of those rules, so they cannot drift apart.
+    *   **A plain click still opens a conversation.** Modifier keys select; an unmodified click opens and drops the selection. Once anything is selected every row shows its checkbox, so the state is visible before a click discards it.
+    *   **The permanent "Select" button is gone**, so the sidebar is a line shorter at rest than it was before this feature was added. Checkboxes appear on touch devices permanently, since there is no hover to reveal them with.
+    *   **Pin adapts to what is selected**: it offers Unpin only when everything selected is already pinned, and otherwise pins. Hiding stays one-way, matching the single-row action.
+    *   **Shared conversations are handled correctly rather than skipped.** The bulk endpoints only cover personal conversations, so a mixed selection is split — and removing a shared conversation is a deletion for its owner and a departure for everybody else, chosen per conversation rather than assumed.
+    *   `Escape` clears the selection, and `Ctrl+A` inside the sidebar selects everything loaded.
+    *   (Ref: `ConversationRail.tsx`, `listSelection.ts`, `conversationSelection.ts`, `POST /api/delete_multiple_conversations`, `POST /api/conversations/bulk-pin`, `POST /api/conversations/bulk-hide`, [V2 Conversation Multi-Select](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_CONVERSATION_MULTI_SELECT.md))
+
+#### Bug Fixes
+
+*   **Images In Shared Conversations Now Display In The New Interface**
+    *   An image in a shared conversation is served from a different address than one in a personal conversation, and the new interface only recognised the personal form. A shared image therefore rendered as "Image unavailable" rather than as a picture.
+    *   (Ref: `images.ts`, `resolveImageSource`, collaboration image URLs)
+
+*   **Deleting A Conversation Now Asks First**
+    *   Deleting a conversation from the sidebar used to happen on a single click, with no confirmation and no way back — one mis-click on a menu destroyed a conversation and every message in it.
+    *   Both the single-row delete and the new bulk delete now confirm, and the confirmation says what will really happen: a shared conversation you can only step out of is described as being left rather than deleted, and a mixed selection reports the two counts separately.
+    *   (Ref: conversation deletion, `ConfirmDialog.tsx`, `ConversationRail.tsx`)
+
+*   **A Sidebar Selection Can No Longer Outlive The Rows It Named**
+    *   Searching or paging the conversation list left a stale selection behind, so a bulk action taken afterwards could apply to conversations that were no longer on screen.
+    *   The selection is now pruned whenever the list reloads, whenever a conversation is removed or hidden, and when a shared conversation is taken away by its owner while you have it selected. Every bulk action also resolves its selection against the visible list before sending anything.
+    *   (Ref: conversation list paging, selection pruning, `chatStore.ts`)
+
+*   **Leaving A Shared Conversation Could Delete It For Everybody**
+    *   The sidebar decided whether removing a shared conversation meant *leaving* it or *deleting* it from two copies of your permissions that were refreshed independently: opening a conversation and role-change events updated one, while the sidebar row kept the value it was loaded with.
+    *   If you were promoted to owner while the conversation was open, the menu still offered **Leave** — but confirming posted a delete, destroying the conversation and all of its messages for every participant. A demoted owner hit the reverse, being told they had deleted something that still existed.
+    *   Both copies are now kept in step, and the decision is made once and carried through to the request, so the wording you confirm is always the action performed.
+    *   (Ref: shared conversation removal, `can_delete_conversation`, `conversationSelection.ts`, `chatStore.ts`)
+
+### **(v0.261.055)**
+
+#### User Interface Enhancements
+
+*   **Admin Settings Has Moved Into The Account Menu In The V2 Interface**
+    *   In the V2 interface, an administrator's left-hand menu listed **Admin Settings** alongside Chats, Agents and the workspaces, mixing the places you work with the place you administer.
+    *   It now lives in the account menu at the bottom of the rail, under your name — the same place the classic interface keeps **App Settings**. The primary list is once again only the places you work.
+    *   **Settings** in that menu is now **User Settings**, so the two entries a line apart say which is which, and the page it opens is titled to match.
+    *   (Ref: V2 interface, left-hand menu, account menu, Admin Settings, personal settings)
+
+*   **Your Profile Picture Now Appears In The V2 Interface**
+    *   Your Microsoft 365 profile photo is already retrieved and stored when you first sign in, and the classic interface has always shown it. The V2 interface drew your initials instead.
+    *   It now appears on the account control at the bottom of the left-hand menu and in the header of your **User Settings** page. Initials are still used when you have no photo.
+    *   (Ref: V2 interface, account menu, User Settings, profile photo)
+
+#### Bug Fixes
+
+*   **Custom Pages And External Links Now Collapse And Stay That Way In The V2 Interface**
+    *   The **Custom Pages** and **External Links** groups in the V2 left-hand menu only became collapsible once a group held three or more links, and even then reopened on the next page load. A group put away never stayed away.
+    *   Every group now collapses from its heading, whatever the link count, and the choice is remembered against your account. It is the same preference the classic interface uses, so a group you put away in one interface stays away in the other.
+    *   Because every group in the V2 menu is now collapsible, **Force Menu Display** in Admin Settings no longer changes it. The setting continues to work in the classic interface.
+    *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `sidebarMenuState`, [V2 Sidebar Navigation And Account Menu](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_SIDEBAR_NAV_AND_ACCOUNT_MENU_FIX.md))
+
+*   **The Account Menu Could Not Be Opened From The Collapsed V2 Menu**
+    *   With the V2 left-hand menu collapsed to icons, clicking your account picture did nothing at all. Your settings, the way back to the classic interface and **Sign out** could only be reached by expanding the menu first, and nothing said so.
+    *   The menu now opens beside the icon strip and names the account it belongs to. It also closes when you press Escape or click elsewhere, which it previously did not.
+    *   (Ref: V2 interface, left-hand menu, collapsed rail, account menu)
+
 ### **(v0.261.054)**
 
 #### Bug Fixes
+
+*   **Image Generation No Longer Goes Quiet When You Look Away**
+    *   Approving inline image proposals and then opening another conversation used to leave the cards looking untouched when you came back — no progress, **Approve** enabled again, **Approve all** back — even though those images were still being generated and did arrive a moment later. Pressing **Approve** again would have paid for the same image twice.
+    *   **Approvals now keep reporting themselves wherever you go.** Leave the conversation, visit My Workspace, come back an hour later: the cards still show their queue position and "Generating image…", because that state no longer belongs to the view you left.
+    *   **Reloading the page no longer loses track of them either.** Generation runs on the server and finishes whether or not your browser is still connected, so the only thing a reload ever really lost was the knowledge that it was coming. Restored cards say "Still generating from before the page reloaded…" and fill in as each image lands.
+    *   **You can tell from anywhere in the app.** A conversation still generating images shows a spinner and a count on its row in the conversation list, and a single notice reports images being generated whose cards are not on screen — whether you have moved to another conversation or left chat entirely. The notice is deliberately absent while you are looking at those cards, where it would only repeat what they already say.
+    *   **An approval that never finishes is written off rather than left spinning.** After ten minutes the card explains that the page reloaded while it was generating and offers to approve it again.
+    *   This is per browser tab. An image approved in one tab is not tracked in another, though the image itself is stored and appears there as soon as the conversation is read.
+    *   (Ref: `imageProposalStore.ts`, `imageProposalTracking.ts`, `imageProposalResume.ts`, `GET /api/chat/image-proposals/status/<conversation_id>`, [V2 Inline Image Proposal Resume](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_INLINE_IMAGE_PROPOSAL_RESUME_FIX.md))
 
 *   **Default System Prompt Remains Active When Files or Images Are Uploaded in Chat**
     *   Uploading an image, XML file, or other file directly in the chat UI no longer suppresses the configured `default_system_prompt` in standard or streaming chat turns.
     *   Previously, chat-uploaded image and file context messages (`role: 'image'` and `role: 'file'` converted into `role: 'system'` entries in `conversation_history_for_api`) were mistaken for an existing general system prompt, causing `default_system_prompt` to be skipped.
     *   `has_general_system_prompt` now checks whether `default_system_prompt` itself is already present in `conversation_history_for_api`.
-    *   (Ref: `route_backend_chats.py`, [Default System Prompt Preservation With Chat Uploads Fix](fixes/DEFAULT_SYSTEM_PROMPT_CHAT_UPLOADS_FIX.md), #1855)
+    *   (Ref: `route_backend_chats.py`, [Default System Prompt Preservation With Chat Uploads Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DEFAULT_SYSTEM_PROMPT_CHAT_UPLOADS_FIX.md), #1855)
 
 ### **(v0.261.053)**
 
+#### New Features
+
+*   **Prompts In My Workspace Is Now A Workbench**
+    *   Editing a prompt used to open a form **above the list**. Clicking Edit on a prompt part-way down the page moved the editor to the top, out of view, with nothing tying it to the row you clicked — so the first thing you did after pressing Edit was scroll to find the editor. The layout now matches the documents explorer: the list on the left, the prompt rendered on the right, and writing done in a dialog.
+    *   **You can read a prompt without editing it.** The details pane shows the full body rendered as markdown, with its variables, its description and its actions. Previously the only way to see past the first 140 characters was to open an editor you then had to cancel out of.
+    *   **The editor shows the source and the rendering side by side**, with a small formatting toolbar, becoming tabs on a narrow screen. Closing it with unsaved changes asks first.
+    *   **Prompts now have a description and can be favourited.** Favourites sort to the top of the list and of the composer's `/` menu.
+    *   Duplicate, copy and "Use in chat" are available from the details pane, and search now covers the body of a prompt as well as its name — so you can find the one that mentions a particular system without remembering what you called it.
+    *   (Ref: V2 My Workspace, Prompts, `PromptWorkbench.tsx`, `GET/POST/PATCH /api/prompts`, [V2 Prompts Workbench](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_PROMPTS_WORKBENCH.md))
+
+*   **Prompts Can Ask You To Fill In The Blanks**
+    *   Write `{{customer}}` or `{{region}}` in a prompt and you are asked for those values when you use it, instead of editing the same three words every time. A default can be written as `{{tone|formal}}`.
+    *   **Values you entered last time are offered back**, remembered per prompt so "name" in one prompt never pre-fills "name" in another. Anything filled in for you is badged as reused and cleared with one click, and the dialog always appears rather than inserting silently.
+    *   **Eight values the app already knows are filled in for you**: today's date, the current time, your name, the conversation title, the documents in scope, the last reply, your last message, and what you have already typed.
+    *   **Values from the conversation are one click each, never automatic.** The last reply can be quoting an uploaded document, and document text becoming part of your next instruction is how prompt injection gets a foothold — so you choose which field gets it.
+    *   **Nothing is pre-filled in a shared conversation**, where a value remembered from a private chat would become visible to everyone the moment you send.
+    *   **The values stay in your browser and are never sent to the server.** Anything matching an obvious key or token shape is not stored at all, and each prompt offers a "Forget saved values" control.
+    *   A prompt that documents a templating language is safe: `{{ }}` inside a code block is left alone, and `\{{` escapes a single occurrence.
+    *   (Ref: `promptVariables.ts`, `promptVariableMemory.ts`, `PromptVariablesDialog.tsx`)
+
+*   **Saving A Prompt From A Conversation**
+    *   Any message now offers **Save as prompt** in its overflow menu, and the composer offers the same for wording you have drafted but not sent. Both open the editor prefilled with a suggested name, so you can turn the specifics into `{{variables}}` before saving.
+    *   A prompt saved this way is selectable in the composer immediately, without a reload.
+    *   (Ref: `MessageActions.tsx`, `Composer.tsx`, `bootstrapStore.upsertPromptInCatalog`)
+
+*   **A `/` Shortcut For Prompts In The Composer**
+    *   Type `/` at the start of a word to search your prompts and insert one without reaching for the picker. Favourites come first, and matching covers the name, description and workspace.
+    *   A slash in the middle of a word is left alone, so `and/or` and `https://` do not trigger it.
+    *   (Ref: `promptSlash.ts`, `PromptSlashMenu.tsx`)
+
 #### Bug Fixes
+
+*   **Picking A Prompt No Longer Discards What You Had Typed**
+    *   Choosing a prompt from the composer's picker replaced the entire message box, so reaching for a prompt part-way through writing threw away the half-sentence you reached for it from. Prompts are now inserted at the cursor, or over the selection, with sensible spacing.
+    *   (Ref: composer prompt picker, `insertPromptText`)
+
+*   **"Use As Prompt" Renamed To "Copy To Composer"**
+    *   The message menu entry called "Use as prompt" only ever copied the message text into the composer — it never saved a prompt. It now says what it does, and a real **Save as prompt** sits beside it.
+    *   (Ref: `MessageActions.tsx`)
+
+*   **Prompt Search Now Actually Reaches The Server**
+    *   The workspace sent its prompt search as `search_term` while the API reads `search`, so server-side search had never once run and the list was filtered in the browser over the first page of results only.
+    *   (Ref: `fetchPrompts`, `list_prompts`)
+
+*   **One Validator For Personal, Group And Public Prompts**
+    *   The three prompt APIs each carried their own copy of the same field checks. Adding a field to one and not the others produces a value that saves on a personal prompt and is silently dropped on a group one, which reads as a save that did not work. All three now share a single validator, and creates and updates return the same fields.
+    *   (Ref: `build_prompt_updates`, `serialize_prompt_summary`, `functions_prompts.py`)
 
 *   **Search Results Refresh After a Background Metadata Sync**
     *   When the background search sync finishes merging a tag or metadata change, it now clears cached search results for the document's workspace and for every user or group with an approved share.
     *   Previously, a chat or search that ran while the sync was still in progress could cache the old values and keep returning them for up to the search cache lifetime (5 minutes by default) after the sync completed.
-    *   (Ref: `run_document_search_metadata_sync()`, `utils_cache.py`, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+    *   (Ref: `run_document_search_metadata_sync()`, `utils_cache.py`, [Document Search Metadata Sync Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
 
 ### **(v0.261.052)**
 
+#### User Interface Enhancements
+
+*   **The Logo Is The Way Home In The New Interface**
+    *   Clicking the logo or the application title at the top of the left rail now opens the home page. Previously it was not a link at all, and a separate **Home** row sat directly underneath it — two controls for one destination, only one of which worked.
+    *   That **Home** row has been removed. The rail is one item shorter, and the place people already click is the place that works.
+    *   The link is announced to screen readers as the application name followed by "home", so it is still identifiable when the rail is collapsed to just a logo or a single letter.
+    *   (Ref: V2 navigation rail, brand mark, [V2 Brand Mark Home Link Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
+
 #### Bug Fixes
+
+*   **The Application Title No Longer Appears Twice In The Left Rail**
+    *   With no custom logo uploaded, the new interface showed a coloured square holding the first letter of the application title *and* the full title next to it — "**S** SimpleChat".
+    *   The lettered square is a stand-in for a logo, so it now appears only where the title itself cannot: when the left rail is collapsed, or when **Hide Application Title** is turned on. An expanded rail shows the title on its own.
+    *   Deployments with a custom logo are unaffected.
+    *   (Ref: V2 navigation rail, Appearance > Branding, [V2 Brand Mark Home Link Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
 
 *   **Metadata and Tag Saves on Large Documents Finish Immediately**
     *   Saving tags, titles, authors, or classification on a document no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Group and public workspace saves no longer time out with "invalid JSON" errors, and the personal workspace dialog sends a single request again.
     *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
     *   The search index update sends only the changed fields instead of re-downloading and re-uploading every chunk with its embedding. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with far fewer Cosmos write-fence operations, which sharply reduces Search and Cosmos load.
     *   Failed or interrupted updates retry automatically with backoff until every chunk matches the document, so chat tag filters and citation titles and classifications converge instead of staying partially stale. A brief notice tells users when the search index is still updating.
-    *   (Ref: `functions_documents.py`, `background_tasks.py`, document metadata routes, [Document Search Metadata Sync Fix](fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+    *   (Ref: `functions_documents.py`, `background_tasks.py`, document metadata routes, [Document Search Metadata Sync Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
 
 *   **Group Document Sharing Changes Reach Search**
     *   Approving, removing, or revoking a group share now updates the search index before the change is saved. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
@@ -89,43 +4787,166 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Clicking Away Just After Starting A New Chat No Longer Bounces You Back**
+    *   The first message in a brand-new chat has to create the conversation before it can answer, and clicking a different conversation during that moment used to undo the click and drop you back into the chat you had just left.
+    *   In the unluckier version of the same timing, the conversation you clicked would have its messages shown underneath the new chat, so a thread appeared to contain a question that was asked somewhere else.
+    *   Your click now wins. The message is still sent and its answer still generated and saved — the new chat appears in the list with its title and unread marker — but the interface stays where you put it.
+    *   Nothing was ever lost or filed against the wrong conversation; the effect was limited to what was on screen.
+    *   (Ref: `chatStore.ts` `sendMessage`, `runChatStream`, [V2 New Conversation Send Race](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_NEW_CONVERSATION_SEND_RACE_FIX.md))
+
 *   **Large Document Metadata Saves Continue Across Batches**
     *   Saving tags or other metadata for large uploaded documents now synchronizes search chunk metadata in bounded batches instead of holding one long request until every chunk is updated.
     *   The workspace metadata dialog continues the save through short JSON PATCH requests until the chunk sync is complete, avoiding timeout HTML responses that previously appeared in the browser as invalid JSON errors.
     *   Tag saves no longer run duplicate full-document search chunk propagation, while blob metadata tag updates are still preserved.
-    *   (Ref: document metadata updates, tag propagation, `functions_documents.py`, `route_backend_documents.py`, `workspace-documents.js`, [Document Metadata Chunk Sync Batching Fix](fixes/DOCUMENT_METADATA_CHUNK_SYNC_BATCHING_FIX.md))
+    *   (Ref: document metadata updates, tag propagation, `functions_documents.py`, `route_backend_documents.py`, `workspace-documents.js`, [Document Metadata Chunk Sync Batching Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DOCUMENT_METADATA_CHUNK_SYNC_BATCHING_FIX.md))
 
 ### **(v0.261.050)**
 
 #### Bug Fixes
 
+*   **Leaving A Chat No Longer Destroys The Answer Being Written**
+    *   In the new interface, sending a message and then opening a different conversation before the reply finished ended the reply. Coming back showed the question with no answer, and nothing to reconnect to.
+    *   It looked intermittent because the timing changed the symptom. Leaving during the "thinking" phase, before the assistant had produced its first word, saved no reply at all. Leaving later left a truncated one.
+    *   The cause was that switching conversations, and starting a new chat, asked the server to *cancel* the generation rather than simply stopping reading it. Those are different things, and only the Stop button should mean the second one. Answers are generated in the background and deliberately outlive the connection carrying them, so dropping the connection was always safe; cancelling was not.
+    *   Leaving a conversation now detaches. The answer finishes and is saved, reopening the thread picks the reply back up mid-flow or shows it complete, and several conversations can be generating at once — matching how the classic interface has always behaved.
+    *   Stop is unchanged and still cancels. Leaving a shared conversation also no longer cancels a reply other participants are waiting for.
+    *   (Ref: `chatStore.ts` `detachActiveStream`, `selectConversation`, `startNewConversation`, `stopStreaming`, `/api/chat/stream/cancel`, [V2 Stream Cancelled On Conversation Leave](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_STREAM_CANCELLED_ON_CONVERSATION_LEAVE_FIX.md))
+
 *   **Maps From Agents Load Their Tiles Again**
     *   Tool results are redacted before they are stored with a reply, and the redaction treated the Azure Maps tile proxy token as a secret. Every stored map lost its token, so maps drew their markers and paths on blank tiles.
     *   The token in SimpleChat's own tile template is now kept. It is encrypted with the app's secret key, expires, and only works on SimpleChat's signed-in tile proxy. Every other `token=` value and every other secret in a tool result is still redacted.
     *   Maps stored before this fix keep the redacted token and still show no tiles. Run the request again to get a map with tiles.
-    *   (Ref: `plugin_invocation_logger.py`, [Azure Maps Tile Token Redaction Fix](fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md))
+    *   (Ref: `plugin_invocation_logger.py`, [Azure Maps Tile Token Redaction Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md))
 
 ### **(v0.261.049)**
+
+#### New Features
+
+*   **Diagrams Can Be Edited Where They Are, Instead Of Regenerated**
+    *   A Mermaid diagram in a reply used to be final. Changing one meant asking again in the thread, which produced another message with another diagram — so refining a diagram a few times left the conversation full of near-duplicates, all of them still being sent to the model.
+    *   Every rendered diagram now has an **Edit** button. The editor opens with a live preview and four tabs: **Source** for editing the Mermaid directly, **Layout** for flow direction and spacing, **Ask AI** for describing a change in words, and **History** for every version it has had.
+    *   **Ask AI is a conversation with the diagram, not with the thread.** The model is given the diagram's current source, that diagram's own earlier instructions, and the request the diagram originally came from — not the conversation. Its replies never appear in the thread.
+    *   **Only the version on your screen is used as context.** The revision history and the editing conversation behind it are stored with the diagram and are never sent to the model, so refining a diagram ten times costs the same context as generating it once.
+    *   **Nothing is ever deleted.** History records who changed what and why, restoring an older version moves a pointer rather than discarding newer ones, and the version the model originally produced is always kept.
+    *   **Boxes still cannot be dragged**, and the interface says so rather than pretending otherwise. Mermaid computes node positions and has no syntax for placing one, so what the Layout tab offers instead is direction, spacing, and — through the source editor — grouping and reordering.
+    *   Works in shared conversations as well as personal ones. Any participant can edit a diagram, matching who can already recolour one, and each change is attributed. An edit is written through to the underlying message, so the AI, exports and the conversation's owner all see the version you edited; the other participants see it change as it happens.
+    *   The classic interface shows whichever version is current, so a conversation read in either place shows the same diagram, and exports carry the current version too.
+    *   (Ref: `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `DiagramEditor.tsx`, `/api/message/<id>/block-revision`, `/api/collaboration/conversations/<id>/messages/<id>/block-revision`, [V2 Inline Diagram Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_DIAGRAM_EDITING.md))
 
 #### Bug Fixes
 
 *   **Inline Map Attribution Shown as Text and Tiles Kept on the Tile Proxy**
     *   Inline maps in the chat now show a tool result's tile attribution as plain text. OpenLayers renders attribution strings as HTML, so the text is escaped first.
     *   A tool result is drawn as a map only when its tile template points at SimpleChat's Azure Maps tile proxy (`/api/azure-maps/tile`). Maps from the Azure Maps action are unchanged.
-    *   (Ref: `chat-inline-maps.js`, [Inline Map Attribution Text Fix](fixes/INLINE_MAP_ATTRIBUTION_TEXT_FIX.md))
+    *   (Ref: `chat-inline-maps.js`, [Inline Map Attribution Text Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/INLINE_MAP_ATTRIBUTION_TEXT_FIX.md))
 
 ### **(v0.261.048)**
 
+#### New Features
+
+*   **Documents In My Workspace Is Now A File Explorer**
+    *   The documents page in the new interface was one flat list that could upload a file, delete a file, and filter by one tag. It is now laid out like a file manager: a command bar across the top, a navigation rail down the left, the list in the middle, a details pane on the right and a status bar along the bottom.
+    *   **Everything the server could already do is now reachable.** The page previously asked for a thousand documents at once and sorted and searched them in the browser, ignoring the paging, searching, sorting, filtering, downloading, metadata editing, re-extraction and sharing the API has supported all along. All of it is now used.
+    *   **Tags live in the left rail instead of behind a view mode.** The classic workspace shows tags as folder cards you switch into a separate mode to see; here they are always visible, with their colour and a live count, and clicking one filters the list. Ctrl-clicking a second tag narrows to documents carrying both.
+    *   **Drag documents onto a tag to file them.** The confirmation offers an **Undo**, so tagging a batch never needs a dialog first.
+    *   **Saved views** pin a combination of search, tags, classification and status to the rail under your own name for it — the closest thing to a folder that a workspace organised by tags can honestly offer.
+    *   **Multi-select works the way it does everywhere else.** There is no longer a mode to switch on before checkboxes appear: click, Ctrl-click, Shift-click, Ctrl+A, Escape, and the arrow keys all behave as expected, and the toolbar's Download, Tag, Chat, Extract and Delete act on whatever is selected.
+    *   **Titles lead, file names follow.** A file called `MSA_v2_FINAL(3).docx` now shows its extracted title on the first line with the file name beneath it, and its tags as coloured chips in their own column rather than run together into one line of text.
+    *   **The details pane** shows a document's tags, classification, size, pages, version, dates, authors, keywords, abstract and sharing, and lets you edit them. With several documents selected it reports how many, their combined size and the tags they have in common, so a bulk action states what it is about to touch.
+    *   **Two views instead of four.** Details (a sortable table) and Tiles (cards). The two folder-shaped modes are gone, replaced by the rail.
+    *   **Active filters are visible.** Whatever is narrowing the list appears as removable chips above it, with a Clear all — previously there was no way to tell why documents seemed to be missing.
+    *   (Ref: V2 My Workspace, Documents, `GET /api/documents`, `GET /api/documents/facets`, `POST /api/documents/bulk-delete`, `POST /api/documents/bulk-tag`)
+
+*   **A Tags Section In My Workspace**
+    *   Tags now have a home of their own under Knowledge, where they can be created, renamed, recoloured, merged and deleted, with a count of how many documents use each one.
+    *   **Renaming a tag onto one that already exists merges the two**, and the page says so before you commit to it.
+    *   Deleting a tag says how many documents it will be removed from, and never deletes the documents themselves.
+    *   Applying tags stays on the Documents page. Choosing what the tags *are* and browsing *by* them are different jobs, and the classic workspace does both from the same toolbar.
+    *   (Ref: V2 My Workspace, Tags, `PATCH /api/documents/tags/<name>`, tag colours)
+
+*   **Deleting Several Documents At Once**
+    *   Removing a selection was previously one request per document. It is now a single request that reports on each document individually.
+    *   **A document the server refuses to delete is named, with the reason.** Files uploaded through chat and files managed by file sync are protected because deleting them silently damages something else; those are now listed by name with an option to go ahead anyway, instead of one protected file blocking everything selected with it.
+    *   (Ref: `POST /api/documents/bulk-delete`, conversation-linked documents, file sync)
+
 #### Bug Fixes
+
+*   **Typing In The Documents Search Box Dropped Characters**
+    *   The search box searched on every keystroke and lost letters if you typed at anything like normal speed, so a search term had to be entered slowly and checked.
+    *   The box was displaying the *searched* term rather than what you had typed, so each keystroke was undone until the search caught up. It now shows what you type, waits for you to stop before searching, and searches immediately if you press **Enter**. **Escape** clears it.
+    *   (Ref: V2 My Workspace, Documents, search)
+
+*   **Tagging Several Documents Appeared To Hang**
+    *   Applying tags to a multi-document selection showed a spinner labelled "Working…" that never went away and never refreshed the list. The tags had actually been applied — a page refresh showed them — but nothing on screen said so.
+    *   Tagging a document is expensive on the server: it rewrites the document and every one of its search index entries. Sending one request for the whole selection meant a single request that ran for a very long time behind a spinner that could not distinguish slow from stuck.
+    *   Tagging and deleting are now sent in small batches with **a real progress bar** showing how many documents of the total are done, and the list refreshes when it finishes. A batch that fails now reports itself instead of leaving the progress indicator up indefinitely.
+    *   (Ref: V2 My Workspace, Documents, bulk tagging, bulk delete, progress reporting)
+
+*   **Sorting Documents By Size Or Page Count Would Have Crashed The Listing**
+    *   The document sort compared a missing value against a present one as different types, which raises an error in Python. It was harmless while documents could only be sorted by name, title and date, and would have failed the moment any numeric column became sortable.
+    *   Sort fields are now declared as numeric or textual, so a document that has never had a size, a page count or a version still sorts correctly alongside ones that do.
+    *   (Ref: `sort_documents`, `ALLOWED_DOCUMENT_SORT_FIELDS`, personal, group and public document lists)
+
+*   **The "Shared With Me" Filter Never Did Anything**
+    *   The classic workspace sends a `shared_only` filter that the document listing has never read, so ticking it changed nothing. The listing now supports filtering by document state — recent, shared with you, processing, needs attention, or untagged — and the new interface's rail uses it.
+    *   (Ref: `GET /api/documents`, `place` parameter)
 
 *   **Agent Model Picker Respects Governance Policies**
     *   Fixed the persona workspace agent setup modal so its model dropdown now follows the same endpoint governance policies as the chat window model selector.
     *   Users no longer see restricted global, personal, or group model endpoints when creating or editing agents, and governed multi-endpoint responses no longer fall back to legacy global model lists.
-    *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
+    *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
+
+#### User Interface Enhancements
+
+*   **Re-Extraction Now Says Which Mode A Document Is Already On**
+    *   The details pane offered **Standard** and **Enhanced** as two identical buttons without indicating which one had been used, so the only way to change a document's extraction was to guess and then check.
+    *   It now states the current mode, marks that option as **(current)**, and presents the other as **Switch to Standard** or **Switch to Enhanced**. A selection spanning both reads **Mixed**; one where no mode was ever recorded reads **Not recorded**.
+    *   The choice is hidden for files it does not apply to — only PDFs and images are processed this way — and in a mixed selection those files are named and left alone rather than silently included.
+    *   **Enhanced** is disabled with an explanation when your administrator has not enabled enhanced extraction, instead of being offered and then refused.
+    *   (Ref: V2 My Workspace, Documents, details pane, `enable_enhanced_extraction`)
+
+*   **The My Workspace Section Menu Can Be Collapsed**
+    *   The list of workspace sections down the left can now be collapsed to icons, giving the documents explorer noticeably more room. The choice is remembered.
+    *   It collapses independently of the main application sidebar, so you can narrow either one without affecting the other. Collapsed entries keep their names as tooltips and for screen readers.
+    *   (Ref: V2 My Workspace, section navigation)
 
 ### **(v0.261.047)**
 
+#### New Features
+
+*   **A Home Page In The V2 Interface**
+    *   The new interface opened straight into chat and had no landing page, which meant three Appearance settings — **Landing Page Text**, **Markdown Alignment** and **Main Page Logo Size** — configured a page that only existed in the classic interface. Editing them appeared to do nothing.
+    *   `/v2` now opens a home page carrying your logo, your landing copy and a **Start chatting** button, and **Home** has been added to the left-hand menu. The logo is sized by **Main Page Logo Size** exactly as the classic home page sizes it.
+    *   Clearing the landing copy leaves the home page without it, rather than restoring the default wording you deleted.
+    *   (Ref: V2 interface, home page, `landing_page_text`, `landing_page_alignment`, `landing_page_logo_scale_percent`)
+
+*   **Custom Pages And External Links In The V2 Left-Hand Menu**
+    *   Both are configured under **Appearance > Pages & Links** and neither appeared in the new interface at all, so a deployment that had set them up saw a menu with none of its own links in it.
+    *   They now appear, following the same rule as the classic navigation: one or two entries sit inline as ordinary menu items, and three or more — or any number when **Force Menu Display** is on — collapse into a group under the menu name you configured, with a count.
+    *   External links open in a new tab so they cannot take an in-progress conversation with them. Custom pages honour their own "open in new tab" setting, and are still filtered per page against your roles.
+    *   (Ref: V2 interface, left-hand menu, Custom Pages, External Links, `/api/v2/bootstrap`)
+
 #### Bug Fixes
+
+*   **Custom Favicon Was Never Shown In The V2 Interface**
+    *   An uploaded favicon replaced the browser tab icon in the classic interface but never in the new one, which also always showed "SimpleChat" as the tab title regardless of the configured application title.
+    *   The favicon file keeps the same name every time it is replaced, so the address it is served from has to change or the browser keeps showing the copy it already has. The classic interface has always done this; the new interface is compiled ahead of time and could not know your branding. The page it serves is now stamped with the current favicon and application title on the way out.
+    *   (Ref: V2 interface, favicon, application title)
+
+*   **Custom Logo Was Squashed In The V2 Left-Hand Menu**
+    *   The logo was drawn into a fixed square, so any logo that is not square — which is most of them — was compressed. It is now sized by height with its own proportions kept, as in the classic navigation.
+    *   (Ref: V2 interface, left-hand menu, custom logo)
+
+*   **Unsafe External Link URLs Are No Longer Rendered In The V2 Left-Hand Menu**
+    *   The new interface validates external link addresses when you save them, but the classic Admin Settings form does not, so a link saved through the classic form — or already stored from an earlier version — could carry an address that is not a web page.
+    *   Addresses that are neither a local path nor `http`/`https` are now removed before the menu is built, so a link that the save path would have rejected can no longer reach the menu by another route.
+    *   (Ref: V2 interface, left-hand menu, External Links, `EXTERNAL_LINK_ALLOWED_SCHEMES`)
+
+*   **Four Settings Appeared Under Appearance Instead Of Their Own Tab**
+    *   **Enable Personal Workspaces** appeared under **Appearance > Notices & Agreements > User Agreement**, and the two external health check endpoints and **Show Simple Chat Documentation Guide Links** appeared under **Appearance > Pages & Links > External Links**. A fifth, **Enable Text Action**, appeared under **Appearance > Branding**.
+    *   Settings that had not yet been described to the new admin page were placed by matching their name against the section names, and these five matched the wrong section — "external" matched External Links rather than Health Check, and "user" matched User Agreement rather than Personal Workspaces.
+    *   They are now described properly and appear where they belong: the health check endpoints under **Operations > Logging & Health > Health Check**, the documentation guide links under **Help > User-Facing Latest Features**, personal workspaces under **Workspaces > Workspace Types**, and the text action under **Agents & Actions > Actions**. Each also gained the explanatory text the classic page has always shown.
+    *   (Ref: V2 Admin Settings, `admin_settings_fields.py`, capability placement)
 
 *   **Images Without OCR Text Are Now Indexed From Their Vision Description**
     *   Fixed text-free images, such as a photo of an empty room, ending with no search chunk, no title, and nothing chat could use, even though the AI vision model had described them. When OCR finds no text, the vision description is now indexed as the image's chunk, so the image is searchable and final metadata extraction runs as usual.
@@ -133,12 +4954,12 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Image chunks are now embedded from the same text that is stored, including the vision description, instead of from the OCR text alone. Images with real OCR text keep their existing chunk.
     *   With Enhanced extraction, a standalone image that the Content Understanding document analyzer returns nothing for is now described by the Content Understanding image analyzer before falling back to Document Intelligence Layout. This applies to workspace uploads and to images uploaded straight into a chat. The image analyzer's `Summary` field is now read, which also replaces the `![image](pages/1)` placeholder that images embedded in DOCX and PPTX files were indexed with.
     *   The multi-modal vision model is now called through the AI connection that hosts it when multi-endpoint models are enabled, instead of always using the legacy GPT connection, which returned 404 for models deployed on another connection. The Test Vision Analysis button now uses the same connection as ingestion.
-    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
+    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
 
 *   **Image Generation Uses The gpt-image API Version By Default**
     *   The default Azure OpenAI image generation API version is now `2025-04-01-preview`, the newest dated Azure OpenAI API version and the one documented for gpt-image-1, gpt-image-1.5, and gpt-image-2. The previous `2024-12-01-preview` default predates gpt-image support.
     *   Existing deployments still storing the previous default, or a blank value, are upgraded automatically when settings load. Any other saved version is kept, and the APIM image generation API version is never changed because the gateway defines it.
-    *   (Ref: `functions_settings.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
+    *   (Ref: `functions_settings.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
 
 *   **Deployers Grant The App Identity Key Vault Secrets Officer**
     *   Fixed credential saves failing with `ForbiddenByRbac` when Key Vault secret storage is enabled on deployments created by the Bicep, Terraform, or Azure CLI deployers. The deployers gave the application identities **Key Vault Secrets User**, which can read secrets but cannot create, update, or delete the ones SimpleChat writes. **Test Key Vault connection** only lists secrets, so it passed and hid the problem.
@@ -150,6 +4971,13 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Admin Settings Changes Did Not Appear Until The Page Was Reloaded (New Interface)**
+    *   Enabling the classification banner in the new interface and saving appeared to do nothing. The banner was saved correctly, but it only showed up after reloading the browser.
+    *   The banner was not the only thing affected. The new interface reads the application title, the sidebar logo, the classification banner and the list of enabled capabilities once, when the page first loads, and had no way of being told that any of them had changed. Every one of those went stale the moment you saved.
+    *   Saving in **Admin Settings** now refreshes what the interface knows about itself, so the banner appears — or disappears — straight away, along with a changed title or a newly enabled capability. Uploading a logo or favicon updates the sidebar immediately too, rather than waiting for the next reload.
+    *   Your unsaved edits are unaffected: the refresh happens quietly in the background and never interrupts the page you are working on.
+    *   (Ref: V2 interface, Admin Settings, classification banner, branding, `/api/v2/bootstrap`)
+
 *   **Chat Upload File Access Errors Avoid Browser-Realm Checks**
     *   Hardened chat upload recovery messaging so rejected browser upload requests no longer depend on a realm-specific `TypeError` check.
     *   Fetch preparation and transport failures now consistently identify the selected file and show the same recovery guidance for locked files, cloud-placeholder files, and interrupted local upload requests.
@@ -160,6 +4988,17 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 #### Bug Fixes
 
+*   **Approving Several Images At Once Looked Like It Had Stopped**
+    *   In the new interface, when a reply proposed several images and you pressed **Approve all**, every card correctly greyed out its Approve button and showed **Generating image…**. The moment the first image appeared, the remaining cards lost their status, their Approve buttons came back, and the **Approve all** button reappeared — so it looked as though nothing was happening and you needed to approve again. The images were in fact still being generated and did arrive shortly after.
+    *   The cards are now told what is happening by the message they belong to rather than keeping it to themselves, so a card that is queued or generating keeps saying so until its image arrives, whatever else happens in the conversation. Editing a proposal's prompt, or dismissing a proposal, now survives a refresh of the reply too.
+    *   The underlying cause was that the whole message was being rebuilt from scratch every time anything about it changed. Diagrams and charts were being thrown away and redrawn for the same reason, and no longer are.
+    *   (Ref: V2 chat, inline image proposals, approve all, assistant markdown rendering)
+
+*   **Generated Image Cards Kept Repeating The Proposal's Description**
+    *   After an image had been generated, its card still showed the labels from the original proposal — the kind of visual, the slide it referred to, and the context it was drawn from. Those describe an image that does not exist yet, and say nothing once you can see it.
+    *   A generated card now shows the title, the image, and which model produced it. Cards still waiting for a decision are unchanged.
+    *   (Ref: V2 chat, inline image proposals, generated image card)
+
 *   **Public Workspace Selector Dark Theme Styling**
     *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
     *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
@@ -168,19 +5007,19 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Revert Premature OneNote Rollout From Development**
     *   Removed native `.one` and `.onepkg` workspace uploads from Development pending Reactv2 testing, correcting the accidental merge of PR #1525.
     *   Restored the previous upload formats and container packaging. Existing document formats and the separately adapted Reactv2 OneNote implementation remain unchanged.
-    *   (Ref: `config.py`, `functions_documents.py`, `Dockerfile`, [OneNote Development Rollout Revert](fixes/ONENOTE_DEVELOPMENT_ROLLOUT_REVERT_FIX.md))
+    *   (Ref: `config.py`, `functions_documents.py`, `Dockerfile`, [OneNote Development Rollout Revert](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/ONENOTE_DEVELOPMENT_ROLLOUT_REVERT_FIX.md))
 
 ### **(v0.261.044)**
 
-#### New Features
-
-*   **Admin Defaults For New Chat Model And Reasoning Effort**
-    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
-    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
-    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
-    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
-
 #### Bug Fixes
+
+*   **The New Interface's New Chat Button Now Works, And Buttons Look Clickable**
+    *   **New chat** appeared in the sidebar on every page but only ever did anything on the chat page. Clicking it from **My Workspace**, **Admin Settings** or **Settings** produced no visible response at all — it reset chat state that was not on screen and left you where you were. It is now shown only on the chat page, where it has something to act on.
+    *   **Chats** in the sidebar covers what that leaves behind. Clicking it from anywhere else now starts a fresh chat, which is what makes a new chat reachable from the rest of the application. Two exceptions: clicking **Chats** while already on the chat page still does nothing, so a stray click cannot discard what you are reading, and a conversation still streaming a reply is returned to rather than reset, so a response in progress is never thrown away.
+    *   Previously, leaving the chat page and coming back silently reopened whatever conversation you last had. That conversation is still one click away in the conversation list.
+    *   No button in the new interface showed a hand cursor — not **New chat**, not the chat header icons, the conversation list, the composer or the admin controls. Everything rendered with the arrow cursor browsers use for text you cannot click. The whole interface now indicates what is clickable.
+    *   Starting a new chat no longer leaves the conversation drawer stranded open and empty after its **Contents** and **Documents** buttons have disappeared, and the conversation details panel no longer outlives the conversation it was describing.
+    *   (Ref: V2 navigation rail, New chat, conversation drawer, button cursor)
 
 *   **New Chat Defaults No Longer Leak Across Conversations**
     *   Fixed new-chat admin model defaults being overwritten by a user's saved model when a freshly created blank conversation was opened through `/chats?conversationId=...`, including the left-navigation **New Chat** flow.
@@ -203,9 +5042,28 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Background action recovery remains silent for ordinary shared conversations, while saved actions retain explicit recovery controls.
     *   (Ref: `route_backend_collaboration.py`, `chat-streaming.js`, `m365-pending-actions.js`)
 
+#### New Features
+
+*   **Admin Defaults For New Chat Model And Reasoning Effort**
+    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
+    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
+    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
+    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
+
 ### **(v0.261.043)**
 
 #### Bug Fixes
+
+*   **Chart And Diagram Colours Could Not Be Saved In A Shared Conversation**
+    *   Picking a colour for a chart or a diagram in a shared conversation changed it on screen and then reported "That change could not be saved", with a 404 in the browser console. Only shared conversations were affected; personal ones saved as normal.
+    *   Shared conversations are stored separately from personal ones, and the endpoint that saves a block's colours could only find personal conversations, so it refused the write before it ever reached the message. Colours and sizes now save in shared conversations too.
+    *   Because a shared conversation is shared, the colours you choose are stored on the message and are what everybody in the conversation sees — the same way masking already works — and they change on the other participants' screens as you make them rather than on their next visit. Changing them needs the same access as posting a message, so a read-only viewer sees the colours others chose without being able to alter them for everybody.
+    *   (Ref: V2 chat, shared conversations, diagram and chart colours, `/api/collaboration/conversations/.../visual-style`)
+
+*   **Opening A Link To A Shared Conversation Logged A Console Error**
+    *   Following a link to a shared conversation worked, but always left a 404 in the browser console. The interface was working out whether the link pointed at a personal or a shared conversation by asking about it as a personal one first and reading the failure as its answer.
+    *   It now asks once and gets a straight answer, so opening a shared conversation from a link is a single successful request and the console stays clean.
+    *   (Ref: V2 chat, shared conversations, conversation deep links)
 
 *   **Add Participants Remains Available Before Sharing**
     *   Ordinary personal conversations no longer lose the Add participants action when a metadata response omits collaboration-only permission fields.
@@ -213,7 +5071,34 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.042)**
 
+#### New Features
+
+*   **My Workspace In The V2 Interface**
+    *   The personal workspace in the new interface previously listed documents and nothing else. It now covers all eight areas the classic workspace does — documents, file sources, prompts, agents, actions, workflows, identities and endpoints.
+    *   **The sections are grouped by what they are for**, rather than presented as eight equal tabs. **Knowledge** is what your assistant can draw on, **Automation** is what it can do, and **Connections** is the shared setup the other two reuse. Identities and endpoints are plumbing that other sections consume, and no longer sit alongside documents as though they were the same kind of thing.
+    *   **An overview page explains how the pieces fit together.** It lists each group with a count of what is in it, one line on what each section is for, and states the relationships plainly: identities are used by file sources and actions, file sources feed documents, documents and actions and endpoints are used by agents, and agents are used by workflows.
+    *   **Sections your administrator has not enabled are named, with the reason.** They appear on the overview greyed out rather than silently vanishing, so a capability that is switched off can no longer be mistaken for one that is broken or missing.
+    *   **Sync is now called File sources**, which is what people go there to set up, and identities are described as saved sign-ins for other systems rather than as your own account.
+    *   Each section is its own address — `/workspace/agents`, `/workspace/prompts` — so a link to one can be bookmarked or shared.
+    *   Prompts support full create, edit and delete. Agents can be created, edited and deleted. Workflows can be run, cancelled and inspected. File sources can be synced on demand with their run history. Connector configuration, the workflow designer and endpoint connection details are still done in the classic workspace, and each section links to it.
+    *   (Ref: V2 interface, My Workspace, `/api/v2/bootstrap`, `functions_workspace_sections.py`)
+
+*   **Per-Item Editing For Personal Agents, Actions And Endpoints**
+    *   Saving or deleting one of these used to rewrite the entire collection. Two browser tabs open on the workspace could overwrite each other's work, and any item a client did not know about was deleted along the way.
+    *   Each now supports editing and removing a single item. The old whole-collection save still works and the classic interface is unaffected.
+    *   Editing a model endpoint no longer risks blanking its stored credentials: only the fields that changed are sent, and the secrets — which are never given to the browser in the first place — are merged in on the server.
+    *   (Ref: `/api/user/agents`, `/api/user/plugins`, `/api/user/model-endpoints`)
+
 #### Bug Fixes
+
+*   **Deleting A Personal Agent Reported An Error After It Had Worked**
+    *   The delete endpoint removed the agent and then answered with an error, so the caller was told the operation failed when it had already succeeded. This happened on any delete that left at least one agent behind, in any deployment without a global agent configured.
+    *   The check that caused it now runs before the delete, so a refusal means nothing was removed.
+    *   (Ref: personal agents, `/api/user/agents`)
+
+*   **Deleting A Personal Agent Skipped Its Governance Check**
+    *   Saving agents checked whether governance policy allowed it; deleting them did not, so a user who had been denied access to personal agents could still delete them. The check is now applied before the agent is removed.
+    *   (Ref: personal agents, governance policy)
 
 *   **Add Participants Appears After the First Shared Exchange**
     *   Collaboration metadata updates now refresh the conversation menus after prompt/response completion, so the Add participants action appears without a page refresh.
@@ -221,21 +5106,262 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 
 ### **(v0.261.041)**
 
+#### New Features
+
+*   **Full Activity Stats In The V2 Interface**
+    *   The **Stats** tab under Settings in the new interface now reports everything the classic profile page's stats tab reports, instead of the four small sparklines it showed before.
+    *   **Your lifetime totals** — conversations, messages, documents and sign-ins — are shown as cards, together with when they were last worked out and when you last signed in. These are cached figures rather than live ones, and the tab now says so, so they are not mistaken for the totals for the period you are looking at.
+    *   **Pick a period.** The last 7, 30 or 90 days, or a start and end date of your own. A range with the dates the wrong way round, or with one date missing, is now explained before the request is sent rather than failing silently.
+    *   **Four activity charts and a storage breakdown.** Sign-ins and token usage as lines, conversations and documents as paired bars showing created against deleted and uploaded against deleted, and storage split between AI Search and blob storage. These are the same charts, shapes and colours as the classic page.
+    *   **Export to CSV.** Choose which of summary totals, sign-ins, conversations, documents and token usage to include, and the period to cover — which can differ from the one on screen. The file matches the classic export column for column.
+    *   **Your account** — name, email address and user id — is shown at the foot of the tab.
+    *   (Ref: V2 settings, Stats tab, `/api/user/activity-trends`, `/api/user/settings`, vendored Chart.js)
+
+#### User Interface Enhancements
+
+*   **One Destination For Personal Settings In The V2 Interface**
+    *   The account menu in the left rail offered both **Settings** and **Profile**, the second of which left the new interface for the classic profile page. With the activity stats now rebuilt under Settings, the Profile entry led nowhere the new interface does not already cover, so it has been removed. **Settings** is the single destination.
+    *   The "open in the classic interface" links inside the Groups and Public tabs are unchanged — those capabilities have not been rebuilt yet, and the links remain the way to reach them.
+    *   (Ref: V2 sidebar, account menu, settings navigation)
+
 #### Bug Fixes
 
 *   **Shared Conversation State No Longer Leaks Into New Conversations**
     *   Starting a new conversation now disconnects the previous shared conversation's event stream and clears its typing state, preventing participant activity and messages from appearing in the new conversation.
     *   Conversation metadata updates now refresh the Add participants action immediately, without requiring a page refresh after sharing a conversation.
-    *   (Ref: `chat-conversations.js`, `chat-collaboration.js`, `chat-sidebar-conversations.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+    *   (Ref: `chat-conversations.js`, `chat-collaboration.js`, `chat-sidebar-conversations.js`, [Collaboration Shared AI Workflow Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
 
 ### **(v0.261.040)**
 
+#### New Features
+
+*   **Export Conversations From The New Interface**
+    *   The new interface could save a single reply as Word, PowerPoint or an email, but there was no way to export a whole conversation — you had to switch back to the classic interface for that. You can now export one conversation, or several at once, as **JSON**, **Markdown** or **PDF**.
+    *   Export is offered in three places: the **⋯** menu on any conversation in the sidebar, the **Export** button in **Conversation details**, and a new **Select** mode above the conversation list for picking several at once.
+    *   Several conversations can be combined into one file or bundled as a ZIP with one file per conversation. Picking more than one defaults to the ZIP, which is almost always what is wanted.
+    *   Optionally, a short AI-written intro summary can be placed above each transcript, using whichever chat model you choose.
+    *   Diagrams are included as pictures in Markdown and PDF exports, drawn in your browser so they match what you were looking at. A diagram that will not draw is left to the server rather than breaking the export. JSON exports keep the original text, diagrams included as source.
+    *   Exported files are identical to the ones the classic interface produces, down to the filename.
+    *   (Ref: V2 chat, conversation export, export wizard, conversation multi-select)
+
 #### Bug Fixes
+
+*   **Exported And Downloaded Diagrams Were Squashed**
+    *   A diagram saved as a PNG, or embedded in an exported file, came out compressed into a narrow strip roughly 100 pixels wide regardless of its real size — a 1094×541 flowchart was rasterized at 100×541.
+    *   The cause was the diagram's width being read as the number `100` from the value `100%`. The real dimensions were sitting in the diagram alongside it and are now used instead.
+    *   (Ref: diagram PNG download, conversation export, SVG rasterizing)
 
 *   **Collaborative Prompts Now Receive Model Responses**
     *   Fixed ordinary prompts in conversations shared through **Invite Participants** being saved as human-only messages without invoking the model.
     *   All non-empty collaborative prompts now use the shared AI streaming workflow, while preserving explicit agent, model, workspace, and tool targeting.
-    *   (Ref: `chat-messages.js`, `chat-collaboration.js`, [Collaboration Shared AI Workflow Fix](fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+    *   (Ref: `chat-messages.js`, `chat-collaboration.js`, [Collaboration Shared AI Workflow Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
+### **(v0.261.039)**
+
+#### New Features
+
+*   **The New Admin Settings Page Now Has The Rest Of The Appearance Settings**
+    *   The new interface's admin page could only ever show on/off switches, because it worked out what to display by looking for settings that happened to be true or false. Everything else was invisible — so the whole Appearance group amounted to a handful of switches and a note telling you to go back to the classic page.
+    *   Appearance is now complete. **Branding** has the application title, the home page logo size slider, and uploads for the light logo, dark logo and favicon, each showing the image you currently have. **Home Page Text** has the alignment control and the landing page editor, with a live preview that follows the alignment you pick. **Notices & Agreements** has the classification banner with both colour pickers and a preview strip, the AI notice, the full Terms of Use configuration, and the user agreement with its four apply-to options, a word counter and a **Test preview** button. **Pages & Links** has the custom pages settings, the full static page designer, the developer guide, and an external links editor you can add to, remove from and reorder.
+    *   (Ref: V2 admin settings, Appearance group, `admin_settings_fields.py`)
+
+*   **Changes Are Saved Together, When You Say So**
+    *   Switches used to save the instant you clicked them, which does not translate to typing into a text box. Edits now collect in a bar at the bottom of the page that tells you how many changes are waiting, with **Save changes** and **Discard**. `Ctrl`/`Cmd`+`S` saves, and closing the tab with unsaved edits asks first.
+    *   This also fixes something subtler: the Terms of Use and AI notice re-prompt every user whenever their wording changes. Saving on every keystroke would have re-prompted everyone once per character typed.
+    *   (Ref: V2 admin settings, save bar)
+
+*   **Rejected Settings Now Explain Themselves**
+    *   Values are checked before anything is written, and a rejected save comes back with the reason attached to the control that caused it — a colour that is not valid hex, a link that is not an http or https address, a cancel redirect that would leave the site unsafely. Nothing is saved unless everything in the batch is valid, so a save can no longer land half-applied.
+    *   The checks reuse the same code the classic page uses, so the two interfaces agree about what a valid value is.
+    *   (Ref: V2 admin settings, settings validation)
+
+#### Bug Fixes
+
+*   **Navigation Links Can No Longer Be Given An Unsafe Address**
+    *   External navigation links saved through the new admin page are now restricted to local paths and http or https addresses. Previously any text was accepted and placed directly into the link, which allowed a `javascript:` address into the navigation bar on every page.
+    *   (Ref: external links, navigation)
+
+*   **Logo And Favicon Handling Now Lives In One Place**
+    *   Image conversion was written into the classic settings page. Both admin pages now share one implementation, so a logo is stored identically no matter where it was uploaded from, and the PNG/JPEG-only restriction that keeps unexpected image formats away from the image library applies to every upload path.
+    *   (Ref: `functions_branding_images.py`, logo and favicon uploads)
+
+*   **Three Tests That Could Not Fail Correctly**
+    *   The Pillow security test pinned an exact dependency version and the custom logo test looked for help text in a file it had moved out of, so both reported problems that were not real while no longer checking the thing they were written for. They now assert a minimum version and read the composed template.
+    *   (Ref: functional tests, version assertions)
+
+### **(v0.261.038)**
+
+#### Bug Fixes
+
+*   **Shared Conversations Opened Empty In The V2 Interface**
+    *   Clicking a shared conversation in the new interface showed a thread with no messages in it. The interface loaded every conversation's messages from the personal chat API, which does not hold shared conversations and answers with an empty list rather than an error, so the conversation opened successfully with nothing in it — and remained the target of the next message sent.
+    *   Shared conversations are now read from the collaboration API they actually live in, in both the personal and the group case.
+    *   (Ref: V2 chat, `/api/get_messages`, `/api/collaboration/conversations`)
+
+#### New Features
+
+*   **Shared Conversations In The V2 Interface**
+    *   The new interface now supports shared conversations in full, matching the classic one. Both shared personal and shared group conversations can be read, replied to and managed there.
+    *   **Messages say who wrote them.** Another participant's message appears on the left with their name above it, and your own on the right as before. Uploads shared into the conversation are shown as named attachments, and a message that asked the assistant is labelled as such.
+    *   **The assistant only answers when asked.** As in the classic interface, a message in a shared conversation goes to the other people in it and not to the model — unless it `@`-mentions a model or an agent, or you have turned on an assistant tool such as document search, web search, image generation, deep research, reading URLs, an agent or a saved prompt. Tagging a model or agent uses that one for the message, whatever the pickers hold.
+    *   **Type `@` to mention somebody.** The menu offers the people already in the conversation, the models and agents you can address, and — if you can manage members — people you could add. Choosing one of the last group invites them.
+    *   **The conversation stays live.** Messages other people write appear as they are sent, along with a "typing" indicator, and deletions and masks applied by others are reflected straight away. You are told when somebody mentions you.
+    *   **Reply to a specific message** with the reply button on any message; the reply shows what it is answering.
+    *   **Share an existing conversation** from the new **people** button in the chat header, or **Share** in the conversation's menu in the left rail. The same panel manages who is in the conversation, promotes members to admin, removes people, and lets you leave it or delete it for everyone. What you are offered follows what you are actually allowed to do.
+    *   **Invitations** are shown above the conversation with **Join** and **Decline**. You can read an invited conversation before joining, so you can see what you are being invited to.
+    *   **Files the assistant generates** in a shared conversation are held back until approved, and anything waiting on your decision is listed above the thread with Approve and Deny.
+    *   Retry, edit, attempt navigation and fork are not offered in a shared conversation, matching the classic interface — those actions have no equivalent there.
+    *   Requires **Collaborative conversations** to be enabled in admin settings. With it off, none of these controls appear.
+    *   (Ref: V2 chat, collaboration API, participants panel, mentions, live updates)
+
+#### User Interface Enhancements
+
+*   **Mentioning Somebody No Longer Notifies The Wrong Person**
+    *   Where one person's display name is the start of another's — "Ada" and "Ada Lovelace" — writing "@Ada Lovelace" also counted as mentioning "Ada", and notified them. The longer name now claims its own text, so only the person actually named is notified. Naming both people in one message still notifies both.
+    *   (Ref: shared conversations, mentions)
+
+### **(v0.261.037)**
+
+#### Bug Fixes
+
+*   **Diagrams No Longer Render Too Small To Read**
+    *   A diagram in the new interface was drawn at roughly a quarter of its natural size — and clicking **Colors** made it suddenly readable. Both were the same bug: the message bubble sizes itself to its contents, and a diagram was telling it "I'll take whatever width you have", so the bubble shrank to the width of the diagram's own buttons. Opening the colour menu added something that *did* have a width, which is why the diagram grew.
+    *   A diagram now sizes its own panel. Measured on the Azure hierarchy diagram from the report, it went from 300 pixels wide to 966, and opening **Colors** no longer changes anything.
+    *   Long labels also wrap at a more sensible width, so a diagram with wordy boxes is no longer squeezed into tall, narrow columns of text.
+    *   (Ref: V2 chat, Mermaid diagrams, message layout)
+
+*   **A Long Diagram No Longer Breaks Scrolling**
+    *   A tall diagram used to be dropped into the conversation at full height — a large flowchart can be tens of thousands of pixels tall — which made scrolling stutter or lock up. A diagram now sits in a panel of its own that scrolls internally.
+    *   The bottom of a conversation was also unreachable after a diagram appeared: diagrams draw a moment after the message does, so the chat had already scrolled before the diagram grew. It now follows content that arrives late.
+    *   Scrolling and typing in a long conversation are noticeably lighter, because the messages you are not looking at are no longer redrawn on every scroll and every word of a streaming reply.
+    *   (Ref: V2 chat, Mermaid diagrams, message list performance)
+
+*   **A Diagram That Will Not Draw Now Says Why**
+    *   "Diagram could not be rendered" was all you got, and nothing was written to the browser console either, so there was nothing to report and nothing to look into. The reason is now shown behind **Show details**, logged to the console, and the source can be copied with one click.
+    *   More usefully, most of those diagrams now just work. When a diagram fails, SimpleChat repairs the common mistakes and draws it again: reserved words such as `end` used as a box name, a `subgraph` left unclosed, `End` instead of `end`, placeholders like `<random GUID>` carried over from pasted text, stray quotes and braces inside a label, and several more. Fourteen distinct failures were reproduced and all fourteen now render.
+    *   Repairs only happen after a diagram has already failed, so a diagram that draws correctly today is never altered.
+    *   A diagram is also given a time limit and a size limit, so a broken one can no longer leave "Rendering diagram…" on screen indefinitely.
+    *   (Ref: V2 chat, Mermaid diagrams, diagram source repair)
+
+#### User Interface Enhancements
+
+*   **Make A Diagram Bigger**
+    *   Diagrams now have **−**, **+** and a fit button to scale them, and an **Expand** button that opens the diagram full screen with its own zoom and PNG download.
+    *   The bar along the bottom edge of a diagram can be dragged to make the panel taller or shorter. It also works from the keyboard — arrow keys to resize, **Home** to go back to the automatic height.
+    *   The size you leave a diagram at is remembered with the conversation, so it is still there when you come back. Resizing a diagram does not disturb its colours, and changing its colours does not resize it.
+    *   (Ref: V2 chat, Mermaid diagrams, diagram zoom and resize)
+
+*   **Better Diagrams From The Assistant**
+    *   The assistant is now told which words break a diagram, to close every `subgraph`, and to keep box labels to a short phrase rather than packing a dozen lines into one box — which is what made the reported diagrams both unreadable and unrenderable.
+    *   When you paste text or ASCII art and ask for a diagram, it is told to summarise the detail rather than copying placeholders and punctuation straight into the boxes.
+    *   (Ref: diagram prompt guidance)
+
+### **(v0.261.036)**
+
+#### Bug Fixes
+
+*   **Your Reasoning Level Now Sticks In The New Interface**
+    *   Choosing a reasoning level in the V2 chat used to be forgotten the moment you left the page and came back, and switching models either carried the level over or lost it entirely. It is now remembered per model, so each model keeps the level you chose for it.
+    *   The level is shared with the classic interface, which has always remembered it: set **Medium** for a model in one interface and it is Medium in the other.
+    *   Switching to a model that has no reasoning — `gpt-4o`, for example — no longer leaves the previous model's level attached to your request. The setting disappeared from the toolbar but was still being sent.
+    *   The model you pick is now remembered too. It previously only appeared to stick, because the page fell back to whichever model the server considered your default.
+    *   A model you have not chosen a level for shows its usual default rather than a blank control, matching the classic interface.
+    *   (Ref: V2 chat, reasoning effort, model picker, user preferences)
+
+### **(v0.261.035)**
+
+#### Bug Fixes
+
+*   **Exported Diagrams Are No Longer Empty Boxes**
+    *   Exporting a message with a diagram to Word or PowerPoint produced the right shapes, arrows and layout, but **no text inside any of the boxes**, even though the same diagram read correctly on screen.
+    *   The application image ships no scalable font, so when the server drew a diagram itself the browser it uses had nothing to write with: it measured every label as zero-width, fell back to the smallest box that would fit nothing, and painted no lettering. The tell-tale sign was every box coming out the same width, while on screen they varied with their labels.
+    *   The renderer now carries its own font instead of relying on whatever the host happens to have, so a diagram exports the same way on every deployment. Real fonts were also added to the image for everything else that draws in it.
+    *   Diagrams are now captured directly from the page they are drawn on, rather than being redrawn from a copy — a step that quietly discarded anything it could not reproduce.
+    *   (Ref: message export, Mermaid diagrams, server-side rendering, container fonts)
+
+*   **Exports Say When They Are Working**
+    *   Exporting to Word, PowerPoint or email closed the menu and then appeared to do nothing, sometimes for a long time. A PowerPoint export in particular waits on the model planning your slides, and long enough that it was reasonably read as having hung or failed when it was still going.
+    *   All three now put up a notice as soon as you click, which stays until the file arrives and is then replaced by the result. The menu entry spins and greys out while it runs, so an impatient second click cannot start a duplicate export.
+    *   Both the classic and new interfaces behave the same way.
+    *   (Ref: message export, notifications, chat message menu)
+
+#### User Interface Enhancements
+
+*   **Faster Exports That Keep Your Diagram Colours**
+    *   The new interface now sends the diagram it has already drawn along with the export, so the server no longer starts a browser to draw it again. Exports containing diagrams finish noticeably sooner.
+    *   Because the exported picture is the one on your screen, any colours you picked for that diagram now come with it.
+    *   (Ref: V2 chat, message export, Mermaid diagrams)
+
+### **(v0.261.034)**
+
+#### Bug Fixes
+
+*   **Picking An Agent No Longer Leaves A Model And Reasoning Level Pretending To Apply**
+    *   In the new interface, choosing an agent left the **Model** picker still showing a selected model and the **Reasoning** picker still offering a level, even though an agent can act on neither — an agent answers with its own model, and reasoning levels only reach a directly chosen model.
+    *   Worse, the request sent all three together, and the server reads a model sent alongside an agent as a deliberate instruction to override it. So an agent could quietly answer through the wrong model rather than the one it is configured with.
+    *   Selecting an agent now dims the **Model** picker back to the plain word "Model" and hides **Reasoning**. The model you had chosen is remembered, not thrown away, and comes straight back when you clear the agent.
+    *   The model picker stays clickable while it is dimmed: choosing a model is how you switch back, and doing so clears the agent for you. Its menu still shows a tick beside the model you had, so you can see what returns.
+    *   Hovering the dimmed picker names the agent that is supplying the model.
+    *   Reasoning is now also hidden while generating an image, matching the classic interface.
+    *   (Ref: V2 chat, agent picker, model picker, reasoning effort, `chatRequestSelection.ts`)
+
+### **(v0.261.033)**
+
+#### New Features
+
+*   **Save A Diagram As A Picture**
+    *   Diagrams in the new interface now have a **PNG** button, matching the one charts have always had. The image is captured from the diagram exactly as it appears on screen, so whatever colours and background you have chosen come with it.
+    *   The picture is saved on a solid background rather than a transparent one, so it stays readable wherever you paste it.
+    *   (Ref: V2 chat, Mermaid diagrams, PNG download)
+
+*   **Choose The Colours For Diagrams And Charts**
+    *   Every diagram and chart in the new interface now has a **Colors** button offering five palettes — Default, Calm, Vivid, Warm and Contrast — the same five the classic interface already used for charts.
+    *   Charts additionally let you set each series or slice individually, and both diagrams and charts let you set a background colour. Leaving the background on **Match theme** means it keeps following light and dark mode, as before.
+    *   Set your own defaults under Settings → Preferences, in the new **Diagrams** and **Charts** sections. Those apply everywhere you have not chosen something specific.
+    *   Colours you choose on an individual diagram or chart are saved with the conversation, so they are still there when you come back to it. Recolouring one chart never changes the others — three charts in a reply keep three independent sets of colours.
+    *   Anything you have not touched looks exactly as it did before.
+    *   (Ref: V2 chat, Mermaid diagrams, inline charts, user preferences)
+
+### **(v0.261.032)**
+
+#### New Features
+
+*   **Links To A Conversation Now Work In The V2 Interface**
+    *   The V2 chat page never put the open conversation in the address bar, so copying the URL shared nothing and reloading the page dropped you into an empty chat. It now names the conversation you are reading, exactly as the classic interface has since v0.237.001.
+    *   A link such as `/v2/chat?conversationId=<id>` opens that conversation. Both spellings the application produces are accepted — `conversationId` from notifications and workflow runs, `conversation_id` from chat responses and workspace document rows — so an existing link opens either way.
+    *   The address bar keeps up on its own: it follows conversations you open from the list, the one created when you send your first message, and forks. Starting a new chat or deleting the open conversation clears it. Opening several conversations does not fill the back button with an entry for each.
+    *   A linked conversation that is older than the loaded list, or hidden, now appears in the rail with its real title instead of leaving the header reading "New chat".
+    *   A link to a conversation that was deleted, or that belongs to somebody else, says so and returns you to an empty chat, rather than leaving an error that reappeared on every refresh.
+    *   **Back to classic UI** in the account menu carries the conversation across, so switching interfaces keeps your place.
+    *   (Ref: V2 chat, conversation deep linking, conversation list)
+
+### **(v0.261.031)**
+
+#### New Features
+
+*   **Ask For A Diagram, Get A Diagram**
+    *   Asking for a diagram, flowchart, sequence, architecture or data flow used to come back as ASCII box art in a plain code block — unreadable, impossible to export as a picture, and meaningless to a screen reader. The assistant was never told that SimpleChat can draw real diagrams, so it fell back on drawing with keyboard characters.
+    *   Diagram requests now get an answer the app actually draws. Chart requests are unaffected: "plot the sales trend" is still a chart, "draw the request flow" is now a diagram.
+    *   The assistant is also steered toward diagram syntax that renders on the first attempt, and toward a diagram rather than a generated image for structural content, so the result stays selectable, searchable and accessible.
+    *   (Ref: chat prompt guidance, Mermaid diagrams, inline charts)
+
+*   **Diagrams Now Render In The Classic Chat Interface**
+    *   The classic interface could turn a diagram into a picture when you exported it, but showed the same diagram as a block of code in the conversation itself. Diagrams now render on screen where you are reading them.
+    *   Diagrams follow light and dark mode, appear as they finish streaming rather than flickering through half-written source, and a diagram that cannot be drawn shows its source instead of vanishing.
+    *   Copying a message and exporting one both still produce the original diagram code, so nothing downstream changes.
+    *   The diagram library is only downloaded the first time a conversation shows a diagram.
+    *   (Ref: classic chat rendering, Mermaid diagrams, dark mode)
+
+#### Bug Fixes
+
+*   **Chart Guidance No Longer Suppresses Genuine Diagrams**
+    *   Guidance intended to stop the assistant from answering a chart request with diagram code was worded broadly enough to discourage diagrams entirely, including in answers where a process or architecture diagram was the right thing to show.
+    *   It now rules out diagram code only as a substitute for a data chart, and explicitly allows a diagram alongside charts in the same answer.
+    *   (Ref: chart guidance, Mermaid diagrams)
+
+*   **Spoken And Preview Text No Longer Read Out Internal Placeholders**
+    *   Reply previews and read-aloud could include internal placeholder text left behind where a chart, diagram or image card sits in a message. Those placeholders are now removed before the text is previewed or spoken.
+    *   (Ref: reply preview, text-to-speech, inline visuals)
 
 ### **(v0.261.030)**
 
@@ -252,18 +5378,39 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   CSV metadata extraction, indexing, citations, row searches, and durable tabular replay now support UTF-8, UTF-8 with BOM, Windows-1252, and Latin-1 files, preserving characters that previously made uploaded content appear unreadable.
     *   Tabular analysis retains the broader automatic-invocation budget for complex questions while detecting repeated equivalent failures and routing the next model pass to a different call shape instead of repeating the same error.
     *   Repeated tabular tool failures now emit an explicit retry lifecycle thought and server-side diagnostic event, making the failure visible while recovery continues.
-    *   (Ref: `functions_tabular_csv_query.py`, `functions_documents.py`, `tabular_processing_plugin.py`, `route_backend_chats.py`, [Tabular CSV ANSI Encoding and Retry Fix](fixes/TABULAR_CSV_ANSI_ENCODING_AND_RETRY_FIX.md))
+    *   (Ref: `functions_tabular_csv_query.py`, `functions_documents.py`, `tabular_processing_plugin.py`, `route_backend_chats.py`, [Tabular CSV ANSI Encoding and Retry Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/TABULAR_CSV_ANSI_ENCODING_AND_RETRY_FIX.md))
 
 *   **Group Chat Uploads Now Recognize Workspace Owners**
     *   Fixed group-scoped chat uploads incorrectly reporting that no group workspace was available when the signed-in user was the group owner.
     *   Chat bootstrap data now includes each group's resolved user role, allowing owners, admins, and document managers to use the existing group upload permissions while preserving server-side authorization checks.
-    *   (Ref: `route_frontend_chats.py`, `chat-input-actions.js`, [Chat Group Upload Owner Role Fix](fixes/CHAT_GROUP_UPLOAD_OWNER_ROLE_FIX.md))
+    *   (Ref: `route_frontend_chats.py`, `chat-input-actions.js`, [Chat Group Upload Owner Role Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/CHAT_GROUP_UPLOAD_OWNER_ROLE_FIX.md))
+
+### **(v0.261.029)**
+
+#### New Features
+
+*   **Image Suggestions Can Now Be Approved In The New Interface**
+    *   When a reply would be clearer with a picture — a timeline, a slide visual, a diagram — the assistant can suggest one instead of producing it unasked. The new interface previously showed those suggestions as a block of raw JSON, so there was no way to act on them.
+    *   Each suggestion now appears as a card in the reply, exactly where the assistant put it, with **Approve** to generate the image, **Edit** to reword the prompt first, and **Cancel** to dismiss it. Nothing is generated until you ask for it.
+    *   A reply containing more than two suggestions gets an **Approve all** button, and approvals are run one at a time with their place in the queue shown, rather than starting every image at once.
+    *   An approved image appears inside its own card rather than at the end of the conversation, so it stays next to the paragraph it illustrates — including after the conversation is reopened. Clicking it opens the same full-size viewer as any other image.
+    *   Approval is refused in shared conversations, which the card now tells you rather than failing silently. A suggestion can only be approved once the reply has finished arriving.
+    *   (Ref: `simpleimage` proposals, V2 chat interface, `/api/chat/image-proposals/generate`, image generation)
 
 ### **(v0.261.028)**
 
 Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implementation: [PR #1488](https://github.com/microsoft/simplechat/pull/1488).
 
 #### Bug Fixes
+
+*   **Your Configured Chat Notices Now Appear In The V2 Interface**
+    *   Two notices administrators can configure — the data-handling notice shown when web search is used, and the AI notice shown under the message box — appeared in the classic interface but never in V2. Anyone who switched interfaces stopped seeing them.
+    *   The web search notice now appears above the message box while web search is turned on, using your configured wording, and can be dismissed for the rest of the browser session. It requires the same three settings as before, including the consent acknowledgement.
+    *   The AI notice now appears below the message box and respects all four display behaviours: always visible, dismissible once per session, once per day, or once per message version. Editing the notice text still brings it back for everyone who had dismissed the previous wording.
+    *   A dismissal now carries across both interfaces in the same browser session, rather than reappearing when you switch.
+    *   Dismissing the notice waits for the change to save, so it no longer disappears and then return on the next page load. A failed save is now reported instead of looking like a dead button.
+    *   **Behaviour change**: V2 previously showed its own fixed line, "AI responses can be inaccurate. Verify important information.", regardless of your settings. That line has been removed. If you want a notice under the message box, enable the AI notice in Admin Settings → Notices & Agreements → Chat AI Notice and set your own wording; if the AI notice is turned off, V2 now shows nothing there, matching the classic interface.
+    *   (Ref: V2 chat composer, web search user notice, chat AI notice, `/api/v2/bootstrap`)
 
 *   **Credential-Aware Cosmos Deployment Checks**
     *   Managed-identity deployments now use the deployment runner's tenant-scoped Entra credential instead of requiring Cosmos keys. Key-mode deployments report when local authentication is disabled.
@@ -283,9 +5430,18 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   Post-configuration creates missing personal, group, and public Search indexes from the same JSON schemas used by the admin setup controls.
     *   Existing indexes and documents are left unchanged. Authorization and service failures stop initialization rather than being treated as missing indexes; concurrent creation is verified before continuing.
     *   Included in deployer version **1.0.31**. Existing-index schema upgrades remain administrator-managed operations.
-    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployment_configuration.py`, `application/single_app/static/json/ai_search-index-*.json`, [deployment prerequisites](../reference/deploy/azd-cli_deploy.md#post-provision-access))
+    *   (Ref: [PR #1488](https://github.com/microsoft/simplechat/pull/1488), `deployment_configuration.py`, `application/single_app/static/json/ai_search-index-*.json`, [deployment prerequisites](https://microsoft.github.io/simplechat/reference/deploy/azd-cli_deploy/#post-provision-access))
 
 ### **(v0.261.027)**
+
+#### New Features
+
+*   **Diagrams In Exports No Longer Need The Browser You Exported From**
+    *   Diagrams are drawn by your browser when you export from one that can draw them. Anything else — an export started from an interface that does not, or one the server starts on its own — previously fell back to showing the diagram's code.
+    *   Those diagrams are now drawn on the server, using the Chromium the app already installs. No new dependency was added, nothing is fetched from the internet, and a diagram looks the same whichever way it was drawn.
+    *   A diagram your browser already drew is never drawn twice, and an export containing no diagrams does no extra work.
+    *   Deployments built without the optional Chromium component are unaffected and keep showing the diagram's code, as before.
+    *   (Ref: conversation and message exports, Mermaid diagrams, server-side rendering)
 
 #### Bug Fixes
 
@@ -298,6 +5454,16 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 ### **(v0.261.026)**
 
+#### New Features
+
+*   **Diagrams And Formulas Now Become Pictures In Exports**
+    *   Assistant replies often contain Mermaid diagrams and LaTeX formulas. Until now these arrived in an exported file as raw code — a wall of `graph TD` lines or `\frac{a}{b}` — which was unreadable for anyone the file was sent to.
+    *   Word, PowerPoint, PDF, Markdown and email exports now render them as images, the same way inline charts have always been handled, so an exported file matches what the conversation shows.
+    *   Recognised formula syntax is ` ```math `, ` ```latex ` and ` ```tex ` blocks, `$$…$$`, and `\[…\]`. Single-dollar text is deliberately left alone so a sentence like "costs $100 to $200" is never mistaken for a formula, and a ` ```text ` block is never mistaken for one either.
+    *   **Open in Email** treats them like charts: each diagram and formula downloads as a PNG file with a matching reference in the draft body, because a `mailto:` draft cannot carry inline images.
+    *   Anything that cannot be drawn — an unusual diagram, or a formula using an environment such as `align` or `matrix` — keeps its original code block rather than failing the export.
+    *   (Ref: conversation and message exports, Mermaid diagrams, TeX math, inline export visuals)
+
 #### Bug Fixes
 
 *   **Redis Explorer Shared Settings Compatibility**
@@ -309,6 +5475,16 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 ### **(v0.261.025)**
 
+#### User Interface Enhancements
+
+*   **Generated Images Now Open In A Viewer Instead Of A New Tab**
+    *   In the V2 interface, clicking an image the assistant generated used to open the raw file in a new browser tab, dropping you out of your conversation. It now opens in a viewer over the page, matching how the classic interface has always behaved.
+    *   The viewer scales the image to fit and can switch to actual size, where a large image scrolls so its edges stay reachable. Clicking the image toggles between the two.
+    *   Saving the image and opening the raw file are both available from the viewer, so nothing is lost by staying in the app. Close it with the close button, the Escape key, or by clicking outside it.
+    *   Smaller images previously did nothing at all when clicked, because browsers refuse to open the inline format they arrive in. Those images now open correctly, and can be saved.
+    *   Images you upload benefit in the same way, since they are shown through the same message type.
+    *   (Ref: V2 chat image messages, image lightbox, image download)
+
 #### Bug Fixes
 
 *   **Delegated Action-Type Policies Now Override Broad Action Access**
@@ -316,6 +5492,7 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   Action-type governance now treats explicit item policies as authoritative once they exist, so a targeted policy such as `personal_action_type = azure_maps` can block that action type even when the broader action feature remains enabled.
     *   This resolves cases where action types such as Azure Maps continued to appear in action creation flows after admins saved a delegated item policy intended to block them.
     *   (Ref: delegated item governance, action-type enforcement, `functions_governance.py`)
+
 *   **Admin Settings Consistency Across Workers**
     *   Removed worker-local admin settings snapshots so reloads read shared Redis settings, or Cosmos directly when Redis is disabled.
     *   Added conflict-checked writes and coordinated cache publication to prevent stale metadata updates, worker startup, and interrupted saves from restoring older settings.
@@ -323,7 +5500,41 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   Reads retain Cosmos fallback without serving an old worker snapshot. Deploy all web workers and the scheduler together; Cosmos fallback remains subject to Session consistency.
     *   (Ref: [#1477](https://github.com/microsoft/simplechat/issues/1477), `app_settings_store.py`, `app_settings_cache.py`, `functions_settings.py`, admin settings form, auxiliary settings writers, `docs/admin/scale.md`)
 
+### **(v0.261.024)**
+
+#### New Features
+
+*   **Equations, Diagrams And Charts Render In The V2 Chat**
+    *   Answers containing mathematics now show it set as mathematics rather than as raw TeX. `$$…$$`, `\[…\]` and `\(…\)` are recognised. A single `$` is deliberately left alone, so an answer about pricing still reads "costs $5 to $10 per user" rather than turning the sentence into an equation.
+    *   Mermaid diagrams render as diagrams. These have been reaching the chat for some time without anyone being able to see them: documents processed with Content Understanding have their figures extracted as Mermaid, so a document containing a flowchart was arriving as diagram source in the middle of an answer.
+    *   Charts produced by the built-in chart action now draw in V2 as they already do in the classic interface, instead of showing the underlying data as a block of JSON.
+    *   A diagram or chart that cannot be read falls back to showing its source rather than disappearing, and one that is still being written shows a placeholder until it is complete.
+    *   (Ref: V2 chat rendering, KaTeX, Mermaid, Chart.js, `AssistantMarkdown.tsx`)
+
+*   **Chart Data And Image Download**
+    *   Each chart carries its title, subtitle and description, plus a **Data** control that reveals the numbers behind it and a **PNG** control that downloads the image. The data table starts closed, so the chart stays the answer, and the download is composited onto a solid background so it stays readable wherever it is pasted.
+    *   Charts and diagrams follow the light and dark theme rather than staying fixed to whichever was active when they first drew.
+    *   (Ref: V2 inline charts, chart data table, PNG export)
+
+#### User Interface Enhancements
+
+*   **Copying A Message Containing A Chart**
+    *   Copying an answer with a chart in it used to paste several kilobytes of chart data into the middle of the text. The chart's title and its numbers are now pasted as a small table instead. Equation and diagram sources are left as they are, since those are still readable as text.
+    *   (Ref: V2 message copy, `messageText.ts`)
+
+#### Breaking Changes
+
+*   **None.** No settings were added, and the Content-Security-Policy is unchanged. The libraries behind this work are committed to the repository under `application/v2_ui/public/vendor/` and served from SimpleChat itself, so nothing is fetched from a public CDN at run time or from a package registry at build time. Pinning them this way means any future change to that third-party code is a reviewable commit rather than a silent substitution.
+
 ### **(v0.261.023)**
+
+#### User Interface Enhancements
+
+*   **V2 Appearance Preferences Now Follow You**
+    *   Light and dark mode, the collapsed state of the left navigation, and the chat width were previously remembered only by the browser you set them in, so they reset on a different machine.
+    *   They are now saved to your account. Light and dark mode in particular is shared with the classic interface, so choosing dark in either place applies to both.
+    *   Your browser still remembers them as well, which is what stops the wrong theme appearing for a moment while your preferences load.
+    *   (Ref: V2 theme, navigation and chat width preferences)
 
 #### New Features
 
@@ -342,7 +5553,27 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   Unknown XSD ingestion failures now return a generic error without exposing exception details.
     *   (Ref: `route_frontend_chats.py`, XSD upload error handling)
 
+### **(v0.261.022)**
+
+#### New Features
+
+*   **The V2 Settings Page Is Now Complete**
+    *   All six sections of the personal settings page are built in the V2 interface: Preferences, Stats, Groups, Public, Feedback and Violations. They no longer link out to the classic page.
+    *   **Groups** and **Public** list the workspaces you belong to with search and paging, show your role in each, and let you switch which one is active. If a switch is refused — because you are not a member, or the workspace no longer exists — the reason is shown rather than the change quietly failing.
+    *   **Feedback** shows the ratings you have given assistant replies, whether each has been reviewed, and any reply from a reviewer, with filters and a CSV export.
+    *   **Violations** shows anything flagged on your account with its status and the categories that triggered it. You can add your own notes to a record; status and reviewer notes remain an administrator's to set.
+    *   **Stats** charts your conversations, uploads, token use and sign-ins over 7, 30 or 90 days.
+    *   (Ref: V2 settings tabs, group and public workspace selection, feedback, safety violations, activity trends)
+
 ### **(v0.261.021)**
+
+#### New Features
+
+*   **Text Size And Spoken Reply Voice In V2 Settings**
+    *   The V2 Settings page now offers a text size choice that scales the whole interface, using the same sizes as the classic interface so a size chosen in one applies to the other.
+    *   When text-to-speech is enabled, you can choose which voice reads assistant replies aloud. Replies are also now read as clean prose: citation markers and masked text are no longer spoken.
+    *   Sections for capabilities your administrator has turned off do not appear, and preferences that only affect the classic interface are deliberately left there rather than shown as controls that would do nothing here.
+    *   (Ref: V2 settings, text size, text-to-speech voice)
 
 #### Bug Fixes
 
@@ -361,6 +5592,18 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 #### New Features
 
+*   **Workspace Tags In The Conversation List**
+    *   The conversation list now labels each conversation with the workspace it belongs to — the group or public workspace name, or a note that it is shared with other people. Personal conversations stay unlabelled, so the label means something when it appears.
+    *   Previously the only way to tell a group conversation from a personal one was to open it and read the badge beside its title, which made a long list of conversations hard to navigate for anyone working across several groups.
+    *   The label is drawn from information the conversation list already receives, so it costs no extra loading time.
+    *   (Ref: conversation list, workspace badges, V2 interface)
+
+*   **Personal Settings In The V2 Interface**
+    *   A new **Settings** page, reachable from the account menu, gives the V2 interface its own home for personal preferences. It opens on Preferences and keeps the familiar sections from the classic profile page — Stats, Groups, Public, Feedback and Violations — each appearing only when the relevant capability is enabled.
+    *   Preferences save as you change them rather than behind a Save button, and a preference that fails to save is put back to its stored value rather than left showing something that was never recorded.
+    *   The first preferences available are the new workspace tags toggle and the conversation contents drawer. The remaining sections currently link through to the classic page while they are rebuilt.
+    *   (Ref: V2 settings page, `/api/user/settings`, personal preferences)
+
 *   **Custom Model Endpoints Support Bearer Tokens, OAuth2, And Client Certificates**
     *   Custom endpoints accepted one authentication scheme: an API key sent in whichever header the built-in providers happened to use. That covers OpenAI and Anthropic and nothing else, so a gateway expecting `x-goog-api-key`, a corporate gateway issuing short-lived tokens, and an appliance requiring a client certificate were all unreachable.
     *   **The API key header name and value prefix are now configurable**, so a single scheme covers `Authorization: Bearer`, Anthropic's `x-api-key`, Google's `x-goog-api-key`, and any bespoke gateway header.
@@ -370,6 +5613,13 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   (Ref: `functions_model_endpoint_auth.py`, `functions_model_endpoint_providers.py`, `functions_model_endpoint_validation.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
 ### **(v0.261.019)**
+
+#### User Interface Enhancements
+
+*   **A Recovered Response No Longer Looks Stalled**
+    *   After a dropped connection was picked back up, the message kept saying "Reconnecting" and kept a "Reconnected to the response still being generated" banner in place for the rest of the answer. Because both stayed put while the response was actually arriving, it read as though nothing was happening.
+    *   The two moments are now told apart. While the connection is being re-established the message says so plainly, alongside a spinner, and it does this even when part of the answer is already on screen — so a response that stopped mid-sentence no longer just looks frozen. Once content starts arriving again the wording changes to a brief "Reconnected." note, the activity indicator goes back to the usual "Thinking", and the note clears itself a few seconds later so the rest of the answer reads like any other.
+    *   (Ref: V2 streaming recovery, reconnect states)
 
 #### New Features
 
@@ -385,6 +5635,17 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 #### Bug Fixes
 
+*   **Copying A Message Pasted Unusable Citation Text In V2**
+    *   Copying an answer put the raw citation markers on the clipboard, so a pasted paragraph read `...up to 0.2 mm/s at full load. (Source: NanoPZ.pdf, Page: 13) [#0d4d4eb0-fbbb-4821-a809-8bbd649be6ef_13]` — unusable in an email or a document.
+    *   Copy now produces the answer as a person would want to read it: the citation markers are removed, along with the space in front of them so no stray gaps or double spaces are left behind, while bold, lists, headings and paragraph breaks are kept intact.
+    *   The same conversion is used when saving a message as Markdown and when reusing one as a prompt, so neither carries the markers either.
+    *   (Ref: V2 message copy, citation markers, `messageText.ts`)
+
+*   **Copying A Message Could Reveal Masked Text In V2**
+    *   A masked span hides text from other readers, but copying the message wrote the underlying content to the clipboard, so the hidden text could be recovered by pasting it. Saving the message as Markdown had the same problem.
+    *   Redactions now survive leaving the app: masked spans are replaced with `[masked]`, and a message masked in its entirety is withheld rather than partially copied.
+    *   (Ref: V2 message masking, clipboard, message download)
+
 *   **Tool-Calling Responses Now Actually Stream**
     *   SimpleChat only supports streaming responses, but tool calling cannot stream, because a tool call has to arrive whole. The completed answer was delivered through the streaming interface as a single chunk, so the user saw nothing at all and then the entire response at once, which reads as a hang. Because agents and plugins rely on tool calling, this was a common path rather than an edge case.
     *   A completed answer is now split into chunks at word boundaries and delivered progressively, so it reads like a real stream. Chunking is lossless — the reassembled text is byte-for-byte identical.
@@ -392,9 +5653,28 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   **Streaming responses can report token usage again.** `stream_options` was stripped from every OpenAI-compatible request, which suppressed usage reporting for all of them. It is now dropped only for surfaces that reject it.
     *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_providers.py`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
+#### User Interface Enhancements
+
+*   **Copy With Sources**
+    *   Removing citations from a copy also removes the attribution, which is sometimes the reason for copying in the first place. The message overflow menu now offers **Copy with sources**, which appends the cited documents and pages as a short numbered list under the answer instead of interleaving them with the prose.
+    *   Saved Markdown files include the same reference list, since a file is more likely to be read later by someone who wants to check where a claim came from.
+    *   (Ref: V2 message actions, citation references)
+
 ### **(v0.261.017)**
 
 #### Bug Fixes
+
+*   **Lists And Line Breaks Disappeared After A Citation In V2**
+    *   In the V2 chat page, a bullet list, heading or new paragraph that followed a citation was pulled up onto the citation's own line, so answers that cited a source lost their formatting from that point on.
+    *   The citation pattern deliberately absorbs the spacing after a citation marker while it removes the marker, and V2 was discarding that spacing instead of putting it back. The blank line that separates one markdown block from the next went with it, so the following block was no longer recognised as a block.
+    *   Answers now keep their structure after a citation. Citations that land inside a heading, list item, table cell or quote are also rendered properly rather than leaving a stray placeholder behind.
+    *   (Ref: V2 citation rendering, markdown blocks, `chat-citations.js` parity)
+
+*   **A Dropped Connection Lost The Answer In V2**
+    *   If the connection carrying a response was interrupted — a sleeping laptop, a flaky network, a proxy timeout — V2 showed "The response ended unexpectedly" and the answer was lost, even though the server was still writing it.
+    *   Responses are generated on the server and outlive the connection that requested them. V2 now checks whether the response is still being produced and picks it back up where the classic interface does, replacing what was on screen with the replayed answer so nothing is duplicated. Opening a conversation whose answer is still being written also joins it in progress rather than showing a message that stops mid-sentence.
+    *   A short "Reconnected to the response still being generated" note makes it clear what happened. A reconnect is attempted once; if it fails the error is reported as before.
+    *   (Ref: V2 streaming recovery, `/api/chat/stream/status`, `/api/chat/stream/reattach`)
 
 *   **Custom Endpoint URLs Are No Longer Rewritten Into 404s**
     *   SimpleChat appended `/v1` to every Custom OpenAI-compatible endpoint, even when the configured URL already said where the API lived. A gateway at `https://apim.example.com/inference/chat/completions` was called at `https://apim.example.com/inference/v1/`, and any base carrying its own version segment, such as `/v1beta` or `/v2`, was broken the same way.
@@ -406,6 +5686,12 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 ### **(v0.261.016)**
 
 #### Bug Fixes
+
+*   **Document Search Failed In V2**
+    *   Turning on **Documents** in the V2 chat page ended with "Something went wrong while streaming the response", while the same search worked in the classic interface.
+    *   Two request problems were behind it. First, V2 identified the chosen model by its deployment name alone, but when multiple model endpoints are configured a name is not unique — the server could not resolve the selection and quietly fell back to a different endpoint than the one shown in the picker. Second, the document scope was fixed to "all workspaces" but the workspace identifiers were never sent, so the search was asked to cover workspaces it was given no way to look in.
+    *   V2 now sends the full model identity with every message and retry, so the model you pick is the model that answers. The document scope is worked out from the workspaces actually in use — personal only, or personal plus the group or public workspace you are working in — and the matching identifiers travel with it.
+    *   (Ref: V2 model selection, document search scope, `/api/chat/stream`)
 
 *   **Custom Model Endpoint Failures Are Now Diagnosable**
     *   Every Custom endpoint failure produced the same sentence — "Custom model request failed." — with the underlying cause discarded before it reached the log. A wrong path, a wrong API key, a wrong model name, a TLS failure, and a blocked address were indistinguishable, and nothing anywhere explained which had happened.
@@ -419,6 +5705,14 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 #### New Features
 
+*   **V2 Conversation Details Rebuilt**
+    *   The details panel previously listed every tag as one undifferentiated row of chips, which mixed documents in with model names, participants and topics, and reduced source documents to a bare count.
+    *   Each kind of information now has its own section: **Source documents**, **Workspaces**, **Models and agents**, **Participants**, **Topics** and **Web sources**.
+    *   **Source documents** are listed properly — file name, the pages or sheets used, how many excerpts, workspace and classification — and marked as **cited** when a response actually referenced them. The list is paged, since a long conversation can draw on dozens of documents.
+    *   Conversations that predate citation tracking say so, rather than showing every document as though it went unused.
+    *   A conversation **summary** can now be generated on demand from the panel, and regenerated later, showing the model used and when it was produced.
+    *   (Ref: V2 conversation details, `/api/conversations/<id>/metadata`, `/api/conversations/<id>/summary`)
+
 *   **Custom Model Endpoints Now Support Google Gemini, Through A Provider Registry**
     *   Custom endpoints supported exactly three API types, and each one was hard-coded in five separate places: the allowlist, the request-model resolver, the protocol inference chain, the admin template's option list, and the admin JavaScript. Adding a provider meant editing all five and hoping none were missed.
     *   An API type is now a single declarative registry entry that carries its wire protocol, which field names the model, how its URL is built, which authentication types it accepts, and which version field applies. The admin API Type list, the model identifier label, and the version fields all render from that registry.
@@ -427,9 +5721,32 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   The three existing API types are unchanged, and an unregistered API type is still refused.
     *   (Ref: `functions_model_endpoint_providers.py`, `functions_model_endpoint_types.py`, `model_endpoint_clients.py`, `admin_model_endpoints.js`, `workspace_model_endpoints.js`, `_multiendpoint_modal.html`, [#1228](https://github.com/microsoft/simplechat/pull/1228))
 
+#### User Interface Enhancements
+
+*   **Composer Controls Appear When They Are Relevant**
+    *   **Read URLs** now appears only once the message you are writing actually contains a URL, and **Deep research** only when there is something for it to research — web search being on, or URLs in the message.
+    *   Turning on **Image generation** now disables the controls it is incompatible with and hides the model picker, since the request goes to an image endpoint that ignores them.
+    *   A control that disappears also clears its setting, so a request never carries a capability you can no longer see you enabled.
+    *   Together this removes the permanently crowded row of buttons in the composer.
+    *   (Ref: V2 composer gating)
+
+*   **Chat Width Can Be Changed**
+    *   A control in the chat header switches between a comfortable reading width and using the full width of the pane. The choice is remembered.
+    *   The message thread and the composer widen together, so the composer controls get the extra room too.
+    *   (Ref: V2 chat width)
+
 ### **(v0.261.014)**
 
 #### New Features
+
+*   **Message Masking In V2**
+    *   You can now mask content in the V2 chat page, which the classic interface has always supported. Masked content is withheld from the AI model when it builds conversation history, so it is a real protection rather than a display setting.
+    *   Select any text in a message and a small **Mask selection** control appears over it. The selected text is replaced with a redaction marker.
+    *   The hover row also offers masking the whole message, and clearing masks once any exist.
+    *   Hovering a redaction shows who applied it and when, so in a shared conversation it is clear whose masking you are looking at.
+    *   Masked text is removed before the message is rendered rather than hidden with styling, so it is never present in the page.
+    *   If a selection cannot be matched back to the stored message — which can happen when it spans citations or formatting — the interface says so instead of appearing to succeed.
+    *   (Ref: V2 message masking, `/api/message/<id>/mask`)
 
 *   **Model Capabilities Now Come From The Model Catalog Instead Of The Model's Name**
     *   SimpleChat previously worked out what a model could do by pattern-matching its name, so a model the catalog did not know about — an on-premises or customer-supplied model reached through a Custom endpoint — silently received wrong answers for vision, tool calling, streaming, and reasoning. A model named `corp-llm-v2` was treated as having no capabilities at all.
@@ -442,13 +5759,64 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 #### New Features
 
+*   **Message Details, Sources And Reasoning In V2**
+    *   Hovering a message now offers three new controls that open a panel beneath it, so you can see what a response was built from without leaving the conversation.
+    *   **Sources** lists the documents a response cited and where in each one, the web results it used, and any tools it called with their arguments and results.
+    *   **Reasoning** shows the steps taken to produce a response *after the fact*, not only while it is being generated. It is presented exactly as it appears live, so the same information does not look like a different feature once the response has finished.
+    *   **Details** covers the model or agent used, the reasoning effort, and which capabilities were available versus actually exercised — a response where web search was enabled but never used now says so.
+    *   Details also explains how the conversation history was assembled: how many earlier messages were kept, summarised, or skipped because they were an inactive retry attempt or were masked. This is often the answer to "why didn't it know that?".
+    *   User messages get their own details panel covering the retry thread and the capabilities that were active when the message was sent.
+    *   (Ref: V2 message inspector, `/api/message/<id>/metadata`, `/api/conversations/<id>/messages/<id>/thoughts`)
+
 *   **Custom Model Endpoint Provider**
     *   Added manually configured Custom endpoints for OpenAI API, Azure OpenAI API, and Anthropic chat models across global, personal, and group scopes.
     *   Added type-specific model identifiers, API-key authentication, connection testing, response-length controls, and Anthropic Version support without model discovery.
     *   Enforced HTTPS, DNS/address safety with connection-time address pinning, runtime URL revalidation, redirect refusal, Key Vault secret handling, and an administrator-controlled private-host policy.
     *   (Ref: #1222, Custom model endpoints, `functions_model_endpoint_runtime.py`, `_multiendpoint_modal.html`, `CUSTOM_MODEL_ENDPOINT_PROVIDER.md`)
 
+#### User Interface Enhancements
+
+*   **V2 Message Actions Grouped**
+    *   The hover row beneath each message is now spaced into related groups — retry attempts, working with the message, feedback, inspecting it, and branching — rather than one long strip of undifferentiated icons.
+    *   (Ref: V2 message actions)
+
 ### **(v0.261.012)**
+
+#### Bug Fixes
+
+*   **V2 Chat Exports Now Work**
+    *   Export to Word, Export to PowerPoint and Open as email did nothing in the V2 chat page. The request was submitted as a web form, but these endpoints only accept a JSON body, so every attempt was rejected before it started.
+    *   All three now work. Word and PowerPoint download the document, and Open as email opens your mail client with the subject and body filled in, saving any charts or images from the response so you can attach them.
+    *   Failures are now reported instead of appearing to do nothing.
+    *   (Ref: V2 message export, `/api/message/export-word`, `/api/message/export-powerpoint`, `/api/message/export-email-draft`)
+
+*   **Generated Images Display In V2**
+    *   Images produced in a conversation showed their internal address as a line of text instead of the picture. V2 now renders the image, and selecting it opens the full-size version.
+    *   An image that cannot be loaded now says so and shows the prompt that produced it, rather than leaving a broken image.
+    *   (Ref: V2 image messages, `/api/image/<id>`)
+
+*   **Message Retry Counter Was Always Wrong**
+    *   Every message in the V2 chat page claimed to be attempt "2 of 2", including messages that had never been retried.
+    *   The counter is now correct and only appears once a message actually has more than one attempt.
+    *   (Ref: V2 message actions, retry attempts)
+
+*   **Conversation Tag Was The Same On Every Conversation**
+    *   The badge beside the conversation title showed your currently selected group rather than anything about the conversation you were reading, so it never changed.
+    *   It now shows what the conversation itself is working in: the group or public workspace name, a "shared" marker for shared conversations, nothing for personal ones, plus classification labels and whether the workspace scope is locked.
+    *   (Ref: V2 chat header, conversation metadata)
+
+*   **Selecting An Agent Had No Effect In V2**
+    *   Choosing an agent in the V2 composer appeared to work but was ignored, because the selection was sent in a form the server does not read.
+    *   Agent selection now applies to both new messages and retries.
+    *   (Ref: V2 composer, agent selection)
+
+*   **Line Breaks Lost In V2 Responses**
+    *   A response written as several short lines was run together into one paragraph, while the same text in your own message kept its line breaks. The two now render the same way, and a single line break is preserved.
+    *   (Ref: V2 message rendering)
+
+*   **Conversation Summary Never Displayed In V2**
+    *   The summary section of V2's conversation details read a field that does not exist, so a generated summary was never shown.
+    *   (Ref: V2 conversation details, conversation summary)
 
 #### New Features
 
@@ -459,11 +5827,17 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   The proxy credential has its own identity reference, separate from the Yamcs credential, so one action can use both.
     *   Proxy authentication combines with the **No Authentication** and **API Key** Yamcs methods. It cannot combine with **Username and Password** or **Access Token**, because only one `Authorization` header can be sent and the Yamcs token request would itself be refused by the proxy. The conflict is reported when saving the action and when running **Test Yamcs Connection** rather than failing later at run time.
     *   **Test Yamcs Connection** exercises the proxy credential and distinguishes a proxy rejection from a Yamcs rejection.
-    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `functions_workspace_identities.py`, `plugin_health_checker.py`, `route_backend_plugins.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `test_yamcs_basic_auth.py`, [Yamcs Action](features/YAMCS_ACTION.md), [#1435](https://github.com/microsoft/simplechat/issues/1435))
+    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `functions_workspace_identities.py`, `plugin_health_checker.py`, `route_backend_plugins.py`, `_plugin_modal.html`, `plugin_modal_stepper.js`, `test_yamcs_basic_auth.py`, [Yamcs Action](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/YAMCS_ACTION.md), [#1435](https://github.com/microsoft/simplechat/issues/1435))
 
 ### **(v0.261.011)**
 
 #### Bug Fixes
+
+*   **V2 Composer Menus Opened Off-Screen**
+    *   The Model, Agent, Prompt and Reasoning pickers in the V2 chat page dropped their menus downward from a composer that sits at the bottom of the window, so the options rendered below the bottom edge of the browser and could not be seen or clicked.
+    *   These menus now open upward when there is not enough room below, and size themselves to the space actually available so they stay on screen in short browser windows. Menus still open downward wherever there is room for them.
+    *   The Reasoning picker was the most affected, since it sits on the composer's lower row.
+    *   (Ref: V2 composer pickers, shared dropdown placement)
 
 *   **Redis Connection Test No Longer Returns Credential Errors To The Browser**
     *   Restored the hardening that a refactor had dropped: when the admin Redis connection test fails while resolving credentials, the details are logged under `[REDIS_TEST]` and the browser receives a generic message instead of the raw exception, which could carry Key Vault secret names, vault URIs, or token details.
@@ -479,13 +5853,21 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 #### New Features
 
+*   **V2 Enhanced Citations**
+    *   Selecting a citation in the V2 chat page now opens the source itself rather than only the extracted passage. PDFs open at the cited page, images open in a zoomable viewer, video and audio play from the cited moment, spreadsheets open as a browsable table with a sheet switcher, and Visio drawings render page by page.
+    *   Each viewer offers a download of the original file, so the source can be opened in its own application when the in-browser view is not enough.
+    *   Documents can still be opted out individually, and file types with no viewer — plain text or Word, for example — continue to show the cited passage as before.
+    *   When a source cannot be loaded, the passage is shown instead and the panel says that it fell back, so a misconfigured deployment is visible rather than presenting an empty viewer.
+    *   PDFs are rendered by the browser's own viewer, so no PDF engine or other third-party browser asset was added.
+    *   (Ref: V2 enhanced citations, `/api/enhanced_citations/*`, `X-Sub-PDF-Page`, `enable_enhanced_citations`)
+
 *   **Azure Managed Redis Support**
     *   SimpleChat now connects to Azure Managed Redis as well as Azure Cache for Redis, ahead of the September 30, 2028 retirement of the Azure Cache for Redis Basic, Standard, and Premium tiers.
     *   The two services listen on different TLS ports, so SimpleChat resolves the port from the host name suffix: `*.<region>.redis.azure.net` connects on port 10000 and `*.redis.cache.windows.net` (plus the Azure Government and 21Vianet equivalents) on port 6380.
     *   New **Redis Service** and **Redis Port** settings let an administrator state the service explicitly when a custom DNS name or private endpoint hides the Azure suffix. Existing deployments are unaffected: unrecognized host names keep the previous Azure Cache for Redis behavior.
     *   The Redis Metrics panel now reports which service and port were resolved, and whether that came from detection or an explicit setting.
     *   Both services are supported because Azure Managed Redis is not available in Azure Government or Azure operated by 21Vianet.
-    *   (Ref: `functions_redis_client.py`, `app_settings_cache.py`, `app.py`, `redis-caching.html`, [Azure Managed Redis Support](features/AZURE_MANAGED_REDIS_SUPPORT.md))
+    *   (Ref: `functions_redis_client.py`, `app_settings_cache.py`, `app.py`, `redis-caching.html`, [Azure Managed Redis Support](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/AZURE_MANAGED_REDIS_SUPPORT.md))
 
 *   **Redis Deployment Uses Azure Managed Redis**
     *   The Bicep deployer now provisions Azure Managed Redis `Balanced_B0` with high availability enabled, Microsoft's documented replacement for the Azure Cache for Redis Standard C0 it previously deployed. That is twice the memory for less cost.
@@ -510,60 +5892,158 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
 
 ### **(v0.261.009)**
 
+#### New Features
+
+*   **V2 Research, Reasoning And Voice Controls**
+    *   **Deep research** and **Read URLs** are now working controls in the V2 composer rather than placeholders, each appearing only when the corresponding capability is enabled for you.
+    *   **Reasoning effort** can be set per message, and the control only appears for models that actually support it — offering the levels that model allows rather than a fixed list. Models with no reasoning support show no control at all.
+    *   **Voice input** records from your microphone and inserts the transcription into the composer, with an explicit send or cancel so a misheard phrase can be discarded rather than sent.
+    *   **Read aloud** plays any response using the configured speech service.
+    *   Every composer control is now wired; none remain marked as previews.
+    *   (Ref: V2 composer, `/api/speech/transcribe-chat`, `/api/chat/tts`, deep research and URL access request fields)
+
 #### Bug Fixes
 
 *   **Shared Workspace File Approvals Are Visible To Approvers Again**
     *   Fixed document access index candidate selection for workspace scope projections so pending-approval records are considered alongside already granted records.
     *   Shared files staged for approval are intentionally not granted yet, so filtering only on `access_granted = true` could hide those files from approval experiences even though they were eligible for review.
     *   The projection query now includes `approval_status = not_approved` rows while still requiring current-version projection records.
-    *   (Ref: `functions_document_access_index.py`, [Workspace Shared File Approval Visibility Fix](fixes/WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md))
+    *   (Ref: `functions_document_access_index.py`, [Workspace Shared File Approval Visibility Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKSPACE_SHARED_FILE_APPROVAL_VISIBILITY_FIX.md))
 
 *   **Distroless Runtime Copy No Longer Fails On `/usr/lib64` Overlay Conflicts**
     *   Fixed Docker BuildKit failures where `COPY --from=builder /odbc-runtime/ /` or `COPY --from=builder /playwright-runtime/ /` could abort with `cannot copy to non-directory ... /usr/lib64` when the distroless base exposes `/usr/lib64` as a non-directory entry.
     *   Updated runtime staging to copy native shared libraries into `/odbc-runtime/usr/lib` and `/playwright-runtime/usr/lib` while continuing to source candidates from both `/usr/lib64` and `/usr/lib` in the builder stage.
     *   This preserves SQL ODBC and Playwright Chromium runtime packaging while avoiding path-type collisions against evolving base-image filesystem layouts.
-    *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))
+    *   (Ref: `Dockerfile`, `test_sql_container_odbc_runtime.py`, `test_deep_research_chromium_build_opt_out.py`, [Distroless Runtime Overlay Path Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/DISTROLESS_RUNTIME_OVERLAY_PATH_FIX.md))
+
+### **(v0.261.008)**
+
+#### New Features
+
+*   **V2 Citations**
+    *   Responses in the V2 chat page now show citations as compact inline chips instead of the raw `(Source: ...)` text the model emits. Each chip names the file and the page, sheet, or location it came from.
+    *   Selecting a chip opens the passage that was actually cited, along with its file name and location.
+    *   Citations that point at a web page render as an outbound link instead, opening in a new tab, since there is no stored passage to show for them.
+    *   Answers without citations are unaffected, and tables, code blocks, and other formatting continue to render normally around the chips.
+    *   (Ref: V2 citations, `/api/get_citation`, citation marker format)
 
 ### **(v0.261.007)**
+
+#### New Features
+
+*   **V2 Per-Message Actions**
+    *   Added an action row to every message in the V2 chat page, appearing on hover and reachable by keyboard.
+    *   **Both roles**: copy, retry, use as prompt, download as Markdown, export to Word or PowerPoint, open as an email draft, and delete.
+    *   **Your messages**: edit in place and resend, which creates a new attempt rather than overwriting the original.
+    *   **Responses**: rate with thumbs up or down (a thumbs down asks for an optional reason), and fork the conversation from that point into a new one, which then opens.
+    *   **Attempt navigation**: when a message has been retried or edited, arrows appear showing which attempt you are viewing and let you page between them.
+    *   (Ref: V2 message actions, `/api/message/<id>` retry, edit, switch-attempt, delete, `/feedback/submit`, conversation fork)
 
 #### Bug Fixes
 
 *   **Markdown Retry Helper Return Contract Clarified**
     *   Added an explicit defensive exception at the end of the Markdown `OrderedDict` retry helper so static analysis no longer sees a possible implicit `None` return.
     *   Runtime behavior is unchanged for normal success and retry-exhaustion paths.
-    *   (Ref: `functions_documents.py`, [Markdown Retry Return Contract Fix](fixes/MARKDOWN_RETRY_RETURN_CONTRACT_FIX.md))
+    *   (Ref: `functions_documents.py`, [Markdown Retry Return Contract Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MARKDOWN_RETRY_RETURN_CONTRACT_FIX.md))
 
 ### **(v0.261.006)**
+
+#### New Features
+
+*   **V2 Conversation Details**
+    *   Added a conversation details view to the V2 chat page, opened from an info button in the header. It shows the title, identifier, last updated time, conversation type, pinned/hidden/scope-locked state, classification, tags, how many documents were used, and the generated summary along with which model produced it and when.
+    *   The conversation can be renamed inline from this view. Renaming to the same title does nothing rather than issuing a pointless save.
+    *   Only fields the server actually returns are displayed, so the panel never shows permanently blank rows for data that does not exist.
+    *   (Ref: V2 conversation details, `/api/conversations/<id>/metadata`)
+
+#### User Interface Enhancements
+
+*   **V2 Dialogs And Menus Are Now Readable Over Content**
+    *   Dialogs, dropdown menus, and the account menu in the V2 interface used the same translucent glass treatment as the fixed page furniture, which left chat text legible straight through them and made the panel itself hard to read.
+    *   Overlays now use a dedicated near-opaque surface in both light and dark themes, while keeping the glass look. Users who ask their system for reduced transparency continue to get fully solid panels.
+    *   (Ref: V2 design tokens, dialog and popover surfaces)
 
 #### Bug Fixes
 
 *   **Markdown Uploads Retry Transient OrderedDict Parser Failures**
     *   Markdown document processing now retries the known transient `OrderedDict mutated during iteration` parser failure before marking a document failed.
     *   The retry is limited to this specific Markdown failure signature, so unrelated parsing, validation, or service errors still fail normally with their original error.
-    *   (Ref: Markdown upload processing, `functions_documents.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
+    *   (Ref: Markdown upload processing, `functions_documents.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
 
 ### **(v0.261.005)**
+
+#### New Features
+
+*   **V2 Chat Conversation Drawer**
+    *   Added a right-hand panel to the V2 chat page with two modes, matching the drawer in the current interface.
+    *   **Contents** lists your questions in order so you can jump straight to a point in a long conversation; selecting one scrolls the thread there and briefly highlights it. It respects the same **Conversation Contents Drawer** admin setting and per-user preference the current interface uses, so turning it off hides it in both.
+    *   **Documents** lists the documents behind a conversation, marking which were actually **Cited**, where the citations landed (pages or sheets), which workspace each came from, and its classification. The toggle carries a count badge.
+    *   Documents are gathered from all three places the server records them, de-duplicated, so files attached directly to a chat appear alongside ones found through search.
+    *   (Ref: V2 conversation drawer, `/api/conversations/<id>/metadata`, `build_used_documents`)
 
 #### User Interface Enhancements
 
 *   **Workspace Upload Progress Now Separates Request Status From Document Processing Status**
     *   The temporary upload summary no longer labels unconfirmed browser upload requests as final document failures. This avoids misleading summaries such as `Uploaded 77/204, Failed: 127` when the document list later shows that most documents were queued and processed successfully.
     *   Personal, group, and public workspace uploads now use `Queued` for confirmed upload requests and direct users to the refreshed document list for final processing status.
-    *   (Ref: workspace upload progress summary, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, [Workspace Upload Status Counter Fix](fixes/WORKSPACE_UPLOAD_STATUS_COUNTER_FIX.md))
+    *   (Ref: workspace upload progress summary, `workspace-documents.js`, `public_workspace.js`, `group_workspaces.html`, [Workspace Upload Status Counter Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/WORKSPACE_UPLOAD_STATUS_COUNTER_FIX.md))
 
 ### **(v0.261.004)**
 
 #### Bug Fixes
+
+*   **V2 Workspace Page Crashed To A Blank Screen**
+    *   Opening **My Workspace** in the V2 interface blanked the page, leaving only a minified React error in the browser console.
+    *   Workspace tags are returned as objects carrying a name, a usage count and a colour, but the V2 tag filter rendered the object itself, which React cannot display. The failure then unmounted the whole interface rather than just the tag row.
+    *   Tags are now read correctly in every shape the API uses, and the chips show their document counts.
+    *   (Ref: `/api/documents/tags`, `build_workspace_tags_from_counts`, V2 workspace page)
+
+*   **V2 Chat Logged A 404 When Opening A Conversation**
+    *   Selecting a conversation in the V2 interface fired a "mark as read" request every time, which failed with a 404 for shared conversations because those are stored separately and have their own endpoint.
+    *   The request is now sent only when a conversation actually has an unread response, and shared conversations use the shared endpoint — matching how the existing interface behaves.
+    *   (Ref: conversation feed, mark-read endpoints, V2 conversation rail)
+
+*   **V2 Pin And Unread Indicators Never Appeared**
+    *   Pinned conversations showed no pin icon and unread conversations showed no dot, because the V2 rail read the wrong field names from the conversation feed. The underlying pin and hide actions worked, so only the indicators were affected.
+    *   Pin and hide are also server-side toggles rather than settable states, so V2 now applies whatever the server reports back instead of assuming the result.
+    *   (Ref: `is_pinned`, `is_hidden`, `has_unread_assistant_response`, V2 conversation rail)
+
+*   **A Single View Failure No Longer Takes Down The V2 Interface**
+    *   Added an error boundary around the V2 content area. An unexpected render failure now shows a contained message with the error and a retry button while the navigation rail keeps working, instead of blanking the entire application.
+    *   (Ref: V2 error boundary, `App.tsx`)
 
 *   **Large Workspace Uploads No Longer Fail On Search Write Gate Contention**
     *   Fixed partial failures when uploading many small Markdown, JSON, or YAML files to personal, group, or public workspaces at once. Document processing could fail with a message that the Data Management Search write gate changed too often to reserve a write slot.
     *   The shared write gate now waits within the existing request timeout budget, briefly backs off after transient Cosmos ETag conflicts, and serializes Search writes inside each worker process. This prevents local upload threads from stampeding the same gate document while preserving the migration freeze protection for Azure AI Search writes.
     *   Markdown processing now batches its chunk embeddings and Search upload instead of reserving the gate once per chunk, which reduces contention and avoids the intermittent `OrderedDict mutated during iteration` failures seen during concurrent Markdown ingestion.
     *   Added regression coverage for repeated transient gate conflicts, local worker serialization, and Markdown use of the batch chunk writer.
-    *   (Ref: `functions_data_management_search_write_fence.py`, `functions_documents.py`, `test_data_management_search_write_fence.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
-
+    *   (Ref: `functions_data_management_search_write_fence.py`, `functions_documents.py`, `test_data_management_search_write_fence.py`, `test_markdown_processing_batches_search_writes.py`, [Search Write Gate Upload Contention Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/SEARCH_WRITE_GATE_UPLOAD_CONTENTION_FIX.md))
 
 ### **(v0.261.003)**
+
+#### New Features
+
+*   **React V2 Interface (Preview)**
+    *   Added an optional React interface at **/v2**, running alongside the existing UI rather than replacing it. Both surfaces share one login, so you can move between `/chats` and `/v2` freely and compare them directly.
+    *   Built with React 18, TypeScript, Vite and Tailwind on a custom glassmorphism design system, with full dark and light modes. The theme is remembered per browser and applied before first paint, so switching to dark mode never flashes white.
+    *   Keeps the current layout language: logo in the upper left, a single collapsible left rail carrying navigation, conversations, theme and account, and no top bar. All content lives in the right-hand pane.
+    *   Chat is wired to the existing APIs — conversation list with paging and search, rename, pin, hide and delete, streaming responses with a collapsible reasoning panel, stop generation, model, agent and prompt pickers, document and web search toggles, and file upload. Controls that are part of the design but not yet connected are visibly marked **Preview** rather than silently doing nothing.
+    *   Personal workspace documents can be listed, searched, filtered by tag, uploaded and deleted.
+    *   Nothing in the existing interface changed. No current route, template, or JavaScript module was modified.
+    *   (Ref: `application/v2_ui/`, `route_frontend_v2.py`, `route_backend_v2.py`, `docs/explanation/features/REACT_V2_UI.md`)
+
+*   **Search-First Admin Settings In V2**
+    *   Reimagined Admin Settings for the V2 interface. The classic page nests 14 groups into 46 tabs into 96 sections, so reaching one toggle can take several clicks through two levels of tabs.
+    *   V2 flattens it: a category rail, one scrollable pane, and a search box that matches across every section, tab, group and capability key at once. Press `/` to focus search from anywhere on the page — searching either `retention` or `data lifecycle` finds the retention settings.
+    *   Toggles save individually and roll back visually if the save fails, so the switch never claims a change that did not persist.
+    *   The structure is still generated from `admin_settings_nav.py`, so it cannot drift from the classic page. Settings needing more than a switch — endpoints, keys, prompts, connection tests — remain on the classic page, which is linked from the V2 page.
+    *   (Ref: `admin_settings_nav.py`, `/api/v2/admin/settings`, V2 admin surface)
+
+*   **Optional Standalone Hosting For The V2 Interface**
+    *   The V2 interface is served by the existing App Service at `/v2` by default, so it needs no new infrastructure and inherits the current sign-in, CSRF protection and content security policy unchanged.
+    *   For deployments that want the front end deployed and scaled on its own, a new opt-in `deployV2FrontendAppService` parameter provisions a dedicated App Service for it. Setting `V2_UI_ALLOWED_ORIGIN` on the API app is the single switch that enables the cross-origin configuration this requires.
+    *   Both settings are off by default and have no effect on existing deployments.
+    *   (Ref: `deployers/bicep/modules/v2FrontendAppService.bicep`, `main.bicep`, `deployers/azure.yaml`, `V2_UI_ALLOWED_ORIGIN`)
 
 #### Bug Fixes
 
@@ -635,14 +6115,14 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   The root cause was Easy Auth detection treating the manually configured `WEBSITE_AUTH_AAD_ALLOWED_TENANTS` application setting as proof that Easy Auth was intercepting requests. SimpleChat's own advanced environment variable guidance instructs operators to set that value by hand, so it was never a reliable signal.
     *   Detection now relies only on the `X-MS-CLIENT-PRINCIPAL` request headers that App Service Easy Auth injects on requests it actually intercepts, so deployments genuinely behind Easy Auth still clear the upstream platform session, and everyone else gets a clean local logout.
     *   Idle-timeout logout uses the same local logout path, so automatic session expiration follows the corrected behavior as well.
-    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
+    *   (Ref: `route_frontend_authentication.py`, `_use_app_service_easy_auth_logout`, `test_app_service_easy_auth_logout.py`, [Easy Auth Logout Detection Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/EASY_AUTH_LOGOUT_DETECTION_FIX.md))
 
 #### New Features
 
 *   **Opt-Out For App Service Easy Auth Logout**
     *   Added the `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT` environment variable for deployments where Easy Auth is genuinely active but the platform `/.auth/logout` endpoint is not reachable on the public host, such as when a custom domain or gateway does not route `/.auth/*` to the App Service origin.
     *   Setting it to `true` keeps logout on the local path instead of redirecting to the platform endpoint. Logout routing decisions are now also traced through debug logging, so `FLASK_DEBUG=1` shows which path was taken and why.
-    *   (Ref: `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT`, `config.py`, `example.env`, [Running SimpleChat Locally](running_simplechat_locally.md))
+    *   (Ref: `DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT`, `config.py`, `example.env`, [Running SimpleChat Locally](https://microsoft.github.io/simplechat/explanation/running_simplechat_locally/))
 
 ### **(v0.261.001)**
 
@@ -1261,6 +6741,7 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   Previously the modal only collected a connection string even though the backend accepted other methods, so managed identity was not reachable through the UI.
     *   The endpoint field is validated against the Azure Blob hostname allowlist before the action is saved.
     *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`, `blob_storage.definition.json`)
+
 *   **Shared Conversations No Longer Fail With "Stream interrupted: Forbidden"**
     *   Fixed invited participants being unable to invoke the AI at all in a shared conversation. Any explicit AI request returned `Forbidden` with no content.
     *   Root cause was the hidden source conversation behind every shared conversation being owned by its creator, so participants failed a plain ownership comparison in the chat streaming route even though they are legitimate members.
@@ -2584,8 +8065,6 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   It now sits outside the tabs and is visible wherever you are in Governance.
     *   (Ref: `governance-status`, `admin_governance.js`)
 
-#### Bug Fixes
-
 *   **Reliable File Generation From Agent Action Results**
     *   Asking an agent for a downloadable file built from action results now produces the complete dataset in the requested format. Previously these requests could fail outright, publish a three-row sample of a large result, overwrite the assistant's written answer, or return nothing at all. Delivered across v0.260.004 through v0.260.011.
     *   **Files no longer fail to generate.** A CSV built from several actions in one turn could stop with `Generated output schema mismatch at row 2`, because each action returned a different set of columns. The export now pins a union of every column before the run starts and pads the missing cells, so mixed-shape results serialize instead of failing.
@@ -2740,6 +8219,7 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   Previously the modal only collected a connection string even though the backend accepted other methods, so managed identity was not reachable through the UI.
     *   The endpoint field is validated against the Azure Blob hostname allowlist before the action is saved.
     *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`, `blob_storage.definition.json`)
+
 *   **Shared Conversations No Longer Fail With "Stream interrupted: Forbidden"**
     *   Fixed invited participants being unable to invoke the AI at all in a shared conversation. Any explicit AI request returned `Forbidden` with no content.
     *   Root cause was the hidden source conversation behind every shared conversation being owned by its creator, so participants failed a plain ownership comparison in the chat streaming route even though they are legitimate members.
@@ -2747,8 +8227,6 @@ Tracking: [#1489](https://github.com/microsoft/simplechat/issues/1489); implemen
     *   Participants can also now download generated files from a shared conversation, which was blocked by the same comparison.
     *   Also fixed background CSV exports queued by a participant becoming unreadable for the owner, because publication checks looked up the export run under the wrong user partition.
     *   (Ref: `build_conversation_participation_context`, `route_backend_chats.py`, `route_enhanced_citations.py`, `functions_simplechat_operations.py`)
-
-#### User Interface Enhancements
 
 *   **Clearer Group Workspace Save Errors**
     *   Attempting to save a generated document into a group workspace without document rights now names the roles that can complete it and suggests requesting the content as a downloadable file instead of failing with a bare permission error.
@@ -2828,14 +8306,17 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   The legacy single `alert_priority` workflow field is superseded by `alert_mode`, `alert_rules`, and `alert_evaluation` for rules-based workflow notifications.
     *   Existing workflows are auto-migrated on read into equivalent failed-run and completed-run notification rules.
     *   **Migration**: Review upgraded workflow alert rules and prune any always-notify completed-run rule that is no longer desired.
+
 *   **New Yamcs Client Dependency**
     *   The Yamcs Mission Control action adds `yamcs-client==2.1.0`, the repository's first LGPL-3.0 dynamically linked pip dependency.
     *   SimpleChat can still start without it, but Yamcs actions return an actionable dependency error until installed.
     *   **Migration**: Run `pip install -r requirements.txt` or rebuild deployment images so the Yamcs client dependency is present where Yamcs actions are used.
+
 *   **Internal Route Name Hardening**
     *   Blueprint security hardening changed internal route names and required broad route policy/test updates.
     *   Shared-conversation streaming regressions from the rename sequence were fixed in the consolidated patch history.
     *   **Migration**: Update any custom integrations that call SimpleChat by internal endpoint name rather than public route URL.
+
 *   **Conversation Cache Fallback Behavior**
     *   Volatile chat bootstrap and conversation cache payloads no longer fall back to the Cosmos `settings` container when Redis is unavailable.
     *   Deployments without Redis keep full functionality, but bypass these cache benefits.
@@ -2846,16 +8327,20 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
 *   **Enhanced Extraction Settings Migration**
     *   Deployments already configured for Enhanced or Auto extraction are automatically migrated on first settings read to preserve their existing extraction mode.
     *   No manual change is required unless admins want to revise extraction defaults after upgrade.
+
 *   **Embedded Image Chunk Placement**
     *   Word and PowerPoint figures are now merged into chunks with surrounding text instead of appended as extra chunks.
     *   Existing documents keep their current chunk layout until re-extracted.
     *   Use Change Extraction or re-upload documents to benefit from the new placement behavior.
+
 *   **Workflow Alert Review**
     *   Rules-based workflow notifications can express run status, text/regex matches, File Sync results, AI-judged outcomes, and agent signals.
     *   Review workflow owner expectations after upgrade because migrated rules intentionally preserve prior notification behavior.
+
 *   **Redis-Backed Cache Operations**
     *   DAI document/tag caches and conversation list/feed caches now include Redis-backed invalidation and metrics behavior.
     *   Monitor Redis availability to keep cache acceleration active; safety-sensitive cache invalidation fails closed when state is unknown.
+
 *   **Detailed Patch Traceability**
     *   The original v0.250.003 through v0.250.229 entries are preserved verbatim below with demoted headings for audit and support lookup.
 
@@ -2866,31 +8351,37 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   Embedded Office images, including EMF/WMF diagrams and legacy DOC/PPT media, are rasterized, analyzed, and indexed as citable chunks.
     *   Optional Document Intelligence formula extraction adds LaTeX equation capture for PDFs when enabled.
     *   (Ref: Azure AI Content Understanding, Document Intelligence, embedded image extraction, formula extraction)
+
 *   **Workflow Multi-Task Automation and Alerts**
     *   Workflows now support ordered instruction tasks with prior-task context chaining, per-task document actions, retry/failure handling, and configurable task limits.
     *   Conditional alert rules cover run status, text/regex matches, File Sync summaries, AI-judged results, and agent-raised signals across five severity levels.
     *   Active workflow runs can be cancelled from workspace rows, run history, or activity surfaces.
     *   (Ref: workflow task sequencing, workflow alert rules, `raise_workflow_alert`, run cancellation)
+
 *   **Expanded Agent and Action Integrations**
     *   Yamcs and RocksDB action types add mission-control and HTTP/JSON data-service integrations.
     *   Inbound MCP exposes governed SimpleChat capabilities for conversations, documents, prompts, tags, and workflows.
     *   Action connection testing now covers OpenAPI, Maps, Blob, Databricks, Log Analytics, MCP, Snowflake, Tableau, RocksDB, Yamcs, SQL, and Cosmos DB.
     *   (Ref: Yamcs action, RocksDB action, MCP inbound server, action test connection)
+
 *   **Governance, Security, and Model Administration**
     *   Governance policies support explicit block lists for feature and delegated item policies alongside allow rules.
     *   Key Vault secret expiration reminders track per-action secrets with background sweeps, notifications, and telemetry.
     *   Model requests can include HMAC-hashed user identity headers, and admins can configure per-model output token ceilings.
     *   (Ref: governance policies, Key Vault secret inventory, model endpoint identity header, output token limits)
+
 *   **Chat Productivity, Grounding, and Notifications**
     *   Users can opt into response completion sounds, desktop notifications, configurable AI notices, and per-message MP3 export.
     *   Conversation grounding now exposes model/workspace/document/agent context, used-document panes, assistant-response forks, and a contents drawer.
     *   User font size preferences, generated JSON/XML export artifacts, and smarter scroll behavior improve long-session usability.
     *   (Ref: chat notifications, grounding citations, used documents pane, conversation fork, contents drawer, export artifacts)
+
 *   **Workspace, Sync, and Data Management Operations**
     *   Azure Blob Storage File Sync adds SAS, managed identity, service principal auth, virtual-folder browsing, and ETag change detection.
     *   Admin operations add automatic Control Center statistics refresh, backup cleanup/retention, restore workflows, Cosmos JSON editing, Redis Explorer, feedback/safety lifecycle controls, and file-processing log cleanup.
     *   Multi-select metadata extraction, configurable Public Workspace naming, and index auto-login improve workspace administration.
     *   (Ref: File Sync, Control Center, Backup Inventory, Data Management, Redis Explorer, metadata extraction)
+
 *   **Caching, Runtime, and Durable Processing Capabilities**
     *   DAI Redis read-through caches document lists, tag lists, and legacy counts with scope-version invalidation.
     *   Conversation list/feed caching adds Redis hit/miss metrics for Admin Settings visibility.
@@ -2901,14 +8392,17 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   Shifted the end-user Latest Features page and Admin Settings tab into current, previous, and archive release tiers for the v0.260.001 rollout.
     *   Preserved per-tenant visibility choices across the shift. The new v0.260.001 user-facing cards ship hidden until their placeholder screenshots are replaced, so admins publish each card once its real capture is in place.
     *   (Ref: Latest Features release groups, support catalog, admin catalog, visibility normalization)
+
 *   **Deeper End-User Feature Cards**
     *   Added 20 v0.260.001 end-user cards with seven concrete How To Try It steps and a three-image gallery each.
     *   Expanded the Latest Features card helper with the `images=[...]` gallery form for multi-image cards.
     *   (Ref: `_latest_feature_card`, `_SUPPORT_RELEASE_260_FEATURE_CATALOG`, Latest Features image galleries)
+
 *   **Admin Latest Features Archive Tier**
     *   Brought the Admin Settings Latest Features tab to the same three-tier current, previous, and archive model used by the end-user page.
     *   Keeps v0.250.001 admin cards and older v0.241.x admin highlights available without crowding the current release tier.
     *   (Ref: `_ADMIN_LATEST_FEATURE_RELEASE_GROUPS`, `_ADMIN_RELEASE_260_FEATURE_CATALOG`, Admin Settings Latest Features tab)
+
 *   **Latest Features PR Workflow Hooks**
     *   Added a Latest Features authoring prompt, PR template checklist, and CI warning path so feature PRs consider release notes, cards, and screenshots together.
     *   Helps future releases keep in-app Latest Features content aligned with shipped user and admin changes.
@@ -2920,16 +8414,19 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   Agent configuration now follows Actions → Knowledge → Instructions, with selected actions visible in the Instructions step.
     *   Workflows use a stepped General/Trigger/Tasks/Reliability/Review builder with per-task runner controls and alert-rule editing.
     *   (Ref: agent modal, workflow builder, workflow runner controls, alert rules editor)
+
 *   **Administration and Configuration UX Improvements**
     *   Workspace sections now use a consistent Documents → Prompts → Identities → Sync → Endpoints → Actions → Agents → Workflows order.
     *   Governance policy copy/inverse/show-users actions, dedicated Log Analytics configuration, refreshed backup/migrate/restore flows, and reviewed data migration steps reduce admin friction.
     *   External links can be reordered, custom pages can be opened directly, and non-blocking Bootstrap toasts replace browser alerts across admin, workspace, and profile pages.
     *   (Ref: workspace section order, governance UI, Log Analytics settings, data migration UI, toast notifications)
+
 *   **Chat, Navigation, and Accessibility Enhancements**
     *   Chat, navigation, and sidebar layouts remain usable at 200% zoom and with large text.
     *   The Conversation Contents drawer adds safe labels, keyboard focus handling, active-location tracking, and responsive desktop/mobile navigation.
     *   Long source lists collapse behind a disclosure, document picker rows show file-name context, and Refresh Documents preserves selection with clearer status.
     *   (Ref: 508 usability, conversation contents drawer, source disclosure, document picker, refresh documents)
+
 *   **Data Explorer and Extraction Status UX**
     *   Redis Explorer uses a fixed-height modal with independent key-list and preview scrolling.
     *   Cosmos query results open in a scrollable modal so the main editor stays focused on query setup.
@@ -2940,6 +8437,7 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   Added 76 branded "Screenshot pending" placeholders so every v0.260.001 Latest Features card renders a valid local image while final captures are pending.
     *   Placeholders can be replaced in place with real screenshots without changing the catalog configuration.
     *   (Ref: `application/single_app/static/images/features/`, Latest Features image galleries)
+
 ### **(v0.250.231)**
 
 #### Bug Fixes
@@ -3026,46 +8524,59 @@ v0.260.001 consolidates all work released after v0.250.001 into one major releas
     *   The admin route was already computing and passing `support_latest_feature_release_groups_preview` for a panel that could never display, so admins had no way to review previous and archive release cards alongside their sharing status.
     *   Closed the disabled block after the legacy cards so the preview panel renders again, and namespaced its element ids to avoid colliding with the admin release-group cards.
     *   (Ref: `admin_settings.html` Latest Features tab, `support_latest_feature_release_groups_preview`, `route_frontend_admin_settings.py`)
+
 *   **Latest Features Sidebar Card Id Special Case Removed**
     *   The admin sidebar built the previous-release section link through a redundant conditional that produced the same id as the general dynamic expression.
     *   Simplified to the dynamic form so every non-current tier, including the new archive tier, is handled the same way.
     *   (Ref: `_sidebar_nav.html`, admin Latest Features navigation)
+
 *   **Orphaned Latest Features Metadata Tables Removed**
     *   Removed `_SUPPORT_CURRENT_FEATURE_IMAGE_METADATA` and `_SUPPORT_CURRENT_FEATURE_USER_METADATA` along with the two helpers that consumed them. Their keys matched no feature id in any release tier, so both helpers were no-ops, and the `_CURRENT_` naming became misleading after the release tiers shifted.
     *   Verified behavior-neutral: the full serialized catalog output across every accessor and several settings permutations is byte-identical before and after removal.
     *   Added a regression test that generically detects orphaned per-feature metadata tables, so this class of drift is caught in future rather than only these two names.
     *   (Ref: `support_menu_config.py`, `test_support_menu_config_dead_metadata_removal.py`)
+
 *   **Citations and Source Rendering**
     *   Citation parsing preserves line breaks after inline citations, agent document search results render as document sources, retrieved and cited sources remain separated, prior grounded references resolve in follow-up turns, and source-reading intent is no longer misclassified as artifact generation.
     *   (Ref: citation parser, agent document search, grounded source references, generated artifacts)
+
 *   **Shared Conversations and Conversation Forks**
     *   Shared conversations load, render messages, generate AI responses, refresh uploads/task documents, and survive Blueprint security hardening.
     *   Forking from group/public workspace knowledge no longer returns HTTP 500, and structured logging normalization prevents logger errors from replacing HTTP responses.
     *   (Ref: shared conversations, streaming bridge, conversation fork, structured logging)
+
 *   **Workflow Execution Reliability**
     *   File Sync summaries reach task-based workflow models, task instructions scope document search queries, run history preserves per-task document status, zero-retry settings persist, and invalid task document actions are contained.
     *   (Ref: workflow execution, task document status, retries, File Sync summaries)
+
 *   **Backup, Restore, and Data Management Reliability**
     *   Backup ETag normalization, Cosmos pagination, checkpoint batching, and provider status diagnostics improve backup completeness and troubleshooting.
     *   (Ref: Data Management backup, Backup Inventory, Cosmos pagination, checkpoint batching)
+
 *   **Tabular Analyze/Search Durability**
     *   Exhaustive Markdown output includes all rows, line-phrased requests route to the durable pipeline, artifact lifecycle finishes before run completion, stale settings migrations correct disabled preflight flags, and `filter_rows contains` semantics match across foreground and durable paths.
     *   (Ref: tabular analyze, durable preflight, generated artifacts, filter_rows)
+
 *   **Document Extraction and Grounded Search**
     *   Legacy DOC/PPT embedded images are analyzed, image chunks merge into the correct surrounding-text chunk, document picker search matches file names, and multi-word grounded queries support punctuation word breaks.
     *   (Ref: embedded images, chunk placement, document picker search, grounded search)
+
 *   **Cosmos, Redis, and Cache Performance**
     *   Settings container idle RU usage is reduced, no-op read invalidation is skipped, Docker multi-worker startup conflicts recover, DAI Redis TTLs are bounded/refreshed, cache invalidation fails closed on unknown safety state, and cache parity improves for pending shared documents, legacy revisions, and generated-artifact identity.
     *   (Ref: Cosmos RU usage, conversation cache invalidation, DAI Redis cache, public workspace artifacts)
+
 *   **Authentication and Security**
     *   Credential-like field names are no longer logged in clear text, action secret references are scoped to their owning action, Terms of Use redirects happen server-side with HTTPS enforcement, and `/getAToken` without an authorization code redirects to sign-in.
     *   (Ref: credential redaction, action secrets, Terms of Use, authentication redirects)
+
 *   **Model Endpoints and MCP Outbound**
     *   Managed identity cloud values are normalized, vision test connection uses the correct multi-endpoint target, GPT 5.6+ models appear in the multi-modal vision selector, and MCP tool arguments no longer get wrapped in incompatible `kwargs` payloads.
     *   (Ref: model endpoints, vision selector, managed identity, MCP outbound)
+
 *   **Governance, Navigation, and Admin Settings**
     *   Retargeting policies no longer creates duplicates, block-list modals stack correctly, Group Workflows appears in the sidebar, hidden tabs hide sidebar links, logo/favicon save paths no longer 500, and update banner version comparison no longer shows stale releases as newer.
     *   (Ref: governance policies, workspace sidebar, admin settings, update banner)
+
 *   **Retention, Notifications, Logging, and Public Workspace Edge Cases**
     *   Group and collaboration conversations now use correct retention policy/activity timestamps, unauthenticated pages avoid notification polling 401 noise, Application Insights events carry sanitized diagnostic values with standardized tags, custom Databricks-prefixed plugin discovery avoids built-in defaults, and hidden public workspace documents can ground chat searches.
     *   (Ref: retention policy, notification polling, Application Insights logging, plugin discovery, public workspace search)
@@ -5486,7 +10997,6 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   Refined the chat conversation info button and compact sidebar toggle so they render as quiet icon-only controls while preserving accessible focus states.
     *   (Ref: `chats.html`, `_sidebar_nav.html`, `_sidebar_short_nav.html`, `sidebar.css`, `test_chat_sidebar_toggle_controls.py`)
 
-
 ### **(v0.241.007)**
 
 #### Bug Fixes
@@ -5538,7 +11048,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   Added an in-app Setup Guide modal to the AI Voice Conversations admin card so admins can configure Azure Speech without leaving Admin Settings.
     *   The guide includes a live snapshot of the current Speech configuration, explains key versus managed-identity authentication, and now walks admins through enabling the required custom domain in Azure portal before verifying the endpoint on Keys and Endpoint.
     *   (Ref: `admin_settings.html`, `_speech_service_info.html`, `azure_speech_managed_identity_manul_setup.md`, `test_admin_multimedia_guidance.py`)
-    
+
 ### **(v0.241.002)**
 
 #### Bug Fixes
@@ -5586,7 +11096,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   Personal Workspace and Group Workspace now surface dedicated model endpoint management cards, and agent/model selection can use combined global plus workspace endpoint lists instead of relying on a single shared deployment.
     *   The endpoint workflow supports Azure OpenAI and Azure AI Foundry discovery flows, including model fetch/test operations and endpoint-based Foundry agent import.
     *   (Ref: `route_backend_models.py`, `route_frontend_admin_settings.py`, `workspace_model_endpoints.js`, `admin_model_endpoints.js`, `workspace.html`, `group_workspaces.html`, `test_workspace_multi_endpoints.py`)
-    
+
 *   **Guided Chat Tutorial**
     *   Expanded the in-app chat tutorial into a fuller guided walkthrough of the current chat experience so new users can learn the live interface in context.
     *   The tutorial now walks through the main chat toolbar, workspace and scope controls, conversation search, advanced search, selection mode, bulk actions, export-related flows, and message-level actions such as retry, edit, feedback, thoughts, and citations.
@@ -5799,7 +11309,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   For SQL action types, the redundant additional fields UI in Step 4 is hidden entirely since all SQL configuration is already handled in Step 3.
     *   Step 5 (Summary) no longer shows the raw additional fields JSON dump for SQL types, since that data is already shown in the SQL Database Configuration summary card.
     *   (Ref: `_plugin_modal.html`, `plugin_modal_stepper.js`)
-    
+
 #### Bug Fixes
 
 *   **Chat History Citation Replay Improvements**
@@ -5814,7 +11324,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   Document deletion now offers a choice between deleting only the current revision or deleting all stored revisions for that document family.
     *   Blob storage now preserves older source files by keeping the active document at the existing alias path and archiving prior current revisions into a revision-family hierarchy before the alias path is overwritten.
     *   (Ref: document revision families, current-only workspace visibility, hybrid blob alias plus archived revision storage, `functions_documents.py`, `functions_search.py`, `route_enhanced_citations.py`, workspace/group/public document flows)
-    
+
 *   **Python Runtime Dependency Refresh and Supply-Chain Hardening**
     *   Continued the requirements hardening work from `v0.240.014` by tightening the main application runtime to exact package pins, reducing dependency drift across local development, CI, and Azure deployments to help mitigate supply-chain exposure.
     *   Upgraded the Flask runtime stack to `Flask==3.1.3` and `Werkzeug==3.1.6`, and updated the shared `Markup` import path to `markupsafe` so the app starts correctly with Flask 3's package boundary changes.
@@ -5838,7 +11348,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   Legacy `.ppt` uploads now extract slide text and available summary metadata from the OLE presentation streams while keeping the same enhanced-citation and final-metadata workflow used by `.pptx` uploads.
     *   `.pptx` uploads now also populate presentation metadata such as title, author, subject, and keywords during the initial metadata update when metadata extraction is enabled.
     *   (Ref: `functions_content.py`, `functions_documents.py`, `test_legacy_doc_ole_extraction.py`, `test_legacy_ppt_ole_extraction.py`, legacy Office OLE support and metadata parity)
-    
+
 *   **Pillow PSD Upload Hardening**
     *   Updated the application to use `pillow==12.1.1`, moving the app off the vulnerable Pillow range for specially crafted PSD image parsing.
     *   Hardened admin logo and favicon uploads so Pillow now only opens the PNG and JPEG formats already allowed by the route, preventing disguised PSD content from being decoded during upload processing.
@@ -5906,7 +11416,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   Streaming chat now polls pending thoughts while the response is still in flight, allowing the active status badge to switch from model-sending text to the currently executing plugin call during long-running tools such as `WaitPlugin.wait`.
     *   Completed plugin thoughts still include the richer human-readable summaries for wait, math, and generic plugin executions, and broader plugin coverage remains enabled through auto-wrapping for manifest-loaded plugins.
     *   (Ref: `plugin_invocation_logger.py`, `plugin_invocation_thoughts.py`, `chat-thoughts.js`, `chat-streaming.js`, `logged_plugin_loader.py`, `test_logged_core_plugins.py`)
-    
+
 *   **Multi-Sheet Workbook Tabular Analysis**
     *   Fixed multi-sheet Excel workbooks being analyzed from the wrong worksheet during tabular chat responses. Questions that clearly target a specific tab, such as asset values in a workbook with `Assets`, `Balance`, and `Income` sheets, no longer silently default to the first sheet.
     *   Tabular runtime analysis now requires explicit `sheet_name` or `sheet_index` selection for analytical calls on multi-sheet workbooks, and the SK mini-agent preload now includes workbook sheet inventory and per-sheet schemas so the model can choose the correct worksheet before computing results.
@@ -6041,6 +11551,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
 *   **Retention Policy UI for Groups and Public Workspaces**
     *   Can now configure conversation and document retention periods directly from the workspace and group management page.
     *   Choose from preset retention periods ranging from 7 days to 10 years, use the organization default, or disable automatic deletion entirely.
+
 *   **Owner-Only Group Agent and Action Management**
     *   New admin setting to restrict group agent and group action management (create, edit, delete) to only the group Owner role.
     *   **Admin Toggle**: "Require Owner to Manage Group Agents and Actions" located in Admin Settings > My Groups section, under the existing group creation membership setting.
@@ -6131,6 +11642,7 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
     *   Removed the membership verification from the `setActive` endpoint; the route still requires authentication (`@login_required`, `@user_required`) and the public workspaces feature flag (`@enabled_required`).
     *   Other admin-level endpoints (listing members, viewing stats, ownership transfer) retain their membership checks.
     *   (Ref: `route_backend_public_workspaces.py`, `api_set_active_public_workspace`)
+
 *   **Chats Page User Settings Hardening**
     *   Fixed a user-specific chats page failure where only one affected user could not load `/chats` due to malformed per-user settings data.
     *   **Root Cause**: The chats route assumed `user_settings["settings"]` was always a dictionary. If that field existed but had an invalid type (for example string, null, or list), the page could fail before rendering.
@@ -6865,4 +12377,4 @@ The individual patch builds consolidated into v0.260.001 are preserved below for
 
 ---
 
-Release notes for versions before v0.230.001 have moved to the [archived release notes](/explanation/archive_release_notes/).
+Release notes for versions before v0.230.001 have moved to the [archived release notes](https://microsoft.github.io/simplechat/explanation/archive_release_notes/).

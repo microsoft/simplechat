@@ -120,6 +120,7 @@ const GOVERNANCE_ACTION_TYPE_ALIASES = {
     blob_storage: 'blob_storage',
     document_search: 'document_search',
     search: 'document_search',
+    control_center: 'control_center',
 };
 
 const GOVERNANCE_ACTION_TYPE_LABELS = {
@@ -139,6 +140,7 @@ const GOVERNANCE_ACTION_TYPE_LABELS = {
     azure_maps: 'Azure Maps',
     blob_storage: 'Blob Storage',
     document_search: 'Document Search',
+    control_center: 'Control Center',
 };
 
 const GOVERNANCE_PRIMARY_TOGGLE_MAP = {

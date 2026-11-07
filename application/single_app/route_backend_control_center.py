@@ -3,45 +3,256 @@
 import csv
 import logging
 import math
+import re
 import time
 from io import StringIO
 
-from flask import make_response
+from flask import Response, make_response, stream_with_context
+from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 from config import *
 from functions_authentication import *
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
-from functions_control_center import (
+from functions_control_center_schedule import (
     calculate_next_control_center_auto_refresh_run,
     get_control_center_auto_refresh_schedule,
     parse_control_center_auto_refresh_datetime,
+)
+from functions_control_center_activity import (
+    ACTIVITY_PAGE_MAX,
+    activity_csv_stream,
+    activity_page,
+    activity_summary,
+    parse_activity_filters,
+    query_activity_rows,
+)
+from functions_control_center_dashboard import (
+    CONTROL_CENTER_ACTION_TYPE,
+    DASHBOARD_INVALID_RANGE_ERROR,
+    DashboardStores,
+    build_token_usage_query_context,
+    extract_token_filters,
+    get_dashboard_insights,
+    get_dashboard_summary,
+    parse_dashboard_period,
+)
+from functions_control_center_dashboard_chat import (
+    build_dashboard_chat_readiness,
+    control_center_action_records,
+)
+from functions_action_catalog import build_accessible_action_catalog
+from functions_governance import is_global_action_access_allowed
+from functions_orchestration_registry import CAPABILITY_ACTION_INVOKE, capability_allowlisted
+from functions_control_center_activity_display import (
+    ACTIVITY_LOOKUP_LIMIT,
+    ActivityNameCache,
+    activity_csv_columns,
+    activity_filter_labels,
+    activity_type_catalog,
+    empty_activity_names,
+    label_activity_facets,
+    present_activity_rows,
+    resolve_activity_names,
+    search_activity_people,
+    search_activity_people_ids,
+    search_activity_workspaces,
 )
 from functions_settings import *
 from functions_logging import *
 from functions_activity_logging import *
 from functions_approvals import *
-from functions_approvals import _can_user_approve, _can_user_deny
+from functions_approvals import (
+    APPROVAL_STATS_SCAN_LIMIT,
+    _can_user_approve,
+    _can_user_deny,
+    summarize_visible_approvals,
+)
+from functions_review_center import parse_review_window
 from functions_m365_approvals import is_m365_approval
 from functions_m365_pending_delivery import cancel_m365_conversation_deliveries
 from route_backend_m365 import m365_approval_decision_response
 from functions_documents import update_document, delete_document, delete_document_chunks
-from functions_group import delete_group
+from functions_group import (
+    GROUP_WRITE_CONFLICT_CODE,
+    GROUP_WRITE_CONFLICT_MESSAGE,
+    GroupDocumentWriteConflict,
+    delete_group,
+    get_user_role_in_group,
+    update_group_document_with_etag_guard,
+)
+from functions_control_center_groups import (
+    GROUP_SNAPSHOT_TTL,
+    GroupRequestError,
+    filter_group_inventory,
+    group_members,
+    group_row,
+    load_group_inventory,
+    parse_group_filters,
+    select_group_bulk_ids,
+    validate_group_id,
+    validate_group_status_payload,
+)
+from functions_control_center_public_workspaces import (
+    WORKSPACE_EXPORT_LIMIT, parse_workspace_filters, query_workspaces,
+    select_workspace_ids, workspace_members, workspace_row,
+)
 from functions_safety_remediation import (
+    SAFETY_REQUEST_NOT_CURRENT_MESSAGE,
+    build_safety_action_execution_updates,
     execute_safety_violation_action,
     get_safety_log_item,
+    safety_log_awaits_request,
     update_safety_log_action_state,
+)
+from functions_public_workspaces import (
+    PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+    PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+    PublicWorkspaceDocumentWriteConflict,
+    update_public_workspace_document_with_etag_guard,
+    get_user_role_in_public_workspace,
 )
 from utils_cache import invalidate_group_search_cache
 from swagger_wrapper import swagger_route, get_auth_security
 from datetime import datetime, timedelta, timezone
-import json
 from functions_debug import debug_print
+from functions_appinsights import log_event
 
 
 ACTIVITY_LOGS_DEFAULT_PER_PAGE = 50
 ACTIVITY_LOGS_MAX_PER_PAGE = 200
 CONTROL_CENTER_MANAGEMENT_DEFAULT_PER_PAGE = 25
 CONTROL_CENTER_MANAGEMENT_MAX_PER_PAGE = 250
+_control_center_group_snapshot_cache = {}
+_control_center_activity_name_cache = ActivityNameCache()
+
+
+def _activity_search_people(filters):
+    """People whose name or email matches the search, so search finds what they did.
+
+    The page, summary and export each widen the same search, so a term's matches are cached
+    briefly with the names. A lookup failure narrows the search back to the stored fields.
+    """
+    term = filters["search"].strip().casefold()
+    if not term:
+        return [], False
+    hit, cached = _control_center_activity_name_cache.get("search", term)
+    if hit:
+        return cached
+    try:
+        result = search_activity_people_ids(cosmos_user_settings_container, filters["search"])
+    except Exception as ex:
+        log_event('[CONTROL_CENTER] Activity people search failed; searching stored fields only.',
+                  extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                  level=logging.WARNING)
+        return [], False
+    _control_center_activity_name_cache.set("search", term, result)
+    return result
+
+
+def _activity_names(records, filters=None):
+    """Display names for a page; a lookup failure leaves IDs on screen instead of failing it."""
+    try:
+        return resolve_activity_names(
+            records, filters,
+            user_container=cosmos_user_settings_container,
+            groups_container=cosmos_groups_container,
+            public_container=cosmos_public_workspaces_container,
+            cache=_control_center_activity_name_cache,
+        )
+    except Exception as ex:
+        log_event('[CONTROL_CENTER] Activity name lookup failed; showing IDs.',
+                  extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                  level=logging.WARNING)
+        return empty_activity_names()
+
+
+def _activity_export_columns(rows):
+    names = _activity_names(rows)
+    return [activity_csv_columns(view) for view in present_activity_rows(rows, names)]
+
+
+def _control_center_group_inventory(force_refresh=False):
+    now = time.monotonic()
+    cached = _control_center_group_snapshot_cache.get("inventory")
+    if cached and not force_refresh and now < cached["expires_at"]:
+        return cached["payload"]
+    payload = load_group_inventory(
+        cosmos_groups_container, cosmos_group_documents_container, cosmos_activity_logs_container,
+    )
+    _control_center_group_snapshot_cache["inventory"] = {
+        "expires_at": now + GROUP_SNAPSHOT_TTL, "payload": payload,
+    }
+    return payload
+
+
+def _control_center_dashboard_stores():
+    """The containers the V2 dashboard reads, bound from the application configuration."""
+    return DashboardStores(
+        activity_logs=cosmos_activity_logs_container,
+        user_settings=cosmos_user_settings_container,
+        groups=cosmos_groups_container,
+        public_workspaces=cosmos_public_workspaces_container,
+        user_documents=cosmos_user_documents_container,
+        group_documents=cosmos_group_documents_container,
+        public_documents=cosmos_public_documents_container,
+        approvals=cosmos_approvals_container,
+    )
+
+
+def _dashboard_force_refresh(args):
+    """Whether the request asks to bypass the short-lived dashboard cache."""
+    return str(args.get('force_refresh', '') or '').strip().lower() in {'1', 'true', 'yes'}
+
+# The answers an approved ownership change gives when the group's current copy no
+# longer matches the request. Each is stored on the approval as its failure reason.
+GROUP_OWNERSHIP_CHANGED_MESSAGE = (
+    "The group's owner changed after this request was made, so it wasn't applied. Submit a new request."
+)
+GROUP_NO_LONGER_EXISTS_MESSAGE = "The group no longer exists."
+# A failed approval can't be approved again, so a group that keeps changing asks for a new
+# request rather than the routes' "Try again".
+GROUP_APPROVAL_CONFLICT_MESSAGE = (
+    "The group kept changing while this request was being applied, so it wasn't applied. Submit a new request."
+)
+
+
+class _GroupChangeAnswer(Exception):
+    """The answer a guarded group change gives from the copy being written, with nothing written.
+
+    ``update_group_document_with_etag_guard`` abandons a write when its change raises,
+    so a writer that finds, on the current copy, that the change is already made or no
+    longer applies raises this with the answer to return instead.
+    """
+
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
+
+
+# The answers an approved ownership change gives when the public workspace's current copy
+# no longer matches the request. Each is stored on the approval as its failure reason.
+PUBLIC_OWNERSHIP_CHANGED_MESSAGE = (
+    "The workspace's owner changed after this request was made, so it wasn't applied. Submit a new request."
+)
+PUBLIC_NO_LONGER_EXISTS_MESSAGE = "The public workspace no longer exists."
+# A failed approval can't be approved again, so a workspace that keeps changing asks for a
+# new request rather than the routes' "Try again".
+PUBLIC_APPROVAL_CONFLICT_MESSAGE = (
+    "The workspace kept changing while this request was being applied, so it wasn't applied. Submit a new request."
+)
+
+
+class _PublicChangeAnswer(Exception):
+    """The answer a guarded public workspace change gives from the copy being written.
+
+    ``update_public_workspace_document_with_etag_guard`` abandons a write when its change
+    raises, so a writer that finds, on the current copy, that the change is already made
+    or no longer applies raises this with the answer to return instead.
+    """
+
+    def __init__(self, answer):
+        super().__init__()
+        self.answer = answer
 
 
 def parse_control_center_management_pagination(request_args):
@@ -223,103 +434,6 @@ def get_public_workspace_name_map(public_workspace_ids):
             )
 
     return public_workspace_names
-
-
-def normalize_token_filter_value(value):
-    """Normalize optional token filter values from query params or request JSON."""
-    if value is None:
-        return None
-
-    normalized = str(value).strip()
-    if not normalized or normalized.lower() == 'all':
-        return None
-
-    return normalized
-
-
-def extract_token_filters(source):
-    """Extract supported token filters from a query string or JSON payload."""
-    if not source:
-        return {}
-
-    token_source = source
-    nested_filters = source.get('token_filters') if hasattr(source, 'get') else None
-    if isinstance(nested_filters, dict):
-        token_source = nested_filters
-
-    token_filters = {
-        'user_id': normalize_token_filter_value(token_source.get('user_id')),
-        'workspace_type': normalize_token_filter_value(token_source.get('workspace_type')),
-        'group_id': normalize_token_filter_value(token_source.get('group_id')),
-        'public_workspace_id': normalize_token_filter_value(token_source.get('public_workspace_id')),
-        'model': normalize_token_filter_value(token_source.get('model')),
-        'token_type': normalize_token_filter_value(token_source.get('token_type'))
-    }
-
-    if token_filters['workspace_type'] not in {None, 'personal', 'group', 'public'}:
-        token_filters['workspace_type'] = None
-
-    if token_filters['token_type'] not in {None, 'embedding', 'chat', 'web_search'}:
-        token_filters['token_type'] = None
-
-    if token_filters['group_id'] and not token_filters['workspace_type']:
-        token_filters['workspace_type'] = 'group'
-
-    if token_filters['public_workspace_id'] and not token_filters['workspace_type']:
-        token_filters['workspace_type'] = 'public'
-
-    return token_filters
-
-
-def append_token_usage_filters(query_conditions, parameters, token_filters):
-    """Append optional token usage filters to the Cosmos query state."""
-    if not token_filters:
-        return
-
-    user_id = token_filters.get('user_id')
-    if user_id:
-        query_conditions.append("c.user_id = @token_user_id")
-        parameters.append({"name": "@token_user_id", "value": user_id})
-
-    workspace_type = token_filters.get('workspace_type')
-    if workspace_type:
-        query_conditions.append("c.workspace_type = @token_workspace_type")
-        parameters.append({"name": "@token_workspace_type", "value": workspace_type})
-
-    group_id = token_filters.get('group_id')
-    if group_id:
-        query_conditions.append("c.workspace_context.group_id = @token_group_id")
-        parameters.append({"name": "@token_group_id", "value": group_id})
-
-    public_workspace_id = token_filters.get('public_workspace_id')
-    if public_workspace_id:
-        query_conditions.append("c.workspace_context.public_workspace_id = @token_public_workspace_id")
-        parameters.append({"name": "@token_public_workspace_id", "value": public_workspace_id})
-
-    model = token_filters.get('model')
-    if model:
-        query_conditions.append("c.usage.model = @token_model")
-        parameters.append({"name": "@token_model", "value": model})
-
-    token_type = token_filters.get('token_type')
-    if token_type:
-        query_conditions.append("c.token_type = @token_type")
-        parameters.append({"name": "@token_type", "value": token_type})
-
-
-def build_token_usage_query_context(start_date, end_date, token_filters=None):
-    """Build shared WHERE-clause state for token usage queries."""
-    parameters = [
-        {"name": "@start_date", "value": start_date.isoformat()},
-        {"name": "@end_date", "value": end_date.isoformat()}
-    ]
-    query_conditions = [
-        "c.activity_type = 'token_usage'",
-        "((c.timestamp >= @start_date AND c.timestamp <= @end_date) OR (c.created_at >= @start_date AND c.created_at <= @end_date))"
-    ]
-
-    append_token_usage_filters(query_conditions, parameters, token_filters or {})
-    return " AND ".join(query_conditions), parameters
 
 
 def get_distinct_token_filter_values(query):
@@ -704,7 +818,8 @@ def enhance_user_with_activity(user, force_refresh=False):
                     'total_documents': 0,
                     'ai_search_size': 0,  # pages × 80KB  
                     'storage_account_size': 0  # Actual file sizes from storage
-                }
+                },
+                'token_metrics': {'total_tokens': 0}
             },
             'access_status': 'allow',  # default
             'file_upload_status': 'allow'  # default
@@ -761,6 +876,8 @@ def enhance_user_with_activity(user, force_refresh=False):
                         cached_doc_metrics['personal_workspace_enabled'] = user.get('settings', {}).get('enable_personal_workspace', False)
                         # Do NOT include enhanced_citation_enabled in user data - frontend gets it from app settings
                         enhanced['activity']['document_metrics'] = cached_doc_metrics
+                    if 'token_metrics' in cached_metrics:
+                        enhanced['activity']['token_metrics'] = cached_metrics['token_metrics']
                     return enhanced
                 except Exception as cache_e:
                     debug_print(f"Error using cached metrics for user {user.get('id')}: {cache_e}")
@@ -1055,6 +1172,25 @@ def enhance_user_with_activity(user, force_refresh=False):
                 
         except Exception as e:
             debug_print(f"Could not get document metrics for user {user.get('id')}: {e}")
+
+        try:
+            token_total_query = """
+                SELECT VALUE SUM(c.usage.total_tokens) FROM c
+                WHERE c.user_id = @user_id
+                AND c.activity_type = 'token_usage'
+                AND IS_DEFINED(c.usage.total_tokens)
+                AND IS_NUMBER(c.usage.total_tokens)
+            """
+            token_totals = list(cosmos_activity_logs_container.query_items(
+                query=token_total_query,
+                parameters=[{"name": "@user_id", "value": user_id}],
+                partition_key=user_id
+            ))
+            enhanced['activity']['token_metrics']['total_tokens'] = int(
+                token_totals[0] or 0
+            ) if token_totals else 0
+        except Exception as token_error:
+            debug_print(f"Could not get token metrics for user {user_id}: {token_error}")
         
         # Save calculated metrics to user settings for caching (only if we calculated fresh data)
         if force_refresh or not user.get('settings', {}).get('metrics', {}).get('calculated_at'):
@@ -1066,6 +1202,7 @@ def enhance_user_with_activity(user, force_refresh=False):
                     'calculated_at': datetime.now(timezone.utc).isoformat(),
                     'login_metrics': enhanced['activity']['login_metrics'],
                     'chat_metrics': enhanced['activity']['chat_metrics'],
+                    'token_metrics': enhanced['activity']['token_metrics'],
                     'document_metrics': {
                         'total_documents': enhanced['activity']['document_metrics']['total_documents'],
                         'ai_search_size': enhanced['activity']['document_metrics']['ai_search_size'],
@@ -1091,6 +1228,290 @@ def enhance_user_with_activity(user, force_refresh=False):
     except Exception as e:
         debug_print(f"Error enhancing user data: {e}")
         return user  # Return original user data if enhancement fails
+
+
+CONTROL_CENTER_USERS_MAX_BULK = 500
+CONTROL_CENTER_USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+CONTROL_CENTER_USER_SORTS = {
+    "name": "c.display_name",
+    "email": "c.email",
+    "last_login": "c.settings.metrics.login_metrics.last_login",
+    "conversations": "c.settings.metrics.chat_metrics.total_conversations",
+    "documents": "c.settings.metrics.document_metrics.total_documents",
+    "tokens": "c.settings.metrics.token_metrics.total_tokens",
+}
+CONTROL_CENTER_USER_FIELDS = "c.id, c.email, c.display_name, c.settings"
+
+
+def _control_center_validate_user_id(user_id):
+    """Reject malformed route/body identifiers before using them in lookups or links."""
+    normalized = str(user_id or "").strip()
+    if not CONTROL_CENTER_USER_ID_PATTERN.fullmatch(normalized):
+        raise ValueError("Invalid user ID.")
+    return normalized
+
+
+def _control_center_parse_user_filters(values, now=None):
+    """Normalize the shared Users list, export, and filter-selection query contract."""
+    current_time = now or datetime.now(timezone.utc)
+    search = str(values.get("search", "") or "").strip()
+    if len(search) > 200:
+        raise ValueError("Search text is too long.")
+
+    legacy_filter = str(values.get("filter", "") or "").strip().lower()
+    status = str(values.get("status", "") or "").strip().lower()
+    access_status = str(values.get("access_status", "all") or "all").strip().lower()
+    if status == "blocked":
+        access_status = "deny"
+    elif status in {"allow", "deny"} and not access_status:
+        access_status = status
+    if legacy_filter == "active" and not values.get("last_login"):
+        last_login = "30"
+    else:
+        last_login = str(values.get("last_login", "all") or "all").strip().lower()
+
+    upload_status = str(values.get("upload_status", "all") or "all").strip().lower()
+    has_documents = str(values.get("has_documents", "all") or "all").strip().lower()
+    sort = str(values.get("sort", "name") or "name").strip().lower()
+    direction = str(values.get("direction", "asc") or "asc").strip().lower()
+
+    if access_status not in {"all", "allow", "deny"}:
+        raise ValueError("Invalid access status filter.")
+    if upload_status not in {"all", "allow", "deny"}:
+        raise ValueError("Invalid file-upload status filter.")
+    if last_login not in {"all", "never", "7", "30", "90", "90_plus"}:
+        raise ValueError("Invalid last-login filter.")
+    if has_documents not in {"all", "yes", "no"}:
+        raise ValueError("Invalid document filter.")
+    if sort not in CONTROL_CENTER_USER_SORTS:
+        raise ValueError("Invalid user sort field.")
+    if direction not in {"asc", "desc"}:
+        raise ValueError("Invalid sort direction.")
+
+    return {
+        "search": search,
+        "access_status": access_status,
+        "upload_status": upload_status,
+        "last_login": last_login,
+        "has_documents": has_documents,
+        "sort": sort,
+        "direction": direction,
+        "now": current_time,
+    }
+
+
+def _control_center_user_where(filters):
+    """Build a parameterized Cosmos WHERE clause from normalized Users filters."""
+    clauses = []
+    parameters = []
+
+    def add_clause(clause, name, value):
+        clauses.append(clause)
+        parameters.append({"name": name, "value": value})
+
+    if filters["search"]:
+        add_clause(
+            "(CONTAINS(LOWER(c.email), @search) OR CONTAINS(LOWER(c.display_name), @search))",
+            "@search",
+            filters["search"].lower(),
+        )
+
+    now_iso = filters["now"].astimezone(timezone.utc).isoformat()
+    for field, value, parameter_prefix in (
+        ("access", filters["access_status"], "access"),
+        ("file_uploads", filters["upload_status"], "upload"),
+    ):
+        if value == "deny":
+            add_clause(
+                f"(c.settings.{field}.status = @{parameter_prefix}_status "
+                f"AND (NOT IS_DEFINED(c.settings.{field}.datetime_to_allow) "
+                f"OR IS_NULL(c.settings.{field}.datetime_to_allow) "
+                f"OR c.settings.{field}.datetime_to_allow > @{parameter_prefix}_now))",
+                f"@{parameter_prefix}_status",
+                "deny",
+            )
+            parameters.append({"name": f"@{parameter_prefix}_now", "value": now_iso})
+        elif value == "allow":
+            add_clause(
+                f"(NOT IS_DEFINED(c.settings.{field}.status) "
+                f"OR c.settings.{field}.status != 'deny' "
+                f"OR (IS_DEFINED(c.settings.{field}.datetime_to_allow) "
+                f"AND NOT IS_NULL(c.settings.{field}.datetime_to_allow) "
+                f"AND c.settings.{field}.datetime_to_allow <= @{parameter_prefix}_now))",
+                f"@{parameter_prefix}_now",
+                now_iso,
+            )
+
+    login_path = "c.settings.metrics.login_metrics.last_login"
+    if filters["last_login"] == "never":
+        clauses.append(
+            f"(NOT IS_DEFINED({login_path}) OR IS_NULL({login_path}) OR {login_path} = 'Never' OR {login_path} = '')"
+        )
+    elif filters["last_login"] in {"7", "30", "90", "90_plus"}:
+        days = 90 if filters["last_login"] == "90_plus" else int(filters["last_login"])
+        cutoff = (filters["now"] - timedelta(days=days)).astimezone(timezone.utc).isoformat()
+        if filters["last_login"] == "90_plus":
+            clauses.append(
+                f"IS_DEFINED({login_path}) AND NOT IS_NULL({login_path}) "
+                f"AND {login_path} != 'Never' AND {login_path} < @last_login_cutoff"
+            )
+        else:
+            clauses.append(
+                f"IS_DEFINED({login_path}) AND {login_path} >= @last_login_cutoff"
+            )
+        parameters.append({"name": "@last_login_cutoff", "value": cutoff})
+
+    document_count_path = "c.settings.metrics.document_metrics.total_documents"
+    if filters["has_documents"] == "yes":
+        clauses.append(f"IS_DEFINED({document_count_path}) AND {document_count_path} > 0")
+    elif filters["has_documents"] == "no":
+        clauses.append(f"IS_DEFINED({document_count_path}) AND {document_count_path} = 0")
+
+    return (" AND ".join(clauses) if clauses else "1=1"), parameters
+
+
+def _control_center_user_populations(filters):
+    """Split users by whether the sort property is recorded; each part orders one property.
+
+    An ORDER BY over two properties needs a composite index that user_settings does not
+    have. Users with a recorded sort value are ordered by that property alone, and users
+    without one follow in ID order, last in either direction.
+    """
+    field = CONTROL_CENTER_USER_SORTS[filters["sort"]]
+    recorded = f"(IS_DEFINED({field}) AND NOT IS_NULL({field}))"
+    return (
+        (recorded, f"ORDER BY {field} {filters['direction'].upper()}"),
+        (f"NOT {recorded}", "ORDER BY c.id ASC"),
+    )
+
+
+def _control_center_count_users(container, where_clause, parameters):
+    """Count the users matching a parameterized WHERE clause."""
+    rows = list(container.query_items(
+        query=f"SELECT VALUE COUNT(1) FROM c WHERE {where_clause}",
+        parameters=parameters,
+        enable_cross_partition_query=True,
+    ))
+    return int(rows[0] or 0) if rows else 0
+
+
+def _control_center_query_user_page(container, filters, page, per_page):
+    """Return one page of filtered users with the total, clamped page and page count.
+
+    A page can end the recorded population and continue into the missing one.
+    """
+    where_clause, parameters = _control_center_user_where(filters)
+    (recorded_clause, recorded_order), (missing_clause, missing_order) = (
+        _control_center_user_populations(filters)
+    )
+    total = _control_center_count_users(container, where_clause, parameters)
+    recorded = _control_center_count_users(
+        container,
+        f"({where_clause}) AND {recorded_clause}",
+        parameters,
+    )
+    total_pages = get_control_center_total_pages(total, per_page)
+    page = clamp_control_center_page(page, total_pages)
+    offset = (page - 1) * per_page
+    user_docs = []
+    if offset < recorded:
+        user_docs.extend(container.query_items(
+            query=(
+                f"SELECT {CONTROL_CENTER_USER_FIELDS} FROM c "
+                f"WHERE ({where_clause}) AND {recorded_clause} {recorded_order} "
+                "OFFSET @offset LIMIT @limit"
+            ),
+            parameters=parameters + [
+                {"name": "@offset", "value": offset},
+                {"name": "@limit", "value": min(per_page, recorded - offset)},
+            ],
+            enable_cross_partition_query=True,
+        ))
+    if len(user_docs) < per_page and total > recorded:
+        user_docs.extend(container.query_items(
+            query=(
+                f"SELECT {CONTROL_CENTER_USER_FIELDS} FROM c "
+                f"WHERE ({where_clause}) AND {missing_clause} {missing_order} "
+                "OFFSET @offset LIMIT @limit"
+            ),
+            parameters=parameters + [
+                {"name": "@offset", "value": max(0, offset - recorded)},
+                {"name": "@limit", "value": per_page - len(user_docs)},
+            ],
+            enable_cross_partition_query=True,
+        ))
+    return user_docs, total, page, total_pages
+
+
+def _control_center_iter_users(container, filters):
+    """Yield every filtered user: recorded sort values in order, then the rest by ID."""
+    where_clause, parameters = _control_center_user_where(filters)
+    for clause, order in _control_center_user_populations(filters):
+        yield from container.query_items(
+            query=(
+                f"SELECT {CONTROL_CENTER_USER_FIELDS} FROM c "
+                f"WHERE ({where_clause}) AND {clause} {order}"
+            ),
+            parameters=parameters,
+            enable_cross_partition_query=True,
+        )
+
+
+def _control_center_effective_restriction(settings, setting_key, now=None):
+    """Return the effective allow/deny state and any stored expiry for one user setting."""
+    value = settings.get(setting_key, {})
+    if not isinstance(value, dict):
+        value = {}
+    expires_at = value.get("datetime_to_allow")
+    status = "deny" if value.get("status") == "deny" else "allow"
+    if status == "deny" and expires_at:
+        try:
+            expiry = datetime.fromisoformat(
+                str(expires_at).replace("Z", "+00:00")
+            )
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= (now or datetime.now(timezone.utc)):
+                status = "allow"
+        except (TypeError, ValueError):
+            # A malformed stored expiry must not lift an active deny.
+            pass
+    return {"status": status, "expires_at": expires_at}
+
+
+def _control_center_user_row(user, now=None):
+    """Project a user document onto the non-sensitive Users table response shape."""
+    settings = user.get("settings", {})
+    if not isinstance(settings, dict):
+        settings = {}
+    metrics = settings.get("metrics", {})
+    if not isinstance(metrics, dict):
+        metrics = {}
+    login_metrics = metrics.get("login_metrics", {})
+    chat_metrics = metrics.get("chat_metrics", {})
+    document_metrics = metrics.get("document_metrics", {})
+    token_metrics = metrics.get("token_metrics", {})
+    return {
+        "id": user.get("id", ""),
+        "email": user.get("email", ""),
+        "display_name": user.get("display_name", ""),
+        "access": _control_center_effective_restriction(settings, "access", now),
+        "file_uploads": _control_center_effective_restriction(settings, "file_uploads", now),
+        "last_login": login_metrics.get("last_login"),
+        "total_logins": login_metrics.get("total_logins"),
+        "conversations": chat_metrics.get("total_conversations"),
+        "documents": document_metrics.get("total_documents"),
+        "tokens": token_metrics.get("total_tokens"),
+        "metrics_calculated_at": metrics.get("calculated_at"),
+    }
+
+
+def _control_center_csv_safe_cell(value):
+    """Prevent formula execution in spreadsheet applications for every CSV cell type."""
+    serialized = "" if value is None else str(value)
+    if serialized.lstrip().startswith(("=", "+", "-", "@")):
+        return f"'{serialized}"
+    return serialized
 
 def enhance_public_workspace_with_activity(workspace, force_refresh=False):
     """
@@ -1341,7 +1762,11 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                     enhanced['storage_size'] = 0
         
-        # Cache the computed metrics in the workspace document
+        # Cache the computed metrics in the workspace document. The figures are computed
+        # above, so the guarded write only sets them on the copy it reads: membership and
+        # every other field come from that copy, even when the caller listed the workspace
+        # long before, and a workspace deleted meanwhile is skipped, never recreated. No
+        # chat bootstrap payload reads the metrics, so nothing is bumped.
         if force_refresh:
             try:
                 metrics_cache = {
@@ -1351,10 +1776,17 @@ def enhance_public_workspace_with_activity(workspace, force_refresh=False):
                     'calculated_at': datetime.now(timezone.utc).isoformat()
                 }
                 
-                # Update workspace document with cached metrics
+                # The caller's copy keeps the figures too, as before
                 workspace['metrics'] = metrics_cache
-                cosmos_public_workspaces_container.upsert_item(workspace)
-                debug_print(f"Successfully cached metrics for workspace {workspace_id}")
+
+                def apply_metrics(fresh):
+                    fresh['metrics'] = metrics_cache
+                    return fresh
+
+                if update_public_workspace_document_with_etag_guard(workspace_id, apply_metrics, cache_reason=None) is None:
+                    debug_print(f"Skipped caching metrics for workspace {workspace_id}: the workspace no longer exists")
+                else:
+                    debug_print(f"Successfully cached metrics for workspace {workspace_id}")
                     
             except Exception as cache_save_e:
                 debug_print(f"Error saving metrics cache for workspace {workspace_id}: {cache_save_e}")
@@ -1684,7 +2116,11 @@ def enhance_group_with_activity(group, force_refresh=False):
                     enhanced['activity']['document_metrics']['storage_account_size'] = 0
                     enhanced['storage_size'] = 0
                 
-        # Cache the computed metrics in the group document
+        # Cache the computed metrics in the group document. The figures are computed
+        # above, so the guarded write only sets them on the copy it reads: membership and
+        # every other field come from that copy, even when the caller listed the group
+        # long before, and a group deleted meanwhile is skipped, never recreated. No
+        # chat bootstrap payload reads the metrics, so nothing is bumped.
         if force_refresh:
             try:
                 metrics_cache = {
@@ -1692,10 +2128,17 @@ def enhance_group_with_activity(group, force_refresh=False):
                     'calculated_at': datetime.now(timezone.utc).isoformat()
                 }
                 
-                # Update group document with cached metrics
+                # The caller's copy keeps the figures too, as before
                 group['metrics'] = metrics_cache
-                cosmos_groups_container.upsert_item(group)
-                debug_print(f"Successfully cached metrics for group {group_id}")
+
+                def apply_metrics(fresh):
+                    fresh['metrics'] = metrics_cache
+                    return fresh
+
+                if update_group_document_with_etag_guard(group_id, apply_metrics, cache_reason=None) is None:
+                    debug_print(f"Skipped caching metrics for group {group_id}: the group no longer exists")
+                else:
+                    debug_print(f"Successfully cached metrics for group {group_id}")
                     
             except Exception as cache_save_e:
                 debug_print(f"Error saving metrics cache for group {group_id}: {cache_save_e}")
@@ -2719,6 +3162,130 @@ def get_raw_activity_trends_data(start_date, end_date, charts, token_filters=Non
 
 
 def register_route_backend_control_center(bp):
+    @bp.route('/api/v2/control-center/activity-logs', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_logs():
+        """A page of activity with readable presentation and names for the active filters."""
+        try:
+            filters = parse_activity_filters(request.args)
+            page_size = int(request.args.get('page_size', 50))
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters, page size, or cursor. Use a UTC date range of up to 366 days.'}), 400
+        search_ids, search_truncated = _activity_search_people(filters)
+        try:
+            payload = activity_page(
+                cosmos_activity_logs_container, filters,
+                page_size=page_size, cursor_value=request.args.get('cursor'), search_user_ids=search_ids,
+            )
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters, page size, or cursor. Use a UTC date range of up to 366 days.'}), 400
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity feed query failed.',
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
+            return jsonify({'error': 'Unable to load activity logs. Check the activity-log composite index in App Maintenance, then retry.'}), 500
+        names = _activity_names(payload['items'], filters)
+        payload['presentation'] = present_activity_rows(payload['items'], names)
+        payload['filter_labels'] = activity_filter_labels(filters, names)
+        payload['search_people'] = {'matched': len(search_ids), 'truncated': search_truncated}
+        return jsonify(payload)
+
+    @bp.route('/api/v2/control-center/activity-logs/summary', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_summary():
+        try:
+            filters = parse_activity_filters(request.args)
+        except ValueError:
+            return jsonify({'error': 'Invalid activity filters. Use a UTC date range of up to 366 days.'}), 400
+        search_ids, _ = _activity_search_people(filters)
+        try:
+            summary = activity_summary(cosmos_activity_logs_container, filters, search_user_ids=search_ids)
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity summary query failed.',
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
+            return jsonify({'error': 'Unable to load the activity summary. Check App Maintenance indexing status and retry.'}), 500
+        summary['facets'] = label_activity_facets(summary['facets'])
+        summary['type_catalog'] = activity_type_catalog()
+        return jsonify(summary)
+
+    @bp.route('/api/v2/control-center/activity-logs/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_export():
+        try:
+            filters = parse_activity_filters(request.args)
+        except ValueError:
+            return jsonify({'error': 'Invalid activity export filters. Use a UTC date range of up to 366 days.'}), 400
+        search_ids, _ = _activity_search_people(filters)
+        try:
+            rows, snapshot = query_activity_rows(
+                cosmos_activity_logs_container, filters, ACTIVITY_PAGE_MAX, search_user_ids=search_ids,
+            )
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity export query failed.',
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
+            return jsonify({'error': 'Unable to export activity logs. Check App Maintenance indexing status and retry.'}), 500
+
+        def generate():
+            try:
+                yield from activity_csv_stream(
+                    cosmos_activity_logs_container, filters, rows, snapshot,
+                    search_user_ids=search_ids, present_rows=_activity_export_columns,
+                )
+            except Exception as ex:
+                log_event('[CONTROL_CENTER] Activity export stream interrupted.',
+                          extra={'error_type': type(ex).__name__}, level=logging.ERROR)
+                raise
+
+        response = Response(stream_with_context(generate()), mimetype='text/csv')
+        response.headers['Content-Disposition'] = 'attachment; filename="activity_logs.csv"'
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['X-Export-Row-Limit'] = '10000'
+        return response
+
+    @bp.route('/api/v2/control-center/activity-logs/people', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_people():
+        """SimpleChat users matching a name, email or ID, for the Activity Logs person filter."""
+        term = (request.args.get('q') or '').strip()
+        if len(term) > 200:
+            return jsonify({'error': 'Search text is too long.'}), 400
+        try:
+            return jsonify({'people': search_activity_people(cosmos_user_settings_container, term, ACTIVITY_LOOKUP_LIMIT)})
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity people lookup failed.',
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
+            return jsonify({'error': 'Unable to search people. Retry.'}), 500
+
+    @bp.route('/api/v2/control-center/activity-logs/workspaces', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('activity_logs')
+    def api_v2_control_center_activity_workspaces():
+        """Groups and public workspaces matching a name or ID, for the workspace filter."""
+        term = (request.args.get('q') or '').strip()
+        if len(term) > 200:
+            return jsonify({'error': 'Search text is too long.'}), 400
+        try:
+            return jsonify({'workspaces': search_activity_workspaces(
+                cosmos_groups_container, cosmos_public_workspaces_container, term, ACTIVITY_LOOKUP_LIMIT,
+            )})
+        except Exception as ex:
+            log_event('[CONTROL_CENTER] Activity workspace lookup failed.',
+                      extra={'error_type': type(ex).__name__, 'status_code': getattr(ex, 'status_code', None)},
+                      level=logging.ERROR)
+            return jsonify({'error': 'Unable to search workspaces. Retry.'}), 500
+
     
     # User Management APIs
     @bp.route('/api/admin/control-center/users', methods=['GET'])
@@ -3100,7 +3667,554 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error performing bulk user action: {e}")
             return jsonify({'error': 'Failed to perform bulk action'}), 500
 
+    # V2 User Management APIs
+    @bp.route('/api/v2/control-center/users', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users():
+        """Return filtered user rows with cached activity metrics and explicit freshness."""
+        try:
+            filters = _control_center_parse_user_filters(request.args)
+            page, per_page = parse_control_center_management_pagination(request.args)
+            user_docs, total, page, total_pages = _control_center_query_user_page(
+                cosmos_user_settings_container,
+                filters,
+                page,
+                per_page,
+            )
+            users = [_control_center_user_row(user, filters["now"]) for user in user_docs]
+            metric_times = sorted(
+                user["metrics_calculated_at"] for user in users
+                if isinstance(user.get("metrics_calculated_at"), str)
+            )
+            return jsonify({
+                "users": users,
+                "pagination": {
+                    "page": page,
+                    "per_page": per_page,
+                    "total_items": total,
+                    "total_pages": total_pages,
+                    "has_prev": page > 1,
+                    "has_next": page < total_pages,
+                },
+                "metrics_freshness": {
+                    "oldest_calculated_at": metric_times[0] if metric_times else None,
+                    "newest_calculated_at": metric_times[-1] if metric_times else None,
+                    "missing_count": sum(not user.get("metrics_calculated_at") for user in users),
+                    "source": "user metrics refresh cache",
+                },
+            }), 200
+        except ValueError:
+            return jsonify({"error": "Invalid user filters or pagination value."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user list query failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve users."}), 500
+
+    @bp.route('/api/v2/control-center/users/<user_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_user_detail(user_id):
+        """Return a user's profile, cached usage, recent activity and workspace memberships."""
+        try:
+            normalized_user_id = _control_center_validate_user_id(user_id)
+            exists = list(cosmos_user_settings_container.query_items(
+                query="SELECT VALUE COUNT(1) FROM c WHERE c.id = @user_id",
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            if not exists or not exists[0]:
+                return jsonify({"error": "User not found."}), 404
+
+            user_doc = read_user_settings_snapshot(
+                normalized_user_id,
+                allow_cross_user=True,
+            )
+            settings = user_doc.get("settings", {})
+            metrics = settings.get("metrics", {}) if isinstance(settings, dict) else {}
+            login_metrics = metrics.get("login_metrics", {})
+            chat_metrics = metrics.get("chat_metrics", {})
+            document_metrics = metrics.get("document_metrics", {})
+            token_metrics = metrics.get("token_metrics", {})
+
+            activity_items = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT TOP 20 c.id, c.timestamp, c.created_at, c.activity_type, "
+                    "c.resource_name, c.workspace_type, c.token_type, c.status, c.usage "
+                    "FROM c WHERE c.user_id = @user_id "
+                    "ORDER BY c.timestamp DESC"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                partition_key=normalized_user_id,
+            ))
+
+            group_docs = list(cosmos_groups_container.query_items(
+                query=(
+                    "SELECT c.id, c.name, c.owner, c.admins, c.documentManagers, c.users "
+                    "FROM c WHERE c.owner.id = @user_id "
+                    "OR ARRAY_CONTAINS(c.admins, @user_id) "
+                    "OR ARRAY_CONTAINS(c.documentManagers, @user_id) "
+                    "OR EXISTS (SELECT VALUE member FROM member IN c.users WHERE member.userId = @user_id)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            group_memberships = []
+            for group in group_docs:
+                if (group.get("owner") or {}).get("id") == normalized_user_id:
+                    role = "Owner"
+                elif normalized_user_id in (group.get("admins") or []):
+                    role = "Admin"
+                elif normalized_user_id in (group.get("documentManagers") or []):
+                    role = "DocumentManager"
+                else:
+                    role = "User"
+                group_memberships.append({
+                    "id": group.get("id", ""),
+                    "name": group.get("name", ""),
+                    "role": role,
+                    "owned": role == "Owner",
+                })
+
+            public_docs = list(cosmos_public_workspaces_container.query_items(
+                query=(
+                    "SELECT c.id, c.name, c.owner, c.admins, c.documentManagers "
+                    "FROM c WHERE c.owner.userId = @user_id "
+                    "OR ARRAY_CONTAINS(c.admins, @user_id) "
+                    "OR EXISTS (SELECT VALUE manager FROM manager IN c.documentManagers "
+                    "WHERE manager.userId = @user_id OR manager = @user_id)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                enable_cross_partition_query=True,
+            ))
+            public_memberships = []
+            for workspace in public_docs:
+                owner_id = (workspace.get("owner") or {}).get("userId")
+                is_admin = normalized_user_id in (workspace.get("admins") or [])
+                is_manager = any(
+                    manager == normalized_user_id
+                    or isinstance(manager, dict) and manager.get("userId") == normalized_user_id
+                    for manager in (workspace.get("documentManagers") or [])
+                )
+                role = "Owner" if owner_id == normalized_user_id else "Admin" if is_admin else "DocumentManager" if is_manager else "Member"
+                public_memberships.append({
+                    "id": workspace.get("id", ""),
+                    "name": workspace.get("name", ""),
+                    "role": role,
+                    "owned": role == "Owner",
+                })
+
+            activity_tokens = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT VALUE SUM(c.usage.total_tokens) FROM c "
+                    "WHERE c.user_id = @user_id AND c.activity_type = 'token_usage' "
+                    "AND IS_DEFINED(c.usage.total_tokens) AND IS_NUMBER(c.usage.total_tokens)"
+                ),
+                parameters=[{"name": "@user_id", "value": normalized_user_id}],
+                partition_key=normalized_user_id,
+            ))
+            total_tokens = (
+                activity_tokens[0]
+                if activity_tokens and activity_tokens[0] is not None
+                else token_metrics.get("total_tokens")
+            )
+
+            return jsonify({
+                "user": {
+                    "id": normalized_user_id,
+                    "email": user_doc.get("email", ""),
+                    "display_name": user_doc.get("display_name", ""),
+                    "access": _control_center_effective_restriction(settings, "access"),
+                    "file_uploads": _control_center_effective_restriction(settings, "file_uploads"),
+                },
+                "usage": {
+                    "last_login": login_metrics.get("last_login"),
+                    "total_logins": login_metrics.get("total_logins"),
+                    "conversations": chat_metrics.get("total_conversations"),
+                    "documents": document_metrics.get("total_documents"),
+                    "tokens": total_tokens,
+                    "metrics_calculated_at": metrics.get("calculated_at"),
+                },
+                "activity": [
+                    {
+                        "id": item.get("id", ""),
+                        "activity_type": item.get("activity_type", ""),
+                        "timestamp": item.get("timestamp") or item.get("created_at"),
+                        "resource_name": item.get("resource_name"),
+                        "workspace_type": item.get("workspace_type"),
+                        "token_type": item.get("token_type"),
+                        "status": item.get("status"),
+                        "usage": item.get("usage"),
+                    }
+                    for item in activity_items
+                ],
+                "memberships": {
+                    "groups": group_memberships,
+                    "public_workspaces": public_memberships,
+                },
+            }), 200
+        except ValueError:
+            return jsonify({"error": "Invalid user ID."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user detail query failed.",
+                extra={"user_id": str(user_id), "error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to retrieve user details."}), 500
+
+    @bp.route('/api/v2/control-center/users/bulk-action', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users_bulk_action():
+        """Apply one access or upload setting to at most 500 explicitly or filter-selected users."""
+        try:
+            data = request.get_json(silent=True) or {}
+            action_type = data.get("action_type")
+            action_settings = data.get("settings")
+            if action_type not in {"access", "file_uploads"} or not isinstance(action_settings, dict):
+                return jsonify({"error": "Choose an access or file-upload action."}), 400
+            status = action_settings.get("status")
+            if status not in {"allow", "deny"}:
+                return jsonify({"error": "Status must be allow or deny."}), 400
+            expires_at = action_settings.get("datetime_to_allow")
+            if expires_at:
+                try:
+                    parsed_expiry = datetime.fromisoformat(
+                        str(expires_at).replace("Z", "+00:00")
+                    )
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Expiry must be an ISO 8601 datetime."}), 400
+                if parsed_expiry.tzinfo is None:
+                    parsed_expiry = parsed_expiry.replace(tzinfo=timezone.utc)
+                expires_at = parsed_expiry.astimezone(timezone.utc).isoformat()
+
+            if isinstance(data.get("user_ids"), list):
+                user_ids = [
+                    _control_center_validate_user_id(value)
+                    for value in data["user_ids"]
+                ]
+                user_ids = list(dict.fromkeys(user_ids))
+            elif isinstance(data.get("filter"), dict):
+                filters = _control_center_parse_user_filters(data["filter"])
+                where_clause, parameters = _control_center_user_where(filters)
+                excluded = data.get("exclude_ids", [])
+                if not isinstance(excluded, list) or len(excluded) > CONTROL_CENTER_USERS_MAX_BULK:
+                    return jsonify({"error": "The exclusion list is too large."}), 400
+                excluded_ids = list(dict.fromkeys(
+                    _control_center_validate_user_id(value) for value in excluded
+                ))
+                if excluded_ids:
+                    exclusion_params = []
+                    placeholders = []
+                    for index, excluded_id in enumerate(excluded_ids):
+                        name = f"@excluded_{index}"
+                        placeholders.append(name)
+                        exclusion_params.append({"name": name, "value": excluded_id})
+                    where_clause += f" AND c.id NOT IN ({', '.join(placeholders)})"
+                    parameters += exclusion_params
+                bounded_query = (
+                    "SELECT c.id FROM c WHERE "
+                    f"{where_clause} OFFSET 0 LIMIT @selection_limit"
+                )
+                selected_rows = list(cosmos_user_settings_container.query_items(
+                    query=bounded_query,
+                    parameters=parameters + [{
+                        "name": "@selection_limit",
+                        "value": CONTROL_CENTER_USERS_MAX_BULK + 1,
+                    }],
+                    enable_cross_partition_query=True,
+                ))
+                if len(selected_rows) > CONTROL_CENTER_USERS_MAX_BULK:
+                    return jsonify({
+                        "error": f"Bulk actions are limited to {CONTROL_CENTER_USERS_MAX_BULK} users."
+                    }), 400
+                user_ids = [
+                    _control_center_validate_user_id(item.get("id"))
+                    for item in selected_rows
+                ]
+            else:
+                return jsonify({"error": "Provide user_ids or a filter with optional exclude_ids."}), 400
+
+            if not user_ids:
+                return jsonify({"error": "Select at least one user."}), 400
+            if len(user_ids) > CONTROL_CENTER_USERS_MAX_BULK:
+                return jsonify({
+                    "error": f"Bulk actions are limited to {CONTROL_CENTER_USERS_MAX_BULK} users."
+                }), 400
+
+            setting_value = {
+                "status": status,
+                "datetime_to_allow": expires_at,
+            }
+            successful_ids = []
+            failed_ids = []
+            for target_user_id in user_ids:
+                try:
+                    updated = update_user_settings(
+                        target_user_id,
+                        {action_type: setting_value},
+                        allow_cross_user=True,
+                    )
+                    (successful_ids if updated else failed_ids).append(target_user_id)
+                except Exception as update_error:
+                    debug_print(
+                        f"[CONTROL_CENTER] Bulk user update failed for {target_user_id}: "
+                        f"{type(update_error).__name__}"
+                    )
+                    failed_ids.append(target_user_id)
+
+            admin_user = session.get("user", {})
+            log_event("[CONTROL_CENTER] Bulk User Action", {
+                "admin_user": admin_user.get("preferred_username", "unknown"),
+                "action_type": action_type,
+                "user_count": len(user_ids),
+                "success_count": len(successful_ids),
+                "failed_count": len(failed_ids),
+                "settings": setting_value,
+            })
+            return jsonify({
+                "success_count": len(successful_ids),
+                "failed_count": len(failed_ids),
+                "failed_user_ids": failed_ids,
+            }), 200
+        except ValueError:
+            return jsonify({"error": "Invalid bulk user action request."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 bulk user action failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to complete the bulk user action."}), 500
+
+    @bp.route('/api/v2/control-center/users/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_users_export():
+        """Stream a CSV export of users matching the same filters as the Users list."""
+        try:
+            filters = _control_center_parse_user_filters(request.args)
+            user_docs = _control_center_iter_users(cosmos_user_settings_container, filters)
+            # Run the first query now so a storage failure returns an error, not a truncated CSV.
+            first_user = next(user_docs, None)
+
+            def remaining_users():
+                if first_user is not None:
+                    yield first_user
+                yield from user_docs
+
+            def stream_csv():
+                buffer = StringIO()
+                writer = csv.writer(buffer)
+                headers = (
+                    "id", "display_name", "email", "access_status", "access_expires_at",
+                    "file_upload_status", "file_upload_expires_at", "last_login",
+                    "conversations", "documents", "tokens", "metrics_calculated_at",
+                )
+                writer.writerow(headers)
+                yield buffer.getvalue()
+                buffer.seek(0)
+                buffer.truncate(0)
+                for user_doc in remaining_users():
+                    row = _control_center_user_row(user_doc, filters["now"])
+                    values = (
+                        row["id"], row["display_name"], row["email"],
+                        row["access"]["status"], row["access"]["expires_at"],
+                        row["file_uploads"]["status"], row["file_uploads"]["expires_at"],
+                        row["last_login"], row["conversations"], row["documents"],
+                        row["tokens"], row["metrics_calculated_at"],
+                    )
+                    writer.writerow(_control_center_csv_safe_cell(value) for value in values)
+                    yield buffer.getvalue()
+                    buffer.seek(0)
+                    buffer.truncate(0)
+
+            response = Response(
+                stream_with_context(stream_csv()),
+                mimetype="text/csv",
+                headers={"Content-Disposition": 'attachment; filename="control-center-users.csv"'},
+            )
+            response.headers["Cache-Control"] = "private, no-store"
+            return response
+        except ValueError:
+            return jsonify({"error": "Invalid user export filters."}), 400
+        except Exception as ex:
+            log_event(
+                "[CONTROL_CENTER] V2 user export query failed.",
+                extra={"error_type": type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Unable to export users."}), 500
+
     # Group Management APIs
+    @bp.route('/api/v2/control-center/groups', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups():
+        """Filter and sort the batched server inventory before paging."""
+        try:
+            filters = parse_group_filters(request.args)
+            page, per_page = parse_control_center_management_pagination(request.args)
+            inventory = _control_center_group_inventory(request.args.get("force_refresh") == "1")
+            rows = filter_group_inventory(inventory["rows"], filters)
+            total_pages = get_control_center_total_pages(len(rows), per_page)
+            page = clamp_control_center_page(page, total_pages)
+            return jsonify({
+                "groups": rows[(page - 1) * per_page:page * per_page],
+                "pagination": {
+                    "page": page, "per_page": per_page, "total_items": len(rows),
+                    "total_pages": total_pages, "has_prev": page > 1, "has_next": page < total_pages,
+                },
+                "metrics_freshness": {
+                    "calculated_at": inventory["calculated_at"],
+                    "ttl_seconds": GROUP_SNAPSHOT_TTL,
+                    "source": "batched group inventory, document metadata and activity logs",
+                },
+            }), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group list failed.",
+                      extra={"error_type": type(ex).__name__, "status_code": getattr(ex, "status_code", None)},
+                      level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve groups."}), 500
+
+    @bp.route('/api/v2/control-center/groups/<group_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_group_detail(group_id):
+        """Admin-authorized overview with a fresh membership/status read and bounded activity."""
+        try:
+            validate_group_id(group_id)
+            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
+            inventory = _control_center_group_inventory()
+            cached = next((row for row in inventory["rows"] if row["id"] == group_id), None)
+            if cached is None:
+                inventory = _control_center_group_inventory(force_refresh=True)
+                cached = next((row for row in inventory["rows"] if row["id"] == group_id), None)
+            if cached is None:
+                return jsonify({"error": "Group not found."}), 404
+            row = group_row(group, cached["documents"], cached["tokens"], cached["last_activity"])
+            activity = list(cosmos_activity_logs_container.query_items(
+                query=(
+                    "SELECT TOP 20 c.id, c.activity_type, c.timestamp, c.description, "
+                    "c.user_id, c.admin_user_id, c.admin_email, c['group'], c.workspace_context, "
+                    "c.status_change, c.added_member, c.removed_member, c.member_email, "
+                    "c.member_name, c.member_role, c.document, c.usage, c.token_type "
+                    "FROM c WHERE c.group_id = @group_id OR c['group']['group_id'] = @group_id "
+                    "OR c.workspace_context.group_id = @group_id ORDER BY c.timestamp DESC"
+                ),
+                parameters=[{"name": "@group_id", "value": group_id}],
+                enable_cross_partition_query=True,
+            ))
+            user = session.get("user") or {}
+            role = get_user_role_in_group(group, user.get("oid") or user.get("sub"))
+            settings = get_settings()
+            can_edit_members = role in ("Owner", "Admin") and bool(settings.get("enable_group_workspaces"))
+            return jsonify({
+                "group": row,
+                "members": group_members(group),
+                "status_history": group.get("statusHistory") or [],
+                "retention": {
+                    "conversation_retention_days": (group.get("retention_policy") or {}).get("conversation_retention_days", "default"),
+                    "document_retention_days": (group.get("retention_policy") or {}).get("document_retention_days", "default"),
+                    "enabled": bool(settings.get("enable_retention_policy_group")),
+                    "can_edit": can_edit_members and bool(settings.get("enable_retention_policy_group")),
+                },
+                "permissions": {"can_edit_members": can_edit_members, "current_role": role},
+                "documents_summary": {
+                    "count": row["documents"],
+                    "cached_metrics": (group.get("metrics") or {}).get("document_metrics") or {},
+                    "metrics_calculated_at": (group.get("metrics") or {}).get("calculated_at"),
+                },
+                "tokens": row["tokens"],
+                "activity": activity,
+                "activity_limit": 20,
+                "metrics_calculated_at": inventory["calculated_at"],
+            }), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group ID."}), 400
+        except CosmosResourceNotFoundError:
+            return jsonify({"error": "Group not found."}), 404
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group detail failed.",
+                      extra={"group_id": group_id, "error_type": type(ex).__name__,
+                             "status_code": getattr(ex, "status_code", None)},
+                      level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve group details."}), 500
+
+    @bp.route('/api/v2/control-center/groups/bulk-status', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups_bulk_status():
+        """Apply the same guarded status writer to a validated, capped population."""
+        try:
+            data = request.get_json(silent=True)
+            status, reason = validate_group_status_payload(data)
+            ids = select_group_bulk_ids(data, lambda: _control_center_group_inventory(force_refresh=True))
+        except GroupRequestError:
+            return jsonify({"error": "Invalid bulk group status request."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group selection failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to select groups."}), 500
+        failed = []
+        for group_id in ids:
+            response, code = _update_group_status(group_id, {"status": status, "reason": reason})
+            if code != 200:
+                failed.append({"id": group_id, "status": code, "error": response.get_json()["error"]})
+        return jsonify({
+            "success_count": len(ids) - len(failed), "failed_count": len(failed), "failed_groups": failed,
+        }), 200
+
+    @bp.route('/api/v2/control-center/groups/<group_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_group_status(group_id):
+        try:
+            validate_group_id(group_id)
+            status, reason = validate_group_status_payload(request.get_json(silent=True))
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group status request."}), 400
+        return _update_group_status(group_id, {"status": status, "reason": reason})
+
+    @bp.route('/api/v2/control-center/groups/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_groups_export():
+        try:
+            filters = parse_group_filters(request.args)
+            rows = filter_group_inventory(_control_center_group_inventory()["rows"], filters)
+            buffer = StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "name", "owner", "status", "members", "documents", "tokens", "last_activity"])
+            for row in rows:
+                writer.writerow(_control_center_csv_safe_cell(value) for value in (
+                    row["id"], row["name"], row["owner"]["email"], row["status"],
+                    row["members"], row["documents"], row["tokens"], row["last_activity"],
+                ))
+            return Response(buffer.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": 'attachment; filename="control-center-groups.csv"'}), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid group export filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] V2 group export failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to export groups."}), 500
+
     @bp.route('/api/admin/control-center/groups', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -3219,12 +4333,14 @@ def register_route_backend_control_center(bp):
     @login_required
     @control_center_required('admin')
     def api_update_group_status(group_id):
+        return _update_group_status(group_id, request.get_json(silent=True))
+
+    def _update_group_status(group_id, data):
         """
         Update group status (active, locked, upload_disabled, inactive)
         Tracks who made the change and when, logs to activity_logs
         """
         try:
-            data = request.get_json()
             if not data:
                 return jsonify({'error': 'No data provided'}), 400
                 
@@ -3250,65 +4366,80 @@ def register_route_backend_control_center(bp):
             admin_user_id = admin_user.get('oid', 'unknown')
             admin_email = admin_user.get('preferred_username', 'unknown')
             
-            # Get old status for logging
-            old_status = group.get('status', 'active')  # Default to 'active' if not set
-            
-            # Only update and log if status actually changed
-            if old_status != new_status:
+            # The change is decided and applied on the copy being written, so a status
+            # or membership change made meanwhile is kept, and the old status logged is
+            # the one actually replaced.
+            transition = {}
+
+            def apply_status(fresh):
+                # Get old status for logging
+                old_status = fresh.get('status', 'active')  # Default to 'active' if not set
+                # Only update and log if status actually changed
+                if old_status == new_status:
+                    raise _GroupChangeAnswer(({'message': 'Group status unchanged', 'status': new_status}, 200))
+                changed_at = datetime.utcnow().isoformat()
                 # Update group status
-                group['status'] = new_status
-                group['modifiedDate'] = datetime.utcnow().isoformat()
+                fresh['status'] = new_status
+                fresh['modifiedDate'] = changed_at
                 
                 # Add status change metadata
-                if 'statusHistory' not in group:
-                    group['statusHistory'] = []
+                if 'statusHistory' not in fresh:
+                    fresh['statusHistory'] = []
                 
-                group['statusHistory'].append({
+                fresh['statusHistory'].append({
                     'old_status': old_status,
                     'new_status': new_status,
                     'changed_by_user_id': admin_user_id,
                     'changed_by_email': admin_email,
-                    'changed_at': datetime.utcnow().isoformat(),
+                    'changed_at': changed_at,
                     'reason': reason
                 })
-                
-                # Update in database
-                cosmos_groups_container.upsert_item(group)
-                bump_chat_bootstrap_global_cache_version(reason="group_status_updated")
-                
-                # Log to activity_logs container for audit trail
-                from functions_activity_logging import log_group_status_change
-                log_group_status_change(
-                    group_id=group_id,
-                    group_name=group.get('name', 'Unknown'),
-                    old_status=old_status,
-                    new_status=new_status,
-                    changed_by_user_id=admin_user_id,
-                    changed_by_email=admin_email,
-                    reason=reason
+                transition['old_status'] = old_status
+                return fresh
+
+            # Update in database
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_status, cache_reason="group_status_updated",
                 )
-                
-                # Log admin action (legacy logging)
-                log_event("[CONTROL_CENTER] Group Status Update", {
-                    "admin_user": admin_email,
-                    "admin_user_id": admin_user_id,
-                    "group_id": group_id,
-                    "group_name": group.get('name'),
-                    "old_status": old_status,
-                    "new_status": new_status,
-                    "reason": reason
-                })
-                
-                return jsonify({
-                    'message': 'Group status updated successfully',
-                    'old_status': old_status,
-                    'new_status': new_status
-                }), 200
-            else:
-                return jsonify({
-                    'message': 'Group status unchanged',
-                    'status': new_status
-                }), 200
+            except _GroupChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except GroupDocumentWriteConflict:
+                return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
+            if group is None:
+                return jsonify({'error': 'Group not found'}), 404
+            _control_center_group_snapshot_cache.clear()
+            old_status = transition['old_status']
+            
+            # Log to activity_logs container for audit trail
+            from functions_activity_logging import log_group_status_change
+            log_group_status_change(
+                group_id=group_id,
+                group_name=group.get('name', 'Unknown'),
+                old_status=old_status,
+                new_status=new_status,
+                changed_by_user_id=admin_user_id,
+                changed_by_email=admin_email,
+                reason=reason
+            )
+            
+            # Log admin action (legacy logging)
+            log_event("[CONTROL_CENTER] Group Status Update", {
+                "admin_user": admin_email,
+                "admin_user_id": admin_user_id,
+                "group_id": group_id,
+                "group_name": group.get('name'),
+                "old_status": old_status,
+                "new_status": new_status,
+                "reason": reason
+            })
+            
+            return jsonify({
+                'message': 'Group status updated successfully',
+                'old_status': old_status,
+                'new_status': new_status
+            }), 200
             
         except Exception as e:
             debug_print(f"Error updating group status: {e}")
@@ -3402,7 +4533,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating group deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request group deletion.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/delete-documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -3465,7 +4596,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating document deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request document deletion.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/members', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -3567,7 +4698,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating take ownership request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request group ownership.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/transfer-ownership', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -3650,7 +4781,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating transfer ownership request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request ownership transfer.'}), 500
 
     @bp.route('/api/admin/control-center/groups/<group_id>/add-member', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -3685,42 +4816,50 @@ def register_route_backend_control_center(bp):
             except Exception as ex:
                 return jsonify({'error': 'Group not found'}), 404
             
-            # Check if user already exists (skip duplicate)
-            existing_user = False
-            for member in group.get('users', []):
-                if member.get('userId') == user_id:
-                    existing_user = True
-                    break
-            
-            if existing_user:
-                return jsonify({
-                    'message': f'User {email} already exists in group',
-                    'skipped': True
-                }), 200
-            
-            # Add user to users array
-            group.setdefault('users', []).append({
-                'userId': user_id,
-                'email': email,
-                'displayName': name
-            })
-            
-            # Add to appropriate role array
-            if role == 'admin':
-                if user_id not in group.get('admins', []):
-                    group.setdefault('admins', []).append(user_id)
-            elif role == 'document_manager':
-                if user_id not in group.get('documentManagers', []):
-                    group.setdefault('documentManagers', []).append(user_id)
-            
-            # Update modification timestamp
-            group['modifiedDate'] = datetime.utcnow().isoformat()
+            # The member is added to the copy being written, so a membership change
+            # made meanwhile is kept, and "already a member" is decided on that copy.
+            def apply_member(fresh):
+                # Check if user already exists (skip duplicate)
+                if any(member.get('userId') == user_id for member in fresh.get('users', [])):
+                    raise _GroupChangeAnswer(({
+                        'message': f'User {email} already exists in group',
+                        'skipped': True
+                    }, 200))
+                
+                # Add user to users array
+                fresh.setdefault('users', []).append({
+                    'userId': user_id,
+                    'email': email,
+                    'displayName': name
+                })
+                
+                # Add to appropriate role array
+                if role == 'admin':
+                    if user_id not in fresh.get('admins', []):
+                        fresh.setdefault('admins', []).append(user_id)
+                elif role == 'document_manager':
+                    if user_id not in fresh.get('documentManagers', []):
+                        fresh.setdefault('documentManagers', []).append(user_id)
+                
+                # Update modification timestamp
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                return fresh
             
             # Save group
-            cosmos_groups_container.upsert_item(group)
-            bump_chat_bootstrap_global_cache_version(reason="group_member_added")
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_member, cache_reason="group_member_added",
+                )
+            except _GroupChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except GroupDocumentWriteConflict:
+                return jsonify({'error': GROUP_WRITE_CONFLICT_MESSAGE, 'error_code': GROUP_WRITE_CONFLICT_CODE}), 409
+            if group is None:
+                return jsonify({'error': 'Group not found'}), 404
             
             # Determine the action source (single add vs bulk CSV)
+            _control_center_group_snapshot_cache.clear()
             source = data.get('source', 'csv')  # Default to 'csv' for backward compatibility
             action_type = 'add_member_directly' if source == 'single' else 'admin_add_member_csv'
             
@@ -3783,17 +4922,19 @@ def register_route_backend_control_center(bp):
                     pass
             
             # Build queries - use two separate queries to avoid nested property access issues
-            # Query 1: Activities with c.group.group_id (member/status changes)
+            # Query 1: Activities with the nested group.group_id (member/status changes)
             # Query 2: Activities with c.workspace_context.group_id (document operations)
             
             time_filter = "AND c.timestamp >= @cutoff_date" if cutoff_date else ""
             
-            # Query 1: Member and status activities (all activity types with c.group.group_id)
+            # Query 1: Member and status activities (all activity types with a nested group.group_id).
+            # GROUP is a reserved word in Cosmos SQL, so the property is read as c['group'];
+            # the dotted form is a syntax error that made this query fail on every call.
             # Use SELECT * to get complete raw documents for modal display
             query1 = f"""
                 SELECT *
                 FROM c
-                WHERE c.group.group_id = @group_id
+                WHERE c['group']['group_id'] = @group_id
                 {time_filter}
             """
             
@@ -3984,6 +5125,148 @@ def register_route_backend_control_center(bp):
             traceback.print_exc()
             return jsonify({'error': f'Failed to fetch group activity: {str(e)}'}), 500
 
+    @bp.route('/api/v2/control-center/public-workspaces', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces():
+        try:
+            filters = parse_workspace_filters(request.args)
+            return jsonify(query_workspaces(cosmos_public_workspaces_container, filters)), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace query failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve public workspaces."}), 500
+
+    @bp.route('/api/v2/control-center/public-workspaces/<workspace_id>', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspace_detail(workspace_id):
+        try:
+            validate_group_id(workspace_id)
+            workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
+            parameters = [{"name": "@id", "value": workspace_id}]
+            documents = list(cosmos_public_documents_container.query_items(
+                query="SELECT VALUE COUNT(1) FROM c WHERE c.type = 'document_metadata' AND c.public_workspace_id = @id",
+                parameters=parameters, enable_cross_partition_query=True,
+            ))[0]
+            tokens = list(cosmos_activity_logs_container.query_items(
+                query=("SELECT VALUE SUM(c.usage.total_tokens) FROM c WHERE c.activity_type = 'token_usage' "
+                       "AND c.workspace_context.public_workspace_id = @id AND IS_NUMBER(c.usage.total_tokens)"),
+                parameters=parameters, enable_cross_partition_query=True,
+            ))
+            activity = list(cosmos_activity_logs_container.query_items(
+                query=("SELECT TOP 20 c.id, c.activity_type, c.timestamp, c.description, c.user_id, "
+                       "c.admin_user_id, c.admin_email, c.workspace_context, c.public_workspace, c.changed_by, c.status_change, "
+                       "c.document, c.usage, c.token_type, c.member_email, c.member_name, c.member_role "
+                       "FROM c WHERE c.workspace_context.public_workspace_id = @id OR c.workspace_id = @id "
+                       "OR c.public_workspace.workspace_id = @id ORDER BY c.timestamp DESC"),
+                parameters=parameters, enable_cross_partition_query=True,
+            ))
+            user = session.get("user") or {}
+            # Normalize legacy bare-string owner for the existing role helper.
+            role_workspace = dict(workspace)
+            if isinstance(role_workspace.get("owner"), str):
+                role_workspace["owner"] = {"userId": role_workspace["owner"]}
+            role = get_user_role_in_public_workspace(role_workspace, user.get("oid") or user.get("sub"))
+            settings = get_settings()
+            can_edit = role in ("Owner", "Admin") and bool(settings.get("enable_public_workspaces"))
+            retention = workspace.get("retention_policy") or {}
+            row = workspace_row(workspace)
+            return jsonify({
+                "workspace": row, "members": workspace_members(workspace),
+                "status_history": workspace.get("statusHistory") or [],
+                "permissions": {"can_edit_members": can_edit, "current_user_id": user.get("oid") or user.get("sub")},
+                "retention": {
+                    "conversation_retention_days": retention.get("conversation_retention_days", "default"),
+                    "document_retention_days": retention.get("document_retention_days", "default"),
+                    "enabled": bool(settings.get("enable_retention_policy_public")),
+                    "can_edit": can_edit and bool(settings.get("enable_retention_policy_public")),
+                },
+                "documents_summary": {"count": documents,
+                                      "cached_metrics": (workspace.get("metrics") or {}).get("document_metrics") or {},
+                                      "metrics_calculated_at": row["metrics_calculated_at"]},
+                "tokens": tokens[0] if tokens and tokens[0] is not None else 0,
+                "activity": activity, "metrics_calculated_at": datetime.now(timezone.utc).isoformat(),
+            }), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace ID."}), 400
+        except CosmosResourceNotFoundError:
+            return jsonify({"error": "Public workspace not found."}), 404
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace detail failed.",
+                      extra={"workspace_id": workspace_id, "error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to retrieve workspace details."}), 500
+
+    @bp.route('/api/v2/control-center/public-workspaces/bulk-status', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces_bulk_status():
+        try:
+            data = request.get_json(silent=True)
+            validate_group_status_payload(data)
+            ids = select_workspace_ids(cosmos_public_workspaces_container, data)
+        except GroupRequestError:
+            return jsonify({"error": "Invalid bulk public workspace status request."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace selection failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to select public workspaces."}), 500
+        failed = []
+        for workspace_id in ids:
+            response, code = api_update_public_workspace_status(workspace_id)
+            if code != 200:
+                failed.append({"id": workspace_id, "status": code, "error": response.get_json()["error"]})
+        return jsonify({"success_count": len(ids) - len(failed), "failed_count": len(failed),
+                        "failed_workspaces": failed}), 200
+
+    @bp.route('/api/v2/control-center/public-workspaces/<workspace_id>/status', methods=['PUT'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspace_status(workspace_id):
+        try:
+            validate_group_id(workspace_id)
+            validate_group_status_payload(request.get_json(silent=True))
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace status request."}), 400
+        return api_update_public_workspace_status(workspace_id)
+
+    @bp.route('/api/v2/control-center/public-workspaces/export.csv', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('admin')
+    def api_v2_control_center_public_workspaces_export():
+        try:
+            filters = parse_workspace_filters(request.args)
+            filters.update(page=1, per_page=250)
+            payload = query_workspaces(cosmos_public_workspaces_container, filters)
+            if payload["pagination"]["total_items"] > WORKSPACE_EXPORT_LIMIT:
+                return jsonify({"error": "Export is limited to 10000 workspaces. Narrow the filters."}), 400
+            rows = payload["workspaces"]
+            for page in range(2, payload["pagination"]["total_pages"] + 1):
+                rows.extend(query_workspaces(cosmos_public_workspaces_container, {**filters, "page": page})["workspaces"])
+            buffer = StringIO()
+            writer = csv.writer(buffer)
+            writer.writerow(["id", "name", "owner", "status", "members", "documents", "tokens", "last_activity", "metrics_calculated_at"])
+            for row in rows:
+                writer.writerow(_control_center_csv_safe_cell(value) for value in (
+                    row["id"], row["name"], row["owner"]["email"], row["status"], row["members"],
+                    row["documents"], row["tokens"], row["last_activity"], row["metrics_calculated_at"],
+                ))
+            return Response(buffer.getvalue(), mimetype="text/csv",
+                            headers={"Content-Disposition": 'attachment; filename="control-center-public-workspaces.csv"'}), 200
+        except GroupRequestError:
+            return jsonify({"error": "Invalid public workspace export filters."}), 400
+        except Exception as ex:
+            log_event("[CONTROL_CENTER] Workspace export failed.",
+                      extra={"error_type": type(ex).__name__}, level=logging.ERROR)
+            return jsonify({"error": "Unable to export public workspaces."}), 500
+
     # Public Workspaces API
     @bp.route('/api/admin/control-center/public-workspaces', methods=['GET'])
     @swagger_route(security=get_auth_security())
@@ -4126,65 +5409,82 @@ def register_route_backend_control_center(bp):
             admin_user_id = admin_user.get('oid', 'unknown')
             admin_email = admin_user.get('preferred_username', 'unknown')
             
-            # Get old status for logging
-            old_status = workspace.get('status', 'active')  # Default to 'active' if not set
-            
-            # Only update and log if status actually changed
-            if old_status != new_status:
+            # The change is decided and applied on the copy being written, so a status
+            # or membership change made meanwhile is kept, and the old status logged is
+            # the one actually replaced.
+            transition = {}
+
+            def apply_status(fresh):
+                # Get old status for logging
+                old_status = fresh.get('status', 'active')  # Default to 'active' if not set
+                # Only update and log if status actually changed
+                if old_status == new_status:
+                    raise _PublicChangeAnswer(({'message': 'Status unchanged', 'status': new_status}, 200))
+                changed_at = datetime.utcnow().isoformat()
                 # Update workspace status
-                workspace['status'] = new_status
-                workspace['modifiedDate'] = datetime.utcnow().isoformat()
+                fresh['status'] = new_status
+                fresh['modifiedDate'] = changed_at
                 
                 # Add status change metadata
-                if 'statusHistory' not in workspace:
-                    workspace['statusHistory'] = []
+                if 'statusHistory' not in fresh:
+                    fresh['statusHistory'] = []
                 
-                workspace['statusHistory'].append({
+                fresh['statusHistory'].append({
                     'old_status': old_status,
                     'new_status': new_status,
                     'changed_by_user_id': admin_user_id,
                     'changed_by_email': admin_email,
-                    'changed_at': datetime.utcnow().isoformat(),
+                    'changed_at': changed_at,
                     'reason': reason
                 })
-                
-                # Update in database
-                cosmos_public_workspaces_container.upsert_item(workspace)
-                bump_chat_bootstrap_global_cache_version(reason="public_workspace_status_updated")
-                
-                # Log to activity_logs container for audit trail
-                from functions_activity_logging import log_public_workspace_status_change
-                log_public_workspace_status_change(
-                    workspace_id=workspace_id,
-                    workspace_name=workspace.get('name', 'Unknown'),
-                    old_status=old_status,
-                    new_status=new_status,
-                    changed_by_user_id=admin_user_id,
-                    changed_by_email=admin_email,
-                    reason=reason
+                transition['old_status'] = old_status
+                return fresh
+
+            # Update in database
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_status, cache_reason="public_workspace_status_updated",
                 )
-                
-                # Log admin action (legacy logging)
-                log_event("[CONTROL_CENTER] Public Workspace Status Update", {
-                    "admin_user": admin_email,
-                    "admin_user_id": admin_user_id,
-                    "workspace_id": workspace_id,
-                    "workspace_name": workspace.get('name'),
-                    "old_status": old_status,
-                    "new_status": new_status,
-                    "reason": reason
-                })
-                
+            except _PublicChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except PublicWorkspaceDocumentWriteConflict:
                 return jsonify({
-                    'message': 'Public workspace status updated successfully',
-                    'old_status': old_status,
-                    'new_status': new_status
-                }), 200
-            else:
-                return jsonify({
-                    'message': 'Status unchanged',
-                    'status': new_status
-                }), 200
+                    'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                    'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+                }), 409
+            if workspace is None:
+                return jsonify({'error': 'Public workspace not found'}), 404
+            old_status = transition['old_status']
+            
+            # Log to activity_logs container for audit trail
+            from functions_activity_logging import log_public_workspace_status_change
+            log_public_workspace_status_change(
+                workspace_id=workspace_id,
+                workspace_name=workspace.get('name', 'Unknown'),
+                old_status=old_status,
+                new_status=new_status,
+                changed_by_user_id=admin_user_id,
+                changed_by_email=admin_email,
+                reason=reason
+            )
+            
+            # Log admin action (legacy logging)
+            log_event("[CONTROL_CENTER] Public Workspace Status Update", {
+                "admin_user": admin_email,
+                "admin_user_id": admin_user_id,
+                "workspace_id": workspace_id,
+                "workspace_name": workspace.get('name'),
+                "old_status": old_status,
+                "new_status": new_status,
+                "reason": reason
+            })
+            
+            return jsonify({
+                'message': 'Public workspace status updated successfully',
+                'old_status': old_status,
+                'new_status': new_status
+            }), 200
                 
         except Exception as e:
             debug_print(f"Error updating public workspace status: {e}")
@@ -4286,31 +5586,55 @@ def register_route_backend_control_center(bp):
                         })
                         
                     else:
-                        # Status change action
+                        # Status change action. The change is decided and applied on the
+                        # copy being written, so a status or membership change made
+                        # meanwhile is kept, and a workspace deleted meanwhile is reported
+                        # as failed rather than recreated. A conflict on one workspace is
+                        # recorded per item and never aborts the rest of the batch.
                         new_status = action_to_status[action]
-                        old_status = workspace.get('status', 'active')
-                        
-                        if old_status != new_status:
-                            workspace['status'] = new_status
-                            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-                            
+                        transition = {}
+
+                        def apply_bulk_status(fresh):
+                            old_status = fresh.get('status', 'active')
+                            transition['old_status'] = old_status
+                            if old_status == new_status:
+                                raise _PublicChangeAnswer(None)
+                            changed_at = datetime.utcnow().isoformat()
+                            fresh['status'] = new_status
+                            fresh['modifiedDate'] = changed_at
+
                             # Add status history
-                            if 'statusHistory' not in workspace:
-                                workspace['statusHistory'] = []
-                            
-                            workspace['statusHistory'].append({
+                            if 'statusHistory' not in fresh:
+                                fresh['statusHistory'] = []
+
+                            fresh['statusHistory'].append({
                                 'old_status': old_status,
                                 'new_status': new_status,
                                 'changed_by_user_id': admin_user_id,
                                 'changed_by_email': admin_email,
-                                'changed_at': datetime.utcnow().isoformat(),
+                                'changed_at': changed_at,
                                 'reason': reason,
                                 'bulk_action': True
                             })
-                            
-                            cosmos_public_workspaces_container.upsert_item(workspace)
-                            bump_chat_bootstrap_global_cache_version(reason="public_workspace_bulk_status_updated")
-                            
+                            return fresh
+
+                        try:
+                            updated = update_public_workspace_document_with_etag_guard(
+                                workspace_id, apply_bulk_status,
+                                cache_reason="public_workspace_bulk_status_updated",
+                            )
+                            changed = True
+                        except _PublicChangeAnswer:
+                            updated = workspace
+                            changed = False
+
+                        if updated is None:
+                            raise Exception('Public workspace not found')
+
+                        old_status = transition['old_status']
+                        workspace = updated
+
+                        if changed:
                             # Log activity
                             from functions_activity_logging import log_public_workspace_status_change
                             log_public_workspace_status_change(
@@ -4504,43 +5828,58 @@ def register_route_backend_control_center(bp):
             except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
-            # Check if user already exists
-            owner = workspace.get('owner', {})
-            owner_id = owner.get('userId') if isinstance(owner, dict) else owner
-            admins = workspace.get('admins', [])
-            doc_managers = workspace.get('documentManagers', [])
-            
-            # Extract user IDs from arrays (handle both object and string formats)
-            admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
-            doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
-            
-            if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
-                return jsonify({
-                    'message': f'User {email} already exists in workspace',
-                    'skipped': True
-                }), 200
-            
-            # Create full user object
-            user_obj = {
-                'userId': user_id,
-                'displayName': name,
-                'email': email
-            }
-            
-            # Add to appropriate role array with full user object
-            if role == 'admin':
-                workspace.setdefault('admins', []).append(user_obj)
-            elif role == 'document_manager':
-                workspace.setdefault('documentManagers', []).append(user_obj)
-            # Note: 'user' role doesn't have a separate array in public workspaces
-            # They are implicit members through document access
-            
-            # Update modification timestamp
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            
+            # The member is added to the copy being written, so a membership change
+            # made meanwhile is kept, and "already a member" is decided on that copy.
+            def apply_member(fresh):
+                owner = fresh.get('owner', {})
+                owner_id = owner.get('userId') if isinstance(owner, dict) else owner
+                admins = fresh.get('admins', [])
+                doc_managers = fresh.get('documentManagers', [])
+
+                # Extract user IDs from arrays (handle both object and string formats)
+                admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
+                doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
+
+                if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
+                    raise _PublicChangeAnswer(({
+                        'message': f'User {email} already exists in workspace',
+                        'skipped': True
+                    }, 200))
+
+                # Create full user object
+                user_obj = {
+                    'userId': user_id,
+                    'displayName': name,
+                    'email': email
+                }
+
+                # Add to appropriate role array with full user object
+                if role == 'admin':
+                    fresh.setdefault('admins', []).append(user_obj)
+                elif role == 'document_manager':
+                    fresh.setdefault('documentManagers', []).append(user_obj)
+                # Note: 'user' role doesn't have a separate array in public workspaces
+                # They are implicit members through document access
+
+                # Update modification timestamp
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                return fresh
+
             # Save workspace
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_member, cache_reason="public_workspace_member_added",
+                )
+            except _PublicChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except PublicWorkspaceDocumentWriteConflict:
+                return jsonify({
+                    'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                    'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+                }), 409
+            if workspace is None:
+                return jsonify({'error': 'Public workspace not found'}), 404
             
             # Determine the action source
             source = data.get('source', 'csv')
@@ -4549,7 +5888,7 @@ def register_route_backend_control_center(bp):
             # Log to activity logs
             activity_record = {
                 'id': str(uuid.uuid4()),
-                'activity_type': activity_type,
+                'activity_type': action_type,
                 'timestamp': datetime.utcnow().isoformat(),
                 'admin_user_id': admin_user.get('oid') or admin_user.get('sub'),
                 'admin_email': admin_email,
@@ -4618,39 +5957,54 @@ def register_route_backend_control_center(bp):
             except Exception as ex:
                 return jsonify({'error': 'Public workspace not found'}), 404
             
-            # Check if user already exists
-            owner = workspace.get('owner', {})
-            owner_id = owner.get('userId') if isinstance(owner, dict) else owner
-            admins = workspace.get('admins', [])
-            doc_managers = workspace.get('documentManagers', [])
-            
-            # Extract user IDs from arrays (handle both object and string formats)
-            admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
-            doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
-            
-            if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
-                return jsonify({
-                    'error': f'User {email} already exists in workspace'
-                }), 400
-            
-            # Add to appropriate role array with full user info
-            user_obj = {
-                'userId': user_id,
-                'displayName': display_name,
-                'email': email
-            }
-            
-            if role == 'admin':
-                workspace.setdefault('admins', []).append(user_obj)
-            elif role == 'document_manager':
-                workspace.setdefault('documentManagers', []).append(user_obj)
-            
-            # Update modification timestamp
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            
+            # The member is added to the copy being written, so a membership change
+            # made meanwhile is kept, and "already a member" is decided on that copy.
+            def apply_member(fresh):
+                owner = fresh.get('owner', {})
+                owner_id = owner.get('userId') if isinstance(owner, dict) else owner
+                admins = fresh.get('admins', [])
+                doc_managers = fresh.get('documentManagers', [])
+
+                # Extract user IDs from arrays (handle both object and string formats)
+                admin_ids = [a.get('userId') if isinstance(a, dict) else a for a in admins]
+                doc_manager_ids = [dm.get('userId') if isinstance(dm, dict) else dm for dm in doc_managers]
+
+                if user_id == owner_id or user_id in admin_ids or user_id in doc_manager_ids:
+                    raise _PublicChangeAnswer(({
+                        'error': f'User {email} already exists in workspace'
+                    }, 400))
+
+                # Add to appropriate role array with full user info
+                user_obj = {
+                    'userId': user_id,
+                    'displayName': display_name,
+                    'email': email
+                }
+
+                if role == 'admin':
+                    fresh.setdefault('admins', []).append(user_obj)
+                elif role == 'document_manager':
+                    fresh.setdefault('documentManagers', []).append(user_obj)
+
+                # Update modification timestamp
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                return fresh
+
             # Save workspace
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_member_added")
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_member, cache_reason="public_workspace_member_added",
+                )
+            except _PublicChangeAnswer as answer:
+                payload, status_code = answer.answer
+                return jsonify(payload), status_code
+            except PublicWorkspaceDocumentWriteConflict:
+                return jsonify({
+                    'error': PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE,
+                    'error_code': PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE,
+                }), 409
+            if workspace is None:
+                return jsonify({'error': 'Public workspace not found'}), 404
             
             # Log to activity logs
             activity_record = {
@@ -4962,7 +6316,7 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error creating take workspace ownership request: {e}")
             import traceback
             traceback.print_exc()
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace ownership.'}), 500
 
     @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>/ownership', methods=['PUT'])
     @swagger_route(security=get_auth_security())
@@ -5150,7 +6504,7 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating document deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace document deletion.'}), 500
 
 
     @bp.route('/api/admin/control-center/public-workspaces/<workspace_id>', methods=['DELETE'])
@@ -5218,7 +6572,114 @@ def register_route_backend_control_center(bp):
             
         except Exception as e:
             debug_print(f"Error creating workspace deletion request: {e}")
-            return jsonify({'error': str(e)}), 500
+            return jsonify({'error': 'Unable to request workspace deletion.'}), 500
+
+    @bp.route('/api/v2/control-center/dashboard/summary', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('dashboard')
+    def api_v2_control_center_dashboard_summary():
+        """Return cached aggregate dashboard metrics for the requested UTC period."""
+        try:
+            period = parse_dashboard_period(request.args)
+        except ValueError:
+            return jsonify({'error': DASHBOARD_INVALID_RANGE_ERROR}), 400
+
+        try:
+            payload, cached = get_dashboard_summary(
+                _control_center_dashboard_stores(),
+                period,
+                extract_token_filters(request.args),
+                force_refresh=_dashboard_force_refresh(request.args),
+                log=log_event,
+            )
+            return jsonify({**payload, 'cached': cached})
+        except Exception as ex:
+            log_event(
+                message='[CONTROL_CENTER] Dashboard summary query failed.',
+                extra={'error_type': type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to retrieve dashboard summary.'}), 500
+
+    @bp.route('/api/v2/control-center/dashboard/insights', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('dashboard')
+    def api_v2_control_center_dashboard_insights():
+        """Return dashboard chart series and rankings, with names, for the requested UTC period."""
+        try:
+            period = parse_dashboard_period(request.args)
+        except ValueError:
+            return jsonify({'error': DASHBOARD_INVALID_RANGE_ERROR}), 400
+
+        try:
+            payload, cached = get_dashboard_insights(
+                _control_center_dashboard_stores(),
+                period,
+                extract_token_filters(request.args),
+                force_refresh=_dashboard_force_refresh(request.args),
+                log=log_event,
+            )
+            return jsonify({**payload, 'cached': cached})
+        except Exception as ex:
+            log_event(
+                message='[CONTROL_CENTER] Dashboard insights query failed.',
+                extra={'error_type': type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Failed to retrieve dashboard insights.'}), 500
+
+    @bp.route('/api/v2/control-center/dashboard/chat-readiness', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @control_center_required('dashboard')
+    def api_v2_control_center_dashboard_chat_readiness():
+        """Report what "Chat with this dashboard" needs and whether each requirement is met.
+
+        The answer lists settings states and the caller's own access, never settings values,
+        and links to Admin Settings only for administrators, who can open those pages.
+        """
+        try:
+            settings = get_settings()
+            user = session.get('user') or {}
+            roles = [role for role in (user.get('roles') or []) if isinstance(role, str)]
+            user_id = get_current_user_id()
+            stored_actions = control_center_action_records(
+                cosmos_global_actions_container.query_items(
+                    query=(
+                        "SELECT c.id, c.name, c.display_name, c.displayName, c.type, c.is_enabled FROM c "
+                        "WHERE IS_STRING(c.type) AND LOWER(c.type) = @action_type"
+                    ),
+                    parameters=[{'name': '@action_type', 'value': CONTROL_CENTER_ACTION_TYPE}],
+                    enable_cross_partition_query=True,
+                ),
+                CONTROL_CENTER_ACTION_TYPE,
+            )
+            available_actions = [
+                action
+                for action in build_accessible_action_catalog(user_id, settings=settings, user_roles=roles)
+                if str(action.get('type') or '').strip().lower() == CONTROL_CENTER_ACTION_TYPE
+            ] if user_id else []
+            readiness = build_dashboard_chat_readiness(
+                settings=settings,
+                user_roles=roles,
+                is_admin='Admin' in roles,
+                stored_actions=stored_actions,
+                available_actions=available_actions,
+                governance_allows=lambda action: is_global_action_access_allowed(user_id, action),
+                action_invoke_allowlisted=capability_allowlisted(settings, CAPABILITY_ACTION_INVOKE),
+            )
+            response = jsonify(readiness)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except Exception as ex:
+            log_event(
+                message='[CONTROL_CENTER] Dashboard chat readiness could not be checked.',
+                extra={'error_type': type(ex).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({'error': 'Dashboard chat requirements could not be checked. Try again.'}), 500
 
     # Activity Trends API
     @bp.route('/api/admin/control-center/activity-trends', methods=['GET'])
@@ -5569,163 +7030,6 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error exporting activity trends: {e}")
             return jsonify({'error': 'Failed to export data'}), 500
 
-    @bp.route('/api/admin/control-center/activity-trends/chat', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @control_center_required('dashboard')
-    def api_chat_activity_trends():
-        """
-        Create a new chat conversation with activity trends data as CSV message.
-        """
-        try:
-            data = request.get_json() or {}
-            
-            # Parse request parameters
-            charts = data.get('charts', ['logins', 'chats', 'documents'])  # Default to all charts
-            time_window = data.get('time_window', '30')  # Default to 30 days
-            start_date = data.get('start_date')  # For custom range
-            end_date = data.get('end_date')  # For custom range
-            token_filters = extract_token_filters(data)
-            
-            # Determine date range
-            if time_window == 'custom' and start_date and end_date:
-                try:
-                    start_date_obj = datetime.fromisoformat(start_date.replace('Z', '+00:00') if 'Z' in start_date else start_date)
-                    end_date_obj = datetime.fromisoformat(end_date.replace('Z', '+00:00') if 'Z' in end_date else end_date)
-                    end_date_obj = end_date_obj.replace(hour=23, minute=59, second=59, microsecond=999999)
-                except ValueError:
-                    return jsonify({'error': 'Invalid date format'}), 400
-            else:
-                # Use predefined ranges
-                days = int(time_window) if time_window.isdigit() else 30
-                end_date_obj = datetime.now().replace(hour=23, minute=59, second=59, microsecond=999999)
-                start_date_obj = end_date_obj - timedelta(days=days-1)
-            
-            # Get activity data using existing function
-            activity_data = get_activity_trends_data(
-                start_date_obj,
-                end_date_obj,
-                token_filters=token_filters
-            )
-            
-            # Prepare CSV data
-            csv_rows = []
-            csv_rows.append(['Date', 'Chart Type', 'Activity Count'])
-            
-            # Process each requested chart type
-            for chart_type in charts:
-                if chart_type in activity_data:
-                    chart_data = activity_data[chart_type]
-                    # Sort dates for consistent output
-                    sorted_dates = sorted(chart_data.keys())
-                    
-                    for date_key in sorted_dates:
-                        count = chart_data[date_key]
-                        chart_display_name = {
-                            'logins': 'Logins',
-                            'chats': 'Chats', 
-                            'documents': 'Documents',
-                            'personal_documents': 'Personal Documents',
-                            'group_documents': 'Group Documents',
-                            'public_documents': 'Public Documents'
-                        }.get(chart_type, chart_type.title())
-                        
-                        csv_rows.append([date_key, chart_display_name, count])
-            
-            # Generate CSV content
-            import io
-            import csv
-            output = io.StringIO()
-            writer = csv.writer(output)
-            writer.writerows(csv_rows)
-            csv_content = output.getvalue()
-            output.close()
-            
-            # Get current user info
-            user_id = session.get('user_id')
-            user_email = session.get('email')
-            user_display_name = session.get('display_name', user_email)
-            
-            if not user_id:
-                return jsonify({'error': 'User not authenticated'}), 401
-            
-            # Create new conversation
-            conversation_id = str(uuid.uuid4())
-            timestamp = datetime.now(timezone.utc).isoformat()
-            
-            # Generate descriptive title with date range
-            if time_window == 'custom':
-                date_range = f"{start_date} to {end_date}"
-            else:
-                date_range = f"Last {time_window} Days"
-            
-            charts_text = ", ".join([c.title() for c in charts])
-            conversation_title = f"Activity Trends - {charts_text} ({date_range})"
-            
-            # Create conversation document
-            conversation_doc = {
-                "id": conversation_id,
-                "title": conversation_title,
-                "user_id": user_id,
-                "user_email": user_email,
-                "user_display_name": user_display_name,
-                "created": timestamp,
-                "last_updated": timestamp,
-                "messages": [],
-                "system_message": "You are analyzing activity trends data from a control center dashboard. The user has provided activity data as a CSV file. Please analyze the data and provide insights about user activity patterns, trends, and any notable observations.",
-                "message_count": 0,
-                "settings": {
-                    "model": "gpt-4o",
-                    "temperature": 0.7,
-                    "max_tokens": 4000
-                }
-            }
-            
-            # Create the initial message with CSV data (simulate file upload)
-            message_id = str(uuid.uuid4())
-            csv_filename = f"activity_trends_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-            
-            # Create message with file attachment structure
-            initial_message = {
-                "id": message_id,
-                "role": "user",
-                "content": f"Please analyze this activity trends data from our system dashboard. The data covers {date_range} and includes {charts_text} activity.",
-                "timestamp": timestamp,
-                "files": [{
-                    "name": csv_filename,
-                    "type": "text/csv",
-                    "size": len(csv_content.encode('utf-8')),
-                    "content": csv_content,
-                    "id": str(uuid.uuid4())
-                }]
-            }
-            
-            conversation_doc["messages"].append(initial_message)
-            conversation_doc["message_count"] = 1
-            
-            # Save conversation to database
-            cosmos_conversations_container.create_item(conversation_doc)
-            
-            # Log the activity
-            log_event("[CONTROL_CENTER] Activity Trends Chat Created", {
-                "conversation_id": conversation_id,
-                "user_id": user_id,
-                "charts": charts,
-                "time_window": time_window,
-                "date_range": date_range
-            })
-            
-            return jsonify({
-                'success': True,
-                'conversation_id': conversation_id,
-                'conversation_title': conversation_title,
-                'redirect_url': f'/chat/{conversation_id}'
-            }), 200
-            
-        except Exception as e:
-            debug_print(f"Error creating activity trends chat: {e}")
-            return jsonify({'error': 'Failed to create chat conversation'}), 500
-    
     # Data Refresh API
     @bp.route('/api/admin/control-center/refresh', methods=['POST'])
     @swagger_route(security=get_auth_security())
@@ -5912,417 +7216,6 @@ def register_route_backend_control_center(bp):
             debug_print(f"Error getting refresh status: {e}")
             return jsonify({'error': 'Failed to get refresh status'}), 500
     
-    # Activity Log Migration APIs
-    @bp.route('/api/admin/control-center/migrate/status', methods=['GET'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @control_center_required('admin')
-    def api_get_migration_status():
-        """
-        Check if there are conversations and documents that need to be migrated to activity logs.
-        Returns counts of records without the 'added_to_activity_log' flag.
-        """
-        try:
-            migration_status = {
-                'conversations_without_logs': 0,
-                'personal_documents_without_logs': 0,
-                'group_documents_without_logs': 0,
-                'public_documents_without_logs': 0,
-                'total_documents_without_logs': 0,
-                'migration_needed': False,
-                'estimated_total_records': 0
-            }
-            
-            # Check conversations without the flag
-            try:
-                conversations_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                conversations_result = list(cosmos_conversations_container.query_items(
-                    query=conversations_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['conversations_without_logs'] = conversations_result[0] if conversations_result else 0
-            except Exception as e:
-                debug_print(f"Error checking conversations migration status: {e}")
-            
-            # Check personal documents without the flag
-            try:
-                personal_docs_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                personal_docs_result = list(cosmos_user_documents_container.query_items(
-                    query=personal_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['personal_documents_without_logs'] = personal_docs_result[0] if personal_docs_result else 0
-            except Exception as e:
-                debug_print(f"Error checking personal documents migration status: {e}")
-            
-            # Check group documents without the flag
-            try:
-                group_docs_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                group_docs_result = list(cosmos_group_documents_container.query_items(
-                    query=group_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['group_documents_without_logs'] = group_docs_result[0] if group_docs_result else 0
-            except Exception as e:
-                debug_print(f"Error checking group documents migration status: {e}")
-            
-            # Check public documents without the flag
-            try:
-                public_docs_query = """
-                    SELECT VALUE COUNT(1) 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                public_docs_result = list(cosmos_public_documents_container.query_items(
-                    query=public_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                migration_status['public_documents_without_logs'] = public_docs_result[0] if public_docs_result else 0
-            except Exception as e:
-                debug_print(f"Error checking public documents migration status: {e}")
-            
-            # Calculate totals
-            migration_status['total_documents_without_logs'] = (
-                migration_status['personal_documents_without_logs'] +
-                migration_status['group_documents_without_logs'] +
-                migration_status['public_documents_without_logs']
-            )
-            
-            migration_status['estimated_total_records'] = (
-                migration_status['conversations_without_logs'] +
-                migration_status['total_documents_without_logs']
-            )
-            
-            migration_status['migration_needed'] = migration_status['estimated_total_records'] > 0
-            
-            return jsonify(migration_status), 200
-            
-        except Exception as e:
-            debug_print(f"Error getting migration status: {e}")
-            return jsonify({'error': 'Failed to get migration status'}), 500
-    
-    @bp.route('/api/admin/control-center/migrate/all', methods=['POST'])
-    @swagger_route(security=get_auth_security())
-    @login_required
-    @control_center_required('admin')
-    def api_migrate_to_activity_logs():
-        """
-        Migrate all conversations and documents without activity logs.
-        This adds activity log records and sets the 'added_to_activity_log' flag.
-        
-        WARNING: This may take a while for large datasets and could impact performance.
-        Recommended to run during off-peak hours.
-        """
-        try:
-            from functions_activity_logging import log_conversation_creation, log_document_creation_transaction
-            
-            results = {
-                'conversations_migrated': 0,
-                'conversations_failed': 0,
-                'personal_documents_migrated': 0,
-                'personal_documents_failed': 0,
-                'group_documents_migrated': 0,
-                'group_documents_failed': 0,
-                'public_documents_migrated': 0,
-                'public_documents_failed': 0,
-                'total_migrated': 0,
-                'total_failed': 0,
-                'errors': []
-            }
-            
-            # Migrate conversations
-            debug_print("Starting conversation migration...")
-            try:
-                conversations_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                conversations = list(cosmos_conversations_container.query_items(
-                    query=conversations_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                debug_print(f"Found {len(conversations)} conversations to migrate")
-                
-                for conv in conversations:
-                    try:
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': str(uuid.uuid4()),
-                            'activity_type': 'conversation_creation',
-                            'user_id': conv.get('user_id'),
-                            'timestamp': conv.get('created_at') or conv.get('last_updated') or datetime.utcnow().isoformat(),
-                            'created_at': conv.get('created_at') or conv.get('last_updated') or datetime.utcnow().isoformat(),
-                            'conversation': {
-                                'conversation_id': conv.get('id'),
-                                'title': conv.get('title', 'Untitled'),
-                                'context': conv.get('context', []),
-                                'tags': conv.get('tags', [])
-                            },
-                            'workspace_type': 'personal',
-                            'workspace_context': {}
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to conversation
-                        conv['added_to_activity_log'] = True
-                        cosmos_conversations_container.upsert_item(conv)
-                        
-                        results['conversations_migrated'] += 1
-                        
-                    except Exception as conv_error:
-                        results['conversations_failed'] += 1
-                        error_msg = f"Failed to migrate conversation {conv.get('id')}: {str(conv_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during conversation migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Migrate personal documents
-            debug_print("Starting personal documents migration...")
-            try:
-                personal_docs_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                personal_docs = list(cosmos_user_documents_container.query_items(
-                    query=personal_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in personal_docs:
-                    try:
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': str(uuid.uuid4()),
-                            'user_id': doc.get('user_id'),
-                            'activity_type': 'document_creation',
-                            'workspace_type': 'personal',
-                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'document': {
-                                'document_id': doc.get('id'),
-                                'file_name': doc.get('file_name', 'Unknown'),
-                                'file_type': doc.get('file_type', 'unknown'),
-                                'file_size_bytes': doc.get('file_size', 0),
-                                'page_count': doc.get('number_of_pages', 0),
-                                'version': doc.get('version', 1)
-                            },
-                            'embedding_usage': {
-                                'total_tokens': doc.get('embedding_tokens', 0),
-                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
-                            },
-                            'document_metadata': {
-                                'author': doc.get('author'),
-                                'title': doc.get('title'),
-                                'subject': doc.get('subject'),
-                                'publication_date': doc.get('publication_date'),
-                                'keywords': doc.get('keywords', []),
-                                'abstract': doc.get('abstract')
-                            },
-                            'workspace_context': {}
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to document
-                        doc['added_to_activity_log'] = True
-                        cosmos_user_documents_container.upsert_item(doc)
-                        
-                        results['personal_documents_migrated'] += 1
-                        
-                    except Exception as doc_error:
-                        results['personal_documents_failed'] += 1
-                        error_msg = f"Failed to migrate personal document {doc.get('id')}: {str(doc_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during personal documents migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Migrate group documents
-            debug_print("Starting group documents migration...")
-            try:
-                group_docs_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                group_docs = list(cosmos_group_documents_container.query_items(
-                    query=group_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in group_docs:
-                    try:
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': str(uuid.uuid4()),
-                            'user_id': doc.get('user_id'),
-                            'activity_type': 'document_creation',
-                            'workspace_type': 'group',
-                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'document': {
-                                'document_id': doc.get('id'),
-                                'file_name': doc.get('file_name', 'Unknown'),
-                                'file_type': doc.get('file_type', 'unknown'),
-                                'file_size_bytes': doc.get('file_size', 0),
-                                'page_count': doc.get('number_of_pages', 0),
-                                'version': doc.get('version', 1)
-                            },
-                            'embedding_usage': {
-                                'total_tokens': doc.get('embedding_tokens', 0),
-                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
-                            },
-                            'document_metadata': {
-                                'author': doc.get('author'),
-                                'title': doc.get('title'),
-                                'subject': doc.get('subject'),
-                                'publication_date': doc.get('publication_date'),
-                                'keywords': doc.get('keywords', []),
-                                'abstract': doc.get('abstract')
-                            },
-                            'workspace_context': {
-                                'group_id': doc.get('group_id')
-                            }
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to document
-                        doc['added_to_activity_log'] = True
-                        cosmos_group_documents_container.upsert_item(doc)
-                        
-                        results['group_documents_migrated'] += 1
-                        
-                    except Exception as doc_error:
-                        results['group_documents_failed'] += 1
-                        error_msg = f"Failed to migrate group document {doc.get('id')}: {str(doc_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during group documents migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Migrate public documents
-            debug_print("Starting public documents migration...")
-            try:
-                public_docs_query = """
-                    SELECT * 
-                    FROM c 
-                    WHERE NOT IS_DEFINED(c.added_to_activity_log) OR c.added_to_activity_log = false
-                """
-                public_docs = list(cosmos_public_documents_container.query_items(
-                    query=public_docs_query,
-                    enable_cross_partition_query=True
-                ))
-                
-                for doc in public_docs:
-                    try:
-                        # Create activity log directly to preserve original timestamp
-                        activity_log = {
-                            'id': str(uuid.uuid4()),
-                            'user_id': doc.get('user_id'),
-                            'activity_type': 'document_creation',
-                            'workspace_type': 'public',
-                            'timestamp': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'created_at': doc.get('upload_date') or datetime.utcnow().isoformat(),
-                            'document': {
-                                'document_id': doc.get('id'),
-                                'file_name': doc.get('file_name', 'Unknown'),
-                                'file_type': doc.get('file_type', 'unknown'),
-                                'file_size_bytes': doc.get('file_size', 0),
-                                'page_count': doc.get('number_of_pages', 0),
-                                'version': doc.get('version', 1)
-                            },
-                            'embedding_usage': {
-                                'total_tokens': doc.get('embedding_tokens', 0),
-                                'model_deployment_name': doc.get('embedding_model_deployment_name', 'unknown')
-                            },
-                            'document_metadata': {
-                                'author': doc.get('author'),
-                                'title': doc.get('title'),
-                                'subject': doc.get('subject'),
-                                'publication_date': doc.get('publication_date'),
-                                'keywords': doc.get('keywords', []),
-                                'abstract': doc.get('abstract')
-                            },
-                            'workspace_context': {
-                                'public_workspace_id': doc.get('public_workspace_id')
-                            }
-                        }
-                        
-                        # Save to activity logs container
-                        cosmos_activity_logs_container.upsert_item(activity_log)
-                        
-                        # Add flag to document
-                        doc['added_to_activity_log'] = True
-                        cosmos_public_documents_container.upsert_item(doc)
-                        
-                        results['public_documents_migrated'] += 1
-                        
-                    except Exception as doc_error:
-                        results['public_documents_failed'] += 1
-                        error_msg = f"Failed to migrate public document {doc.get('id')}: {str(doc_error)}"
-                        debug_print(error_msg)
-                        results['errors'].append(error_msg)
-                        
-            except Exception as e:
-                error_msg = f"Error during public documents migration: {str(e)}"
-                debug_print(error_msg)
-                results['errors'].append(error_msg)
-            
-            # Calculate totals
-            results['total_migrated'] = (
-                results['conversations_migrated'] +
-                results['personal_documents_migrated'] +
-                results['group_documents_migrated'] +
-                results['public_documents_migrated']
-            )
-            
-            results['total_failed'] = (
-                results['conversations_failed'] +
-                results['personal_documents_failed'] +
-                results['group_documents_failed'] +
-                results['public_documents_failed']
-            )
-            
-            debug_print(f"Migration complete: {results['total_migrated']} migrated, {results['total_failed']} failed")
-            
-            return jsonify(results), 200
-            
-        except Exception as e:
-            debug_print(f"Error during migration: {e}")
-            import traceback
-            traceback.print_exc()
-            return jsonify({'error': f'Migration failed: {str(e)}'}), 500
-
     @bp.route('/api/admin/control-center/activity-logs', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -6855,6 +7748,46 @@ def register_route_backend_control_center(bp):
             log_event("[APPROVALS] Failed to fetch approvals", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
             return jsonify({'error': 'Failed to fetch approvals'}), 500
 
+    @bp.route('/api/approvals/stats', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    def api_get_approval_stats():
+        """
+        Summarize the approval requests the current user can see, for the Approvals dashboard.
+
+        Query Parameters:
+            days (int): 7, 30 or 90 (default 30), the window decided requests are counted in.
+
+        Requests are read through the same visibility rules as GET /api/approvals, so a
+        request the caller cannot see is never counted.
+        """
+        try:
+            days = parse_review_window(request.args.get('days')) or 30
+        except ValueError:
+            return jsonify({'error': 'The window must be 7, 30 or 90 days.'}), 400
+        try:
+            user = session.get('user', {})
+            user_id = user.get('oid') or user.get('sub')
+            user_roles = user.get('roles', [])
+            result = get_pending_approvals(
+                user_id=user_id,
+                user_roles=user_roles,
+                page=1,
+                per_page=APPROVAL_STATS_SCAN_LIMIT,
+                include_completed=True,
+                status_filter='all',
+                tenant_id=user.get('tid'),
+            )
+            return jsonify(summarize_visible_approvals(
+                result.get('approvals', []),
+                user_id,
+                user_roles,
+                days,
+            )), 200
+        except Exception as e:
+            log_event("[APPROVALS] Failed to summarize approvals", extra={'exception_type': type(e).__name__}, level=logging.ERROR)
+            return jsonify({'error': 'Failed to summarize approvals'}), 500
+
     @bp.route('/api/approvals/<approval_id>', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -7101,6 +8034,10 @@ def register_route_backend_control_center(bp):
             return {'success': False, 'message': 'Approval metadata is missing the safety log reference.'}
 
         safety_log = get_safety_log_item(safety_log_id)
+        # Only the request its violation is waiting on is carried out. One the violation has
+        # moved on from -- withdrawn, replaced by a newer request, or settled -- changes nothing.
+        if not safety_log_awaits_request(safety_log, approval.get('id')):
+            return {'success': False, 'message': SAFETY_REQUEST_NOT_CURRENT_MESSAGE}
         action = metadata.get('violation_action')
         if not action:
             return {'success': False, 'message': 'Approval metadata is missing the violation action.'}
@@ -7118,72 +8055,98 @@ def register_route_backend_control_center(bp):
             },
         )
 
-        update_safety_log_action_state(safety_log_id, {
-            'action_request_status': 'executed',
+        # Warnings are sent without approval now; this path still finishes warn_user
+        # requests created before that, and marks them for acknowledgment the same way.
+        execution_updates = build_safety_action_execution_updates(action, result)
+        execution_updates.update({
             'action_request_id': approval.get('id'),
             'action_request_type': approval.get('request_type'),
             'action_requested_at': approval.get('created_at'),
             'action_approved_at': approval.get('approved_at'),
-            'action_executed_at': datetime.utcnow().isoformat(),
-            'action_execution_error': None,
         })
+        update_safety_log_action_state(safety_log_id, execution_updates)
 
         return result
 
     def _execute_take_ownership(approval, executor_id, executor_email, executor_name):
-        """Execute admin take ownership action."""
+        """Execute admin take ownership action.
+
+        The request is checked again on the group's current copy. When the requester
+        already owns the group, as after a second approval, it has already been applied:
+        nothing is written or logged, and it succeeds. When anyone other than the owner
+        the request recorded owns the group, it is refused and the approval fails.
+        """
         try:
             group_id = approval['group_id']
             requester_id = approval['requester_id']
             requester_email = approval['requester_email']
-            
-            # Get the group
-            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            
-            old_owner = group.get('owner', {})
-            old_owner_id = old_owner.get('id')
-            old_owner_email = old_owner.get('email', 'unknown')
-            
-            # Update owner to requester (the admin who requested)
-            group['owner'] = {
-                'id': requester_id,
-                'email': requester_email,
-                'displayName': approval['requester_name']
+            recorded_owner_id = (approval.get('metadata') or {}).get('old_owner_id')
+            success = {
+                'success': True,
+                'message': f'Ownership transferred to {requester_email}'
             }
-            
-            # Remove requester from special roles if present
-            if requester_id in group.get('admins', []):
-                group['admins'].remove(requester_id)
-            if requester_id in group.get('documentManagers', []):
-                group['documentManagers'].remove(requester_id)
-            
-            # Ensure requester is in users list
-            requester_in_users = any(m.get('userId') == requester_id for m in group.get('users', []))
-            if not requester_in_users:
-                group.setdefault('users', []).append({
-                    'userId': requester_id,
+            replaced = {}
+
+            def apply_take(group):
+                old_owner = group.get('owner', {})
+                old_owner_id = old_owner.get('id')
+                old_owner_email = old_owner.get('email', 'unknown')
+                if old_owner_id == requester_id:
+                    raise _GroupChangeAnswer(success)
+                if old_owner_id != recorded_owner_id:
+                    raise _GroupChangeAnswer({'success': False, 'message': GROUP_OWNERSHIP_CHANGED_MESSAGE})
+                
+                # Update owner to requester (the admin who requested)
+                group['owner'] = {
+                    'id': requester_id,
                     'email': requester_email,
                     'displayName': approval['requester_name']
-                })
-            
-            # Demote old owner to regular member
-            if old_owner_id:
-                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
-                if not old_owner_in_users:
+                }
+                
+                # Remove requester from special roles if present
+                if requester_id in group.get('admins', []):
+                    group['admins'].remove(requester_id)
+                if requester_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(requester_id)
+                
+                # Ensure requester is in users list
+                requester_in_users = any(m.get('userId') == requester_id for m in group.get('users', []))
+                if not requester_in_users:
                     group.setdefault('users', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner.get('displayName', old_owner_email)
+                        'userId': requester_id,
+                        'email': requester_email,
+                        'displayName': approval['requester_name']
                     })
                 
-                if old_owner_id in group.get('admins', []):
-                    group['admins'].remove(old_owner_id)
-                if old_owner_id in group.get('documentManagers', []):
-                    group['documentManagers'].remove(old_owner_id)
-            
-            group['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_groups_container.upsert_item(group)
-            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
+                # Demote old owner to regular member
+                if old_owner_id:
+                    old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                    if not old_owner_in_users:
+                        group.setdefault('users', []).append({
+                            'userId': old_owner_id,
+                            'email': old_owner_email,
+                            'displayName': old_owner.get('displayName', old_owner_email)
+                        })
+                    
+                    if old_owner_id in group.get('admins', []):
+                        group['admins'].remove(old_owner_id)
+                    if old_owner_id in group.get('documentManagers', []):
+                        group['documentManagers'].remove(old_owner_id)
+                
+                group['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner_id=old_owner_id, old_owner_email=old_owner_email)
+                return group
+
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_take, cache_reason="group_ownership_transferred",
+                )
+            except _GroupChangeAnswer as answer:
+                return answer.answer
+            except GroupDocumentWriteConflict:
+                return {'success': False, 'message': GROUP_APPROVAL_CONFLICT_MESSAGE}
+            if group is None:
+                return {'success': False, 'message': GROUP_NO_LONGER_EXISTS_MESSAGE}
             
             # Log to activity logs
             activity_record = {
@@ -7197,8 +8160,8 @@ def register_route_backend_control_center(bp):
                 'approver_email': executor_email,
                 'group_id': group_id,
                 'group_name': group.get('name', 'Unknown'),
-                'old_owner_id': old_owner_id,
-                'old_owner_email': old_owner_email,
+                'old_owner_id': replaced['old_owner_id'],
+                'old_owner_email': replaced['old_owner_email'],
                 'new_owner_id': requester_id,
                 'new_owner_email': requester_email,
                 'approval_id': approval['id'],
@@ -7206,10 +8169,7 @@ def register_route_backend_control_center(bp):
             }
             cosmos_activity_logs_container.create_item(body=activity_record)
             
-            return {
-                'success': True,
-                'message': f'Ownership transferred to {requester_email}'
-            }
+            return success
             
         except Exception as e:
             return {'success': False, 'message': f'Failed to take ownership: {str(e)}'}
@@ -7224,104 +8184,135 @@ def register_route_backend_control_center(bp):
             
             # Get the workspace
             workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            
-            # Get old owner info
-            old_owner = workspace.get('owner', {})
-            if isinstance(old_owner, dict):
-                old_owner_id = old_owner.get('userId')
-                old_owner_email = old_owner.get('email')
-                old_owner_name = old_owner.get('displayName')
-            else:
-                # Old format where owner is just a string
-                old_owner_id = old_owner
-                # Try to get user info
+
+            # The recorded owner the request was made against. The change is applied only
+            # when the workspace's current owner still matches it; a second approval, where
+            # the requester already owns it, is idempotent; any other owner is refused.
+            recorded_owner_id = (approval.get('metadata') or {}).get('old_owner_id')
+
+            # Resolve display info for any legacy string-format members up front, so the
+            # guarded write below performs no user-settings or Graph reads while it may
+            # retry. Reads use the copy just fetched; entries added meanwhile degrade to
+            # 'unknown' rather than blocking the write.
+            def _resolve_user(uid):
                 try:
-                    old_owner_user = cosmos_user_settings_container.read_item(
-                        item=old_owner_id,
-                        partition_key=old_owner_id
-                    )
-                    old_owner_email = old_owner_user.get('email', 'unknown')
-                    old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except Exception as ex:
-                    old_owner_email = 'unknown'
-                    old_owner_name = 'unknown'
-            
-            # Update owner to requester (the admin who requested) with full user object
-            workspace['owner'] = {
-                'userId': requester_id,
-                'email': requester_email,
-                'displayName': requester_name
+                    u = cosmos_user_settings_container.read_item(item=uid, partition_key=uid)
+                    return {
+                        'userId': uid,
+                        'email': u.get('email', 'unknown'),
+                        'displayName': u.get('display_name', 'unknown'),
+                    }
+                except Exception:
+                    return {'userId': uid, 'email': 'unknown', 'displayName': 'unknown'}
+
+            resolved_users = {}
+            pre_owner = workspace.get('owner', {})
+            if isinstance(pre_owner, dict):
+                pre_owner_id = pre_owner.get('userId')
+                pre_owner_email = pre_owner.get('email', 'unknown')
+                pre_owner_name = pre_owner.get('displayName', pre_owner_email)
+            else:
+                pre_owner_id = pre_owner
+                info = _resolve_user(pre_owner_id) if pre_owner_id else {'email': 'unknown', 'displayName': 'unknown'}
+                pre_owner_email = info['email']
+                pre_owner_name = info['displayName']
+                if pre_owner_id:
+                    resolved_users[pre_owner_id] = info
+            for entry in list(workspace.get('admins', [])) + list(workspace.get('documentManagers', [])):
+                if not isinstance(entry, dict) and entry and entry not in resolved_users:
+                    resolved_users[entry] = _resolve_user(entry)
+
+            success = {
+                'success': True,
+                'message': f"Ownership transferred to {requester_email}"
             }
-            
-            # Remove requester from admins/documentManagers if present
-            new_admins = []
-            for admin in workspace.get('admins', []):
-                admin_id = admin.get('userId') if isinstance(admin, dict) else admin
-                if admin_id != requester_id:
-                    # Ensure admin is full object
+            replaced = {}
+
+            def apply_take(fresh):
+                fresh_owner = fresh.get('owner', {})
+                if isinstance(fresh_owner, dict):
+                    fresh_owner_id = fresh_owner.get('userId')
+                    fresh_owner_email = fresh_owner.get('email', 'unknown')
+                    fresh_owner_name = fresh_owner.get('displayName', fresh_owner_email)
+                else:
+                    fresh_owner_id = fresh_owner
+                    info = resolved_users.get(fresh_owner_id, {'email': pre_owner_email, 'displayName': pre_owner_name})
+                    fresh_owner_email = info.get('email', 'unknown')
+                    fresh_owner_name = info.get('displayName', 'unknown')
+
+                if fresh_owner_id == requester_id:
+                    raise _PublicChangeAnswer(success)
+                if fresh_owner_id != recorded_owner_id:
+                    raise _PublicChangeAnswer({'success': False, 'message': PUBLIC_OWNERSHIP_CHANGED_MESSAGE})
+
+                # Update owner to requester (the admin who requested) with full user object
+                fresh['owner'] = {
+                    'userId': requester_id,
+                    'email': requester_email,
+                    'displayName': requester_name
+                }
+
+                # Remove requester from admins/documentManagers if present, keeping full objects
+                new_admins = []
+                for admin in fresh.get('admins', []):
+                    admin_id = admin.get('userId') if isinstance(admin, dict) else admin
+                    if admin_id == requester_id:
+                        continue
                     if isinstance(admin, dict):
                         new_admins.append(admin)
+                    elif admin_id in resolved_users:
+                        new_admins.append(resolved_users[admin_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            admin_user = cosmos_user_settings_container.read_item(
-                                item=admin,
-                                partition_key=admin
-                            )
-                            new_admins.append({
-                                'userId': admin,
-                                'email': admin_user.get('email', 'unknown'),
-                                'displayName': admin_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['admins'] = new_admins
-            
-            new_dms = []
-            for dm in workspace.get('documentManagers', []):
-                dm_id = dm.get('userId') if isinstance(dm, dict) else dm
-                if dm_id != requester_id:
-                    # Ensure dm is full object
+                        new_admins.append({'userId': admin_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['admins'] = new_admins
+
+                new_dms = []
+                for dm in fresh.get('documentManagers', []):
+                    dm_id = dm.get('userId') if isinstance(dm, dict) else dm
+                    if dm_id == requester_id:
+                        continue
                     if isinstance(dm, dict):
                         new_dms.append(dm)
+                    elif dm_id in resolved_users:
+                        new_dms.append(resolved_users[dm_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            dm_user = cosmos_user_settings_container.read_item(
-                                item=dm,
-                                partition_key=dm
-                            )
-                            new_dms.append({
-                                'userId': dm,
-                                'email': dm_user.get('email', 'unknown'),
-                                'displayName': dm_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['documentManagers'] = new_dms
-            
-            # Demote old owner to admin if not already there
-            if old_owner_id and old_owner_id != requester_id:
-                old_owner_in_admins = any(
-                    (a.get('userId') if isinstance(a, dict) else a) == old_owner_id 
-                    for a in workspace.get('admins', [])
+                        new_dms.append({'userId': dm_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['documentManagers'] = new_dms
+
+                # Demote old owner to admin if not already a member
+                if fresh_owner_id and fresh_owner_id != requester_id:
+                    old_owner_in_admins = any(
+                        (a.get('userId') if isinstance(a, dict) else a) == fresh_owner_id
+                        for a in fresh.get('admins', [])
+                    )
+                    old_owner_in_dms = any(
+                        (dm.get('userId') if isinstance(dm, dict) else dm) == fresh_owner_id
+                        for dm in fresh.get('documentManagers', [])
+                    )
+                    if not old_owner_in_admins and not old_owner_in_dms:
+                        fresh.setdefault('admins', []).append({
+                            'userId': fresh_owner_id,
+                            'email': fresh_owner_email,
+                            'displayName': fresh_owner_name
+                        })
+
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner_id=fresh_owner_id, old_owner_email=fresh_owner_email)
+                return fresh
+
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_take, cache_reason="public_workspace_ownership_transferred",
                 )
-                old_owner_in_dms = any(
-                    (dm.get('userId') if isinstance(dm, dict) else dm) == old_owner_id 
-                    for dm in workspace.get('documentManagers', [])
-                )
-                
-                if not old_owner_in_admins and not old_owner_in_dms:
-                    # Add old owner as admin
-                    workspace.setdefault('admins', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner_name
-                    })
-            
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
+            except _PublicChangeAnswer as answer:
+                return answer.answer
+            except PublicWorkspaceDocumentWriteConflict:
+                return {'success': False, 'message': PUBLIC_APPROVAL_CONFLICT_MESSAGE}
+            if workspace is None:
+                return {'success': False, 'message': PUBLIC_NO_LONGER_EXISTS_MESSAGE}
+
+            old_owner_id = replaced['old_owner_id']
+            old_owner_email = replaced['old_owner_email']
             
             # Log to activity logs
             activity_record = {
@@ -7353,7 +8344,14 @@ def register_route_backend_control_center(bp):
             return {'success': False, 'message': f'Failed to take workspace ownership: {str(e)}'}
 
     def _execute_transfer_ownership(approval, executor_id, executor_email, executor_name):
-        """Execute transfer ownership action."""
+        """Execute transfer ownership action.
+
+        The request is checked again on the group's current copy. When the new owner
+        already owns the group, as after a second approval, it has already been applied:
+        nothing is written or logged, and it succeeds. When anyone other than the owner
+        the request recorded owns the group, it is refused and the approval fails. The
+        new owner must still be a member.
+        """
         try:
             group_id = approval['group_id']
             new_owner_id = approval['metadata'].get('new_owner_id')
@@ -7361,53 +8359,74 @@ def register_route_backend_control_center(bp):
             if not new_owner_id:
                 return {'success': False, 'message': 'new_owner_id not found in approval metadata'}
             
-            # Get the group
-            group = cosmos_groups_container.read_item(item=group_id, partition_key=group_id)
-            
-            # Find new owner in members
-            new_owner_member = None
-            for member in group.get('users', []):
-                if member.get('userId') == new_owner_id:
-                    new_owner_member = member
-                    break
-            
-            if not new_owner_member:
-                return {'success': False, 'message': 'New owner not found in group members'}
-            
-            old_owner = group.get('owner', {})
-            old_owner_id = old_owner.get('id')
-            
-            # Update owner
-            group['owner'] = {
-                'id': new_owner_id,
-                'email': new_owner_member.get('email'),
-                'displayName': new_owner_member.get('displayName')
-            }
-            
-            # Remove new owner from special roles
-            if new_owner_id in group.get('admins', []):
-                group['admins'].remove(new_owner_id)
-            if new_owner_id in group.get('documentManagers', []):
-                group['documentManagers'].remove(new_owner_id)
-            
-            # Demote old owner to member
-            if old_owner_id:
-                old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
-                if not old_owner_in_users:
-                    group.setdefault('users', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner.get('email'),
-                        'displayName': old_owner.get('displayName')
+            recorded_owner_id = approval['metadata'].get('old_owner_id')
+            replaced = {}
+
+            def apply_transfer(group):
+                old_owner = group.get('owner', {})
+                old_owner_id = old_owner.get('id')
+                if old_owner_id == new_owner_id:
+                    raise _GroupChangeAnswer({
+                        'success': True,
+                        'message': f"Ownership transferred to {old_owner.get('email') or approval['metadata'].get('new_owner_email')}"
                     })
+                if old_owner_id != recorded_owner_id:
+                    raise _GroupChangeAnswer({'success': False, 'message': GROUP_OWNERSHIP_CHANGED_MESSAGE})
                 
-                if old_owner_id in group.get('admins', []):
-                    group['admins'].remove(old_owner_id)
-                if old_owner_id in group.get('documentManagers', []):
-                    group['documentManagers'].remove(old_owner_id)
-            
-            group['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_groups_container.upsert_item(group)
-            bump_chat_bootstrap_global_cache_version(reason="group_ownership_transferred")
+                # Find new owner in members
+                new_owner_member = None
+                for member in group.get('users', []):
+                    if member.get('userId') == new_owner_id:
+                        new_owner_member = member
+                        break
+                
+                if not new_owner_member:
+                    raise _GroupChangeAnswer({'success': False, 'message': 'New owner not found in group members'})
+                
+                # Update owner
+                group['owner'] = {
+                    'id': new_owner_id,
+                    'email': new_owner_member.get('email'),
+                    'displayName': new_owner_member.get('displayName')
+                }
+                
+                # Remove new owner from special roles
+                if new_owner_id in group.get('admins', []):
+                    group['admins'].remove(new_owner_id)
+                if new_owner_id in group.get('documentManagers', []):
+                    group['documentManagers'].remove(new_owner_id)
+                
+                # Demote old owner to member
+                if old_owner_id:
+                    old_owner_in_users = any(m.get('userId') == old_owner_id for m in group.get('users', []))
+                    if not old_owner_in_users:
+                        group.setdefault('users', []).append({
+                            'userId': old_owner_id,
+                            'email': old_owner.get('email'),
+                            'displayName': old_owner.get('displayName')
+                        })
+                    
+                    if old_owner_id in group.get('admins', []):
+                        group['admins'].remove(old_owner_id)
+                    if old_owner_id in group.get('documentManagers', []):
+                        group['documentManagers'].remove(old_owner_id)
+                
+                group['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner=old_owner, new_owner_member=new_owner_member)
+                return group
+
+            try:
+                group = update_group_document_with_etag_guard(
+                    group_id, apply_transfer, cache_reason="group_ownership_transferred",
+                )
+            except _GroupChangeAnswer as answer:
+                return answer.answer
+            except GroupDocumentWriteConflict:
+                return {'success': False, 'message': GROUP_APPROVAL_CONFLICT_MESSAGE}
+            if group is None:
+                return {'success': False, 'message': GROUP_NO_LONGER_EXISTS_MESSAGE}
+            old_owner = replaced['old_owner']
+            new_owner_member = replaced['new_owner_member']
             
             # Log to activity logs
             activity_record = {
@@ -7421,7 +8440,7 @@ def register_route_backend_control_center(bp):
                 'approver_email': executor_email,
                 'group_id': group_id,
                 'group_name': group.get('name', 'Unknown'),
-                'old_owner_id': old_owner_id,
+                'old_owner_id': old_owner.get('id'),
                 'old_owner_email': old_owner.get('email'),
                 'new_owner_id': new_owner_id,
                 'new_owner_email': new_owner_member.get('email'),
@@ -7451,104 +8470,134 @@ def register_route_backend_control_center(bp):
             
             # Get the workspace
             workspace = cosmos_public_workspaces_container.read_item(item=workspace_id, partition_key=workspace_id)
-            
-            # Get old owner info
-            old_owner = workspace.get('owner', {})
-            if isinstance(old_owner, dict):
-                old_owner_id = old_owner.get('userId')
-                old_owner_email = old_owner.get('email')
-                old_owner_name = old_owner.get('displayName')
-            else:
-                # Handle case where owner is just a string (old format)
-                old_owner_id = old_owner
-                # Try to get full user info
+
+            # The recorded owner the request was made against. The change is applied only
+            # when the workspace's current owner still matches it; a second approval, where
+            # the new owner already owns it, is idempotent; any other owner is refused.
+            recorded_owner_id = approval['metadata'].get('old_owner_id')
+
+            # Resolve display info for any legacy string-format members up front, so the
+            # guarded write below performs no user-settings or Graph reads while it may
+            # retry. Reads use the copy just fetched; entries added meanwhile degrade to
+            # 'unknown' rather than blocking the write.
+            def _resolve_user(uid):
                 try:
-                    old_owner_user = cosmos_user_settings_container.read_item(
-                        item=old_owner_id,
-                        partition_key=old_owner_id
-                    )
-                    old_owner_email = old_owner_user.get('email', 'unknown')
-                    old_owner_name = old_owner_user.get('display_name', old_owner_email)
-                except Exception as ex:
-                    old_owner_email = 'unknown'
-                    old_owner_name = 'unknown'
-            
-            # Update owner with full user object
-            workspace['owner'] = {
-                'userId': new_owner_id,
-                'email': new_owner_email,
-                'displayName': new_owner_name
+                    u = cosmos_user_settings_container.read_item(item=uid, partition_key=uid)
+                    return {
+                        'userId': uid,
+                        'email': u.get('email', 'unknown'),
+                        'displayName': u.get('display_name', 'unknown'),
+                    }
+                except Exception:
+                    return {'userId': uid, 'email': 'unknown', 'displayName': 'unknown'}
+
+            resolved_users = {}
+            pre_owner = workspace.get('owner', {})
+            if isinstance(pre_owner, dict):
+                pre_owner_email = pre_owner.get('email', 'unknown')
+                pre_owner_name = pre_owner.get('displayName', pre_owner_email)
+            else:
+                pre_owner_id = pre_owner
+                info = _resolve_user(pre_owner_id) if pre_owner_id else {'email': 'unknown', 'displayName': 'unknown'}
+                pre_owner_email = info['email']
+                pre_owner_name = info['displayName']
+                if pre_owner_id:
+                    resolved_users[pre_owner_id] = info
+            for entry in list(workspace.get('admins', [])) + list(workspace.get('documentManagers', [])):
+                if not isinstance(entry, dict) and entry and entry not in resolved_users:
+                    resolved_users[entry] = _resolve_user(entry)
+
+            success = {
+                'success': True,
+                'message': f"Ownership transferred to {new_owner_email}"
             }
-            
-            # Remove new owner from admins/documentManagers if present
-            new_admins = []
-            for admin in workspace.get('admins', []):
-                admin_id = admin.get('userId') if isinstance(admin, dict) else admin
-                if admin_id != new_owner_id:
-                    # Ensure admin is full object
+            replaced = {}
+
+            def apply_transfer(fresh):
+                fresh_owner = fresh.get('owner', {})
+                if isinstance(fresh_owner, dict):
+                    fresh_owner_id = fresh_owner.get('userId')
+                    fresh_owner_email = fresh_owner.get('email', 'unknown')
+                    fresh_owner_name = fresh_owner.get('displayName', fresh_owner_email)
+                else:
+                    fresh_owner_id = fresh_owner
+                    info = resolved_users.get(fresh_owner_id, {'email': pre_owner_email, 'displayName': pre_owner_name})
+                    fresh_owner_email = info.get('email', 'unknown')
+                    fresh_owner_name = info.get('displayName', 'unknown')
+
+                if fresh_owner_id == new_owner_id:
+                    raise _PublicChangeAnswer(success)
+                if fresh_owner_id != recorded_owner_id:
+                    raise _PublicChangeAnswer({'success': False, 'message': PUBLIC_OWNERSHIP_CHANGED_MESSAGE})
+
+                # Update owner with full user object
+                fresh['owner'] = {
+                    'userId': new_owner_id,
+                    'email': new_owner_email,
+                    'displayName': new_owner_name
+                }
+
+                # Remove new owner from admins/documentManagers if present, keeping full objects
+                new_admins = []
+                for admin in fresh.get('admins', []):
+                    admin_id = admin.get('userId') if isinstance(admin, dict) else admin
+                    if admin_id == new_owner_id:
+                        continue
                     if isinstance(admin, dict):
                         new_admins.append(admin)
+                    elif admin_id in resolved_users:
+                        new_admins.append(resolved_users[admin_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            admin_user = cosmos_user_settings_container.read_item(
-                                item=admin,
-                                partition_key=admin
-                            )
-                            new_admins.append({
-                                'userId': admin,
-                                'email': admin_user.get('email', 'unknown'),
-                                'displayName': admin_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['admins'] = new_admins
-            
-            new_dms = []
-            for dm in workspace.get('documentManagers', []):
-                dm_id = dm.get('userId') if isinstance(dm, dict) else dm
-                if dm_id != new_owner_id:
-                    # Ensure dm is full object
+                        new_admins.append({'userId': admin_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['admins'] = new_admins
+
+                new_dms = []
+                for dm in fresh.get('documentManagers', []):
+                    dm_id = dm.get('userId') if isinstance(dm, dict) else dm
+                    if dm_id == new_owner_id:
+                        continue
                     if isinstance(dm, dict):
                         new_dms.append(dm)
+                    elif dm_id in resolved_users:
+                        new_dms.append(resolved_users[dm_id])
                     else:
-                        # Convert string ID to object if needed
-                        try:
-                            dm_user = cosmos_user_settings_container.read_item(
-                                item=dm,
-                                partition_key=dm
-                            )
-                            new_dms.append({
-                                'userId': dm,
-                                'email': dm_user.get('email', 'unknown'),
-                                'displayName': dm_user.get('display_name', 'unknown')
-                            })
-                        except Exception as ex:
-                            pass
-            workspace['documentManagers'] = new_dms
-            
-            # Add old owner to admins if not already there
-            if old_owner_id and old_owner_id != new_owner_id:
-                old_owner_in_admins = any(
-                    (a.get('userId') if isinstance(a, dict) else a) == old_owner_id 
-                    for a in workspace.get('admins', [])
+                        new_dms.append({'userId': dm_id, 'email': 'unknown', 'displayName': 'unknown'})
+                fresh['documentManagers'] = new_dms
+
+                # Add old owner to admins if not already a member
+                if fresh_owner_id and fresh_owner_id != new_owner_id:
+                    old_owner_in_admins = any(
+                        (a.get('userId') if isinstance(a, dict) else a) == fresh_owner_id
+                        for a in fresh.get('admins', [])
+                    )
+                    old_owner_in_dms = any(
+                        (dm.get('userId') if isinstance(dm, dict) else dm) == fresh_owner_id
+                        for dm in fresh.get('documentManagers', [])
+                    )
+                    if not old_owner_in_admins and not old_owner_in_dms:
+                        fresh.setdefault('admins', []).append({
+                            'userId': fresh_owner_id,
+                            'email': fresh_owner_email,
+                            'displayName': fresh_owner_name
+                        })
+
+                fresh['modifiedDate'] = datetime.utcnow().isoformat()
+                replaced.update(old_owner_id=fresh_owner_id, old_owner_email=fresh_owner_email)
+                return fresh
+
+            try:
+                workspace = update_public_workspace_document_with_etag_guard(
+                    workspace_id, apply_transfer, cache_reason="public_workspace_ownership_transferred",
                 )
-                old_owner_in_dms = any(
-                    (dm.get('userId') if isinstance(dm, dict) else dm) == old_owner_id 
-                    for dm in workspace.get('documentManagers', [])
-                )
-                
-                if not old_owner_in_admins and not old_owner_in_dms:
-                    # Add old owner as admin
-                    workspace.setdefault('admins', []).append({
-                        'userId': old_owner_id,
-                        'email': old_owner_email,
-                        'displayName': old_owner_name
-                    })
-            
-            workspace['modifiedDate'] = datetime.utcnow().isoformat()
-            cosmos_public_workspaces_container.upsert_item(workspace)
-            bump_chat_bootstrap_global_cache_version(reason="public_workspace_ownership_transferred")
+            except _PublicChangeAnswer as answer:
+                return answer.answer
+            except PublicWorkspaceDocumentWriteConflict:
+                return {'success': False, 'message': PUBLIC_APPROVAL_CONFLICT_MESSAGE}
+            if workspace is None:
+                return {'success': False, 'message': PUBLIC_NO_LONGER_EXISTS_MESSAGE}
+
+            old_owner_id = replaced['old_owner_id']
+            old_owner_email = replaced['old_owner_email']
             
             # Log to activity logs
             activity_record = {

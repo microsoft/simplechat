@@ -1,7 +1,7 @@
 # test_model_endpoint_management_cloud_environment.py
 """
 Functional test for model endpoint management cloud environment normalization.
-Version: 0.261.010
+Version: 0.261.107
 Implemented in: 0.250.004; updated in 0.250.172, 0.261.010
 
 This test ensures model endpoint normalization derives non-editable management
@@ -193,6 +193,7 @@ def test_service_principal_preserves_explicit_cross_cloud_selection():
             "id": "public-foundry-sp",
             "provider": "new_foundry",
             "enabled": True,
+            "identity_header": {"mode": "inherit", "header_name": "", "value_type": ""},
             "auth": {
                 "type": "service_principal",
                 "management_cloud": "public",

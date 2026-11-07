@@ -3,6 +3,7 @@
 
 import asyncio
 from collections import Counter, deque
+from copy import deepcopy
 import csv
 import heapq
 import hashlib
@@ -20,18 +21,35 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from xml.sax.saxutils import escape as escape_xml_text
 
+import pandas
 from azure.core import MatchConditions
 from azure.core.exceptions import ResourceExistsError
-from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from flask import current_app, has_app_context
 from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.azure_chat_prompt_execution_settings import AzureChatPromptExecutionSettings
 from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 from semantic_kernel_plugins.tabular_processing_plugin import TabularProcessingPlugin
+from excel_workbook_reader import EXCEL_WORKBOOK_SCHEMA_VERSION, ExcelWorkbookReader
 
+from blob_container_readiness import (
+    BlobContainerUnavailableError,
+    STORAGE_FAILURE_CODE,
+    STORAGE_FAILURE_MESSAGE,
+    write_blob_with_container_recovery,
+)
+from content_screening.access import (
+    PROVENANCE_FIELD,
+    assert_blob_available,
+    assert_evidence_available,
+    current_request_source_provenance,
+    guard_chat_service,
+)
+from content_screening.contracts import ScreeningError
 from config import (
     CLIENTS,
     TABULAR_EXTENSIONS,
     cosmos_conversations_container,
+    cosmos_orchestration_runs_container,
     cosmos_tabular_export_runs_container,
     storage_account_group_documents_container_name,
     storage_account_personal_chat_container_name,
@@ -71,6 +89,7 @@ from functions_generated_file_exports import (
     serialize_generated_xml,
 )
 from functions_model_budget_runtime import prepare_model_execution_settings
+from functions_model_endpoint_validation import model_endpoint_inference_api
 from functions_model_capabilities import (
     ModelTokenBudgetError,
     normalize_token_limit,
@@ -85,8 +104,9 @@ from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from model_endpoint_clients import (
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     infer_model_endpoint_protocol,
+    resolve_model_inference_endpoint,
 )
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from public_source_access import get_public_source_workspace_ids
 from functions_settings import get_settings
 from functions_simplechat_operations import (
     commit_generated_chat_artifact_publication_for_user,
@@ -96,6 +116,14 @@ from functions_tabular_semantic_validation import (
     TABULAR_SEMANTIC_VALIDATION_CONTRACT_VERSION,
     build_safe_semantic_validation_counts,
     verify_and_repair_semantic_rows,
+)
+from functions_native_tabular_compute import (
+    NATIVE_TABULAR_DATA_ONLY,
+    NATIVE_TABULAR_RESULT_VERSION,
+    authorize_native_compute_owner,
+    native_compute_bytes,
+    native_compute_job_id,
+    validate_native_compute_context,
 )
 
 
@@ -2660,14 +2688,19 @@ def _write_chunk_manifest_for_run(
 
 
 def _upload_json_blob(blob_path, payload, metadata=None, overwrite=True):
-    blob_client = _get_blob_service_client().get_blob_client(
+    service_client = _get_blob_service_client()
+    blob_client = service_client.get_blob_client(
         container=storage_account_personal_chat_container_name,
         blob=blob_path,
     )
-    blob_client.upload_blob(
-        json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8'),
-        overwrite=overwrite,
-        metadata={str(key): str(value) for key, value in (metadata or {}).items()},
+    data = json.dumps(payload, default=str, ensure_ascii=False).encode('utf-8')
+    write_blob_with_container_recovery(
+        service_client, storage_account_personal_chat_container_name,
+        lambda: blob_client.upload_blob(
+            data, overwrite=overwrite,
+            metadata={str(key): str(value) for key, value in (metadata or {}).items()},
+        ),
+        log=log_event,
     )
 
 
@@ -2713,6 +2746,13 @@ def _get_tabular_generation_plan_source_etag(run):
 
 def _build_tabular_output_checkpoint_metadata(run, metadata=None):
     checkpoint_metadata = dict(metadata or {})
+    if (run or {}).get('execution_policy') == 'data_only':
+        context = validate_native_compute_context(run.get('compute_context'))
+        checkpoint_metadata.update({
+            'compute_request_fingerprint': context['request_fingerprint'],
+            'execution_policy': NATIVE_TABULAR_DATA_ONLY,
+            'source_etag': _get_tabular_generation_plan_source_etag(run),
+        })
     plan_hash = str((run or {}).get('plan_hash') or '').strip()
     if plan_hash:
         checkpoint_metadata.update({
@@ -2753,6 +2793,15 @@ def _scan_output_checkpoint_batches_for_run(run):
 
 
 def _validate_tabular_output_checkpoint_metadata(run, blob_path, batch_number):
+    if (run or {}).get('execution_policy') == 'data_only':
+        context = validate_native_compute_context(run.get('compute_context'))
+        metadata = _get_blob_metadata(blob_path)
+        if (
+            metadata.get('compute_request_fingerprint') != context['request_fingerprint']
+            or metadata.get('execution_policy') != NATIVE_TABULAR_DATA_ONLY
+            or metadata.get('source_etag') != _get_tabular_generation_plan_source_etag(run)
+        ):
+            raise ValueError('Native computation checkpoint identity does not match.')
     expected_plan_hash = str((run or {}).get('plan_hash') or '').strip()
     if not expected_plan_hash:
         return
@@ -2994,7 +3043,8 @@ def _delete_blob_if_exists(blob_path):
         blob_client.delete_blob()
 
 
-def _authorize_tabular_export_run_execution(run):
+def _authorize_tabular_export_run_conversation(run):
+    """The run's conversation is the container for the exports it produces."""
     user_id = str((run or {}).get('user_id') or '').strip()
     conversation_id = str((run or {}).get('conversation_id') or '').strip()
     if not user_id or not conversation_id:
@@ -3009,6 +3059,37 @@ def _authorize_tabular_export_run_execution(run):
         raise PermissionError('Export conversation no longer exists') from exc
     if str(conversation.get('user_id') or '').strip() != user_id:
         raise PermissionError('Export conversation ownership changed')
+    return conversation
+
+
+def _authorize_tabular_export_run_execution(
+    run, *, require_current_sources=True, require_active_producer=None,
+):
+    """Authorize work that still reads the export's source file as an input.
+
+    The sources the originating chat request consumed (``screening_sources``) are
+    provenance and are not checked again.
+    """
+    conversation = _authorize_tabular_export_run_conversation(run)
+    user_id = str((run or {}).get('user_id') or '').strip()
+    conversation_id = str((run or {}).get('conversation_id') or '').strip()
+    if run.get('execution_policy') == 'data_only' or run.get('compute_context') is not None:
+        if require_active_producer is None:
+            require_active_producer = run.get('status') != 'completed'
+        authorize_native_compute_owner(
+            run, conversation=conversation,
+            read_producer=lambda producer_run_id: cosmos_orchestration_runs_container.read_item(
+                item=producer_run_id, partition_key=conversation_id,
+            ),
+            require_active=require_active_producer,
+            require_current_sources=require_current_sources,
+        )
+        if not require_current_sources and run.get('status') == 'completed':
+            # Historical compute readers authorize the current document, not
+            # the obsolete blob/provenance used to calculate the saved result.
+            return conversation
+    elif run.get('execution_policy') not in (None, 'publish'):
+        raise ValueError('The native execution policy is invalid.')
 
     source_authorization = (
         (run or {}).get('source_descriptor')
@@ -3052,7 +3133,7 @@ def _authorize_tabular_export_run_execution(run):
     elif source == 'public':
         if not scope_id:
             raise PermissionError('Export public workspace scope is missing')
-        visible_workspace_ids = set(get_user_visible_public_workspace_ids_from_settings(user_id) or [])
+        visible_workspace_ids = set(get_public_source_workspace_ids(user_id) or [])
         authorized = scope_id in visible_workspace_ids and (
             not container_name and not blob_path
             or (
@@ -3065,6 +3146,9 @@ def _authorize_tabular_export_run_execution(run):
 
     if not authorized:
         raise PermissionError('Export source is no longer authorized')
+    assert_evidence_available(source_authorization, user_id=user_id)
+    if container_name and blob_path:
+        assert_blob_available(container_name, blob_path, user_id=user_id, purpose="export")
     return conversation
 
 
@@ -3084,11 +3168,12 @@ def _get_versioned_source_blob_client(source_descriptor):
     if isinstance(blob_properties, dict):
         current_etag = current_etag or str(blob_properties.get('etag') or '').strip()
     if current_etag != expected_etag:
-        raise ValueError('Source CSV changed after the export was queued')
+        raise ValueError('The tabular source changed after the computation was queued.')
     return blob_client
 
 
 def _revalidate_tabular_source_version_for_publication(run):
+    _authorize_tabular_export_run_execution(run)
     source_descriptor = (
         (run or {}).get('source_descriptor')
         or (run or {}).get('source_authorization')
@@ -3373,7 +3458,7 @@ def _build_combined_chunk_prompt(run, batch_rows, batch_number, batch_count, out
     output_schema_line = (
         f'Use exactly these structured row fields for every object, in this order: '
         f'{json.dumps(model_output_schema, ensure_ascii=False)}.\n'
-        if model_output_schema
+        if output_schema
         else ''
     )
     answer_field_line = (
@@ -3499,14 +3584,56 @@ def _checkpoint_source_input_batch(run, batch_rows, source_scan_row_count):
     return _replace_claimed_run(run)
 
 
+def _iter_excel_table_source_chunks(reader, table, source_chunk_rows, source_row_offset=0):
+    """Keep only a bounded table batch, with physical worksheet provenance."""
+    columns = [column['name'] for column in table['columns']]
+    rows, physical_rows, missing = [], [], {}
+    batch_start = source_row_offset
+
+    def build_chunk():
+        frame = pandas.DataFrame(
+            rows, columns=columns, index=range(batch_start, batch_start + len(rows)),
+        )
+        frame.attrs.update({
+            'excel_table': deepcopy(table), 'excel_tables': [deepcopy(table)],
+            'excel_row_numbers': tuple(physical_rows),
+            'excel_row_table_ids': (table['id'],) * len(rows),
+            'excel_table_ranges': {table['id']: table['range']},
+            'excel_missing_formula_caches': deepcopy(missing),
+            'excel_index_offset': batch_start,
+        })
+        return frame
+
+    for physical_row, cells in reader.iter_table_rows(table):
+        ordinal = len(rows)
+        rows.append(['' if cell['value'] is None else str(cell['value']) for cell in cells])
+        physical_rows.append(physical_row)
+        for column, cell in zip(columns, cells):
+            if cell['value_status'] == 'cache_missing':
+                missing.setdefault(column, set()).add(ordinal)
+        if len(rows) >= source_chunk_rows:
+            yield build_chunk()
+            batch_start += len(rows)
+            rows, physical_rows, missing = [], [], {}
+    if rows:
+        yield build_chunk()
+
+
 def _iter_versioned_tabular_source_rows(
     source_descriptor,
     source_format,
     source_chunk_rows,
     resume_source_row,
+    user_id=None,
 ):
+    if type(resume_source_row) is not int or resume_source_row < 0:
+        raise ValueError('The source replay cursor is invalid.')
+    source_chunk_rows = max(1, min(10000, int(source_chunk_rows or 1)))
     blob_path = str(source_descriptor.get('blob_path') or '').strip()
-    tabular_plugin = TabularProcessingPlugin()
+    container_name = source_descriptor.get('container')
+    tabular_plugin = TabularProcessingPlugin(authorized_user_id=user_id)
+    tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+    assert_evidence_available(source_descriptor, user_id=user_id)
 
     if source_format == 'csv':
         source_blob_client = _get_versioned_source_blob_client(source_descriptor)
@@ -3527,52 +3654,124 @@ def _iter_versioned_tabular_source_rows(
                 tabular_plugin=tabular_plugin,
                 start_source_row=resume_source_row,
             )
-            yield from source_rows
+            for row_number, row in source_rows:
+                yield row_number, row
+        tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+        _get_versioned_source_blob_client(source_descriptor)
         return
 
-    _get_versioned_source_blob_client(source_descriptor)
-    sheet_names = [
-        str(sheet_name or '').strip()
-        for sheet_name in source_descriptor.get('sheet_names') or []
-        if str(sheet_name or '').strip()
-    ]
-    if not sheet_names:
-        raise ValueError('Source-backed workbook replay requires an explicit worksheet scope')
+    if (
+        type(source_descriptor.get('version')) is not int or source_descriptor.get('version') != 2
+        or source_descriptor.get('selection_semantics') != 'excel-tables-v2'
+        or source_descriptor.get('workbook_schema_version') != EXCEL_WORKBOOK_SCHEMA_VERSION
+    ):
+        # A v1 job meant the entire worksheet with row 1 as its header. Table
+        # discovery is not an equivalent resume of that historical operation.
+        raise ValueError(
+            'This queued workbook uses legacy worksheet-header semantics. Start a new computation to select its tables explicitly.'
+        )
+    selections = source_descriptor.get('table_selections')
+    source_row_count = source_descriptor.get('source_row_count')
+    sheet_names = source_descriptor.get('sheet_names')
+    numeric_scope = source_descriptor.get('numeric_conversion_scope')
+    if (
+        not isinstance(selections, list) or not isinstance(sheet_names, list) or not sheet_names
+        or any(not isinstance(name, str) or not name for name in sheet_names)
+        or len(set(sheet_names)) != len(sheet_names)
+        or (
+            source_descriptor.get('selected_sheet') is not None
+            and source_descriptor.get('selected_sheet') not in sheet_names
+        )
+        or type(source_row_count) is not int or source_row_count < 0
+        or resume_source_row > source_row_count
+        or any(not isinstance(table, dict) for table in selections)
+        or numeric_scope not in ('table', 'sheet')
+    ):
+        raise ValueError('The saved workbook table selection or replay cursor is invalid.')
+    source_blob_client = _get_versioned_source_blob_client(source_descriptor)
+    source_bytes = source_blob_client.download_blob(
+        etag=source_descriptor.get('blob_etag'), match_condition=MatchConditions.IfNotModified,
+    ).readall()
+    if hashlib.sha256(source_bytes).hexdigest() != source_descriptor.get('source_sha256'):
+        raise ValueError('The saved workbook source identity no longer matches.')
     parsed_return_columns = tabular_plugin._parse_optional_column_list_argument(
         source_descriptor.get('return_columns')
     )
-    source_row_offset = 0
-    for sheet_name in sheet_names:
-        source_dataframe = tabular_plugin._read_tabular_blob_to_dataframe(
-            source_descriptor.get('container'),
-            blob_path,
-            sheet_name=sheet_name,
-            require_explicit_sheet=True,
+    query = validate_tabular_csv_query_expression(source_descriptor.get('query_expression'))
+    with ExcelWorkbookReader(source_bytes, extension=f'.{source_format}') as reader:
+        if any(name not in reader.sheet_names for name in sheet_names):
+            raise ValueError('The saved workbook worksheet selection is invalid.')
+        manifest = reader.build_manifest()
+        metadata = {
+            'tables': [table for sheet in manifest['sheets'] for table in sheet['tables']],
+            'tables_by_sheet': {sheet['name']: sheet['tables'] for sheet in manifest['sheets']},
+        }
+        resolved_tables = []
+        for sheet_name in sheet_names:
+            resolved_tables.extend(tabular_plugin._select_excel_tables(
+                reader, metadata, sheet_name, source_descriptor.get('table_id'),
+                source_descriptor.get('cell_range'), source_descriptor.get('header_row'),
+                allow_heterogeneous=True,
+            ))
+        selected_table = (
+            resolved_tables[0]['id'] if len(resolved_tables) == 1 else source_descriptor.get('table_id')
         )
-        source_dataframe = tabular_plugin._try_numeric_conversion(source_dataframe)
-        source_dataframe.index = range(
-            source_row_offset,
-            source_row_offset + len(source_dataframe),
-        )
-        source_row_offset += len(source_dataframe)
-        filtered_dataframe, _ = tabular_plugin._apply_query_expression_with_fallback(
-            source_dataframe,
-            query_expression=source_descriptor.get('query_expression'),
-            normalize_match=False,
-        )
-        selected_columns = [
-            column_name
-            for column_name in (parsed_return_columns or list(filtered_dataframe.columns))
-            if column_name in filtered_dataframe.columns
-        ]
-        output_records = tabular_plugin._build_row_output_records(
-            filtered_dataframe,
-            selected_columns,
-        )
-        for source_row_index, output_record in zip(filtered_dataframe.index, output_records):
-            source_row_number = int(source_row_index) + 1
-            if source_row_number > resume_source_row:
-                yield source_row_number, output_record
+        if (
+            resolved_tables != selections or selected_table != source_descriptor.get('selected_table')
+            or sum(table['row_count'] for table in resolved_tables) != source_row_count
+        ):
+            raise ValueError('The saved workbook table, range, or header selection no longer matches.')
+        numeric_columns_by_scope = {}
+        for table in resolved_tables:
+            scope_key = table['sheet'] if numeric_scope == 'sheet' else table['id']
+            columns = {column['name'] for column in table['columns']}
+            numeric_columns = numeric_columns_by_scope.setdefault(scope_key, set(columns))
+            numeric_columns.intersection_update(columns)
+            actual_rows = 0
+            for source_chunk in _iter_excel_table_source_chunks(reader, table, source_chunk_rows):
+                actual_rows += len(source_chunk)
+                for column in list(numeric_columns):
+                    try:
+                        pandas.to_numeric(source_chunk[column])
+                    except (ValueError, TypeError):
+                        numeric_columns.discard(column)
+            if actual_rows != table['row_count']:
+                raise ValueError('The saved workbook table row count no longer matches.')
+            tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+            _get_versioned_source_blob_client(source_descriptor)
+        source_row_offset = 0
+        for table in resolved_tables:
+            scope_key = table['sheet'] if numeric_scope == 'sheet' else table['id']
+            numeric_columns = numeric_columns_by_scope[scope_key]
+            actual_rows = table['row_count']
+            if source_row_offset + actual_rows <= resume_source_row:
+                source_row_offset += actual_rows
+                continue
+            for source_chunk in _iter_excel_table_source_chunks(
+                reader, table, source_chunk_rows, source_row_offset,
+            ):
+                if source_chunk.index[-1] < resume_source_row:
+                    continue
+                for column in numeric_columns:
+                    source_chunk[column] = pandas.to_numeric(source_chunk[column])
+                source_chunk = source_chunk.loc[source_chunk.index >= resume_source_row]
+                filtered_chunk, _ = tabular_plugin._apply_query_expression_with_fallback(
+                    source_chunk, query_expression=query, normalize_match=False,
+                )
+                selected_columns = [
+                    column for column in (parsed_return_columns or list(filtered_chunk.columns))
+                    if column in filtered_chunk.columns
+                ]
+                records = tabular_plugin._build_row_output_records(filtered_chunk, selected_columns)
+                tabular_plugin._assert_blob_screening_access(container_name, blob_path)
+                assert_evidence_available(source_descriptor, user_id=user_id)
+                _get_versioned_source_blob_client(source_descriptor)
+                for source_row_index, record in zip(filtered_chunk.index, records):
+                    if source_descriptor.get('include_sheet_column') is True:
+                        record['_sheet'] = table['sheet']
+                    yield int(source_row_index) + 1, record
+            source_row_offset += actual_rows
+    tabular_plugin._assert_blob_screening_access(container_name, blob_path)
     _get_versioned_source_blob_client(source_descriptor)
 
 
@@ -3588,7 +3787,7 @@ def _stage_tabular_generated_output_source(run, settings):
         raise ValueError('Source-backed generated exports require a supported tabular source')
 
     expected_row_count = _safe_int(source_descriptor.get('expected_row_count'))
-    if expected_row_count <= 0:
+    if expected_row_count < 0 or (expected_row_count == 0 and run.get('execution_policy') != 'data_only'):
         raise ValueError('Source query descriptor has no expected rows')
     source_chunk_rows = _settings_int(
         settings,
@@ -3609,7 +3808,14 @@ def _stage_tabular_generated_output_source(run, settings):
         minimum=1,
         maximum=TABULAR_EXPORT_MAX_SOURCE_BATCH_CHARS,
     )
-    resume_source_row = _safe_int(run.get('source_scan_row_count'))
+    resume_source_row = run.get('source_scan_row_count', 0)
+    if (
+        type(resume_source_row) is not int or resume_source_row < 0
+        or resume_source_row < _safe_int(run.get('source_staged_rows'))
+    ):
+        raise ValueError('The saved source staging cursor is invalid.')
+    if _safe_int(run.get('source_staged_rows')) > expected_row_count:
+        raise ValueError('The saved source staging row count is invalid.')
     pending_rows = []
     pending_chars = 0
     last_source_row_number = resume_source_row
@@ -3618,9 +3824,15 @@ def _stage_tabular_generated_output_source(run, settings):
         source_format,
         source_chunk_rows,
         resume_source_row,
+        user_id=run.get("user_id"),
     )
 
     for source_row_number, source_row in source_rows:
+        if (
+            type(source_row_number) is not int or source_row_number <= last_source_row_number
+            or not isinstance(source_row, dict)
+        ):
+            raise ValueError('The source replay returned an invalid or repeated cursor.')
         source_row_text = _dump_generated_output_json(source_row)
         current_batch_row_limit = _get_tabular_source_batch_row_limit(
             source_descriptor,
@@ -3663,7 +3875,7 @@ def _stage_tabular_generated_output_source(run, settings):
         raise ValueError(
             f'Source query returned {staged_row_count} row(s); expected {expected_row_count}'
         )
-    if staged_batch_count <= 0:
+    if staged_batch_count <= 0 and expected_row_count:
         raise ValueError('Source query produced no input checkpoints')
 
     staged_chunk_row_counts = []
@@ -3676,7 +3888,21 @@ def _stage_tabular_generated_output_source(run, settings):
         ))
         if not isinstance(batch_rows, list):
             raise ValueError(f'Source input checkpoint {batch_number}/{staged_batch_count} was not a JSON array')
+        expected_rows = _prepare_tabular_source_rows(
+            batch_rows, start_row=sum(staged_chunk_row_counts), token_namespace=run.get('id'),
+        )
+        for row, expected in zip(batch_rows, expected_rows):
+            if not isinstance(row, dict) or any(
+                row.get(field) != expected[field] for field in (
+                    TABULAR_EXPORT_INPUT_ROW_NUMBER_FIELD,
+                    TABULAR_EXPORT_INPUT_ROW_IDENTITY_FIELD,
+                    TABULAR_EXPORT_INPUT_ROW_TOKEN_FIELD,
+                )
+            ):
+                raise ValueError('A source input checkpoint has invalid row identity or order.')
         staged_chunk_row_counts.append(len(batch_rows))
+    if sum(staged_chunk_row_counts) != staged_row_count:
+        raise ValueError('The source input checkpoints do not match the staged row count.')
 
     chunk_manifest = _write_chunk_manifest_for_run(
         run.get('user_id'),
@@ -4176,14 +4402,21 @@ def _resolve_tabular_model_token_limits(gpt_model, settings, model_context=None,
     provider = selected_endpoint.get('provider') or chunk_model_context.get('provider') or 'aoai'
     connection = selected_endpoint.get('connection') or {}
     api_type = selected_endpoint.get('api_type') or chunk_model_context.get('api_type')
+    inference_endpoint = resolve_model_inference_endpoint(
+        connection.get('endpoint') or chunk_model_context.get('endpoint'),
+        provider=provider, api_type=api_type, model=model,
+        use_responses_api=connection.get('use_responses_api', chunk_model_context.get('use_responses_api')),
+        url_mode=connection.get('url_mode'),
+    )
     runtime_protocol = infer_model_endpoint_protocol(
         provider,
-        connection.get('endpoint') or chunk_model_context.get('endpoint'),
+        inference_endpoint,
         chunk_model_context.get('request_model') or chunk_gpt_model,
         api_type,
     )
     budget_protocol = (
-        'messages' if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else 'chat_completions'
+        'messages' if runtime_protocol == MODEL_ENDPOINT_PROTOCOL_ANTHROPIC else
+        model_endpoint_inference_api(inference_endpoint)
     )
     budget = resolve_model_token_budget(
         model,
@@ -7393,6 +7626,8 @@ def _build_safe_tabular_run_failure(run):
     artifact_manifest = run.get('artifact_set_manifest') if isinstance(run.get('artifact_set_manifest'), dict) else {}
     artifact_lifecycle = str(artifact_manifest.get('lifecycle_state') or '').strip().lower()
 
+    if run.get('failure_code') == STORAGE_FAILURE_CODE:
+        return {'failure_code': STORAGE_FAILURE_CODE, 'failure_detail': STORAGE_FAILURE_MESSAGE}
     if artifact_lifecycle in {
         TABULAR_ARTIFACT_SET_LIFECYCLE_ROLLBACK_REQUIRED,
         TABULAR_ARTIFACT_SET_LIFECYCLE_FAILED,
@@ -7684,9 +7919,38 @@ def _build_run_status_detail(run, settings, retryable_failure, can_resume):
 
 
 
+def _screened_run_public_status(run):
+    if not any(run.get(key) for key in ("source_descriptor", "source_authorization", "screening_sources")):
+        return None
+    try:
+        if str(run.get('status') or '').strip().lower() == TABULAR_EXPORT_STATUS_COMPLETED:
+            # A finished export is generated content: its status follows its conversation,
+            # not the file it was generated from.
+            _authorize_tabular_export_run_conversation(run)
+        else:
+            _authorize_tabular_export_run_execution(run)
+    except (ScreeningError, LookupError, PermissionError) as error:
+        message = error.public_message if isinstance(error, ScreeningError) else "Source content is unavailable."
+        return {
+            "id": run.get("id"), "run_id": run.get("id"),
+            "conversation_id": run.get("conversation_id"),
+            "status": "failed", "status_label": "Source unavailable",
+            "status_detail": message, "last_message": message,
+            "capability": "tabular", "source_available": False,
+            "failure_code": error.code if isinstance(error, ScreeningError) else "source_unavailable",
+            "can_resume": False, "can_cancel": _can_cancel_run(run),
+            "generated_artifact": None, "generated_artifacts": [],
+            "preview_available": False, "background_export": True,
+        }
+    return None
+
+
 def _build_run_public_status(run, settings=None):
     if not isinstance(run, dict):
         return None
+    screened_status = _screened_run_public_status(run)
+    if screened_status is not None:
+        return screened_status
     run = _sync_tabular_generation_contract_fields(run)
 
     batch_count = _safe_int(run.get('batch_count'))
@@ -7931,6 +8195,9 @@ def get_tabular_generated_output_run_status(user_id, run_id):
         )
     except CosmosResourceNotFoundError:
         return None
+    screened_status = _screened_run_public_status(run)
+    if screened_status is not None:
+        return screened_status
     # Legacy completion repair is a bounded, idempotent status-read exception:
     # the partition-authorized run already owns the uploaded artifact, and the
     # missing publication commit is the only mutation performed.
@@ -8177,7 +8444,14 @@ def _raise_if_tabular_export_canceled(run):
     )
     if not claim_matches:
         raise TabularExportLeaseLostError('Background structured export worker lost its claim')
+    if run.get('compute_context') is not None or current_run.get('compute_context') is not None:
+        if any(
+            current_run.get(field) != run.get(field)
+            for field in ('execution_policy', 'compute_context', 'source_descriptor')
+        ):
+            raise TabularExportLeaseLostError('Native computation ownership changed.')
 
+    _authorize_tabular_export_run_execution(run)
     run['_etag'] = current_run.get('_etag')
     return current_run
 
@@ -8296,6 +8570,10 @@ def _mark_run_failed(run, error_message):
         'last_error': str(error_message or 'Unknown error')[:1000],
         'last_message': 'Background structured export failed',
     })
+    if isinstance(error_message, BlobContainerUnavailableError):
+        run['failure_code'] = STORAGE_FAILURE_CODE
+    else:
+        run.pop('failure_code', None)
     run['failure_code'] = _build_safe_tabular_run_failure(run)['failure_code']
     run['performance_summary'] = _build_tabular_generation_performance_summary(run, completed_at=now)
     try:
@@ -8592,11 +8870,43 @@ def _log_progress_if_due(run, last_logged_at):
     return now_monotonic
 
 
-def _write_ordered_output_stream(run, output_stream):
-    user_id = run.get('user_id')
-    conversation_id = run.get('conversation_id')
-    run_id = run.get('id')
+def iter_tabular_output_records(run, *, include_lineage=False, check_callback=None):
+    """Read every validated native checkpoint in source order, one batch at a time."""
+    output_schema = list(run.get('output_schema') or [])
+    public_schema = _get_tabular_run_serialized_public_schema(run)
+    if not output_schema or not public_schema or TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD not in output_schema:
+        raise ValueError('Generated output schema is incomplete.')
+    expected_count = _safe_int(run.get('row_count'))
     batch_count = _safe_int(run.get('batch_count'))
+    count = 0
+    for batch_number in range(1, batch_count + 1):
+        if check_callback is not None:
+            check_callback()
+        path = _output_blob_path(run.get('user_id'), run.get('conversation_id'), run.get('id'), batch_number)
+        _validate_tabular_output_checkpoint_metadata(run, path, batch_number)
+        entries = _download_json_blob(path)
+        if not isinstance(entries, list):
+            raise ValueError('A native output checkpoint is malformed.')
+        for entry in entries:
+            if not isinstance(entry, dict) or set(entry) != set(output_schema):
+                raise ValueError('A native output checkpoint has schema drift.')
+            if run.get('execution_policy') == 'data_only' and type(entry.get(TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD)) is not int:
+                raise ValueError('Native source row order is invalid.')
+            if _safe_int(entry[TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD]) != count + 1:
+                raise ValueError('Native source row order has a gap or overlap.')
+            ordered = {field: entry[field] for field in output_schema}
+            public = project_structured_deliverable_row(ordered, public_schema, require_all_fields=True)
+            count += 1
+            if count > expected_count:
+                raise ValueError('Native output contains more rows than expected.')
+            yield ordered if include_lineage else public
+    if check_callback is not None:
+        check_callback()
+    if count != expected_count:
+        raise ValueError('Native output row count does not match the expected count.')
+
+
+def _write_ordered_output_stream(run, output_stream):
     expected_row_count = _safe_int(run.get('row_count'))
     output_format = str(run.get('output_format') or 'json').strip().lower() or 'json'
     output_schema = list(run.get('output_schema') or [])
@@ -8626,78 +8936,41 @@ def _write_ordered_output_stream(run, output_stream):
         output_stream.write('[\n')
 
     written_row_count = 0
-    expected_source_row_number = 1
-    for batch_number in range(1, batch_count + 1):
-        batch_blob_path = _output_blob_path(user_id, conversation_id, run_id, batch_number)
-        _validate_tabular_output_checkpoint_metadata(run, batch_blob_path, batch_number)
-        batch_entries = _download_json_blob(batch_blob_path)
-        if not isinstance(batch_entries, list):
-            raise ValueError(f'Output checkpoint {batch_number}/{batch_count} was not a JSON array')
-
-        for batch_row_index, entry in enumerate(batch_entries, start=1):
-            if not isinstance(entry, dict):
-                raise ValueError(
-                    f'Output checkpoint {batch_number}/{batch_count} row {batch_row_index} was not an object'
-                )
-            if set(entry) != set(output_schema):
-                raise ValueError(
-                    f'Output checkpoint {batch_number}/{batch_count} row {batch_row_index} has schema drift'
-                )
-
-            source_row_number = _safe_int(entry.get(TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD))
-            if source_row_number != expected_source_row_number:
-                raise ValueError(
-                    f'Source row order gap or overlap: expected {expected_source_row_number}, '
-                    f'found {source_row_number}'
-                )
-            ordered_entry = {
-                field_name: entry.get(field_name)
-                for field_name in output_schema
-            }
-            public_entry = project_structured_deliverable_row(
-                ordered_entry,
-                public_output_schema,
-                require_all_fields=True,
+    for ordered_entry in iter_tabular_output_records(run, include_lineage=True):
+        source_row_number = ordered_entry[TABULAR_EXPORT_OUTPUT_ROW_NUMBER_FIELD]
+        public_entry = project_structured_deliverable_row(
+            ordered_entry, public_output_schema, require_all_fields=True,
+        )
+        if csv_writer:
+            csv_writer.writerow({
+                safe_field_name: _serialize_generated_output_value(public_entry.get(field_name))
+                for field_name, safe_field_name in zip(public_output_schema, safe_output_schema)
+            })
+        elif output_format == 'xml':
+            _write_generated_xml_row(output_stream, public_entry)
+        elif output_format == 'md':
+            source_row_identity = _normalize_analysis_text(
+                ordered_entry.get(TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD), max_chars=200,
             )
-            if csv_writer:
-                csv_writer.writerow({
-                    safe_field_name: _serialize_generated_output_value(public_entry.get(field_name))
-                    for field_name, safe_field_name in zip(public_output_schema, safe_output_schema)
-                })
-            elif output_format == 'xml':
-                _write_generated_xml_row(output_stream, public_entry)
-            elif output_format == 'md':
-                source_row_identity = _normalize_analysis_text(
-                    ordered_entry.get(TABULAR_EXPORT_OUTPUT_ROW_IDENTITY_FIELD),
-                    max_chars=200,
+            identity_suffix = f": {source_row_identity}" if source_row_identity else ''
+            output_stream.write(f"## Row {source_row_number}{_escape_markdown_text(identity_suffix)}\n\n")
+            row_questions = list((run or {}).get('row_analysis_questions') or [])
+            for field_index, field_name in enumerate(public_output_schema, start=1):
+                question_label = (
+                    _normalize_analysis_text(row_questions[field_index - 1], max_chars=500)
+                    if field_index <= len(row_questions)
+                    else str(field_name or '').replace('_', ' ').strip().title()
                 )
-                identity_suffix = f": {source_row_identity}" if source_row_identity else ''
-                output_stream.write(
-                    f"## Row {source_row_number}{_escape_markdown_text(identity_suffix)}\n\n"
-                )
-                row_questions = list((run or {}).get('row_analysis_questions') or [])
-                for field_index, field_name in enumerate(public_output_schema, start=1):
-                    question_label = (
-                        _normalize_analysis_text(row_questions[field_index - 1], max_chars=500)
-                        if field_index <= len(row_questions)
-                        else str(field_name or '').replace('_', ' ').strip().title()
-                    )
-                    field_value = _escape_markdown_text(
-                        _serialize_generated_output_value(public_entry.get(field_name))
-                    )
-                    output_stream.write(
-                        f"{field_index}. **{_escape_markdown_text(question_label)}**\n\n"
-                    )
-                    for value_line in field_value.split('\n'):
-                        output_stream.write(f"   {value_line}\n")
-                    output_stream.write('\n')
-            else:
-                if written_row_count:
-                    output_stream.write(',\n')
-                output_stream.write(json.dumps(public_entry, default=str, ensure_ascii=False))
-
-            written_row_count += 1
-            expected_source_row_number += 1
+                field_value = _escape_markdown_text(_serialize_generated_output_value(public_entry.get(field_name)))
+                output_stream.write(f"{field_index}. **{_escape_markdown_text(question_label)}**\n\n")
+                for value_line in field_value.split('\n'):
+                    output_stream.write(f"   {value_line}\n")
+                output_stream.write('\n')
+        else:
+            if written_row_count:
+                output_stream.write(',\n')
+            output_stream.write(json.dumps(public_entry, default=str, ensure_ascii=False))
+        written_row_count += 1
 
     if output_format == 'xml':
         output_stream.write('</GeneratedOutput>\n')
@@ -9247,6 +9520,8 @@ def _build_artifact_member_upload_metadata(run, member_id):
 
 
 def _publish_artifact_set_members(run, published_member_ids):
+    if run.get('execution_policy') == 'data_only':
+        raise ValueError('Data-only native computations cannot publish artifacts.')
     published_ids = {str(member_id or '').strip() for member_id in list(published_member_ids or []) if member_id}
     manifest = _build_or_update_artifact_set_manifest(run)
     for member in manifest.get('members') or []:
@@ -9317,6 +9592,8 @@ def _publish_artifact_set_members(run, published_member_ids):
 def _reconcile_completed_tabular_artifact_set(run):
     """Repair completed legacy runs whose uploaded artifacts were never committed."""
     run = run if isinstance(run, dict) else {}
+    if run.get('execution_policy') == 'data_only':
+        return run
     if str(run.get('status') or '').strip().lower() != TABULAR_EXPORT_STATUS_COMPLETED:
         return run
 
@@ -9433,6 +9710,8 @@ def _build_public_artifact_projection(artifact):
 
 
 def _publish_structured_export_artifact(run, descriptor=None):
+    if run.get('execution_policy') == 'data_only':
+        raise ValueError('Data-only native computations cannot create user files.')
     descriptor = descriptor if isinstance(descriptor, dict) else {}
     member_id = str(descriptor.get('member_id') or _get_structured_artifact_member_id(run)).strip()
     output_format = _normalize_tabular_artifact_format(
@@ -9538,7 +9817,118 @@ def _publish_structured_export_artifacts(run):
     return run, artifacts, first_summary, _safe_int(first_entry_count), first_output_format, first_file_name
 
 
+def _native_record_type(value):
+    for python_type, name in (
+        (bool, 'boolean'), (int, 'integer'), (float, 'number'), (str, 'string'), (dict, 'object'), (list, 'array'),
+    ):
+        if type(value) is python_type:
+            return name
+    raise ValueError('Native output contains a non-JSON value.')
+
+
+def _complete_native_computation(run, final_summary=None):
+    """Commit validated private output, without creating or committing user files."""
+    _raise_if_tabular_export_canceled(run)
+    _revalidate_tabular_source_version_for_publication(run)
+    if (
+        run.get('execution_policy') != NATIVE_TABULAR_DATA_ONLY
+        or not run.get('source_staging_complete')
+        or run.get('completed_batches') != run.get('batch_count')
+        or run.get('processed_rows') != run.get('row_count')
+    ):
+        raise ValueError('Native computation coverage is incomplete.')
+    outputs = {}
+    task_type = _normalize_tabular_run_task_type(run.get('task_type'))
+    if task_type in {TABULAR_RUN_TASK_STRUCTURED_EXPORT, TABULAR_RUN_TASK_COMBINED}:
+        schema = _get_tabular_run_serialized_public_schema(run)
+        types = {name: set() for name in schema}
+        nullable = {name: False for name in schema}
+        digest = hashlib.sha256()
+        digest.update(b'[')
+        size_bytes, count = 2, 0
+        for row in iter_tabular_output_records(run, check_callback=lambda: _raise_if_tabular_export_canceled(run)):
+            encoded = native_compute_bytes(row)
+            if count:
+                digest.update(b',')
+                size_bytes += 1
+            digest.update(encoded)
+            size_bytes += len(encoded)
+            count += 1
+            for name, value in row.items():
+                if value is None:
+                    nullable[name] = True
+                else:
+                    types[name].add(_native_record_type(value))
+        digest.update(b']')
+        declared = {
+            field['name']: field for field in (_get_tabular_run_transformation_spec(run).get('fields') or [])
+        }
+        columns = []
+        for name in schema:
+            observed = types[name]
+            value_type = (
+                next(iter(observed)) if len(observed) == 1
+                else 'number' if observed == {'integer', 'number'}
+                else 'json'
+            )
+            if not count:
+                value_type = declared.get(name, {}).get('type') or 'json'
+                nullable[name] = bool(declared.get(name, {}).get('nullable', True))
+            columns.append({'name': name, 'value_type': value_type, 'nullable': nullable[name]})
+        outputs['records'] = {
+            'kind': 'records-v1', 'columns': columns, 'item_count': count,
+            'size_bytes': size_bytes, 'content_sha256': digest.hexdigest(),
+        }
+    if task_type in {TABULAR_RUN_TASK_HIERARCHICAL_ANALYSIS, TABULAR_RUN_TASK_COMBINED}:
+        if (
+            not isinstance(final_summary, dict) or not isinstance(final_summary.get('summary'), str)
+            or not final_summary['summary'].strip()
+            or type(final_summary.get('row_count')) is not int
+            or final_summary['row_count'] != run.get('row_count')
+        ):
+            raise ValueError('The native final analysis has incomplete coverage.')
+        encoded = native_compute_bytes(final_summary)
+        _raise_if_tabular_export_canceled(run)
+        _upload_json_blob(
+            _analysis_final_blob_path(run['user_id'], run['conversation_id'], run['id']),
+            final_summary, metadata=_build_tabular_output_checkpoint_metadata(run),
+        )
+        outputs['analysis'] = {
+            'kind': 'structured-v1', 'item_count': 1,
+            'size_bytes': len(encoded), 'content_sha256': hashlib.sha256(encoded).hexdigest(),
+        }
+    _raise_if_tabular_export_canceled(run)
+    now = _now_iso()
+    run.update({
+        'status': TABULAR_EXPORT_STATUS_COMPLETED,
+        'computation_state': 'complete',
+        'native_result_manifest': {
+            'version': NATIVE_TABULAR_RESULT_VERSION, 'outputs': outputs,
+            'coverage': {
+                'expected': run['batch_count'], 'completed': run['completed_batches'], 'unit': 'work_units',
+            },
+            'checks': ['native_source_snapshot', 'native_checkpoint_coverage', 'native_schema_order_count'],
+            'limitations': (
+                [] if task_type == TABULAR_RUN_TASK_STRUCTURED_EXPORT and (
+                    is_tabular_transformation_deterministic_only(
+                        _get_tabular_run_transformation_spec(run),
+                        public_output_schema=_get_tabular_run_public_output_schema(run),
+                    ) or run.get('passthrough_input_rows')
+                )
+                else ['Native semantic output is not an independent factual or mathematical review.']
+            ),
+        },
+        'completed_at': now, 'generation_completed_at': now, 'updated_at': now,
+        'last_heartbeat_at': now, 'estimated_remaining_seconds': 0,
+        'last_message': 'Native tabular computation completed; no user files were published.',
+    })
+    run.update(_build_generation_progress_contract_fields(run, run['batch_count'], run['processed_rows']))
+    return _replace_claimed_run(run)
+
+
 def _complete_run(run):
+    if run.get('execution_policy') == 'data_only':
+        return _complete_native_computation(run)
     run, structured_artifacts, post_run_summary, output_entry_count, output_format, generated_file_name = (
         _publish_structured_export_artifacts(run)
     )
@@ -9646,6 +10036,8 @@ def _build_analysis_summary_markdown(run, final_summary):
 
 
 def _publish_analysis_artifact(run, final_summary):
+    if run.get('execution_policy') == 'data_only':
+        raise ValueError('Data-only native computations cannot create user files.')
     generated_file_name = (
         run.get('analysis_generated_file_name')
         or run.get('generated_file_name')
@@ -9711,6 +10103,8 @@ def _publish_analysis_artifact(run, final_summary):
 
 
 def _complete_analysis_run(run, final_summary):
+    if run.get('execution_policy') == 'data_only':
+        return _complete_native_computation(run, final_summary)
     run, uploaded_message, final_summary, generated_file_name = _publish_analysis_artifact(run, final_summary)
     artifact_preview_text = _build_analysis_summary_markdown(run, final_summary)
     analysis_artifact = _build_artifact_metadata(
@@ -9780,6 +10174,8 @@ def _complete_analysis_run(run, final_summary):
 
 
 def _publish_combined_structured_export_phase(run):
+    if run.get('execution_policy') == 'data_only':
+        return run
     if isinstance(run.get('structured_export_artifact'), dict) and run.get('structured_export_artifact'):
         return run
 
@@ -9832,6 +10228,8 @@ def _publish_combined_structured_export_phase(run):
 
 
 def _complete_combined_analysis_run(run, final_summary):
+    if run.get('execution_policy') == 'data_only':
+        return _complete_native_computation(run, final_summary)
     existing_analysis_artifact = run.get('analysis_artifact') if isinstance(run.get('analysis_artifact'), dict) else {}
     if existing_analysis_artifact:
         final_summary = _normalize_analysis_summary_payload(
@@ -11002,6 +11400,10 @@ def process_tabular_generated_output_run(run_id, user_id):
             run.get('row_analysis_questions'),
             _get_tabular_run_public_output_schema(run),
         )
+        if run.get('execution_policy') == 'data_only' and run.get('row_count') == 0:
+            if run.get('task_type') != TABULAR_RUN_TASK_STRUCTURED_EXPORT:
+                raise ValueError('Empty native analysis requires an explicit records schema.')
+            return _complete_run(run)
 
         retry_attempts = _settings_int(
             settings,
@@ -11058,6 +11460,9 @@ def process_tabular_generated_output_run(run_id, user_id):
                     else run.get('model_context')
                 ),
                 preselected=has_snapshotted_chunk_model,
+            )
+            chat_service = guard_chat_service(
+                chat_service, source_validator=lambda: _authorize_tabular_export_run_execution(run),
             )
         completed_batches = _safe_int(run.get('completed_batches'))
         processed_rows = _safe_int(run.get('processed_rows'))
@@ -11254,6 +11659,10 @@ def process_tabular_generated_output_run(run_id, user_id):
         failed_run = exc.failed_run if isinstance(exc.failed_run, dict) else run
         return _mark_run_failed(failed_run, exc)
     except Exception as exc:
+        if isinstance(exc, BlobContainerUnavailableError):
+            return _mark_run_failed(run, exc)
+        if run.get('execution_policy') == 'data_only' and isinstance(exc, (PermissionError, ScreeningError)):
+            return _mark_run_failed(run, exc)
         if _is_retryable_export_error(exc):
             return _mark_run_retryable(run, exc, settings, retry_category='transient')
         if _is_retryable_model_validation_error(exc):
@@ -11296,6 +11705,9 @@ def queue_tabular_generated_output_run(
     task_type=TABULAR_RUN_TASK_STRUCTURED_EXPORT,
     analysis_objective=None,
     planner_metadata=None,
+    execution_policy='publish',
+    compute_context=None,
+    submit=True,
 ):
     """Stage batch input blobs, create a run record, and submit background processing."""
     normalized_user_id = str(user_id or '').strip()
@@ -11303,7 +11715,41 @@ def queue_tabular_generated_output_run(
     if not normalized_user_id or not normalized_conversation_id:
         raise ValueError('user_id and conversation_id are required for background tabular export')
 
-    run_id = str(uuid.uuid4())
+    if execution_policy not in {'publish', 'data_only'}:
+        raise ValueError('The native execution policy is invalid.')
+    if compute_context is not None and execution_policy != 'data_only':
+        raise ValueError('Native compute ownership requires a data-only policy.')
+    if execution_policy == 'data_only':
+        compute_context = deepcopy(validate_native_compute_context(compute_context))
+        run_id = native_compute_job_id(compute_context['producer'])
+        if (
+            not isinstance(source_descriptor, dict) or not source_descriptor
+            or type(source_descriptor.get('expected_row_count')) is not int
+            or source_descriptor['expected_row_count'] < 0
+            or source_descriptor.get('document_id') != compute_context['sources'][0]['document_id']
+            or bool(passthrough_input_rows) != (compute_context['operation'] == 'query')
+        ):
+            raise ValueError('Native computation requires its exact replayable source contract.')
+        _authorize_tabular_export_run_execution({
+            'id': run_id, 'user_id': normalized_user_id, 'conversation_id': normalized_conversation_id,
+            'status': 'queued', 'execution_policy': execution_policy, 'compute_context': compute_context,
+            'source_descriptor': source_descriptor,
+        })
+        try:
+            existing = _read_run(normalized_user_id, run_id)
+        except CosmosResourceNotFoundError:
+            existing = None
+        if existing is not None:
+            if (
+                existing.get('compute_context') != compute_context
+                or existing.get('execution_policy') != execution_policy
+                or (existing.get('source_descriptor') or {}).get('blob_etag') != source_descriptor.get('blob_etag')
+            ):
+                raise ValueError('The native computation request changed within its producer attempt.')
+            _authorize_tabular_export_run_execution(existing)
+            return existing
+    else:
+        run_id = str(uuid.uuid4())
     source_candidate = source_candidate if isinstance(source_candidate, dict) else {}
     source_file_name = str(source_candidate.get('filename') or 'tabular_output').strip() or 'tabular_output'
     selected_sheet = str(source_candidate.get('selected_sheet') or '').strip()
@@ -11423,8 +11869,10 @@ def queue_tabular_generated_output_run(
 
     if source_descriptor:
         staged_row_count = _safe_int(source_descriptor.get('expected_row_count'))
-        if staged_row_count <= 0:
+        if staged_row_count <= 0 and execution_policy != 'data_only':
             raise ValueError('Source query descriptor must include the expected row count')
+        if staged_row_count == 0 and not contract_public_output_schema:
+            raise ValueError('An empty native result requires an explicit output schema.')
         source_descriptor['batch_max_rows'] = model_batch_budget['max_rows']
         source_descriptor['batch_max_chars'] = model_batch_budget['max_chars']
         schema_probe_rows = _resolve_tabular_schema_probe_rows(
@@ -11476,6 +11924,8 @@ def queue_tabular_generated_output_run(
             source_descriptor['batch_max_rows'],
             schema_probe_rows,
         )
+        if staged_row_count == 0:
+            staged_batch_count = 0
         if source_descriptor['batch_max_rows'] != unbalanced_batch_rows:
             log_event(
                 '[TABULAR_GENERATED_OUTPUT] Balanced source batches across concurrency waves',
@@ -11492,7 +11942,7 @@ def queue_tabular_generated_output_run(
             )
         source_authorization = {
             field_name: source_descriptor.get(field_name)
-            for field_name in ('source', 'scope_id', 'container', 'blob_path')
+            for field_name in ('source', 'scope_id', 'container', 'blob_path', PROVENANCE_FIELD)
         }
     else:
         for index, batch_rows in enumerate(row_batches or [], start=1):
@@ -11535,16 +11985,20 @@ def queue_tabular_generated_output_run(
         else []
     )
 
-    chunk_manifest = _write_chunk_manifest_for_run(
-        normalized_user_id,
-        normalized_conversation_id,
-        run_id,
-        staged_batch_count,
-        row_count=staged_row_count,
-        chunk_row_counts=staged_chunk_row_counts if staged_chunk_row_counts else None,
-        estimated_rows_per_chunk=source_descriptor.get('batch_max_rows') if source_descriptor else None,
-        chunk_status='pending_source_staging' if source_descriptor else 'staged',
-    )
+    # Data-only jobs reserve their deterministic identity before the worker
+    # writes any checkpoints. A duplicate submit must not overwrite its inputs.
+    chunk_manifest = None
+    if execution_policy != 'data_only':
+        chunk_manifest = _write_chunk_manifest_for_run(
+            normalized_user_id,
+            normalized_conversation_id,
+            run_id,
+            staged_batch_count,
+            row_count=staged_row_count,
+            chunk_row_counts=staged_chunk_row_counts if staged_chunk_row_counts else None,
+            estimated_rows_per_chunk=source_descriptor.get('batch_max_rows') if source_descriptor else None,
+            chunk_status='pending_source_staging' if source_descriptor else 'staged',
+        )
 
     now = _now_iso()
     run = {
@@ -11634,6 +12088,7 @@ def queue_tabular_generated_output_run(
         'source_descriptor': source_descriptor or None,
         'batch_budget': model_batch_budget,
         'source_authorization': source_authorization or None,
+        'screening_sources': current_request_source_provenance(),
         'source_staging_complete': not bool(source_descriptor),
         'source_staged_rows': 0 if source_descriptor else staged_row_count,
         'source_staged_batches': 0 if source_descriptor else staged_batch_count,
@@ -11669,9 +12124,28 @@ def queue_tabular_generated_output_run(
         'analysis_artifact': None,
         'combined_artifacts': [],
     }
-    run['artifact_set_manifest'] = _build_or_update_artifact_set_manifest(run)
-    cosmos_tabular_export_runs_container.create_item(body=run)
-    submitted = submit_tabular_generated_output_run(run_id, normalized_user_id)
+    if execution_policy == 'data_only':
+        run.update({
+            'execution_policy': execution_policy, 'compute_context': compute_context,
+            'computation_state': 'pending', 'native_result_manifest': None,
+        })
+        _authorize_tabular_export_run_execution(run)
+        try:
+            cosmos_tabular_export_runs_container.create_item(body=run)
+        except CosmosResourceExistsError:
+            existing = _read_run(normalized_user_id, run_id)
+            if (
+                existing.get('compute_context') != compute_context
+                or existing.get('execution_policy') != execution_policy
+                or (existing.get('source_descriptor') or {}).get('blob_etag') != source_descriptor.get('blob_etag')
+            ):
+                raise ValueError('The native computation request changed within its producer attempt.')
+            _authorize_tabular_export_run_execution(existing)
+            return existing
+    else:
+        run['artifact_set_manifest'] = _build_or_update_artifact_set_manifest(run)
+        cosmos_tabular_export_runs_container.create_item(body=run)
+    submitted = submit_tabular_generated_output_run(run_id, normalized_user_id) if submit else False
     run['submitted_to_executor'] = submitted
 
     log_event(

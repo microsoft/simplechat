@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional tests for deployer Key Vault secret-management permissions.
-Version: 0.261.047
-Implemented in: 0.261.047 (deployer 1.0.32; backport of the 0.261.125 fix)
+Version: 0.261.125
+Implemented in: 0.261.125
 
 Validate vault-scoped Secrets Officer grants, runtime identity wiring, additive
 upgrades, compiled ARM, and Azure CLI reconciliation. PowerShell scenarios load

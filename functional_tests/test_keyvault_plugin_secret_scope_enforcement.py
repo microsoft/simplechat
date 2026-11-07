@@ -1,8 +1,8 @@
 # test_keyvault_plugin_secret_scope_enforcement.py
 """
 Functional test for Key Vault plugin secret scope enforcement.
-Version: 0.250.121
-Implemented in: 0.241.011; 0.241.022; 0.250.121
+Version: 0.261.096
+Implemented in: 0.241.011; 0.241.022; 0.250.121; 0.261.096
 
 This test ensures plugin Key Vault references are validated against the
 expected scope and source before they are preserved, resolved, or deleted.
@@ -222,10 +222,11 @@ def test_sql_secret_resolution_helper_binds_expected_scope_and_source():
 
     namespace, _ = load_functions(
         PLUGIN_ROUTE_FILE,
-        {"_resolve_secret_value_for_sql_test"},
+        {"_resolve_secret_value_for_sql_test", "_resolve_secret_value_for_action_test"},
         {
             "validate_secret_name_dynamic": lambda value: True,
             "resolve_secret_reference_for_context": fake_resolver,
+            "ACTION_ADDITIONAL_SECRET_SOURCES": {"action-addset"},
         },
     )
 
@@ -242,6 +243,13 @@ def test_sql_secret_resolution_helper_binds_expected_scope_and_source():
     assert captured["scope"] == "user"
     assert captured["allowed_sources"] == {"action-addset"}
     assert captured["context_label"] == "SQL field 'connection_string'"
+
+    try:
+        resolve_sql_secret("***REDACTED***", "password", scope_value="user-123", scope="user")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("An unhydrated editor mask must never reach a connection test.")
 
     print("✅ SQL test-connection secret resolution helper passed")
 

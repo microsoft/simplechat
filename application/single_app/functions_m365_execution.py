@@ -28,7 +28,11 @@ from functions_m365_operations import (
     is_m365_action_type,
 )
 from functions_msgraph_operations import get_msgraph_enabled_function_names
-from functions_m365_workflow_binding import workflow_execution_fingerprint
+from functions_m365_workflow_binding import (
+    M365_REVISION_AUTHORSHIP_FIELD,
+    workflow_execution_fingerprint,
+    workflow_revision_self_authored,
+)
 
 
 M365ExecutionContext = m365_context.M365ExecutionContext
@@ -574,7 +578,11 @@ def prepare_m365_workflow_binding(context, workflow, effective_manifests, *, rev
         candidate, connection_id=connection["id"],
     )
     require_m365_execution_context(resolved)
+    # Stored authorship, not the caller, decides whether the Run as user saved this revision.
+    self_authored = workflow_revision_self_authored(
+        workflow, context.data_user_id, workflow.get(M365_REVISION_AUTHORSHIP_FIELD),
+    )
     approval = get_m365_approval_service().ensure_workflow_binding(
-        resolved, sources, connection, review=review,
+        resolved, sources, connection, review=review, self_authored=self_authored,
     )
     return replace(resolved, binding_id=approval["id"])

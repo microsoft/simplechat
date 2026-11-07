@@ -2,7 +2,7 @@
 # test_chat_selected_document_metadata_authorization.py
 """
 Functional test for chat selected-document metadata authorization.
-Version: 0.241.022
+Version: 0.261.106
 Implemented in: 0.241.017; 0.241.022
 
 This test ensures chat selected-document metadata resolution only returns
@@ -153,6 +153,9 @@ def load_helpers():
         'cosmos_user_documents_container': AccessAwareMockContainer(),
         'cosmos_group_documents_container': AccessAwareMockContainer(),
         'cosmos_public_documents_container': AccessAwareMockContainer(),
+        # This harness tests scope-query selection; authoritative quarantine and
+        # point-read authorization are exercised in test_content_screening_access.
+        'assert_document_available': lambda document, **_kwargs: document,
     }
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
     return namespace, source

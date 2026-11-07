@@ -1,0 +1,5009 @@
+// chatStore.ts
+// Conversation list, message thread and live streaming state for the chat page.
+
+import { create } from 'zustand';
+import {
+    addMessageBlockRevision as addMessageBlockRevisionApi,
+    addMessageImageRevision as addMessageImageRevisionApi,
+    assistMessageBlockRevision as assistMessageBlockRevisionApi,
+    bulkHideConversations as bulkHideConversationsApi,
+    bulkPinConversations as bulkPinConversationsApi,
+    createConversation,
+    deleteConversation as deleteConversationApi,
+    deleteConversations as deleteConversationsApi,
+    deleteMessage as deleteMessageApi,
+    editMessage as editMessageApi,
+    fetchConversationFeed,
+    fetchMessages,
+    forkConversation as forkConversationApi,
+    generateImageFromProposal,
+    markConversationRead,
+    maskMessage as maskMessageApi,
+    renameConversation as renameConversationApi,
+    regenerateOrchestrationMessage as regenerateOrchestrationMessageApi,
+    retryMessage as retryMessageApi,
+    setMessageBlockRevision as setMessageBlockRevisionApi,
+    setMessageImageRevision as setMessageImageRevisionApi,
+    setMessageVisualStyle as setMessageVisualStyleApi,
+    submitFeedback as submitFeedbackApi,
+    switchAttempt as switchAttemptApi,
+    toggleConversationHidden,
+    toggleConversationPinned,
+    type BulkConversationResult,
+    type BlockRevisionEntry,
+    type ImageRevisionEntry,
+    type ImageRevisionOrigin,
+    type ImageRevisionOperation,
+    type MessageBlockRevisions,
+    type AttemptChatRequest,
+} from '../lib/endpoints';
+import {
+    cancelStream,
+    fetchStreamStatus,
+    isReplyRemoved,
+    reattachChatStream,
+    resolveStreamContent,
+    streamChat,
+    consumeCredentialChatResponse,
+    type ChatStreamHandlers,
+    type ChatStreamOptions,
+} from '../lib/sse';
+import {
+    addCollaborationBlockRevision,
+    addCollaborationImageRevision,
+    assistCollaborationBlockRevision,
+    cancelCollaborationStreamUrl,
+    collaborationDeleteAction,
+    deleteCollaborationMessage,
+    fetchCollaborationConversation,
+    fetchCollaborationMessages,
+    markCollaborationConversationRead,
+    maskCollaborationMessage,
+    postCollaborationMessage,
+    renameCollaborationConversation,
+    setCollaborationBlockRevision,
+    setCollaborationImageRevision,
+    setCollaborationMessageVisualStyle,
+    streamCollaborationUrl,
+    toggleCollaborationHidden,
+    toggleCollaborationPinned,
+} from '../lib/collaboration';
+import { subscribeToCollaborationEvents, conversationFactsOnly } from '../lib/collaborationEvents';
+import {
+    conversationParticipants,
+    extractMentionedParticipants,
+    mentionsCurrentUser,
+    sharedConversationTarget,
+} from '../lib/mentions';
+import { buildSelectionFields } from '../lib/chatRequestSelection';
+import {
+    clearActionRecovery, getActionRecoveryRevision, setActionRecoveryConversation,
+    synchronizeActionRecoveryContext,
+} from '../lib/actionRecovery';
+import {
+    normalizeReasoningAdjustments,
+    reasoningMetadataForEvent,
+    type ReasoningResolution,
+} from '../lib/reasoning';
+import { promptSelectionMetadata } from '../lib/promptRequest';
+import {
+    analysisResultContext,
+    applySavedAnalysisContext,
+    latestSavedAnalysis,
+    readSavedAnalyses,
+    readSavedAnalysis,
+    sameAnalysis,
+} from '../lib/savedAnalysis';
+import {
+    WORKFLOW_RESULT_LAUNCH_PENDING_MESSAGE,
+    WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE,
+    applyWorkflowResultContext,
+    fetchWorkflowResultDescriptor,
+    latestWorkflowResult,
+    parseWorkflowResultDescriptor,
+    requestTimeZone,
+    turnAsksAboutWorkflowResult,
+    workflowResultContext,
+    workflowResultFetchErrorMessage,
+    workflowResultRefusal,
+    type SelectedWorkflowResult,
+} from '../lib/workflowResults';
+import { readM365Citations } from '../lib/m365Citations';
+import { completionCitations } from '../lib/messageDetails';
+import type { RunStreamEvent } from '../lib/orchestration';
+import type { CredentialRequest } from '../lib/actionCredentialTypes';
+import { openCredentialContinuation } from '../lib/actionCredentials';
+import {
+    applySelection,
+    pruneSelection,
+    type SelectionIntent,
+    type SelectionState,
+} from '../lib/listSelection';
+import {
+    collaborativeIdsNeedingPin,
+    collaborativeRemovals,
+    partialFailureMessage,
+    partitionBySpecies,
+    selectedConversations,
+    type PinAction,
+} from '../lib/conversationSelection';
+import type { ModelCatalogEntry } from '../lib/models';
+import { resolveDocumentScope } from '../lib/documentScope';
+import { documentSourceSelection } from '../lib/documentSourceSelection';
+import { publicChatScopeFromMessages, readPublicWorkspaceSelection, type PublicWorkspaceSelection } from '../lib/publicChatScope';
+import {
+    contextDocumentIds,
+    contextFilterMode,
+    contextScopes,
+    contextTags,
+    type ContextItem,
+} from '../lib/chatContext';
+import { currentAttempt, messageThreadId } from '../lib/threads';
+import {
+    adoptRetryQuestion, beginRetryPresentation, initialPlanningState, insertRetryReply, messageOrchestrationTurn,
+    retryQuestion, retryReplyMetadata, savedResponseAttempt, updateRetryState, type RetryPresentation,
+} from '../lib/chatRetryAttempts';
+import { withoutDeletedMessages } from '../lib/deletedMessages';
+import { proposalSourceMessageId, type ImageProposalSpec } from '../lib/imageProposalSpec';
+import { toast } from './toastStore';
+import { ApiError } from '../lib/apiClient';
+import { normalizeOrchestrationAttempt } from '../lib/orchestration';
+import {
+    forgetOrchestrationConversation,
+    planRegeneratedMessage,
+    retryOrchestrationPlanning,
+    resumeOrchestrationPlanning,
+} from '../lib/orchestrationController';
+import { foundryAuthUrl } from '../lib/foundryAuth';
+import { announceCompletedReply, type CompletedReply } from '../lib/replyEvents';
+import { getAppNavigator, subscribeRouteChanges, type AppRoute } from '../lib/appNavigation';
+import { readConversationParam } from '../lib/conversationUrl';
+import { refreshNotificationCount } from './notificationStore';
+import { useBootstrapStore } from './bootstrapStore';
+import { adoptConversationModeDraft, conversationModes, forgetConversationMode } from '../lib/conversationMode';
+import { composerAttachmentDrafts, composerAttachmentOwner } from '../lib/composerAttachmentDrafts';
+import { useCollaborationStore, participantName } from './collaborationStore';
+import { chatPendingActionsStore } from './m365PendingActionsStore';
+import { latestUserMessageId } from '../lib/m365PendingActions';
+import type { MaskAction, MaskSelection } from '../lib/masking';
+import type { VisualStyle } from '../lib/visualPalettes';
+import {
+    effectiveReferenceImageLimit,
+    normalizeImageReferences,
+    type ImageReferenceRequest,
+} from '../lib/imageReferences';
+import {
+    cancelConversationHandoff,
+    conversationReferenceRequests,
+    listConversationHandoffs,
+    storedConversationReferences,
+    type ConversationHandoff,
+    type ConversationReference,
+    type ConversationSource,
+} from '../lib/conversationReferences';
+import type {
+    AgentOption,
+    AnalysisResultContext,
+    ChatMessage,
+    ChatStreamEvent,
+    ChatStreamRequest,
+    CollaborationConversation,
+    CollaborationMessage,
+    Conversation,
+    ConversationMetadata,
+    Json,
+    SavedAnalysisDescriptor,
+    ThoughtEntry,
+    WorkflowResultDescriptor,
+} from '../lib/types';
+import { isCollaborative } from '../lib/types';
+import { fetchConversationKind, fetchConversationMetadata } from '../lib/endpoints';
+import type { ConversationKind } from '../lib/endpoints';
+
+const FEED_PAGE_SIZE = 30;
+
+/** Identifier for the optimistic assistant message shown while a stream is running. */
+const STREAMING_MESSAGE_ID = '__streaming__';
+
+/** Which mode the right-hand drawer is showing, or null when it is closed. */
+export type DrawerMode = 'contents' | 'documents' | 'plan' | null;
+
+/**
+ * How an orchestration run's answer settled into the thread.
+ *
+ * A run is driven outside the chat stream machinery, but its answer lands in the same thread as
+ * any other, so `settleOrchestrationTurn` takes one of these and folds it into the shared
+ * streaming state. `completed` carries the chat-shaped terminal frame (`RunStreamEvent` extends
+ * `ChatStreamEvent`) so the final message is built exactly as a chat completion's is.
+ */
+export type OrchestrationTurnOutcome = { turnId?: string } & (
+    | {
+          status: 'completed' | 'failed' | 'cancelled' | 'unknown';
+          event: RunStreamEvent;
+          accumulated: string;
+          /** The optimistic user bubble to reconcile with the server's id, when one is known. */
+          pendingUserMessageId?: string | null;
+      }
+    | { status: 'cancelled'; accumulated: string }
+    | { status: 'failed'; error: string }
+    /** Planning produced a plan or a question: leave the thinking state without adding a message. */
+    | { status: 'planned'; attemptState?: 'awaiting_review' | 'awaiting_clarification' | 'waiting' }
+);
+
+/**
+ * Which API family the open conversation belongs to.
+ *
+ * A shared conversation is stored in different Cosmos containers and served by
+ * `/api/collaboration/*`; sending its id to a personal route either 404s or, in the case of
+ * `/api/get_messages`, answers 200 with an empty list. Every conversation-scoped call
+ * therefore branches on this rather than trying one endpoint and falling back.
+ *
+ * Defined with the wire types because the server reports it, and re-exported here because this
+ * is where the rest of the app has always read it from.
+ */
+export type { ConversationKind };
+
+/**
+ * How far a stream recovery has got.
+ *
+ * `connecting` means the answer has stopped arriving while the reattach is negotiated.
+ * `reconnected` means it is arriving again, and the interface should go back to looking
+ * like an ordinary response rather than continuing to advertise the interruption.
+ */
+export type ReconnectPhase = 'connecting' | 'reconnected' | null;
+
+/**
+ * Which part of an orchestrated turn holds the streaming surface.
+ *
+ * `planning` is the planner working before a plan or question exists, and `running` is an approved
+ * plan executing. They are told apart because they draw differently. While a turn plans, the
+ * streaming bubble is the only sign of progress. A run's progress is already on the plan card, so a
+ * bubble beside it only repeated it.
+ */
+export type OrchestrationSurfacePhase = 'planning' | 'running';
+
+export interface ComposerOptions {
+    publicWorkspaceSelection?: PublicWorkspaceSelection | null;
+    /**
+     * The picker's selection key for the chosen model, NOT its deployment name.
+     *
+     * The deployment name does not identify a model on its own when several endpoints
+     * offer the same one, so the full identity is resolved from the catalog at send time.
+     */
+    modelDeployment?: string;
+    agentSelection?: string;
+    promptId?: string;
+    /**
+     * The saved prompt behind this message, resolved and ready to send.
+     *
+     * Built by the composer at send time rather than looked up from the catalog here, because
+     * the text that reaches the server has to be the text that was actually used: variables
+     * filled in, and any wording edited for this one turn included.
+     */
+    promptInfo?: Json | null;
+    reasoningEffort?: string;
+    documentSearch: boolean;
+    webSearch: boolean;
+    imageGeneration: boolean;
+    /** Deep research sets both source_review_enabled and deep_research_enabled. */
+    deepResearch: boolean;
+    urlAccess: boolean;
+    /**
+     * What this message is grounded in: documents, tags and workspaces chosen in the composer.
+     *
+     * Replaces the write-only `selectedDocumentIds` this interface shipped with, which was
+     * declared, forwarded to both the chat request and the orchestration seeds, and never
+     * populated by anything. The document ids are now derived from here at send time, so
+     * everything downstream that already reads `selected_document_ids` is unchanged.
+     */
+    contextItems: ContextItem[];
+    conversationReferences?: readonly (ConversationReference | ConversationSource)[];
+    imageReferences?: ImageReferenceRequest[];
+}
+
+export interface GenerateImageFromReferenceRequest {
+    prompt: string;
+    references: ImageReferenceRequest[];
+    mask?: string;
+    maskRegions?: number;
+}
+
+interface ChatState {
+    conversations: Conversation[];
+    conversationsLoading: boolean;
+    conversationsError: string | null;
+    hasMore: boolean;
+    nextCursor: string | null;
+    searchTerm: string;
+
+    /**
+     * The rail's multi-selection.
+     *
+     * Selection lives here rather than in the rail because deleting or hiding a conversation
+     * is a store action, and a selection kept beside the list would go stale the moment one
+     * of those removed a row — acting on an id the user can no longer see.
+     *
+     * There is no separate "selection mode" flag: a selection either has members or it does
+     * not, and a mode that could be on with nothing selected was a second source of truth
+     * for the same question.
+     */
+    selectedConversationIds: string[];
+    /**
+     * Where a Shift+click range starts, or null when there is nothing to extend from.
+     *
+     * Held apart from the ids because a range must survive the selection being replaced —
+     * that is what lets an over-long range be corrected by Shift+clicking a nearer row.
+     */
+    selectionAnchorId: string | null;
+
+    activeConversationId: string | null;
+    /**
+     * Which API family the open conversation belongs to.
+     *
+     * Null only before anything is open. Resolved when the conversation is selected rather
+     * than looked up per call, because a deep link may name a conversation that is not in
+     * the loaded rail and answering the question costs a request.
+     */
+    activeConversationKind: ConversationKind | null;
+    messages: ChatMessage[];
+    messagesLoading: boolean;
+    messagesError: string | null;
+    analysisResultContext: AnalysisResultContext | null;
+    analysisContextRevision: number;
+    analysisContextChosen: boolean;
+    analysisTurnRevision: number | null;
+    selectAnalysisResult: (descriptor: SavedAnalysisDescriptor, expectedRevision?: number) => void;
+    clearAnalysisResultContext: () => void;
+    /**
+     * The finished workflow run the composer is asking about (phase 6a), or null.
+     *
+     * Exclusive with `analysisResultContext`: selecting either clears the other. Shares its
+     * revision and "chosen" flag, so removing one is remembered the same way and an inherited
+     * selection never overrides the user's own choice.
+     */
+    workflowResultContext: SelectedWorkflowResult | null;
+    /** The run a new chat is opening, while its descriptor is read. Sending waits for it. */
+    workflowResultLaunch: { workflow_id: string; run_id: string } | null;
+    /**
+     * Select a workflow result for `conversationId` (null for a new chat). Returns whether it
+     * was selected: an unavailable result, another conversation, a collaborative chat or a
+     * stale revision is refused.
+     */
+    selectWorkflowResult: (
+        descriptor: WorkflowResultDescriptor,
+        conversationId: string | null,
+        expectedRevision?: number,
+    ) => boolean;
+    clearWorkflowResultContext: () => void;
+    /**
+     * Start a new chat asking about one finished personal run. The run's current descriptor is
+     * read first, so the chip always names the result as it is now; a refusal is reported and
+     * leaves nothing selected.
+     */
+    launchWorkflowResult: (workflowId: string, runId: string) => Promise<boolean>;
+
+    streaming: boolean;
+    streamingContent: string;
+    /** Identifies the reply that actually completed, even if its shared broadcast arrived first. */
+    completedReply: { conversationId: string; messageId: string } | null;
+    streamingReasoningAdjustments: ReasoningResolution[];
+    thoughts: ThoughtEntry[];
+    streamError: string | null;
+    streamAuthUrl: string | null;
+    retryPresentation: RetryPresentation | null;
+    /**
+     * Where a stream recovery has got to, or null when nothing is being recovered.
+     *
+     * Generation continues server-side after the HTTP connection drops, so a broken
+     * transport is recoverable. The two phases are deliberately distinct because they mean
+     * different things to someone watching: `connecting` is a response that has genuinely
+     * stopped moving while the reattach is negotiated, whereas `reconnected` is a response
+     * that is flowing again and should look no different from any other. Leaving the UI in
+     * the first state for the whole reattached stream makes working output look stalled.
+     */
+    reconnectPhase: ReconnectPhase;
+    /**
+     * The orchestration phase holding the open conversation's `streaming` flag, or null when the
+     * flag belongs to an ordinary chat stream or nothing is streaming.
+     *
+     * `streaming` alone cannot say whose it is. A chat message can be sent while an orchestration
+     * run waits or is being reconciled in the same conversation, and that reply must still show
+     * Thinking, so the owner is recorded when the flag is taken rather than guessed from the
+     * orchestration store.
+     */
+    orchestrationSurface: OrchestrationSurfacePhase | null;
+
+    /** Right-hand drawer state. Null means closed. */
+    drawerMode: DrawerMode;
+    evidenceMessageId: string | null;
+    metadata: ConversationMetadata | null;
+    publicWorkspaceSelection: PublicWorkspaceSelection | null;
+    setPublicWorkspaceSelection: (selection: PublicWorkspaceSelection | null) => void;
+    metadataLoading: boolean;
+    metadataError: string | null;
+
+    /**
+     * Attempt numbers known to exist, keyed by thread id.
+     *
+     * `/api/get_messages` filters to the active attempt, so the loaded list can never reveal
+     * how many attempts a thread has. The switch-attempt endpoint is the only thing that
+     * reports the full set, so what it returns is remembered here.
+     */
+    attemptsByThread: Record<string, number[]>;
+    composerImageReferences: ImageReferenceRequest[];
+    composerConversationReferences: ConversationSource[];
+    conversationHandoffs: ConversationHandoff[];
+
+    loadConversations: (options?: { reset?: boolean; search?: string }) => Promise<void>;
+    loadMore: () => Promise<void>;
+    setSearchTerm: (term: string) => void;
+
+    selectConversation: (
+        conversationId: string | null,
+        options?: {
+            kind?: ConversationKind;
+            /**
+             * Membership already fetched for this conversation, saving a second request.
+             *
+             * Passed in rather than left in the store, because it is fetched before the
+             * conversation is open and the store now refuses writes for anything that is
+             * not.
+             */
+            prefetched?: CollaborationConversation;
+        },
+    ) => Promise<void>;
+    /**
+     * Open a conversation named by the URL rather than clicked in the rail.
+     *
+     * Kept apart from `selectConversation` because the two have different failure
+     * modes. A row the user clicked is one the server just sent; a link can name a
+     * conversation that has since been deleted, or that belongs to somebody else.
+     */
+    openLinkedConversation: (conversationId: string) => Promise<void>;
+    startNewConversation: () => void;
+    renameConversation: (conversationId: string, title: string) => Promise<void>;
+    /**
+     * Remove one conversation from the reader's view.
+     *
+     * `decidedAction` is how a shared conversation is to be removed, when the caller has
+     * already shown the user which of the two it will be. Passing it is what guarantees the
+     * confirmation and the request agree; omitting it falls back to deciding here.
+     */
+    removeConversation: (
+        conversationId: string,
+        decidedAction?: 'delete' | 'leave',
+    ) => Promise<void>;
+    togglePinned: (conversationId: string) => Promise<void>;
+    toggleHidden: (conversationId: string) => Promise<void>;
+
+    /**
+     * Apply a click to the selection, honouring its modifier keys.
+     *
+     * `intent` comes from `selectionIntentFromEvent`; the ordering a range reads is the
+     * rail's current list, so a range always means what the user can see. This is the only
+     * way to change which rows are picked — a second "toggle this one" action would be a
+     * parallel path that could drift from the modifier rules.
+     */
+    applyConversationSelection: (
+        conversationId: string,
+        intent: SelectionIntent,
+    ) => void;
+    selectAllConversations: () => void;
+    clearConversationSelection: () => void;
+
+    /** Delete or leave every selected conversation, whichever each one permits. */
+    bulkRemoveConversations: () => Promise<void>;
+    /** Set — not toggle — the pin state of every selected conversation. */
+    bulkSetConversationsPinned: (action: PinAction) => Promise<void>;
+    /** Hide every selected conversation, dropping them out of the feed. */
+    bulkHideSelectedConversations: () => Promise<void>;
+
+    sendMessage: (text: string, options: ComposerOptions) => Promise<void | false>;
+    generateImageFromReference: (request: GenerateImageFromReferenceRequest) => Promise<string | null>;
+    addComposerImageReference: (reference: ImageReferenceRequest) => void;
+    consumeComposerImageReferences: () => ImageReferenceRequest[];
+    addComposerConversationReference: (source: ConversationSource) => void;
+    consumeComposerConversationReferences: () => ConversationSource[];
+    upsertConversationHandoff: (handoff: ConversationHandoff) => void;
+    loadConversationHandoffs: (conversationId: string) => Promise<void>;
+    cancelHandoff: (handoffId: string, destinationConversationId: string) => Promise<ConversationHandoff | null>;
+    stopStreaming: () => void;
+
+    /**
+     * Fold an orchestration turn into the shared thread and streaming state.
+     *
+     * Orchestration plans and runs are driven by `useOrchestrationController`, not by the chat
+     * stream machinery, because they speak a different transport and cancel differently. But the
+     * question the user typed and the answer a run produces belong in this thread like any other,
+     * so these three are the seam between the two. They are deliberately small and each guards on
+     * the open conversation: a run outlives the view it started in, and writing streaming state
+     * for a conversation the reader has since left would paint this answer into whatever they
+     * opened instead — the same hazard `sendMessage` guards with `ownsScreen`.
+     *
+     * `beginOrchestrationTurn` returns the optimistic user bubble's id so the controller can hand
+     * it back on completion for reconciliation with the server's persisted id. Passing
+     * `addUserMessage: false` re-enters the thinking state for a re-plan without adding a second
+     * bubble, because the user's question is already in the thread from the first plan. `phase`
+     * says which part of the turn takes the surface: a plan by default, or `running` for an
+     * approved plan, whose progress the plan card shows instead of the streaming bubble.
+     */
+    beginOrchestrationTurn: (
+        conversationId: string,
+        text: string,
+        addUserMessage?: boolean,
+        turnId?: string,
+        promptInfo?: Json | null,
+        phase?: OrchestrationSurfacePhase,
+    ) => string;
+    pushOrchestrationThought: (conversationId: string, event: RunStreamEvent) => void;
+    pushOrchestrationContent: (conversationId: string, accumulated: string, turnId?: string) => void;
+    settleOrchestrationTurn: (
+        conversationId: string,
+        outcome: OrchestrationTurnOutcome,
+    ) => void;
+    /**
+     * Re-key an in-flight turn's optimistic bubble when the server reconciles its ids.
+     *
+     * A safety net for the plan seam, not a normal step. The client mints the turn id and
+     * pre-creates the conversation, so the server almost always echoes both back unchanged; when it
+     * does not, the plan is keyed on one value and the question bubble already on screen carries
+     * another. That bubble is the anchor the plan card scrolls back to, so it is re-stamped to the
+     * ids the store now keys on. A no-op when neither id actually moved, so the ordinary path — and
+     * the common orchestration path — pays nothing.
+     */
+    reassignOrchestrationTurn: (params: {
+        fromConversationId: string;
+        toConversationId: string;
+        fromTurnId: string;
+        toTurnId: string;
+    }) => void;
+    reconcileOrchestrationUserMessage: (params: {
+        conversationId: string;
+        turnId: string;
+        optimisticId: string;
+        savedId: string;
+    }) => void;
+
+    setDrawerMode: (mode: DrawerMode) => void;
+    loadMetadata: (conversationId: string) => Promise<void>;
+
+    /**
+     * Re-read the open chat's messages and show them.
+     *
+     * `onlyIfUnchanged` is for a re-read the reader didn't ask for, such as a workflow result
+     * landing: it is dropped, resolving 'superseded', if a reply started or the messages changed
+     * while it was out, so it can't replace a question sent in the meantime. Every other re-read
+     * resolves 'done', including one that showed nothing because the chat changed or it failed.
+     */
+    reloadMessages: (options?: { onlyIfUnchanged?: boolean }) => Promise<'done' | 'superseded'>;
+    removeMessage: (messageId: string, deleteThread?: boolean) => Promise<void>;
+    retryMessage: (messageId: string, options?: ComposerOptions) => Promise<void>;
+    editMessage: (messageId: string, content: string) => Promise<void>;
+    changeAttempt: (messageId: string, direction: 'prev' | 'next') => Promise<void>;
+    forkFromMessage: (messageId: string) => Promise<void>;
+    applyMask: (
+        messageId: string,
+        action: MaskAction,
+        selection?: MaskSelection,
+    ) => Promise<void>;
+    /**
+     * Save or clear the colours of one diagram or chart inside a message.
+     *
+     * Resolves to true when the change was stored, so the block can surface a failure next to
+     * the control the reader just used rather than only as a toast.
+     */
+    applyVisualStyle: (
+        messageId: string,
+        conversationId: string,
+        /**
+         * Which API family that conversation belongs to, captured when the change was made.
+         *
+         * Passed in for the same reason `conversationId` is: a pending change is flushed when
+         * the block unmounts, and by then the conversation it belongs to may no longer be the
+         * open one. `null` falls back to whatever the store can still work out.
+         */
+        conversationKind: ConversationKind | null,
+        blockKind: string,
+        blockIndex: number,
+        sourceHash: string,
+        style: VisualStyle | null,
+        /**
+         * The block's stage height in pixels.
+         *
+         * `undefined` leaves whatever is stored alone, so a colour change does not reset a
+         * size someone chose; `null` clears it back to the automatic height.
+         */
+        height?: number | null,
+    ) => Promise<boolean>;
+    sendFeedback: (
+        messageId: string,
+        feedbackType: 'positive' | 'negative',
+        reason?: string,
+    ) => Promise<void>;
+    /**
+     * Store an edited diagram as a new revision and make it the one that shows.
+     *
+     * Resolves to null on success, or to a message explaining why the change was not kept. An
+     * error string rather than a thrown exception because the editor shows the reason inline
+     * beside the diagram rather than as a toast over the thread.
+     */
+    saveBlockRevision: (request: BlockRevisionRequest & {
+        source: string;
+        origin: 'manual' | 'control';
+        note: string;
+    }) => Promise<string | null>;
+    /** Show one of a diagram's stored revisions. Nothing is discarded. */
+    restoreBlockRevision: (request: Omit<BlockRevisionRequest, 'originalSource'> & {
+        revisionId: string;
+    }) => Promise<string | null>;
+    /** Ask the model to change one diagram, scoped to that diagram alone. */
+    askBlockRevision: (request: BlockRevisionRequest & AssistRequestOptions & {
+        instruction: string;
+    }) => Promise<AssistRequestOutcome>;
+    /** Fold a message's updated revision map into the thread after a successful write. */
+    mergeBlockRevisions: (
+        messageId: string,
+        blockRevisions: MessageBlockRevisions | undefined,
+    ) => void;
+    /**
+     * Produce a new version of a generated image, scoped to that image alone.
+     *
+     * There is no "save what I edited" counterpart to the diagram actions, because a browser
+     * cannot author an image. Every version comes from the model, so asking for one and
+     * creating one are the same call.
+     *
+     * Resolves to an outcome whose `error` is null on success, or a message worth showing
+     * beside the image.
+     */
+    reviseImage: (request: ImageRevisionActionRequest) => Promise<AssistRequestOutcome>;
+    /** Show one of an image's stored versions. Nothing is discarded; the pointer moves. */
+    restoreImageRevision: (request: {
+        messageId: string;
+        conversationId: string;
+        conversationKind: ConversationKind | null;
+        revisionId: string;
+    }) => Promise<string | null>;
+    /**
+     * Fold a revision response back into the thread.
+     *
+     * Unlike a diagram revision this also replaces the message's `content`. A diagram's stored
+     * source is substituted at render time, but an image's content *is* a URL, and an edited
+     * image is served from a different one — carrying the revision id so the browser does not
+     * keep showing the copy it already cached.
+     */
+    mergeImageRevisions: (
+        messageId: string,
+        entry: ImageRevisionEntry | undefined,
+        imageUrl?: string,
+    ) => void;
+    /**
+     * Generate the image a `simpleimage` proposal card describes.
+     *
+     * The conversation is passed in rather than read from the store, because approvals are
+     * queued: an "Approve all" started in one thread can still be draining when the user has
+     * moved to another, and reading the active conversation at that point would generate the
+     * image into whichever thread happens to be open. The server accepts that request quite
+     * happily — it is a conversation the same user owns — so nothing downstream would catch
+     * it.
+     *
+     * Resolves once the image has been stored and folded into the thread; rejects with the
+     * server's own message so the card can show why it failed.
+     */
+    approveImageProposal: (
+        conversationId: string,
+        assistantMessageId: string,
+        proposal: ImageProposalSpec,
+    ) => Promise<void>;
+}
+
+/**
+ * How a block revision request addresses one diagram.
+ *
+ * The conversation is passed in rather than read from the store for the same reason image
+ * approvals do it: a model edit can still be in flight when the reader has moved to another
+ * thread, and the edit belongs to the conversation it was started in.
+ */
+interface BlockRevisionRequest {
+    messageId: string;
+    conversationId: string;
+    /**
+     * Which API family that conversation belongs to, as known when the edit was made.
+     *
+     * Captured with the id and for the same reason: a shared conversation is written through a
+     * different endpoint, and resolving the kind at write time would consult a rail row that
+     * may no longer describe the conversation this edit belongs to. Null means it was not
+     * known, in which case the store falls back to looking it up.
+     */
+    conversationKind: ConversationKind | null;
+    blockKind: string;
+    blockIndex: number;
+    /** Fingerprint of the block's original source, which the entry is filed under. */
+    sourceHash: string;
+    originalSource: string;
+    /**
+     * How many revisions the editor was opened against.
+     *
+     * Sent so a second person editing the same diagram in a shared conversation gets a conflict
+     * rather than silently overwriting the first. Omitted when there is no history yet.
+     */
+    expectedRevisionCount?: number;
+}
+
+/** Whether a block revision write belongs to the collaboration API. */
+function isSharedBlockRevision(
+    state: ChatState,
+    conversationId: string,
+    conversationKind: ConversationKind | null,
+): boolean {
+    return conversationKind === null
+        ? isCollaborativeConversation(state, conversationId)
+        : conversationKind === 'collaborative';
+}
+
+/** What the AI-assist thread adds to a model edit request. */
+export interface AssistRequestOptions {
+    /** The thread's id for this exchange, which the server stores on both of its chat turns. */
+    submissionId?: string;
+    /** Stops the browser waiting when the reader cancels. */
+    signal?: AbortSignal;
+    /**
+     * Ids of this thread's exchanges the reader cancelled.
+     *
+     * Cancelling only stops the browser waiting: the server may still finish the change. When it
+     * did, the next request is refused as a conflict, and these ids are how that refusal is
+     * recognised as the reader's own earlier change rather than somebody else's.
+     */
+    earlierSubmissionIds?: readonly string[];
+}
+
+/** How a model edit request ended. `error` is null on success. */
+export interface AssistRequestOutcome {
+    error: string | null;
+    /** The reader cancelled the request, so there is nothing to report. */
+    aborted?: boolean;
+    /** Refused because a cancelled earlier request finished first. Its result is now showing. */
+    earlierApplied?: boolean;
+}
+
+function isAbortError(error: unknown): boolean {
+    return Boolean(error) && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError';
+}
+
+/** The body of a revision conflict, which carries what the server has stored. */
+function revisionConflictPayload(error: unknown): Record<string, unknown> | null {
+    if (!(error instanceof ApiError) || error.status !== 409) {
+        return null;
+    }
+    const payload = error.payload;
+    if (!payload || typeof payload !== 'object'
+        || (payload as { code?: unknown }).code === 'submission_conflict') {
+        return null;
+    }
+    return payload as Record<string, unknown>;
+}
+
+/** Whether a stored sub-conversation holds one of the given submissions. */
+function chatHoldsSubmission(chat: unknown, submissionIds: readonly string[] | undefined): boolean {
+    if (!submissionIds?.length || !Array.isArray(chat)) {
+        return false;
+    }
+    return chat.some((turn) => {
+        const id = turn && typeof turn === 'object' ? (turn as { submission_id?: unknown }).submission_id : null;
+        return typeof id === 'string' && submissionIds.includes(id);
+    });
+}
+
+/** One block's stored sub-conversation inside a message's revision map. */
+function storedBlockChat(blockRevisions: unknown, blockKind: string, blockIndex: number): unknown {
+    const forKind = blockRevisions && typeof blockRevisions === 'object'
+        ? (blockRevisions as Record<string, unknown>)[blockKind]
+        : null;
+    const entry = forKind && typeof forKind === 'object'
+        ? (forKind as Record<string, unknown>)[String(blockIndex)]
+        : null;
+    return entry && typeof entry === 'object' ? (entry as BlockRevisionEntry).chat : null;
+}
+
+/** Whether a failure is the server refusing an id it already stored for a different message. */
+function isSubmissionConflict(error: unknown): boolean {
+    return error instanceof ApiError && error.status === 409
+        && Boolean(error.payload) && typeof error.payload === 'object'
+        && (error.payload as { code?: unknown }).code === 'submission_conflict';
+}
+
+/**
+ * Turn a failed diagram edit into something worth showing beside the diagram.
+ *
+ * A 409 is the interesting one: it is not a fault, it means someone else edited the same
+ * diagram, and saying so is more useful than repeating whatever the server called it.
+ */
+function describeBlockRevisionError(error: unknown, fallback: string): string {
+    if (error instanceof ApiError) {
+        if (error.status === 403) {
+            return 'You can only edit diagrams in conversations you take part in.';
+        }
+        if (isSubmissionConflict(error)) {
+            return error.message;
+        }
+        if (error.status === 409) {
+            return 'Someone else changed this diagram. Close and reopen it to see their version.';
+        }
+    }
+    return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/** What a caller asks for when producing a new version of an image. */
+export interface ImageRevisionActionRequest extends AssistRequestOptions {
+    messageId: string;
+    conversationId: string;
+    conversationKind: ConversationKind | null;
+    origin?: ImageRevisionOrigin;
+    operation?: ImageRevisionOperation;
+    instruction?: string;
+    prompt?: string;
+    /** A PNG data URL whose transparent pixels mark the region to change. */
+    mask?: string;
+    maskRegions?: number;
+    size?: string;
+    quality?: string;
+    background?: string;
+    expectedRevisionCount?: number;
+    expectedCurrentRevisionId?: string;
+    /** The URL of one stored version, for showing a result recovered from a conflict. */
+    revisionUrl?: (revisionId: string) => string;
+}
+
+/**
+ * Turn a failed image edit into something worth showing beside the image.
+ *
+ * Separate from the diagram version because the failures differ. A 502 here is ordinary rather
+ * than alarming: image models refuse prompts, time out, and reject regions, and every one of
+ * those costs the reader a wait, so the message has to suggest what to do next rather than
+ * read as a crash.
+ */
+function describeImageRevisionError(error: unknown, fallback: string): string {
+    if (error instanceof ApiError) {
+        if (error.status === 403) {
+            return 'You can only change images in conversations you take part in.';
+        }
+        if (isSubmissionConflict(error)) {
+            return error.message;
+        }
+        if (error.status === 409) {
+            return 'Someone else changed this image. Close and reopen it to see their version.';
+        }
+        if (error.status === 502 && error.message) {
+            return `${error.message} Try describing the change differently.`;
+        }
+    }
+    return error instanceof Error && error.message ? error.message : fallback;
+}
+
+/**
+ * Build a conversation list row out of a metadata response.
+ *
+ * The two shapes differ in more than depth: metadata keys the conversation as
+ * `conversation_id` where the feed uses `id`, and carries no `created_at`. The id is passed
+ * in rather than read from the response so the row is guaranteed to match the conversation
+ * it was fetched for, which is what the rail highlights on. Only the fields the rail and the
+ * header actually read are mapped; everything else is left off rather than guessed at.
+ */
+function conversationFromMetadata(
+    conversationId: string,
+    metadata: ConversationMetadata,
+): Conversation {
+    return {
+        id: conversationId,
+        title: metadata.title || 'Untitled conversation',
+        last_updated: metadata.last_updated,
+        is_pinned: metadata.is_pinned ?? false,
+        is_hidden: metadata.is_hidden ?? false,
+        has_unread_assistant_response: metadata.has_unread_assistant_response ?? false,
+        classification: metadata.classification ?? null,
+        context: metadata.context,
+        chat_type: metadata.chat_type ?? undefined,
+        workflow_id: metadata.workflow_id,
+        workflow_provenance: metadata.workflow_provenance,
+    };
+}
+
+/**
+ * Present a shared conversation as the metadata shape the header and drawer already read.
+ *
+ * The two responses overlap but are not the same: a shared conversation keys itself as `id`
+ * where metadata uses `conversation_id`, and carries membership the personal shape has no
+ * place for. Mapping here rather than teaching every consumer about both shapes keeps the
+ * badges, classification pills, document drawer and summary working on a shared thread
+ * without a single change to those components.
+ *
+ * The original is kept under `collaboration` so anything that genuinely needs the
+ * membership can reach it without a second request.
+ */
+export function metadataFromCollaboration(
+    conversation: CollaborationConversation,
+): ConversationMetadata {
+    return {
+        ...conversation,
+        conversation_id: String(conversation.id ?? ''),
+        title: conversation.title || 'Untitled conversation',
+        last_updated: conversation.updated_at ?? conversation.last_updated,
+        chat_type: conversation.chat_type ?? null,
+        collaboration: conversation,
+    } as ConversationMetadata;
+}
+
+/** Controller for the in-flight stream, kept outside the store as it is not render state. */
+let activeStreamController: AbortController | null = null;
+
+/**
+ * Conversation the in-flight stream belongs to.
+ *
+ * Tracked separately from `activeConversationId` because the user can switch threads while
+ * a response is still generating; a cancel must address the conversation that is actually
+ * streaming, not whichever one happens to be on screen.
+ */
+let streamingConversationId: string | null = null;
+
+/**
+ * Whether the in-flight stream belongs to a shared conversation.
+ *
+ * Cancelling addresses a different endpoint for each, and the answer must survive the
+ * reader switching threads mid-response, so it is recorded alongside the conversation id
+ * rather than re-derived from whatever is on screen when Stop is pressed.
+ */
+let streamingConversationKind: ConversationKind = 'personal';
+let activeStreamCancellation: (() => Promise<void>) | null = null;
+
+/**
+ * Conversations whose orchestration turn currently holds the streaming surface, and in which phase.
+ *
+ * A plan or run is driven by its own controller, not `activeStreamController`, so
+ * `detachActiveStream` knows nothing about it. The turn takes the shared `streaming` flag in
+ * `beginOrchestrationTurn` and gives it back in `settleOrchestrationTurn`, but both only write
+ * while that conversation is on screen. Relying on that alone, leaving a conversation mid-turn
+ * stranded the flag on whatever came next: a new chat showed the old turn thinking, offered a
+ * Stop with nothing to stop, and refused to send until the page was reloaded.
+ *
+ * Kept per conversation, whatever is on screen, so leaving can drop the flag and reopening a
+ * conversation whose turn is still running in this tab can put it back. The phase comes back with
+ * it, so a reopened run still shows its progress on the plan card alone.
+ */
+const orchestrationSurfaces = new Map<string, { phase: OrchestrationSurfacePhase; turnId: string | null }>();
+
+/**
+ * Bumped each time the reader starts a new chat or opens a conversation.
+ *
+ * A first message creates its conversation in a round trip, then claims the screen only if the
+ * reader is still in the new chat it was sent from. `activeConversationId === null` cannot say
+ * that on its own: clicking New chat during the round trip leaves it null as well, and the old
+ * question used to take over the fresh chat. Comparing the epoch from before the round trip can.
+ */
+let conversationEpoch = 0;
+
+/** The current epoch, for the creation path that lives outside this store (orchestration). */
+export function currentConversationEpoch(): number {
+    return conversationEpoch;
+}
+
+/**
+ * Stop reading the in-flight stream without asking the server to stop producing it.
+ *
+ * These are two different things and only the Stop button means the second one. Generation
+ * runs in background execution and deliberately outlives the connection carrying it
+ * (`build_background_stream_response`, route_backend_chats.py:14372), so dropping the reader
+ * leaves the answer being written and saved; `resumeChatStream` picks it back up when the
+ * conversation is opened again.
+ *
+ * Cancelling instead would end the generation for good. `/api/chat/stream/cancel` reaches
+ * `request_cancel` (route_backend_chats.py:8382), which sets `cancel_requested`, and the
+ * agent loop honours it. Worse, a cancel that lands before the first content token persists
+ * no assistant message at all (`message_persisted=False`, route_backend_chats.py:15971) —
+ * so leaving a thread during the thinking phase destroyed the reply outright rather than
+ * merely truncating it. The classic client never does this: chat-conversations.js reattaches
+ * on select and only the stop control cancels.
+ */
+function detachActiveStream(): void {
+    if (!activeStreamController) {
+        return;
+    }
+    activeStreamController.abort();
+    activeStreamController = null;
+    activeStreamCancellation = null;
+    streamingConversationId = null;
+    // The reply is no longer being read, so its turn stops being a streaming one. Left
+    // registered, the next send in this conversation would take the old turn for a renamed
+    // one and pull the stopped reply's saved Microsoft 365 actions down with it.
+    chatPendingActionsStore.getState().setLiveStream(null);
+    // Included here rather than left to callers: `stopStreaming` has no state reset of its
+    // own, so dropping it would leave the composer stuck showing Stop for a stream that is no
+    // longer being read. `selectConversation` and `startNewConversation` also set `streaming`
+    // themselves, because an orchestration turn holds it without a controller to detach.
+    useChatStore.setState({ streaming: false, streamingContent: '', reconnectPhase: null });
+}
+
+/**
+ * Read the open conversation's saved Microsoft 365 actions again once a reply is over.
+ *
+ * A reply can save an action its own stream never described: the connection drops, or the
+ * model fails after the tool ran. The list is the only complete answer, so the classic client
+ * reads it after every ending (chat-streaming.js:777). Skipped when the reader has moved on,
+ * because a conversation's list is read when it is opened.
+ */
+function refreshPendingActionsAfterReply(conversationId: string): void {
+    const pendingActions = chatPendingActionsStore.getState();
+    if (pendingActions.conversationId !== conversationId) {
+        return;
+    }
+    void pendingActions.refreshList();
+}
+
+/**
+ * Detach from the open shared conversation's event stream, if there is one.
+ *
+ * Held at module scope for the same reason as the stream controller: it is a live
+ * connection rather than render state, and leaving one attached after a thread switch
+ * would keep feeding another conversation's messages into the list.
+ */
+let detachCollaborationEvents: (() => void) | null = null;
+
+function stopCollaborationEvents(): void {
+    if (detachCollaborationEvents) {
+        detachCollaborationEvents();
+        detachCollaborationEvents = null;
+    }
+}
+
+/** The message a shared-thread copy was mirrored from, or '' when it is not a copy. */
+function mirroredSourceId(message: ChatMessage | CollaborationMessage): string {
+    const metadata = message.metadata as { source_message_id?: unknown } | undefined;
+    return typeof metadata?.source_message_id === 'string' ? metadata.source_message_id.trim() : '';
+}
+
+/**
+ * Merge a message that arrived from the server into the thread.
+ *
+ * Idempotent by message id, which it has to be: the sender of an AI request receives the
+ * assistant's reply twice — once in the stream's terminal frame and once as a
+ * `collaboration.message.created` event — and a posted message comes back both in the
+ * POST response and over the event stream. Appending blindly shows each of those twice.
+ *
+ * An optimistic placeholder for the same message is replaced rather than left behind:
+ * matched on the pending id when it is known, and otherwise on the reader's own unsent
+ * text, which is how a message posted from another tab still lands in one place.
+ */
+export function mergeCollaborationMessage(
+    messages: ChatMessage[],
+    incoming: CollaborationMessage,
+    options: { pendingId?: string | null; currentUserId?: string } = {},
+): ChatMessage[] {
+    const existingIndex = messages.findIndex((message) => message.id === incoming.id);
+    if (existingIndex !== -1) {
+        if (
+            isReplyRemoved(messages[existingIndex].metadata)
+            && !isReplyRemoved(incoming.metadata)
+        ) return messages;
+        const merged = [...messages];
+        merged[existingIndex] = isReplyRemoved(incoming.metadata)
+            ? { ...incoming, thoughts: undefined }
+            : { ...merged[existingIndex], ...incoming };
+        return merged;
+    }
+
+    // A shared conversation's orchestrated question and answer are mirrored into its thread
+    // from the run's own messages, so the shared copy and the run's live bubble name each other
+    // through `metadata.source_message_id`. Either can arrive first; the second updates the first.
+    const incomingSourceId = mirroredSourceId(incoming);
+    const mirroredIndex = messages.findIndex((message) =>
+        (incomingSourceId && message.id === incomingSourceId)
+        || (Boolean(incoming.id) && mirroredSourceId(message) === incoming.id),
+    );
+    if (mirroredIndex !== -1) {
+        if (
+            isReplyRemoved(messages[mirroredIndex].metadata)
+            && !isReplyRemoved(incoming.metadata)
+        ) return messages;
+        const merged = [...messages];
+        merged[mirroredIndex] = isReplyRemoved(incoming.metadata)
+            ? { ...incoming, thoughts: undefined }
+            : { ...merged[mirroredIndex], ...incoming };
+        return merged;
+    }
+
+    const senderId = String(incoming.sender?.user_id ?? '').trim();
+    const isOwnMessage = Boolean(
+        options.currentUserId && senderId && senderId === options.currentUserId,
+    );
+
+    const placeholderIndex = messages.findIndex((message) => {
+        if (options.pendingId && message.id === options.pendingId) {
+            return true;
+        }
+        return (
+            isOwnMessage &&
+            typeof message.id === 'string' &&
+            message.id.startsWith('pending-user-') &&
+            message.content === incoming.content
+        );
+    });
+
+    if (placeholderIndex !== -1) {
+        const merged = [...messages];
+        merged[placeholderIndex] = incoming;
+        return merged;
+    }
+
+    return [...messages, incoming];
+}
+
+/** Store writer used by the stream handlers, kept narrow so they can be shared. */
+type StreamStateSetter = (
+    partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>),
+) => void;
+
+/**
+ * Read receipts sent for replies the reader watched finish, by conversation.
+ *
+ * A brand-new conversation reloads the rail once its first reply lands, and that reload
+ * waits for the receipt. The server marks a personal conversation unread as it finishes a
+ * reply, so a rail read that beat the receipt would show the reader's own open conversation
+ * as unread.
+ */
+const watchedReplyReads = new Map<string, Promise<void>>();
+
+/** Replies that finished in the open conversation while the reader was not looking at it. */
+const deferredReplyReads = new Set<string>();
+let stopWaitingForReader: (() => void) | null = null;
+/**
+ * The conversation a link is opening, from the moment it is followed until it has opened or
+ * failed to. A notice brings the reader back to the chat page by naming a conversation that is
+ * not the open one until its messages have loaded, and that is the one they are about to see.
+ */
+let linkedConversationOpening: string | null = null;
+
+/**
+ * Whether the reader can see a reply that finishes in the open conversation: the tab is
+ * showing and the chat page is the page in it.
+ *
+ * Without a registered navigator there is no telling which page is showing, so the answer
+ * is no. The application registers one before any reply can finish; only a test fixture
+ * without the notification runtime lacks one.
+ */
+function replyIsWatched(): boolean {
+    if (document.visibilityState !== 'visible') {
+        return false;
+    }
+    return getAppNavigator()?.pathname() === '/chat';
+}
+
+/** Whether the server marks this conversation unread when a reply finishes in it. */
+function serverMarksReplyUnread(kind: ConversationKind, event: ChatStreamEvent): boolean {
+    if (kind === 'collaborative') {
+        return false;
+    }
+    // Mirrors is_personal_chat_conversation in route_backend_chats.py.
+    const chatType = typeof event.chat_type === 'string' ? event.chat_type.trim().toLowerCase() : '';
+    return !chatType.startsWith('group') && !chatType.startsWith('public');
+}
+
+function setConversationUnread(conversationId: string, unread: boolean): void {
+    const { conversations } = useChatStore.getState();
+    const changes = conversations.some(
+        (item) => item.id === conversationId && Boolean(item.has_unread_assistant_response) !== unread,
+    );
+    if (!changes) {
+        return;
+    }
+    useChatStore.setState({
+        conversations: conversations.map((item) =>
+            item.id === conversationId ? { ...item, has_unread_assistant_response: unread } : item,
+        ),
+    });
+}
+
+/**
+ * Clear the unread marker the server put on a conversation when it finished a reply the
+ * reader has now seen, along with the "AI responded" notice that came with it.
+ */
+function markWatchedReplyRead(conversationId: string): Promise<void> {
+    const request: Promise<void> = markConversationRead(conversationId)
+        .then(() => {
+            setConversationUnread(conversationId, false);
+            void refreshNotificationCount('action');
+        })
+        .catch(() => {
+            /* Read receipts are advisory; the reply is on screen either way. */
+        })
+        .finally(() => {
+            if (watchedReplyReads.get(conversationId) === request) {
+                watchedReplyReads.delete(conversationId);
+            }
+        });
+    watchedReplyReads.set(conversationId, request);
+    return request;
+}
+
+/**
+ * Send the receipts held back for the reader, once they are looking at the chat page again.
+ *
+ * Only for the conversation they are about to see. Coming back through a link -- a notice in
+ * the bell's panel, a desktop notification, or an address naming a conversation -- means the
+ * conversation on screen is the one the link names, even while the one it replaces is still
+ * the open one.
+ */
+function acknowledgeDeferredReplies(route: AppRoute | null): void {
+    if (!replyIsWatched()) {
+        return;
+    }
+    const pending = [...deferredReplyReads];
+    deferredReplyReads.clear();
+    stopWaitingForReader?.();
+    stopWaitingForReader = null;
+    const linkedByRoute = route?.pathname === '/chat'
+        ? readConversationParam(new URLSearchParams(route.search))
+        : null;
+    const visibleConversationId =
+        linkedByRoute ?? linkedConversationOpening ?? useChatStore.getState().activeConversationId;
+    for (const conversationId of pending) {
+        // A conversation the reader has since left stays unread: they never saw its reply.
+        if (conversationId === visibleConversationId) {
+            void markWatchedReplyRead(conversationId);
+        }
+    }
+}
+
+function acknowledgeDeferredRepliesOnReturn(): void {
+    acknowledgeDeferredReplies(null);
+}
+
+/**
+ * Leave a finished reply unread until the reader comes back to it.
+ *
+ * A hidden tab, or another page of the application, means nobody saw the reply arrive, so
+ * clearing the server's unread marker then would also clear the "AI responded" notice the
+ * reader has not had a chance to see. The rail shows the marker meanwhile, as the server has
+ * it. Returning to the tab, or to the chat page, sends the receipt if the conversation is
+ * still the open one.
+ */
+function deferReplyRead(conversationId: string): void {
+    deferredReplyReads.add(conversationId);
+    setConversationUnread(conversationId, true);
+    if (stopWaitingForReader) {
+        return;
+    }
+    document.addEventListener('visibilitychange', acknowledgeDeferredRepliesOnReturn);
+    const stopRoutes = subscribeRouteChanges(acknowledgeDeferredReplies);
+    stopWaitingForReader = () => {
+        document.removeEventListener('visibilitychange', acknowledgeDeferredRepliesOnReturn);
+        stopRoutes();
+    };
+}
+
+/**
+ * Act on a finished reply for the reader: announce it to the desktop notifier, whether or
+ * not it is on screen, and settle the unread marker the server gave it.
+ *
+ * `current` is whether the reply landed in the open conversation, and `serverMarksUnread`
+ * whether the server marked that conversation unread for it. Exported for replies that
+ * arrive without a stream: a saved workflow's results, which the server posts back to the
+ * chat that started the run, are settled exactly as a streamed reply is.
+ */
+export function settleCompletedReply(
+    reply: CompletedReply,
+    { current, serverMarksUnread }: { current: boolean; serverMarksUnread: boolean },
+): void {
+    const { conversationId } = reply;
+    announceCompletedReply(reply);
+    if (!serverMarksUnread) {
+        return;
+    }
+    if (current && replyIsWatched()) {
+        void markWatchedReplyRead(conversationId);
+        return;
+    }
+    if (current) {
+        deferReplyRead(conversationId);
+    } else {
+        // Finished in a conversation the reader has already left. It stays unread, as the
+        // server has it, until they open it again.
+        setConversationUnread(conversationId, true);
+    }
+    // The reply's notice is already in the bell's count; show it now rather than at the
+    // next poll.
+    void refreshNotificationCount('action');
+}
+
+/** Settle a reply that finished streaming. */
+function settleFinishedReply(
+    conversationId: string,
+    kind: ConversationKind,
+    event: ChatStreamEvent,
+    current: boolean,
+    getState: () => ChatState,
+): void {
+    const listed = getState().conversations.find((item) => item.id === conversationId);
+    settleCompletedReply(
+        {
+            conversationId,
+            messageId: typeof event.message_id === 'string' && event.message_id ? event.message_id : null,
+            conversationTitle: event.conversation_title || listed?.title || null,
+            blocked: event.blocked === true || event.role === 'safety',
+            source: 'chat',
+        },
+        { current, serverMarksUnread: serverMarksReplyUnread(kind, event) },
+    );
+}
+
+/**
+ * Build the event handlers that fold a stream into the store.
+ *
+ * Shared by a fresh send and by a resume of an already-running generation, so a reattached
+ * stream produces exactly the same message, thoughts and error handling as the original.
+ */
+function buildStreamHandlers(
+    conversationId: string,
+    isCurrent: () => boolean,
+    set: StreamStateSetter,
+    getState: () => ChatState,
+    /**
+     * Id of the optimistic user message this stream was started for, when there is one.
+     *
+     * Given the server's real id as soon as the message is persisted. Without this the
+     * bubble keeps a `pending-user-…` id, and every per-message action on it — delete,
+     * mask, reply — would address a message the server has never heard of. It also lets a
+     * shared conversation recognise its own message when the same one arrives back over
+     * the event stream.
+     */
+    pendingUserMessageId?: string | null,
+    /** Which API family the conversation belongs to. A reattached stream is always personal. */
+    kind: ConversationKind = 'personal',
+    requestPrompt?: string,
+): ChatStreamHandlers {
+    const analysisRevision = getState().analysisContextRevision;
+    const completionMetadata = (event: ChatStreamEvent) =>
+        reasoningMetadataForEvent(event, getState().streamingReasoningAdjustments);
+    // The user turn this stream answers, which is where an outgoing Microsoft 365 action it
+    // saves is drawn until the reply exists. Swapped for the server's id once the optimistic
+    // message is persisted.
+    let streamUserMessageId =
+        String(pendingUserMessageId ?? '').trim() || latestUserMessageId(getState().messages);
+    const imagePrompt = requestPrompt
+        ?? getState().messages.find((message) => message.id === streamUserMessageId && message.role === 'user')?.content;
+    const streamRetry = () => {
+        const presentation = getState().retryPresentation;
+        return presentation?.conversationId === conversationId && presentation.userMessageId === streamUserMessageId
+            ? presentation : null;
+    };
+    return {
+        onM365PendingActions: (event) => {
+            // The viewed conversation's id rather than the frame's own: a shared conversation's
+            // frames can carry the id of the hidden source conversation.
+            chatPendingActionsStore.getState().handleStreamPayload(event, {
+                conversationId,
+                messageId: '',
+                userMessageId: streamUserMessageId,
+                requestId: '',
+            });
+        },
+        onUserMessagePersisted: (event) => {
+            const persistedId = String(event.user_message_id ?? event.message_id ?? '').trim();
+            if (persistedId) {
+                streamUserMessageId = persistedId;
+                if (isCurrent()) {
+                    chatPendingActionsStore
+                        .getState()
+                        .setLiveStream({ conversationId, userMessageId: persistedId });
+                }
+            }
+            if (!persistedId || !pendingUserMessageId || !isCurrent()) {
+                return;
+            }
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === pendingUserMessageId
+                        ? { ...message, id: persistedId }
+                        : message,
+                ),
+            }));
+        },
+        onContent: (_delta, accumulated) => {
+            if (!isCurrent()) {
+                return;
+            }
+            set({ streamingContent: accumulated });
+        },
+        onThought: (event) => {
+            const content =
+                typeof event.content === 'string'
+                    ? event.content
+                    : String(event.thought ?? '');
+            const adjustmentUpdates = event.reasoning_adjustments ?? event.metadata?.reasoning_adjustments;
+            const hasAdjustmentUpdates = Array.isArray(adjustmentUpdates) && adjustmentUpdates.length > 0;
+            if (!isCurrent() || (!content && !hasAdjustmentUpdates)) {
+                return;
+            }
+            set((state) => ({
+                streamingReasoningAdjustments: normalizeReasoningAdjustments(
+                    adjustmentUpdates, state.streamingReasoningAdjustments,
+                ),
+                thoughts: content ? [
+                    ...state.thoughts,
+                    {
+                        id: `${state.thoughts.length}`,
+                        // The frame names the step in `step_type`; there is no `title` field.
+                        // Falling straight to "Thinking" made every live step look alike and
+                        // is what stopped a tabular run being recognisable while it ran.
+                        title: String(event.title ?? event.step_type ?? 'Thinking'),
+                        content,
+                        stepType:
+                            typeof event.step_type === 'string' ? event.step_type : undefined,
+                        detail: typeof event.detail === 'string' ? event.detail : undefined,
+                        activity: event.activity as ThoughtEntry['activity'],
+                        progress: event.progress as ThoughtEntry['progress'],
+                        stepIndex:
+                            typeof event.step_index === 'number' ? event.step_index : undefined,
+                    },
+                ] : state.thoughts,
+            }));
+        },
+        onConversationMetadata: (event) => {
+            // Applied even when superseded: the title belongs to a conversation in the
+            // rail, not to the message list on screen.
+            const title = event.conversation_title;
+            if (typeof title === 'string' && title) {
+                set((state) => ({
+                    conversations: state.conversations.map((item) =>
+                        item.id === conversationId ? { ...item, title } : item,
+                    ),
+                }));
+            }
+        },
+        onDone: (event, accumulated) => {
+            // Before the check below: a reply that finished out of sight is exactly the one
+            // a desktop notification is for.
+            settleFinishedReply(conversationId, kind, event, isCurrent(), getState);
+            if (!isCurrent()) {
+                return;
+            }
+            const m365Citations = readM365Citations(event.m365_citations);
+            const blocked = Boolean(event.blocked) || event.role === 'safety';
+            const imageSource = !blocked && typeof event.image_url === 'string' && event.image_url.trim()
+                ? event.image_url : null;
+            const imageResult = !blocked && (imageSource !== null || event.role === 'image');
+            const finalConversationRefs = storedConversationReferences(
+                event.conversation_references ?? event.metadata?.conversation_references,
+            );
+            const baseMetadata = retryReplyMetadata(completionMetadata(event) ?? {}, streamRetry());
+            const finalMessage: ChatMessage = {
+                id: String(event.message_id ?? STREAMING_MESSAGE_ID),
+                conversation_id: conversationId,
+                role: blocked ? 'safety' : imageSource ? 'image' : event.role ?? 'assistant',
+                content: imageSource ?? resolveStreamContent(event, accumulated),
+                ...(imageResult ? { prompt: imagePrompt } : {}),
+                timestamp: new Date().toISOString(),
+                model_deployment_name: event.model_deployment_name,
+                agent_display_name: event.agent_display_name,
+                augmented: event.augmented,
+                ...completionCitations(event),
+                metadata: finalConversationRefs.length > 0
+                    ? { ...(baseMetadata ?? {}), conversation_references: finalConversationRefs }
+                    : baseMetadata,
+                // Carried onto the finished message so the reasoning steps stay
+                // available after the stream ends instead of disappearing with the
+                // streaming placeholder.
+                thoughts:
+                    !event.blocked && getState().thoughts.length > 0 ? [...getState().thoughts] : undefined,
+            };
+            set((state) => ({
+                // Appended by id rather than blindly: in a shared conversation the same
+                // assistant message also arrives as a `collaboration.message.created` event,
+                // and whichever of the two lands second must update the message rather than
+                // add a second copy of it.
+                messages: kind === 'personal'
+                    ? insertRetryReply(updateRetryState(state.messages, streamRetry(), event.blocked ? 'failed' : 'completed'), finalMessage, streamRetry())
+                    : mergeCollaborationMessage(state.messages, finalMessage as CollaborationMessage),
+                completedReply: { conversationId, messageId: finalMessage.id },
+                streaming: false,
+                streamingContent: '',
+                streamingReasoningAdjustments: [],
+                reconnectPhase: null,
+                ...(event.blocked ? { thoughts: [] } : {}),
+            }));
+            const descriptor = latestSavedAnalysis([finalMessage]);
+            if (descriptor) {
+                getState().selectAnalysisResult(descriptor, analysisRevision);
+            }
+            // A Follow up answer carries the run it read, so the next question inherits it.
+            const workflowResult = latestWorkflowResult([finalMessage]);
+            if (workflowResult) {
+                getState().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
+            }
+            // The Documents pane lists the conversation's Microsoft 365 items, which the server
+            // extends once the reply is saved, so loaded metadata is read again.
+            if (m365Citations.length > 0 && !event.blocked && getState().metadata) {
+                void getState().loadMetadata(conversationId);
+            }
+        },
+        onCancelled: (_event, accumulated) => {
+            if (!isCurrent()) {
+                return;
+            }
+            // Partial output is kept: discarding what was already generated is more
+            // annoying than useful when someone stops a long answer.
+            const finalContent = resolveStreamContent(_event, accumulated);
+            if (finalContent) {
+                set((state) => ({
+                    messages: insertRetryReply(
+                        updateRetryState(state.messages, streamRetry(), 'interrupted'),
+                        {
+                            id: `cancelled-${Date.now()}`,
+                            conversation_id: conversationId,
+                            role: 'assistant',
+                            content: finalContent,
+                            timestamp: new Date().toISOString(),
+                            metadata: retryReplyMetadata(completionMetadata(_event) ?? {}, streamRetry()),
+                            thoughts:
+                                state.thoughts.length > 0 ? [...state.thoughts] : undefined,
+                        }, streamRetry(),
+                    ),
+                }));
+            }
+            set({ streaming: false, streamingContent: '', streamingReasoningAdjustments: [], reconnectPhase: null });
+        },
+        onError: (message, event) => {
+            if (!isCurrent()) {
+                return;
+            }
+            // A workflow result that can no longer be asked about as selected is said so in
+            // the server's fixed wording, and its chip removed: the turn is never answered
+            // some other way instead.
+            const refusal = workflowResultRefusal(event);
+            const failure = refusal?.message ?? message;
+            const presentation = streamRetry();
+            set((state) => ({
+                streaming: false,
+                streamingContent: '',
+                completedReply: null,
+                streamingReasoningAdjustments: [],
+                reconnectPhase: null,
+                ...(presentation?.admitted ? {
+                    messages: updateRetryState(state.messages, presentation, event ? 'failed' : 'unknown', failure),
+                    retryPresentation: { ...presentation, error: failure, authUrl: foundryAuthUrl(event) },
+                    streamError: null, streamAuthUrl: null,
+                } : { streamError: failure, streamAuthUrl: foundryAuthUrl(event) }),
+            }));
+            const selectedResult = getState().workflowResultContext;
+            if (refusal?.clears && selectedResult &&
+                (selectedResult.conversation_id === conversationId || selectedResult.conversation_id === null)) {
+                getState().clearWorkflowResultContext();
+            }
+        },
+        onReconnecting: () => {
+            if (!isCurrent()) {
+                return;
+            }
+            // Nothing is arriving yet: the status check and the reattach request are still
+            // in flight, and the response on screen really has stopped moving.
+            set({ reconnectPhase: 'connecting', streamError: null, streamAuthUrl: null });
+        },
+        onReconnect: () => {
+            if (!isCurrent()) {
+                return;
+            }
+            // Attached, and the replay starts at the first event, so what is on screen is
+            // about to be sent again and has to be cleared or it would double up.
+            //
+            // The phase moves to 'reconnected' rather than staying at 'connecting': from
+            // here the stream behaves like any other, so the interface should too. A
+            // response that is visibly working must not keep saying it is reconnecting.
+            set({
+                streamingContent: '',
+                thoughts: [],
+                streamingReasoningAdjustments: [],
+                reconnectPhase: 'reconnected',
+                streamError: null,
+                streamAuthUrl: null,
+            });
+        },
+    };
+}
+
+/**
+ * Run a chat stream and fold its events into the store.
+ *
+ * Shared by three callers that all end in the same place: a normal send, a retry, and an
+ * edit. Retry and edit do not generate anything themselves — their endpoints create the
+ * next thread attempt and hand back a ready-made request body for this endpoint — so they
+ * reuse this rather than duplicating the event handling.
+ */
+async function runChatStream(
+    requestBody: ChatStreamRequest | null,
+    conversationId: string,
+    options: {
+        isNewConversation?: boolean;
+        reloadOnDone?: boolean;
+        /** Which API family this stream belongs to, so a cancel reaches the right route. */
+        kind?: ConversationKind;
+        /** Endpoint and recovery overrides for a shared conversation. */
+        stream?: ChatStreamOptions;
+        /** Optimistic user message to reconcile with the server's id. */
+        pendingUserMessageId?: string | null;
+        transport?: (handlers: ChatStreamHandlers, signal: AbortSignal) => Promise<unknown>;
+        cancel?: () => Promise<void>;
+    } = {},
+): Promise<void | false> {
+    const { set, getState } = {
+        set: (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
+            useChatStore.setState(partial as never),
+        getState: () => useChatStore.getState(),
+    };
+
+    const controller = new AbortController();
+    activeStreamController = controller;
+    streamingConversationId = conversationId;
+    streamingConversationKind = options.kind ?? 'personal';
+    activeStreamCancellation = options.cancel ?? null;
+
+    // Two different questions, and conflating them breaks one case each way.
+    //
+    // `ownsController` is about teardown: does this invocation still own the module's
+    // controller, or has a newer send installed its own? Only the owner may clear it.
+    //
+    // `isCurrent` is about rendering: is this stream's conversation still the one on
+    // screen? Switching threads mid-response clears the controller, so that alone used to
+    // answer both. It does not cover a brand-new conversation, where the reader can open a
+    // different thread during the round trip that creates it — before there is any
+    // controller to clear — leaving the handlers free to write this answer into whatever
+    // they opened.
+    const ownsController = () => activeStreamController === controller;
+    const isCurrent = () =>
+        ownsController() && getState().activeConversationId === conversationId;
+
+    // The user turn this stream answers is where an outgoing Microsoft 365 action it saves is
+    // drawn until the reply exists. Registered after the conversation is active, because
+    // switching conversations clears it.
+    const liveUserMessageId =
+        String(options.pendingUserMessageId ?? '').trim() || latestUserMessageId(getState().messages);
+    if (liveUserMessageId && isCurrent()) {
+        chatPendingActionsStore
+            .getState()
+            .setLiveStream({ conversationId, userMessageId: liveUserMessageId });
+    }
+
+    const handlers = buildStreamHandlers(
+            conversationId,
+            isCurrent,
+            set,
+            getState,
+            options.pendingUserMessageId,
+            options.kind ?? 'personal',
+            requestBody?.message,
+        );
+    let preflightRejected = false;
+    if (options.transport) {
+        await options.transport(handlers, controller.signal);
+    } else if (requestBody) {
+        const result = await streamChat({
+            ...requestBody, action_recovery_client_message_id: options.pendingUserMessageId ?? null,
+        }, handlers, controller.signal, options.stream);
+        preflightRejected = result.preflightRejected === true;
+    }
+
+    // Only tear down if this stream is still the active one; a newer send may already have
+    // installed its own controller. Captured before the teardown because clearing the
+    // controller makes ownsController() false for every check after it.
+    const wasCurrent = isCurrent();
+    if (ownsController()) {
+        activeStreamController = null;
+        activeStreamCancellation = null;
+        streamingConversationId = null;
+        chatPendingActionsStore.getState().setLiveStream(null);
+        set({ streaming: false, reconnectPhase: null });
+        refreshPendingActionsAfterReply(conversationId);
+    }
+
+    // Retry and edit rewrite thread state server-side, so the authoritative message list
+    // has to be re-read rather than patched locally. Skipped when the reader is elsewhere,
+    // since reloadMessages reads whatever is on screen and would refetch a thread this
+    // stream never touched.
+    if (options.reloadOnDone && wasCurrent) {
+        await getState().reloadMessages();
+    }
+
+    // Refresh the rail so a newly created conversation appears with its server-side
+    // generated title. After the read receipt, if one is on its way, so the reader's own
+    // open conversation does not come back marked unread.
+    if (options.isNewConversation) {
+        await watchedReplyReads.get(conversationId);
+        await getState().loadConversations({ reset: true });
+    }
+    if (preflightRejected) return false;
+}
+
+/**
+ * Attach to a generation that is still running for a conversation.
+ *
+ * The answer is produced on the server and survives the HTTP connection, so opening a
+ * conversation whose response is still being written should show it continuing rather than
+ * a truncated message. chat-conversations.js:1695 does the same after selecting a thread.
+ *
+ * Returns false when there is nothing live to attach to, which is the ordinary case.
+ */
+export async function resumeActionRecoveryChat(body: ChatStreamRequest): Promise<void> {
+    const current = useChatStore.getState();
+    const conversationId = body.conversation_id;
+    if (!conversationId || current.activeConversationId !== conversationId || current.streaming) {
+        throw new Error('Open the original conversation and wait for its current response before rechecking.');
+    }
+    // This request stopped before persistence. Reuse its optimistic bubble when
+    // still present, rather than appending the same question a second time.
+    const originalId = body.action_recovery_client_message_id;
+    let pendingId = typeof originalId === 'string' ? current.messages.find((message) =>
+        message.id === originalId && message.id.startsWith('pending-user-'))?.id : undefined;
+    if (!pendingId) {
+        pendingId = `pending-user-${crypto.randomUUID()}`;
+        useChatStore.setState({ messages: [...current.messages, {
+            id: pendingId, conversation_id: conversationId, role: 'user',
+            content: body.message, timestamp: new Date().toISOString(),
+        }] });
+    }
+    useChatStore.setState({
+        streaming: true,
+        orchestrationSurface: null,
+        streamingContent: '', streamError: null, thoughts: [],
+        streamAuthUrl: null, streamingReasoningAdjustments: [],
+    });
+    const { action_recovery: previousDecision, ...pending } = body;
+    await runChatStream({ ...pending, action_recovery_nonce: crypto.randomUUID() },
+        conversationId, { pendingUserMessageId: pendingId, reloadOnDone: true });
+}
+
+export async function continueCredentialChat(credentialRequest: CredentialRequest): Promise<void> {
+    return continueInteractionChat(
+        credentialRequest.conversation_id, credentialRequest.conversation_kind ?? 'personal',
+        (signal) => openCredentialContinuation(credentialRequest, signal),
+    );
+}
+
+export async function continueInteractionChat(
+    conversationId: string, kind: ConversationKind,
+    openContinuation: (signal: AbortSignal) => Promise<Response>,
+    cancel?: () => Promise<void>,
+): Promise<void> {
+    const state = useChatStore.getState();
+    if (state.activeConversationId !== conversationId || state.streaming ||
+        (state.activeConversationKind && state.activeConversationKind !== kind)) {
+        throw new Error('Open this conversation and wait for its current response before continuing.');
+    }
+    useChatStore.setState({
+        streaming: true,
+        orchestrationSurface: null,
+        streamingContent: '',
+        streamingReasoningAdjustments: [],
+        streamError: null, streamAuthUrl: null, thoughts: [],
+    });
+    let failure: Error | null = null;
+    await runChatStream(null, conversationId, {
+        reloadOnDone: true,
+        kind,
+        cancel,
+        transport: async (handlers, signal) => {
+            try {
+                const response = await openContinuation(signal);
+                const result = await consumeCredentialChatResponse(response, handlers, signal);
+                if (result.errored) failure = new Error('The action could not finish. Review the conversation before continuing.');
+            } catch (error) {
+                if (signal.aborted) return;
+                failure = error instanceof Error ? error : new Error('The action could not be continued.');
+                handlers.onError?.(failure.message);
+            }
+        },
+    });
+    if (failure) throw failure;
+}
+
+async function resumeChatStream(conversationId: string): Promise<boolean> {
+    const set = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
+        useChatStore.setState(partial as never);
+    const getState = () => useChatStore.getState();
+
+    // Checked before any state is touched so opening an ordinary conversation never
+    // flickers a streaming placeholder.
+    const status = await fetchStreamStatus(conversationId);
+    if (!status?.pending) {
+        return false;
+    }
+
+    // A stream started in the meantime owns the UI; do not displace it.
+    if (activeStreamController || getState().activeConversationId !== conversationId) {
+        return false;
+    }
+
+    const runningQuestions = getState().messages.filter((message) => message.role === 'user'
+        && savedResponseAttempt(message).kind === 'chat' && savedResponseAttempt(message).state === 'running');
+    const savedQuestionId = typeof status.user_message_id === 'string' ? status.user_message_id : undefined;
+    const runningQuestion = savedQuestionId
+        ? getState().messages.find((message) => message.id === savedQuestionId && message.role === 'user')
+        : runningQuestions.length === 1 ? runningQuestions[0] : undefined;
+    const presentation = runningQuestion && savedResponseAttempt(runningQuestion).kind === 'chat'
+        ? { ...beginRetryPresentation(getState().messages, runningQuestion, 'chat'), admitted: true } : null;
+    const controller = new AbortController();
+    activeStreamController = controller;
+    // Deliberately NOT setting streamingConversationId. That marks a stream this tab
+    // started, and it is the only thing that lets Stop POST /api/chat/stream/cancel, which
+    // is a real server-side cancellation. This stream belongs to whoever started it —
+    // another tab, or this page before a reload — so Stop here detaches this reader instead
+    // of ending a generation somebody else is still waiting on. The classic client draws the
+    // same line: reattachStreamingConversation (chat-streaming.js:1157) opens its reattached
+    // stream with no cancelEndpoint at all.
+    const isCurrent = () => activeStreamController === controller;
+
+    set({
+        streaming: true,
+        retryPresentation: presentation,
+        orchestrationSurface: null,
+        streamingContent: '',
+        thoughts: [],
+        streamingReasoningAdjustments: [],
+        streamError: null,
+        streamAuthUrl: null,
+        reconnectPhase: 'connecting',
+    });
+
+    const reattachedUserMessageId = runningQuestion?.id ?? latestUserMessageId(getState().messages);
+    if (reattachedUserMessageId) {
+        chatPendingActionsStore
+            .getState()
+            .setLiveStream({ conversationId, userMessageId: reattachedUserMessageId });
+    }
+
+    await reattachChatStream(
+        conversationId,
+        buildStreamHandlers(conversationId, isCurrent, set, getState, reattachedUserMessageId),
+        controller.signal,
+    );
+
+    if (isCurrent()) {
+        activeStreamController = null;
+        chatPendingActionsStore.getState().setLiveStream(null);
+        set({ streaming: false, reconnectPhase: null });
+        refreshPendingActionsAfterReply(conversationId);
+    }
+
+    return true;
+}
+
+function adoptPreparedRetry(result: Pick<AttemptChatRequest,
+    'user_message' | 'user_message_id' | 'thread_id' | 'new_attempt' | 'available_attempts'
+>, presentation: RetryPresentation): RetryPresentation {
+    const question = result.user_message;
+    const threadId = result.thread_id;
+    const attempt = result.new_attempt;
+    if (!question || question.id !== result.user_message_id || question.role !== 'user'
+        || question.conversation_id !== presentation.conversationId || !threadId || typeof attempt !== 'number'
+        || messageThreadId(question) !== threadId || currentAttempt(question) !== attempt) {
+        throw new Error('The saved retry could not be confirmed. Reload the conversation before retrying.');
+    }
+    const admitted: RetryPresentation = {
+        ...presentation, admitted: true, userMessageId: question.id, threadId, attempt,
+    };
+    useChatStore.setState((state) => ({
+        messages: adoptRetryQuestion(state.messages, presentation, question),
+        retryPresentation: admitted,
+        attemptsByThread: Array.isArray(result.available_attempts) ? {
+            ...state.attemptsByThread, [threadId]: result.available_attempts,
+        } : state.attemptsByThread,
+        metadata: null,
+    }));
+    return admitted;
+}
+
+/**
+ * Work out which API family a conversation belongs to by asking.
+ *
+ * Only reached for a conversation that is not in the loaded rail — a deep link, or one
+ * opened straight after being shared.
+ *
+ * A single endpoint answers this. It used to be inferred by calling the personal metadata
+ * endpoint and reading its 404 as "then it is a shared one", which was correct but made the
+ * browser log a failed request every time somebody followed a link to a shared conversation.
+ *
+ * A collaboration response is handed back rather than written to a store: it is the same
+ * document the participants panel and the composer need, so returning it saves a second
+ * request — but stashing it somewhere for `selectConversation` to find would be a write for
+ * a conversation that is not open yet, which is exactly the class of stale write the
+ * collaboration store now refuses.
+ *
+ * With `requireExists`, a conversation the server does not recognise is a rejection rather
+ * than a default, which is what lets a dead link be reported instead of opening as an empty
+ * chat.
+ */
+async function resolveConversationKind(
+    conversationId: string,
+    options: { requireExists?: boolean } = {},
+): Promise<{ kind: ConversationKind; conversation?: CollaborationConversation }> {
+    try {
+        const { kind, conversation } = await fetchConversationKind(conversationId);
+        return { kind, conversation };
+    } catch (error) {
+        if (options.requireExists) {
+            throw error;
+        }
+        // Not knowing is not the same as knowing it is shared, and personal is the
+        // overwhelmingly common case, so an unreachable server degrades to the thread simply
+        // failing to load rather than to collaboration calls that could never work.
+        return { kind: 'personal' };
+    }
+}
+
+/**
+ * Attach to a shared conversation's event stream and fold what arrives into the stores.
+ *
+ * This is what makes the conversation shared rather than merely visible: without it, a
+ * message written by somebody else appears only if the reader reloads.
+ */
+function attachCollaborationEvents(conversationId: string): void {
+    const set = (partial: Partial<ChatState> | ((state: ChatState) => Partial<ChatState>)) =>
+        useChatStore.setState(partial as never);
+    const getState = () => useChatStore.getState();
+    const collaboration = () => useCollaborationStore.getState();
+    const currentUserId = () => useBootstrapStore.getState().data?.user?.id;
+
+    /** Ignore anything that arrives after the reader has moved to another conversation. */
+    const stillOpen = () => getState().activeConversationId === conversationId;
+
+    /**
+     * Re-read this reader's own membership after a change to it.
+     *
+     * The event's payload cannot answer the question. Every publishing route serializes the
+     * conversation for the user who *caused* the event, so its `can_*` flags, role and
+     * membership status are theirs — an owner's action would hand every member owner
+     * permissions, and a member leaving would tell everyone else they can no longer post.
+     * Only a fetch returns the flags computed for the reader.
+     */
+    const refreshOwnMembership = () => {
+        if (stillOpen()) {
+            void collaboration()
+                .loadConversation(conversationId)
+                .then(() => syncListedPermissions(conversationId));
+        }
+    };
+
+    stopCollaborationEvents();
+    detachCollaborationEvents = subscribeToCollaborationEvents(conversationId, {
+        onMessageUpdated: (message) => {
+            if (!stillOpen()) return;
+            set((state) => ({
+                messages: mergeCollaborationMessage(state.messages, message),
+            }));
+        },
+        onMessageCreated: (message, conversation) => {
+            if (conversation) {
+                collaboration().applyBroadcast(conversation);
+            }
+            if (!stillOpen()) {
+                return;
+            }
+
+            set((state) => ({
+                messages: mergeCollaborationMessage(state.messages, message, {
+                    currentUserId: currentUserId(),
+                }),
+            }));
+            // The answer is proof its request has finished, should that event be late or lost.
+            collaboration().finishAiRunsAnsweredBy(message);
+
+            const senderId = String(message.sender?.user_id ?? '').trim();
+            if (!senderId || senderId === currentUserId()) {
+                return;
+            }
+
+            // Being named is the one thing in a shared conversation worth interrupting for;
+            // an ordinary message is already visible in the thread.
+            if (mentionsCurrentUser(message.metadata as Record<string, unknown>, currentUserId())) {
+                toast.info(
+                    `${participantName(message.sender)} mentioned you in this conversation.`,
+                );
+            }
+
+            // Somebody else has written, so the unread marker this thread may have just
+            // acquired is already satisfied by the reader looking at it.
+            void markCollaborationConversationRead(conversationId).catch(() => {
+                /* Read receipts are advisory. */
+            });
+        },
+
+        onMessageDeleted: (messageId, deletedByUserId, conversation) => {
+            if (conversation) {
+                collaboration().applyBroadcast(conversation);
+            }
+            if (!stillOpen()) {
+                return;
+            }
+            set((state) => ({
+                messages: state.messages.filter((message) => message.id !== messageId),
+            }));
+            if (deletedByUserId && deletedByUserId !== currentUserId()) {
+                toast.info('A message was deleted from this conversation.');
+            }
+        },
+
+        onMessageMasked: (message, updatedByUserId) => {
+            if (!stillOpen()) {
+                return;
+            }
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === message.id ? { ...existing, ...message } : existing,
+                ),
+            }));
+            if (updatedByUserId && updatedByUserId !== currentUserId()) {
+                toast.info('A message in this conversation was masked.');
+            }
+        },
+
+        onMessageBlockRevised: (messageId, blockRevisions, updatedByUserId) => {
+            if (!stillOpen()) {
+                return;
+            }
+            // Only the revision map is replaced. The editor reads the current version out of
+            // the message's metadata, so this is enough for an open editor to follow along.
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === messageId
+                        ? {
+                              ...existing,
+                              metadata: {
+                                  ...(existing.metadata as Record<string, unknown>),
+                                  block_revisions: blockRevisions,
+                              },
+                          }
+                        : existing,
+                ),
+            }));
+            if (updatedByUserId && updatedByUserId !== currentUserId()) {
+                toast.info('A diagram in this conversation was edited.');
+            }
+        },
+
+        onMessageImageRevised: (messageId, imageRevisions, imageUrl, updatedByUserId) => {
+            if (!stillOpen()) {
+                return;
+            }
+            // The URL is replaced as well as the history. An edited image is served from a
+            // different URL carrying its revision id, and without taking it the participant
+            // would keep showing the copy already in their cache.
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === messageId
+                        ? {
+                              ...existing,
+                              content: imageUrl || existing.content,
+                              metadata: {
+                                  ...(existing.metadata as Record<string, unknown>),
+                                  image_revisions: imageRevisions,
+                              },
+                          }
+                        : existing,
+                ),
+            }));
+            if (updatedByUserId && updatedByUserId !== currentUserId()) {
+                toast.info('An image in this conversation was changed.');
+            }
+        },
+
+        onMessageVisualStyleUpdated: (message) => {
+            if (!stillOpen()) {
+                return;
+            }
+            // Only the styles are taken, not the whole message. Everything else in the
+            // broadcast is unchanged by a recolour, and replacing it wholesale would discard
+            // client-side state the thread has built up around the message.
+            //
+            // No toast, and no interest in who did it: a colour change is cosmetic, and a drag
+            // on somebody else's screen would announce itself repeatedly for something the
+            // reader can already see happening.
+            const styles =
+                (message.metadata as Record<string, unknown> | undefined)?.visual_styles ?? {};
+            set((state) => ({
+                messages: state.messages.map((existing) =>
+                    existing.id === message.id
+                        ? {
+                              ...existing,
+                              metadata: {
+                                  ...(existing.metadata as Record<string, unknown>),
+                                  visual_styles: styles,
+                              },
+                          }
+                        : existing,
+                ),
+            }));
+        },
+
+        onTyping: (user, isTyping, expiresAt) => {
+            if (!stillOpen()) {
+                return;
+            }
+            collaboration().applyTyping(user, isTyping, expiresAt, currentUserId());
+        },
+
+        onAiActivity: (activity) => {
+            if (!stillOpen()) {
+                return;
+            }
+            collaboration().applyAiActivity(activity);
+        },
+
+        onM365PendingActions: ({ unavailable }) => {
+            if (!stillOpen()) {
+                return;
+            }
+            const pendingActions = chatPendingActionsStore.getState();
+            if (unavailable) {
+                // The server could not work out what this reader may see of the saved action,
+                // so say so and look again rather than showing a thread that seems to have none.
+                pendingActions.handleStreamPayload(
+                    { m365_pending_actions_error: { error: 'm365_pending_actions_unavailable' } },
+                    { conversationId },
+                );
+                return;
+            }
+            void pendingActions.refreshList();
+        },
+
+        onConversationUpdated: (conversation) => {
+            // Only the facts every reader shares. The capability flags, role, membership
+            // status and pin state in this payload are the acting user's, not this one's.
+            collaboration().applyBroadcast(conversation);
+            if (!conversation.id) {
+                return;
+            }
+            const facts = conversationFactsOnly(conversation);
+            // The rail row and the header read from the conversation list, so a change to
+            // the title or the participant count lands there too — but the reader's own pin
+            // and hide state must survive it, which is why the same stripping applies.
+            set((state) => ({
+                conversations: state.conversations.map((item) =>
+                    item.id === conversation.id ? { ...item, ...facts } : item,
+                ),
+                metadata:
+                    state.activeConversationId === conversation.id && state.metadata
+                        ? ({ ...state.metadata, ...facts } as ConversationMetadata)
+                        : state.metadata,
+            }));
+        },
+
+        onMembersInvited: (participants) => {
+            const names = participants
+                .map((participant) => participantName(participant))
+                .filter(Boolean);
+            if (names.length > 0 && stillOpen()) {
+                toast.info(
+                    names.length === 1
+                        ? `${names[0]} was invited to this conversation.`
+                        : `${names.length} people were invited to this conversation.`,
+                );
+            }
+        },
+
+        onMemberRemoved: (participant) => {
+            const removedId = String(participant?.user_id ?? '').trim();
+            if (removedId && removedId === currentUserId()) {
+                // The reader has lost access. Leaving the thread on screen would show a
+                // conversation every subsequent request will refuse.
+                toast.info('You no longer have access to this shared conversation.');
+                removeConversationLocally(conversationId);
+                return;
+            }
+            if (participant && stillOpen()) {
+                toast.info(`${participantName(participant)} was removed from this conversation.`);
+            }
+            // Somebody leaving can promote somebody else, so the reader's own role may have
+            // changed even though they were not the subject of the event.
+            refreshOwnMembership();
+        },
+
+        onMemberRoleUpdated: (participant) => {
+            if (participant && stillOpen()) {
+                const role = String(participant.role ?? 'member');
+                toast.info(`${participantName(participant)} is now ${role}.`);
+            }
+            refreshOwnMembership();
+        },
+
+        onInviteAnswered: (participant, accepted) => {
+            if (participant && accepted && stillOpen()) {
+                toast.success(`${participantName(participant)} joined the conversation.`);
+            }
+        },
+
+        onConversationDeleted: () => {
+            toast.info('This shared conversation was deleted.');
+            removeConversationLocally(conversationId);
+        },
+    });
+}
+
+/**
+ * Whether a conversation must be driven through the collaboration API.
+ *
+ * Answered from what the client already knows — the open conversation's resolved kind, or
+ * the rail row's `conversation_kind` — so no request is needed to decide which endpoint an
+ * action belongs to.
+ */
+function isCollaborativeConversation(state: ChatState, conversationId: string): boolean {
+    if (state.activeConversationId === conversationId) {
+        return state.activeConversationKind === 'collaborative';
+    }
+    const listed = state.conversations.find((item) => item.id === conversationId);
+    return isCollaborative(listed);
+}
+
+/**
+ * Drop a conversation from the interface without asking the server to delete it.
+ *
+ * Used when the server has already made it inaccessible — deleted by its owner, or the
+ * reader removed from it — where the ordinary delete path would post to a conversation that
+ * would rightly refuse.
+ */
+function removeConversationLocally(conversationId: string): void {
+    const store = useChatStore.getState();
+    useChatStore.setState({
+        conversations: store.conversations.filter((item) => item.id !== conversationId),
+        // Pruned here as well as in the ordinary removal paths. This one is driven by a
+        // server event rather than by a click, so without it a row could vanish from under
+        // a live selection and leave the bulk bar counting a conversation that is gone.
+        selectedConversationIds: store.selectedConversationIds.filter(
+            (id) => id !== conversationId,
+        ),
+        selectionAnchorId:
+            store.selectionAnchorId === conversationId ? null : store.selectionAnchorId,
+    });
+    if (store.activeConversationId === conversationId) {
+        store.startNewConversation();
+    }
+}
+
+/**
+ * Copy the reader's freshly-read permissions onto the matching rail row.
+ *
+ * The feed row and the loaded conversation are two copies of the same viewer-scoped flags,
+ * and they are refreshed independently: a role change re-reads the membership into the
+ * collaboration store but does not reload the feed. Left to drift, the rail would describe
+ * a removal from the stale copy while `removeConversation` posted the action chosen from
+ * the fresh one — offering to "Leave" a conversation and then deleting it for everybody.
+ *
+ * Syncing the flags rather than choosing a winner keeps one answer to the question.
+ */
+function syncListedPermissions(conversationId: string): void {
+    const detail = useCollaborationStore.getState().conversation;
+    if (!detail || detail.id !== conversationId) {
+        return;
+    }
+
+    const store = useChatStore.getState();
+    const listed = store.conversations.find((item) => item.id === conversationId);
+    if (
+        !listed ||
+        (listed.can_delete_conversation === detail.can_delete_conversation &&
+            listed.can_leave_conversation === detail.can_leave_conversation)
+    ) {
+        return;
+    }
+
+    useChatStore.setState({
+        conversations: store.conversations.map((item) =>
+            item.id === conversationId
+                ? {
+                      ...item,
+                      can_delete_conversation: detail.can_delete_conversation,
+                      can_leave_conversation: detail.can_leave_conversation,
+                  }
+                : item,
+        ),
+    });
+}
+
+export const useChatStore = create<ChatState>((set, get) => ({
+    conversations: [],
+    conversationsLoading: false,
+    conversationsError: null,
+    hasMore: false,
+    nextCursor: null,
+    searchTerm: '',
+
+    selectedConversationIds: [],
+    selectionAnchorId: null,
+
+    activeConversationId: null,
+    activeConversationKind: null,
+    messages: [],
+    messagesLoading: false,
+    messagesError: null,
+    analysisResultContext: null,
+    analysisContextRevision: 0,
+    analysisContextChosen: false,
+    analysisTurnRevision: null,
+    workflowResultContext: null,
+    workflowResultLaunch: null,
+
+    selectAnalysisResult: (value, expectedRevision) => {
+        const descriptor = readSavedAnalysis({ saved_analysis: value });
+        if (!descriptor || descriptor.available === false ||
+            descriptor.conversation_id !== get().activeConversationId ||
+            (expectedRevision !== undefined && expectedRevision !== get().analysisContextRevision)) {
+            return;
+        }
+        set((state) => ({
+            analysisResultContext: analysisResultContext(descriptor),
+            workflowResultContext: null,
+            workflowResultLaunch: null,
+            analysisContextChosen: true,
+            analysisContextRevision: state.analysisContextRevision + 1,
+        }));
+    },
+
+    // Clears whichever stored result the composer is answering from: every control that picks
+    // another source calls this, and a workflow result gives way to it just as an analysis does.
+    clearAnalysisResultContext: () => set((state) => ({
+        analysisResultContext: null,
+        workflowResultContext: null,
+        workflowResultLaunch: null,
+        analysisContextChosen: true,
+        analysisContextRevision: state.analysisContextRevision + 1,
+    })),
+
+    selectWorkflowResult: (value, conversationId, expectedRevision) => {
+        const descriptor = parseWorkflowResultDescriptor(value);
+        if (!descriptor || descriptor.available === false ||
+            conversationId !== get().activeConversationId ||
+            // Workflow results are private: never offered in a shared conversation.
+            get().activeConversationKind === 'collaborative' ||
+            (expectedRevision !== undefined && expectedRevision !== get().analysisContextRevision)) {
+            return false;
+        }
+        set((state) => ({
+            workflowResultContext: { conversation_id: conversationId, descriptor },
+            workflowResultLaunch: null,
+            analysisResultContext: null,
+            analysisContextChosen: true,
+            analysisContextRevision: state.analysisContextRevision + 1,
+        }));
+        return true;
+    },
+
+    clearWorkflowResultContext: () => set((state) => ({
+        workflowResultContext: null,
+        workflowResultLaunch: null,
+        analysisContextChosen: true,
+        analysisContextRevision: state.analysisContextRevision + 1,
+    })),
+
+    launchWorkflowResult: async (workflowId, runId) => {
+        get().startNewConversation();
+        // Identity, not value: a second launch of the same run replaces this one.
+        const launch = { workflow_id: workflowId, run_id: runId };
+        set({ workflowResultLaunch: launch });
+        const revision = get().analysisContextRevision;
+        let descriptor: WorkflowResultDescriptor;
+        try {
+            descriptor = await fetchWorkflowResultDescriptor(workflowId, runId);
+        } catch (error) {
+            if (get().workflowResultLaunch !== launch) {
+                return false;
+            }
+            set({ workflowResultLaunch: null });
+            toast.error(workflowResultFetchErrorMessage(error));
+            return false;
+        }
+        // Abandoned if the reader opened something else, started another chat or picked
+        // another source while it was read.
+        if (get().workflowResultLaunch !== launch) {
+            return false;
+        }
+        set({ workflowResultLaunch: null });
+        return get().selectWorkflowResult(descriptor, null, revision);
+    },
+
+    streaming: false,
+    streamingContent: '',
+    completedReply: null,
+    thoughts: [],
+    streamingReasoningAdjustments: [],
+    streamError: null,
+    streamAuthUrl: null,
+    reconnectPhase: null,
+    orchestrationSurface: null,
+    retryPresentation: null,
+
+    drawerMode: null,
+    evidenceMessageId: null,
+    metadata: null,
+    publicWorkspaceSelection: null,
+    setPublicWorkspaceSelection: (selection) => set({ publicWorkspaceSelection: readPublicWorkspaceSelection(selection) }),
+    metadataLoading: false,
+    metadataError: null,
+    attemptsByThread: {},
+    composerImageReferences: [],
+    composerConversationReferences: [],
+    conversationHandoffs: [],
+
+    loadConversations: async (options = {}) => {
+        const { reset = true, search } = options;
+        const searchTerm = search ?? get().searchTerm;
+
+        set({ conversationsLoading: true, conversationsError: null });
+        try {
+            const page = await fetchConversationFeed({
+                search: searchTerm,
+                pageSize: FEED_PAGE_SIZE,
+                cursor: reset ? null : get().nextCursor,
+            });
+
+            set((state) => {
+                const conversations = reset
+                    ? page.conversations
+                    : [...state.conversations, ...page.conversations];
+                // Selected ids that are no longer on the page are dropped here. Without
+                // this, a bulk delete taken after a search or a reload would act on rows
+                // the user can no longer see — the one surprise a delete button must never
+                // produce.
+                const selection = pruneSelection(
+                    {
+                        ids: state.selectedConversationIds,
+                        anchorId: state.selectionAnchorId,
+                    },
+                    conversations.map((conversation) => conversation.id),
+                );
+                return {
+                    conversations,
+                    hasMore: Boolean(page.has_more),
+                    nextCursor: page.next_cursor,
+                    conversationsLoading: false,
+                    selectedConversationIds: selection.ids,
+                    selectionAnchorId: selection.anchorId,
+                };
+            });
+        } catch (error) {
+            set({
+                conversationsLoading: false,
+                conversationsError:
+                    error instanceof Error ? error.message : 'Failed to load conversations.',
+            });
+        }
+    },
+
+    loadMore: async () => {
+        if (!get().hasMore || get().conversationsLoading) {
+            return;
+        }
+        await get().loadConversations({ reset: false });
+    },
+
+    setSearchTerm: (searchTerm) => {
+        set({ searchTerm });
+        void get().loadConversations({ reset: true, search: searchTerm });
+    },
+
+    selectConversation: async (conversationId, options = {}) => {
+        clearActionRecovery();
+        // Any stream still running belongs to the thread being left, so its reader is
+        // dropped: left attached, its handlers would append the finished response into the
+        // newly selected conversation's message list.
+        //
+        // Detached rather than cancelled. The generation carries on server-side and is
+        // picked back up by `resumeChatStream` below when this thread is opened again,
+        // which is what chat-conversations.js:1695 does. Cancelling here meant that simply
+        // clicking another conversation ended the answer — and ended it with nothing saved
+        // at all when it had not yet produced its first token.
+        detachActiveStream();
+        // Likewise the event stream: it is a live connection, and left attached it would
+        // keep delivering the previous conversation's messages into this one.
+        stopCollaborationEvents();
+        useCollaborationStore.getState().reset();
+        conversationEpoch += 1;
+        const epoch = conversationEpoch;
+        conversationModes.resetDraft();
+
+        // Known from the rail row when there is one, which is the common case and costs no
+        // request. A conversation opened from a link is not in the list yet, so its kind is
+        // resolved below by asking the collaboration API about it.
+        const listed = get().conversations.find((item) => item.id === conversationId);
+        const knownKind: ConversationKind | null =
+            options.kind ?? (listed ? (isCollaborative(listed) ? 'collaborative' : 'personal') : null);
+        const analysisConversationChanged = get().activeConversationId !== conversationId;
+
+        set({
+            activeConversationId: conversationId,
+            publicWorkspaceSelection: null,
+            activeConversationKind: knownKind,
+            analysisResultContext: analysisConversationChanged ? null : get().analysisResultContext,
+            workflowResultContext: analysisConversationChanged ? null : get().workflowResultContext,
+            workflowResultLaunch: analysisConversationChanged ? null : get().workflowResultLaunch,
+            analysisContextChosen: analysisConversationChanged ? false : get().analysisContextChosen,
+            analysisContextRevision: get().analysisContextRevision + (analysisConversationChanged ? 1 : 0),
+            analysisTurnRevision: analysisConversationChanged ? null : get().analysisTurnRevision,
+            messages: [],
+            messagesLoading: Boolean(conversationId),
+            messagesError: null,
+            composerImageReferences: [],
+            composerConversationReferences: [],
+            completedReply: null,
+            // Anything streaming belonged to the conversation being left. An orchestration turn
+            // still running in this tab for the one being opened gets its Thinking state and
+            // Stop back, which also keeps the composer from sending into a busy turn; its later
+            // thoughts and its settle land here as usual. A chat stream is picked back up by
+            // `resumeChatStream` below.
+            streaming: conversationId ? orchestrationSurfaces.has(conversationId) : false,
+            orchestrationSurface: conversationId ? orchestrationSurfaces.get(conversationId)?.phase ?? null : null,
+            streamingContent: '',
+            thoughts: [],
+            streamingReasoningAdjustments: [],
+            streamError: null,
+            streamAuthUrl: null,
+            reconnectPhase: null,
+            retryPresentation: null,
+            // Metadata belongs to the previous conversation; drop it so the drawer never
+            // shows another thread's documents.
+            metadata: null,
+            metadataLoading: false,
+            metadataError: null,
+            // Thread ids are per conversation, so learned attempt sets do not carry over.
+            attemptsByThread: {},
+        });
+        // Mirrored so the collaboration store can refuse a membership write that arrives for
+        // a conversation which is no longer open.
+        useCollaborationStore.getState().setActiveConversation(conversationId);
+
+        if (!conversationId) {
+            return;
+        }
+
+        const analysisRevision = get().analysisContextRevision;
+        try {
+            let prefetched = options.prefetched;
+            let kind = knownKind;
+            if (!kind) {
+                const resolved = await resolveConversationKind(conversationId);
+                kind = resolved.kind;
+                prefetched = prefetched ?? resolved.conversation;
+            }
+            // Discarded if the reader moved on while the kind was being resolved; without
+            // this the wrong thread's messages would be fetched and displayed.
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
+                return;
+            }
+            set({ activeConversationKind: kind });
+
+            const { messages: loadedMessages } =
+                kind === 'collaborative'
+                    ? await fetchCollaborationMessages(conversationId)
+                    : await fetchMessages(conversationId);
+            // A message deleted while archiving was enabled is never shown, not even as a
+            // masked one; see deletedMessages.ts.
+            const messages = withoutDeletedMessages(loadedMessages);
+
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
+                return;
+            }
+            set({ messages, messagesLoading: false, publicWorkspaceSelection: publicChatScopeFromMessages(messages) });
+            void resumeOrchestrationPlanning(conversationId);
+            const descriptor = latestSavedAnalysis(messages);
+            if (descriptor && !get().analysisContextChosen) {
+                get().selectAnalysisResult(descriptor, analysisRevision);
+            }
+            const workflowResult = latestWorkflowResult(messages);
+            if (workflowResult && !get().analysisContextChosen) {
+                get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
+            }
+
+            // The header badges describe what this conversation is bound to, so its
+            // metadata is needed as soon as it opens rather than only when a drawer is
+            // expanded. Advisory: a failure leaves the badges off, not the thread broken.
+            void get().loadMetadata(conversationId);
+
+            if (kind === 'collaborative') {
+                // Membership and the capability flags that gate the composer and the
+                // participants panel.
+                //
+                // The rail row was serialized when the feed was read, which may have been
+                // long enough ago for a role change to have happened since. Opening the
+                // conversation is the moment fresher flags become available, so the row is
+                // brought into line rather than left describing an old permission — it is
+                // what the row menu and the delete confirmation read.
+                if (prefetched?.id === conversationId) {
+                    useCollaborationStore.getState().setConversation(prefetched);
+                    syncListedPermissions(conversationId);
+                } else {
+                    void useCollaborationStore
+                        .getState()
+                        .loadConversation(conversationId)
+                        .then(() => syncListedPermissions(conversationId));
+                }
+                // Then the live stream that keeps the thread current while other people are
+                // writing in it.
+                attachCollaborationEvents(conversationId);
+            } else {
+                // Generation outlives the connection that started it, so a thread opened
+                // while its answer is still being written picks the stream back up instead of
+                // showing a message that stops mid-sentence.
+                //
+                // Deliberately not attempted for a shared conversation: the generation runs
+                // in a hidden source conversation whose id the browser is never given, so
+                // the status and reattach endpoints have nothing to address.
+                void resumeChatStream(conversationId).catch(() => {
+                    /* Advisory: the thread is readable whether or not a resume was possible. */
+                });
+            }
+
+            // Only clear the marker when there is one. Calling unconditionally produced a
+            // 404 for collaboration conversations, which are stored separately and have
+            // their own endpoint.
+            if (listed?.has_unread_assistant_response) {
+                void markConversationRead(conversationId, kind === 'collaborative')
+                    .then(() => {
+                        set((state) => ({
+                            conversations: state.conversations.map((item) =>
+                                item.id === conversationId
+                                    ? { ...item, has_unread_assistant_response: false }
+                                    : item,
+                            ),
+                        }));
+                        // The receipt clears the conversation's notices too, so the bell drops them now.
+                        void refreshNotificationCount('action');
+                    })
+                    .catch(() => {
+                        /* Read receipts are advisory; the thread still opened fine. */
+                    });
+            }
+        } catch (error) {
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
+                return;
+            }
+            set({
+                messagesLoading: false,
+                messagesError:
+                    error instanceof Error ? error.message : 'Failed to load messages.',
+            });
+        }
+    },
+
+    /**
+     * Open a conversation named by the URL.
+     *
+     * The load itself is `selectConversation`'s job; what is different here is that a link
+     * can name a conversation that has been deleted, or one belonging to somebody else,
+     * whereas a row in the rail is one the server has just listed.
+     *
+     * Existence is checked against a metadata endpoint rather than inferred from the
+     * message load, because neither message endpoint is an existence check:
+     * `/api/get_messages` turns a not-found conversation into `{'messages': []}` with a 200
+     * (`route_backend_conversations.py`), and its collaboration counterpart answers the same
+     * way for a conversation with no messages yet. A deleted conversation would otherwise
+     * open as an empty chat, keep its id in the address bar, and remain the target of the
+     * next message sent.
+     *
+     * Which endpoint answers that question is itself the thing being determined, so the
+     * probe doubles as the kind resolution and its result is handed to
+     * `selectConversation` rather than being asked for twice.
+     */
+    openLinkedConversation: async (conversationId) => {
+        linkedConversationOpening = conversationId;
+        try {
+            let resolved: { kind: ConversationKind; conversation?: CollaborationConversation };
+            try {
+                resolved = await resolveConversationKind(conversationId, { requireExists: true });
+            } catch {
+                toast.error(
+                    'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+                );
+                return;
+            }
+
+            await get().selectConversation(conversationId, {
+                kind: resolved.kind,
+                prefetched: resolved.conversation,
+            });
+
+            // Still checked: the conversation exists, but its messages may not have loaded.
+            if (get().messagesError) {
+                toast.error(
+                    'Could not open that conversation. It may have been deleted, or you may not have access to it.',
+                );
+                get().startNewConversation();
+            }
+        } finally {
+            if (linkedConversationOpening === conversationId) {
+                linkedConversationOpening = null;
+            }
+        }
+    },
+
+    startNewConversation: () => {
+        clearActionRecovery();
+        // Detach first: the running stream belongs to the previous thread and must not
+        // deliver its response into the empty new one. Detached rather than cancelled, so
+        // starting a new chat leaves the previous answer to finish and be saved rather than
+        // discarding it — reopening that thread resumes or shows the completed reply.
+        detachActiveStream();
+        stopCollaborationEvents();
+        useCollaborationStore.getState().reset();
+        conversationEpoch += 1;
+        conversationModes.resetDraft();
+
+        // The conversation row is created by the server on first send, so a new chat is
+        // purely a local reset until then. This avoids leaving empty conversations behind
+        // when someone clicks New Chat and navigates away.
+        set({
+            activeConversationId: null,
+            retryPresentation: null,
+            publicWorkspaceSelection: null,
+            analysisResultContext: null,
+            workflowResultContext: null,
+            workflowResultLaunch: null,
+            analysisContextChosen: false,
+            analysisContextRevision: get().analysisContextRevision + 1,
+            analysisTurnRevision: null,
+            // A new chat is always personal. Sharing is something done to a conversation
+            // that already exists, so there is no way to start one shared.
+            activeConversationKind: null,
+            messages: [],
+            composerImageReferences: [],
+            composerConversationReferences: [],
+            // A load still in flight for the conversation being left returns without touching
+            // this once it sees the reader has moved on, so the new chat would otherwise sit
+            // behind loading placeholders instead of its empty state.
+            messagesLoading: false,
+            messagesError: null,
+            completedReply: null,
+            // Cleared here and not only by `detachActiveStream`, which knows about chat streams
+            // alone. An orchestration turn holds this flag without one, and its settle is skipped
+            // once its conversation is off screen, so the new chat kept the old turn's Thinking
+            // state and a Stop button with nothing to stop. The turn itself keeps running.
+            streaming: false,
+            orchestrationSurface: null,
+            streamingContent: '',
+            thoughts: [],
+            streamingReasoningAdjustments: [],
+            streamError: null,
+            streamAuthUrl: null,
+            reconnectPhase: null,
+            metadata: null,
+            metadataLoading: false,
+            metadataError: null,
+            // Closed rather than left behind. The header's Contents and Documents toggles
+            // are drawn only while a conversation is open, so an open drawer would survive
+            // with nothing left to describe and no control to dismiss it from. The classic
+            // interface closes it here too.
+            drawerMode: null,
+        });
+        useCollaborationStore.getState().setActiveConversation(null);
+    },
+
+    renameConversation: async (conversationId, title) => {
+        const previous = get().conversations;
+        const collaborative = isCollaborativeConversation(get(), conversationId);
+        set({
+            conversations: previous.map((conversation) =>
+                conversation.id === conversationId ? { ...conversation, title } : conversation,
+            ),
+        });
+        try {
+            if (collaborative) {
+                await renameCollaborationConversation(conversationId, title);
+            } else {
+                await renameConversationApi(conversationId, title);
+            }
+        } catch {
+            set({ conversations: previous });
+        }
+    },
+
+    /**
+     * Remove a conversation from the reader's view.
+     *
+     * For a shared conversation this is not necessarily a deletion. Only an owner may
+     * destroy one for everybody; anybody else leaves it, which removes it from their rail
+     * and leaves the conversation intact for the remaining participants. The server reports
+     * which applies, so the right one is chosen rather than assumed — posting `delete` as a
+     * member is refused, and posting `leave` as the sole owner would strand the thread.
+     */
+    removeConversation: async (conversationId, decidedAction) => {
+        const modeAccountId = useBootstrapStore.getState().data?.user?.id ?? '';
+        const previous = get().conversations;
+        const listed = previous.find((conversation) => conversation.id === conversationId);
+        const collaborative = isCollaborativeConversation(get(), conversationId);
+
+        set({
+            conversations: previous.filter((conversation) => conversation.id !== conversationId),
+            selectedConversationIds: get().selectedConversationIds.filter(
+                (id) => id !== conversationId,
+            ),
+            // A range must not be able to extend from a row that has gone.
+            selectionAnchorId:
+                get().selectionAnchorId === conversationId ? null : get().selectionAnchorId,
+        });
+
+        if (get().activeConversationId === conversationId) {
+            get().startNewConversation();
+        }
+
+        try {
+            if (collaborative) {
+                // A caller that showed the user which of the two this would be passes it in,
+                // so what was promised is what happens. Without that the decision would be
+                // taken a second time, from a copy of the permissions that may have been
+                // refreshed in between — offering to leave a conversation and then deleting
+                // it for everybody.
+                const detail =
+                    useCollaborationStore.getState().conversation?.id === conversationId
+                        ? useCollaborationStore.getState().conversation
+                        : (listed as CollaborationConversation | undefined);
+                const action =
+                    decidedAction ?? (detail?.can_delete_conversation ? 'delete' : 'leave');
+                await collaborationDeleteAction(conversationId, action);
+            } else {
+                await deleteConversationApi(conversationId);
+            }
+            forgetOrchestrationConversation(conversationId);
+            forgetConversationMode(modeAccountId, conversationId);
+            composerAttachmentDrafts.forget(modeAccountId, conversationId);
+        } catch (error) {
+            set({ conversations: previous });
+            toast.error(
+                error instanceof Error ? error.message : 'Could not remove that conversation.',
+            );
+        }
+    },
+
+    togglePinned: async (conversationId) => {
+        const conversation = get().conversations.find((item) => item.id === conversationId);
+        if (!conversation) {
+            return;
+        }
+        // The server owns the toggle, so the optimistic value is only a guess at what it
+        // will return; the authoritative value replaces it below.
+        const optimistic = !conversation.is_pinned;
+        set({
+            conversations: get().conversations.map((item) =>
+                item.id === conversationId ? { ...item, is_pinned: optimistic } : item,
+            ),
+        });
+        try {
+            const result = isCollaborative(conversation)
+                ? await toggleCollaborationPinned(conversationId)
+                : await toggleConversationPinned(conversationId);
+            set({
+                conversations: get().conversations.map((item) =>
+                    item.id === conversationId
+                        ? { ...item, is_pinned: Boolean(result.is_pinned) }
+                        : item,
+                ),
+            });
+            // Pinning changes ordering, so the feed is re-read rather than re-sorted here.
+            await get().loadConversations({ reset: true });
+        } catch {
+            set({
+                conversations: get().conversations.map((item) =>
+                    item.id === conversationId ? { ...item, is_pinned: !optimistic } : item,
+                ),
+            });
+        }
+    },
+
+    toggleHidden: async (conversationId) => {
+        const conversation = get().conversations.find((item) => item.id === conversationId);
+        if (!conversation) {
+            return;
+        }
+        // Hidden conversations drop out of the default feed, so the row is removed rather
+        // than re-rendered with a new flag.
+        set({
+            conversations: get().conversations.filter((item) => item.id !== conversationId),
+            selectedConversationIds: get().selectedConversationIds.filter(
+                (id) => id !== conversationId,
+            ),
+            selectionAnchorId:
+                get().selectionAnchorId === conversationId ? null : get().selectionAnchorId,
+        });
+        try {
+            if (isCollaborative(conversation)) {
+                await toggleCollaborationHidden(conversationId);
+            } else {
+                await toggleConversationHidden(conversationId);
+            }
+        } catch {
+            await get().loadConversations({ reset: true });
+        }
+    },
+
+    applyConversationSelection: (conversationId, intent) => {
+        const state = get();
+        const current: SelectionState = {
+            ids: state.selectedConversationIds,
+            anchorId: state.selectionAnchorId,
+        };
+        // The order a range reads is the rail's list as rendered, not the order ids happen
+        // to have been picked in, so a Shift+click always spans what the user can see.
+        const next = applySelection(
+            current,
+            conversationId,
+            intent,
+            state.conversations.map((conversation) => conversation.id),
+        );
+        set({ selectedConversationIds: next.ids, selectionAnchorId: next.anchorId });
+    },
+
+    /** Selects the rows currently loaded, which is what the user can actually see. */
+    selectAllConversations: () => {
+        const ids = get().conversations.map((item) => item.id);
+        set({ selectedConversationIds: ids, selectionAnchorId: ids[0] ?? null });
+    },
+
+    clearConversationSelection: () => {
+        set({ selectedConversationIds: [], selectionAnchorId: null });
+    },
+
+    /**
+     * Remove every selected conversation.
+     *
+     * Two things vary row by row and both decide which request is correct, so the selection
+     * is split rather than posted whole. Personal conversations go to the bulk route in one
+     * request. Shared ones go one at a time to the collaboration route, as a delete for an
+     * owner and a leave for everybody else — the server refuses the wrong one, and a leave
+     * posted as a delete would destroy a thread other people are still using.
+     */
+    bulkRemoveConversations: async () => {
+        const modeAccountId = useBootstrapStore.getState().data?.user?.id ?? '';
+        const previous = get().conversations;
+        const targets = selectedConversations(previous, get().selectedConversationIds);
+        if (targets.length === 0) {
+            return;
+        }
+
+        const { personalIds } = partitionBySpecies(targets);
+        const removals = collaborativeRemovals(targets);
+        const removedIds = new Set(targets.map((conversation) => conversation.id));
+
+        set({
+            conversations: previous.filter(
+                (conversation) => !removedIds.has(conversation.id),
+            ),
+            selectedConversationIds: [],
+            selectionAnchorId: null,
+        });
+
+        const activeId = get().activeConversationId;
+        if (activeId && removedIds.has(activeId)) {
+            get().startNewConversation();
+        }
+
+        try {
+            let failed = 0;
+
+            if (personalIds.length > 0) {
+                const result = await deleteConversationsApi(personalIds);
+                const failedIds = new Set(result?.failed_ids ?? []);
+                failed += failedIds.size;
+                for (const id of personalIds) {
+                    if (!failedIds.has(id)) {
+                        forgetConversationMode(modeAccountId, id);
+                        composerAttachmentDrafts.forget(modeAccountId, id);
+                    }
+                }
+            }
+
+            if (removals.length > 0) {
+                // Settled rather than all: one shared conversation refusing must not
+                // abandon the rest of the batch half-done.
+                const outcomes = await Promise.allSettled(
+                    removals.map((removal) =>
+                        collaborationDeleteAction(removal.id, removal.action),
+                    ),
+                );
+                failed += outcomes.filter((outcome) => outcome.status === 'rejected').length;
+                outcomes.forEach((outcome, index) => {
+                    if (outcome.status === 'fulfilled') {
+                        forgetConversationMode(modeAccountId, removals[index].id);
+                        composerAttachmentDrafts.forget(modeAccountId, removals[index].id);
+                    }
+                });
+            }
+
+            const message = partialFailureMessage(targets.length, failed, 'delete', 'deleted');
+            if (message) {
+                toast.error(message);
+                // The optimistic removal was wrong for whatever failed, so the list is
+                // re-read rather than guessed at.
+                await get().loadConversations({ reset: true });
+            }
+        } catch (error) {
+            set({ conversations: previous });
+            toast.error(
+                error instanceof Error
+                    ? error.message
+                    : 'Could not remove those conversations.',
+            );
+        }
+    },
+
+    /**
+     * Pin or unpin every selected conversation.
+     *
+     * The caller passes the state to reach rather than a toggle. Toggling a mixed selection
+     * would leave it inverted rather than uniform, which is never what was asked for.
+     */
+    bulkSetConversationsPinned: async (action) => {
+        const previous = get().conversations;
+        const targets = selectedConversations(previous, get().selectedConversationIds);
+        if (targets.length === 0) {
+            return;
+        }
+
+        const pinned = action === 'pin';
+        const { personalIds } = partitionBySpecies(targets);
+        // The collaboration route toggles, so anything already in the target state is left
+        // alone — posting to it would flip it the wrong way.
+        const collaborativeIds = collaborativeIdsNeedingPin(targets, action);
+        const targetIds = new Set(targets.map((conversation) => conversation.id));
+
+        set({
+            conversations: previous.map((conversation) =>
+                targetIds.has(conversation.id)
+                    ? { ...conversation, is_pinned: pinned }
+                    : conversation,
+            ),
+        });
+
+        try {
+            let failed = 0;
+
+            if (personalIds.length > 0) {
+                const result: BulkConversationResult = await bulkPinConversationsApi(
+                    personalIds,
+                    action,
+                );
+                failed += (result?.failed_ids ?? []).length;
+            }
+
+            if (collaborativeIds.length > 0) {
+                const outcomes = await Promise.allSettled(
+                    collaborativeIds.map((id) => toggleCollaborationPinned(id)),
+                );
+                failed += outcomes.filter((outcome) => outcome.status === 'rejected').length;
+            }
+
+            const message = partialFailureMessage(
+                targets.length,
+                failed,
+                action,
+                pinned ? 'pinned' : 'unpinned',
+            );
+            if (message) {
+                toast.error(message);
+            }
+
+            // Pinning changes ordering, so the feed is re-read rather than re-sorted here.
+            await get().loadConversations({ reset: true });
+        } catch (error) {
+            set({ conversations: previous });
+            toast.error(
+                error instanceof Error ? error.message : 'Could not update those conversations.',
+            );
+        }
+    },
+
+    /**
+     * Hide every selected conversation.
+     *
+     * One-way, matching the single-row action: hidden conversations drop out of the feed and
+     * the rail has no view that lists them, so there would be nothing to unhide from.
+     */
+    bulkHideSelectedConversations: async () => {
+        const previous = get().conversations;
+        const targets = selectedConversations(previous, get().selectedConversationIds);
+        if (targets.length === 0) {
+            return;
+        }
+
+        const { personalIds, collaborativeIds } = partitionBySpecies(targets);
+        const hiddenIds = new Set(targets.map((conversation) => conversation.id));
+
+        set({
+            conversations: previous.filter((conversation) => !hiddenIds.has(conversation.id)),
+            selectedConversationIds: [],
+            selectionAnchorId: null,
+        });
+
+        const activeId = get().activeConversationId;
+        if (activeId && hiddenIds.has(activeId)) {
+            get().startNewConversation();
+        }
+
+        try {
+            let failed = 0;
+
+            if (personalIds.length > 0) {
+                const result: BulkConversationResult = await bulkHideConversationsApi(
+                    personalIds,
+                    'hide',
+                );
+                failed += (result?.failed_ids ?? []).length;
+            }
+
+            if (collaborativeIds.length > 0) {
+                const outcomes = await Promise.allSettled(
+                    collaborativeIds.map((id) => toggleCollaborationHidden(id)),
+                );
+                failed += outcomes.filter((outcome) => outcome.status === 'rejected').length;
+            }
+
+            const message = partialFailureMessage(targets.length, failed, 'hide', 'hidden');
+            if (message) {
+                toast.error(message);
+                await get().loadConversations({ reset: true });
+            }
+        } catch (error) {
+            set({ conversations: previous });
+            toast.error(
+                error instanceof Error ? error.message : 'Could not hide those conversations.',
+            );
+        }
+    },
+
+    addComposerImageReference: (reference) => set((state) => ({
+        composerImageReferences: normalizeImageReferences(
+            [...state.composerImageReferences, reference],
+            effectiveReferenceImageLimit(useBootstrapStore.getState().data?.capabilities?.image_edit),
+        ),
+    })),
+
+    consumeComposerImageReferences: () => {
+        const references = get().composerImageReferences;
+        if (references.length > 0) {
+            set({ composerImageReferences: [] });
+        }
+        return references;
+    },
+
+    addComposerConversationReference: (source) => set((state) => ({
+        composerConversationReferences: state.composerConversationReferences.some((item) => item.id === source.id)
+            ? state.composerConversationReferences
+            : [...state.composerConversationReferences, source],
+    })),
+
+    consumeComposerConversationReferences: () => {
+        const references = get().composerConversationReferences;
+        if (references.length > 0) {
+            set({ composerConversationReferences: [] });
+        }
+        return references;
+    },
+
+    upsertConversationHandoff: (handoff) => set((state) => {
+        const exists = state.conversationHandoffs.some((item) => item.id === handoff.id);
+        return {
+            conversationHandoffs: exists
+                ? state.conversationHandoffs.map((item) => item.id === handoff.id ? { ...item, ...handoff } : item)
+                : [handoff, ...state.conversationHandoffs],
+        };
+    }),
+
+    loadConversationHandoffs: async (conversationId) => {
+        if (!conversationId) return;
+        try {
+            const { handoffs } = await listConversationHandoffs(conversationId);
+            set((state) => {
+                const byId = new Map(state.conversationHandoffs.map((item) => [item.id, item]));
+                for (const handoff of handoffs) {
+                    byId.set(handoff.id, { ...(byId.get(handoff.id) ?? {}), ...handoff });
+                }
+                return { conversationHandoffs: [...byId.values()] };
+            });
+        } catch {
+            /* Handoff list is supplementary to the active thread. */
+        }
+    },
+
+    cancelHandoff: async (handoffId, destinationConversationId) => {
+        try {
+            const updated = await cancelConversationHandoff(handoffId, destinationConversationId);
+            get().upsertConversationHandoff(updated);
+            return updated;
+        } catch (error) {
+            toast.error(error instanceof Error ? error.message : 'Could not cancel the handoff.');
+            return null;
+        }
+    },
+
+    sendMessage: async (text, options) => {
+        options = {
+            ...options,
+            publicWorkspaceSelection: readPublicWorkspaceSelection(options.publicWorkspaceSelection === undefined
+                ? get().publicWorkspaceSelection : options.publicWorkspaceSelection),
+        };
+        const trimmed = text.trim();
+        if (!trimmed || get().streaming) {
+            return;
+        }
+
+        let conversationId = get().activeConversationId;
+        const actorId = useBootstrapStore.getState().data?.user?.id;
+        synchronizeActionRecoveryContext({ actorId, conversationId, agentSelection: options.agentSelection });
+        const recoveryRevision = getActionRecoveryRevision();
+        const selectedAnalysis = get().analysisResultContext;
+        const savedContext = selectedAnalysis?.conversation_id === conversationId ? selectedAnalysis : null;
+        const isNewConversation = !conversationId;
+        const collaborative = Boolean(
+            conversationId && isCollaborativeConversation(get(), conversationId),
+        );
+        // Ask in chat is still reading the run: sent now, the question would go out as an
+        // ordinary turn a moment before the chip appeared.
+        if (!conversationId && get().workflowResultLaunch) {
+            set({ streamError: WORKFLOW_RESULT_LAUNCH_PENDING_MESSAGE, streamAuthUrl: null });
+            return;
+        }
+        const selectedWorkflowResult = get().workflowResultContext;
+        const workflowContext = !collaborative &&
+            selectedWorkflowResult?.conversation_id === (conversationId ?? null)
+            ? selectedWorkflowResult
+            : null;
+
+        // A conversation is created up front so the streaming endpoint has a stable id to
+        // attach to and so a cancel request has something to address. Only ever a personal
+        // one: a shared conversation always already exists, because sharing is done to a
+        // conversation rather than at the moment of writing into one.
+        if (!conversationId) {
+            // Taken before the round trip: New chat leaves `activeConversationId` null too, so
+            // null alone cannot say the reader is still in the chat this was sent from.
+            const epoch = conversationEpoch;
+            const draftMode = conversationModes.captureDraft(useBootstrapStore.getState().data?.user?.id ?? '');
+            try {
+                const created = await createConversation(trimmed);
+                conversationId = created.conversation_id;
+                composerAttachmentDrafts.adoptConversation(
+                    composerAttachmentOwner(actorId ?? '', null, 'personal', epoch), conversationId,
+                );
+                if (options.agentSelection && (recoveryRevision !== getActionRecoveryRevision()
+                    || conversationEpoch !== epoch
+                    || actorId !== useBootstrapStore.getState().data?.user?.id)) {
+                    toast.info('Chat context changed before sending. Your message has not been sent.');
+                    return false;
+                }
+                adoptConversationModeDraft(draftMode, conversationId);
+                // The reader can open a conversation during that round trip, and if they do
+                // their click wins. The message is still sent and its answer still generated
+                // and saved — it appears in the rail and is there when they come back — but
+                // the interface stays where they put it instead of snapping back to a chat
+                // they have already left. Claiming `activeConversationId` unconditionally
+                // also let the thread they had just opened render its messages under this
+                // new one, because the list is keyed on whatever is active. Starting another
+                // new chat is the same case, which the epoch is what tells apart.
+                if (get().activeConversationId === null && conversationEpoch === epoch) {
+                    synchronizeActionRecoveryContext({ actorId, conversationId, agentSelection: options.agentSelection });
+                    set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
+                    // Mirrored like every other write to this field. Today the conversation just
+                    // created can only be personal — this branch is reached only when nothing was
+                    // open, which forces `collaborative` false above — so nothing would currently
+                    // notice. Leaving it out would make the collaboration store's guard depend on
+                    // that reasoning continuing to hold, and a shared conversation reachable here
+                    // later would silently strand its composer at "checking access".
+                    useCollaborationStore.getState().setActiveConversation(conversationId);
+                }
+                // A workflow result picked for the chat that did not exist yet now belongs to
+                // this one, so the next question inherits it. Left alone when the reader has
+                // since opened something else or changed the selection.
+                if (workflowContext && get().workflowResultContext === workflowContext &&
+                    get().activeConversationId === conversationId) {
+                    set({ workflowResultContext: { ...workflowContext, conversation_id: conversationId } });
+                }
+            } catch (error) {
+                set({
+                    streamAuthUrl: null,
+                    streamError:
+                        error instanceof Error
+                            ? error.message
+                            : 'Could not start a new conversation.',
+                });
+                return;
+            }
+        }
+
+        const bootstrap = useBootstrapStore.getState().data;
+        const loadedCollaboration = useCollaborationStore.getState().conversation;
+        // Guarded on the id: the participants panel keeps its own slot, but a stale load
+        // would still resolve this message's mentions against another conversation's people.
+        const collaborationConversation =
+            loadedCollaboration?.id === conversationId ? loadedCollaboration : null;
+        const replyTo = useCollaborationStore.getState().replyTo;
+
+        // In a shared conversation most messages are people talking to each other, so the
+        // AI is only brought in when something asks for it. `sharedConversationTarget` applies
+        // the classic client's rule, the same one Orchestrate applies; null means this message
+        // is for the participants alone.
+        const invocationTarget = collaborative
+            ? sharedConversationTarget(
+                  trimmed,
+                  options,
+                  {
+                      agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+                      models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                  },
+                  { savedContext: Boolean(savedContext) },
+              ) ?? (savedContext ? {
+                  target_type: 'model' as const,
+                  display_name: 'Model',
+                  mention_text: '@Model',
+                  source_mode: 'saved_analysis',
+                  selection_key: options.modelDeployment,
+              } : null)
+            : null;
+
+        /**
+         * Picker selections an explicit `@` tag replaces for this message.
+         *
+         * Only ever set in a shared conversation, where tagging a model or an agent is how
+         * the assistant is addressed at all.
+         */
+        const taggedAgentSelection =
+            invocationTarget?.target_type === 'agent'
+                ? invocationTarget.agent_selection_key
+                : undefined;
+        const taggedModelSelection =
+            invocationTarget?.target_type === 'model' ? invocationTarget.selection_key : undefined;
+
+        const optimisticImageReferences = options.imageGeneration && !collaborative
+            ? normalizeImageReferences(
+                  options.imageReferences ?? [],
+                  effectiveReferenceImageLimit(bootstrap?.capabilities?.image_edit),
+              )
+            : [];
+        const optimisticConversationReferences = !collaborative
+            ? storedConversationReferences(options.conversationReferences)
+            : [];
+        const mentionedParticipants = collaborative
+            ? extractMentionedParticipants(
+                  trimmed,
+                  conversationParticipants(collaborationConversation),
+              )
+            : [];
+        const pendingUserMessageId = `pending-user-${Date.now()}`;
+        const optimisticUserMessage: ChatMessage = {
+            id: pendingUserMessageId,
+            conversation_id: conversationId,
+            role: 'user',
+            content: trimmed,
+            timestamp: new Date().toISOString(),
+            // Carried locally so the bubble can draw the prompt as a collapsed block straight
+            // away. Without it the message would render as one blob until the server echo
+            // arrived and then silently rearrange itself.
+            ...(options.promptInfo || optimisticImageReferences.length > 0 || optimisticConversationReferences.length > 0 || workflowContext
+                || mentionedParticipants.length > 0 || (collaborative && invocationTarget)
+                ? {
+                      metadata: {
+                          ...(options.promptInfo
+                              ? { prompt_selection: promptSelectionMetadata(options.promptInfo) }
+                              : {}),
+                          ...(optimisticImageReferences.length > 0
+                              ? { image_references: optimisticImageReferences }
+                              : {}),
+                          ...(optimisticConversationReferences.length > 0
+                              ? { conversation_references: optimisticConversationReferences }
+                              : {}),
+                          // As the server stores it, so the question is recognised as one
+                          // about a workflow result before its echo arrives.
+                          ...(workflowContext
+                              ? { workflow_result_context: workflowResultContext(workflowContext.descriptor) }
+                              : {}),
+                          // As the server stores them, so the mention pills replace the
+                          // `@Name` text before the echo arrives rather than after.
+                          ...(mentionedParticipants.length > 0
+                              ? { mentioned_participants: mentionedParticipants as unknown as Json }
+                              : {}),
+                          ...(collaborative && invocationTarget
+                              ? { ai_invocation_target: invocationTarget as unknown as Json }
+                              : {}),
+                      },
+                  }
+                : {}),
+        };
+
+        // A shared message that is not addressed to the AI produces no stream, so the
+        // interface must not sit in the streaming state waiting for one that never starts.
+        const willStream = !collaborative || invocationTarget !== null;
+
+        // Only ever false when the reader opened another conversation while this one was
+        // being created. `messages`, `streaming` and the rest describe whatever is on
+        // screen, so writing them then would show this question and its answer inside a
+        // thread they have nothing to do with.
+        const ownsScreen = get().activeConversationId === conversationId;
+
+        if (ownsScreen) {
+            set((state) => ({
+                messages: [...state.messages, optimisticUserMessage],
+                streaming: willStream,
+                retryPresentation: null,
+                streamingContent: '',
+                thoughts: [],
+                streamingReasoningAdjustments: [],
+                streamError: null,
+                streamAuthUrl: null,
+                reconnectPhase: null,
+            }));
+        }
+
+        if (collaborative && !invocationTarget) {
+            // Posted rather than streamed. The response carries the stored message, which
+            // replaces the placeholder; the same message also arrives over the event stream,
+            // and `mergeCollaborationMessage` recognises it by id rather than adding it
+            // twice.
+            try {
+                const result = await postCollaborationMessage(conversationId, {
+                    content: trimmed,
+                    reply_to_message_id: replyTo?.message_id ?? null,
+                    mentioned_participants: mentionedParticipants,
+                    ...(options.promptInfo ? { prompt_info: options.promptInfo } : {}),
+                });
+                useCollaborationStore.getState().setReplyTo(null);
+                if (result.conversation) {
+                    useCollaborationStore.getState().setConversation(result.conversation);
+                }
+                set((state) => ({
+                    messages: mergeCollaborationMessage(state.messages, result.message, {
+                        pendingId: pendingUserMessageId,
+                    }),
+                }));
+            } catch (error) {
+                // The placeholder is removed rather than left as a message that was never
+                // sent, and the text is reported so it can be retyped or the cause fixed.
+                set((state) => ({
+                    messages: state.messages.filter(
+                        (message) => message.id !== pendingUserMessageId,
+                    ),
+                    streamError:
+                        error instanceof Error ? error.message : 'Could not post that message.',
+                    streamAuthUrl: null,
+                }));
+            }
+            return;
+        }
+
+        // Derived once here rather than at each field: the chip row is the single source of
+        // truth for what this message is pointed at, and the request is three views of it.
+        const contextItems = options.contextItems ?? [];
+        const directImageMode = Boolean(options.imageGeneration && !collaborative);
+        const imageReferences = directImageMode ? optimisticImageReferences : [];
+        const searchContextItems = directImageMode ? [] : contextItems;
+        const contextDocuments = contextDocumentIds(searchContextItems);
+        const contextTagNames = contextTags(searchContextItems);
+        const contextWorkspaces = contextScopes(searchContextItems);
+        const filterMode = contextFilterMode(searchContextItems);
+
+        const scope = resolveDocumentScope({
+            publicWorkspaceSelection: options.publicWorkspaceSelection,
+            activeGroupId: bootstrap?.scope?.active_group_id,
+            activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
+            contextGroupIds: contextWorkspaces.groupIds,
+            contextPublicWorkspaceIds: contextWorkspaces.publicWorkspaceIds,
+        });
+
+        let requestBody: ChatStreamRequest = {
+            message: trimmed,
+            conversation_id: conversationId,
+            // Deliberately always 'user'. The server derives scope_id/scope_type from this
+            // (route_backend_chats.py:20692) and those feed fact-memory reads and writes,
+            // so sending 'group' would move a personal conversation's extracted facts into
+            // a shared group scope. The classic client's group branch is unreachable —
+            // `window.activeChatTabType` is read in two places and assigned in none — so
+            // 'user' is what it actually sends, and matching that is the real parity.
+            chat_type: 'user',
+            // Choosing context is itself a request to search: a chip the user added while
+            // the toggle happened to be off would otherwise be collected, sent, and ignored.
+            hybrid_search: directImageMode ? false : Boolean(options.publicWorkspaceSelection) || options.documentSearch || searchContextItems.length > 0,
+            web_search_enabled: options.webSearch,
+            image_generation: options.imageGeneration,
+            selected_document_ids: contextDocuments,
+            // The scope and its workspace ids travel together: the server filters the ids
+            // down to what the caller may see, so a scope without them covers nothing.
+            // Document search is widened to the group this way, without re-scoping the
+            // request itself.
+            ...scope,
+            // Deep research is carried by two fields: the server reads source_review_enabled
+            // for the fetching machinery and deep_research_enabled for query planning.
+            source_review_enabled: options.deepResearch,
+            deep_research_enabled: options.deepResearch,
+            url_access_enabled: options.urlAccess,
+        };
+        if (!collaborative && !directImageMode && !options.publicWorkspaceSelection) {
+            const selection = documentSourceSelection(options.documentSearch, searchContextItems);
+            if (selection) {
+                requestBody.document_source_selection = selection;
+                delete requestBody.doc_scope;
+                delete requestBody.selected_document_ids;
+                delete requestBody.active_group_id;
+                delete requestBody.active_group_ids;
+                delete requestBody.active_public_workspace_id;
+                delete requestBody.active_public_workspace_ids;
+            }
+        }
+        // Microsoft 365 email and event times in the answer are written in the reader's zone.
+        const timeZone = requestTimeZone();
+        if (timeZone) {
+            requestBody.time_zone = timeZone;
+        }
+        if (imageReferences.length > 0) {
+            requestBody.image_references = imageReferences;
+        }
+        const conversationReferences = !collaborative && !directImageMode
+            ? conversationReferenceRequests(options.conversationReferences ?? [])
+            : [];
+        if (conversationReferences.length > 0) {
+            requestBody.conversation_references = conversationReferences;
+        }
+
+        if (contextTagNames.length > 0 && !requestBody.document_source_selection) {
+            requestBody.tags = contextTagNames;
+        }
+        // The ordinary chat path used to send nothing about the prompt, so a saved prompt used
+        // outside orchestration left no record it had been involved: no metadata to draw the
+        // sent message with, and nothing for the server to attribute the wording to.
+        if (options.promptInfo) {
+            requestBody.prompt_info = options.promptInfo;
+        }
+        // Only when both kinds are present. With one kind the mode has no effect, and an
+        // unnecessary field in the request is one more thing to account for later.
+        if (filterMode && !requestBody.document_source_selection) {
+            requestBody.document_filter_mode = filterMode;
+        }
+
+        // Model identity, agent and reasoning level are mutually exclusive halves of the same
+        // decision, resolved in one place. An agent answers with its own deployment, and a
+        // model identity sent alongside `agent_info` reads to the server as an override of it.
+        Object.assign(
+            requestBody,
+            buildSelectionFields({
+                agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                // An explicit `@agent` or `@model` tag chooses for this message alone and
+                // overrides the pickers, which is the point of tagging one. A tagged *model*
+                // additionally clears the agent selection: the exclusivity rule above lets an
+                // agent win, so leaving a picked agent in place would silently discard the
+                // model the reader just named.
+                agentSelection: taggedModelSelection
+                    ? undefined
+                    : (taggedAgentSelection ?? options.agentSelection),
+                modelDeployment: taggedModelSelection ?? options.modelDeployment,
+                reasoningEffort: options.reasoningEffort,
+            }),
+        );
+
+        requestBody = applySavedAnalysisContext(requestBody, savedContext);
+        // Bound to the conversation just created when this is a new chat's first question.
+        requestBody = applyWorkflowResultContext(
+            requestBody,
+            workflowContext ? { ...workflowContext, conversation_id: conversationId } : null,
+        );
+
+        if (collaborative) {
+            // The collaboration stream reads the text as `content` and records who was
+            // named and what was addressed alongside it, so the thread shows what was asked
+            // rather than only that something was.
+            requestBody.content = trimmed;
+            requestBody.reply_to_message_id = replyTo?.message_id ?? null;
+            requestBody.mentioned_participants = mentionedParticipants;
+            requestBody.invocation_target = invocationTarget;
+            // The server resolves the hidden source conversation itself; sending the shared
+            // conversation's id here would point the bridge at the wrong thread.
+            delete requestBody.conversation_id;
+            useCollaborationStore.getState().setReplyTo(null);
+        }
+
+        return runChatStream(requestBody, conversationId, {
+            isNewConversation,
+            kind: collaborative ? 'collaborative' : 'personal',
+            pendingUserMessageId,
+            stream: collaborative
+                ? {
+                      url: streamCollaborationUrl(conversationId),
+                      // No reattach endpoint exists for a shared conversation, so a dropped
+                      // transport must be reported rather than retried against a route that
+                      // does not know this conversation id.
+                      allowRecovery: false,
+                  }
+                : undefined,
+        });
+    },
+
+    generateImageFromReference: async ({ prompt, references, mask, maskRegions }) => {
+        const trimmed = prompt.trim();
+        if (!trimmed) {
+            return 'Describe the image you want to create.';
+        }
+        if (get().streaming) {
+            return 'Wait for the current response to finish, then try again.';
+        }
+        if (get().activeConversationKind === 'collaborative') {
+            return 'Reference image editing is not available in collaborative conversations.';
+        }
+
+        const limit = effectiveReferenceImageLimit(
+            useBootstrapStore.getState().data?.capabilities?.image_edit,
+        );
+        const imageReferences = normalizeImageReferences(references, limit);
+        if (imageReferences.length === 0) {
+            return 'Choose a reference image before creating a new image.';
+        }
+
+        let conversationId = get().activeConversationId;
+        const isNewConversation = !conversationId;
+        if (!conversationId) {
+            // As in sendMessage: only the epoch tells "still in this new chat" apart from
+            // "started another one" while the conversation is being created.
+            const epoch = conversationEpoch;
+            const draftMode = conversationModes.captureDraft(useBootstrapStore.getState().data?.user?.id ?? '');
+            try {
+                const created = await createConversation(trimmed);
+                conversationId = created.conversation_id;
+                adoptConversationModeDraft(draftMode, conversationId);
+                if (get().activeConversationId === null && conversationEpoch === epoch) {
+                    set({ activeConversationId: conversationId, activeConversationKind: 'personal' });
+                    useCollaborationStore.getState().setActiveConversation(conversationId);
+                }
+            } catch (error) {
+                return error instanceof Error ? error.message : 'Could not start a new conversation.';
+            }
+        }
+
+        const pendingUserMessageId = `pending-user-${Date.now()}`;
+        if (get().activeConversationId === conversationId) {
+            set((state) => ({
+                messages: [
+                    ...state.messages,
+                    {
+                        id: pendingUserMessageId,
+                        conversation_id: conversationId,
+                        role: 'user',
+                        content: trimmed,
+                        timestamp: new Date().toISOString(),
+                        metadata: { image_references: imageReferences },
+                    },
+                ],
+                streaming: true,
+                orchestrationSurface: null,
+                streamingContent: '',
+                thoughts: [],
+                streamingReasoningAdjustments: [],
+                streamError: null,
+                streamAuthUrl: null,
+                reconnectPhase: null,
+            }));
+        }
+
+        const requestBody: ChatStreamRequest = {
+            message: trimmed,
+            conversation_id: conversationId,
+            chat_type: 'user',
+            hybrid_search: false,
+            image_generation: true,
+            image_references: imageReferences,
+            ...(mask ? { image_mask: mask } : {}),
+            ...(maskRegions ? { image_mask_regions: maskRegions } : {}),
+        };
+
+        // Not awaited: the editor closes once the request is on its way, so the reader watches
+        // the new image arrive in the conversation. Stream failures are reported there.
+        void runChatStream(requestBody, conversationId, {
+            isNewConversation,
+            kind: 'personal',
+            pendingUserMessageId,
+            reloadOnDone: true,
+        }).catch((error: unknown) => {
+            set({
+                streaming: false,
+                streamError: error instanceof Error ? error.message : 'Could not create the image.',
+            });
+        });
+        return null;
+    },
+
+    stopStreaming: () => {
+        if (!activeStreamController) {
+            clearActionRecovery();
+            if (get().retryPresentation && !get().retryPresentation?.admitted) {
+                set({ streaming: false, retryPresentation: null, streamingContent: '', thoughts: [] });
+            }
+            return;
+        }
+        // The one place a cancel belongs: the reader asked for the answer to stop being
+        // written, not merely to stop being watched. Addresses the conversation the stream
+        // actually belongs to, which may no longer be the one on screen, through whichever
+        // cancel route that conversation uses.
+        const stoppedConversationId = streamingConversationId;
+        const presentation = get().retryPresentation;
+        if (presentation?.admitted && presentation.conversationId === stoppedConversationId) {
+            const partial = get().streamingContent;
+            set((state) => {
+                const messages = updateRetryState(state.messages, presentation, 'interrupted');
+                return {
+                    messages: partial ? insertRetryReply(messages, {
+                        id: `cancelled-${Date.now()}`, conversation_id: presentation.conversationId,
+                        role: 'assistant', content: partial, timestamp: new Date().toISOString(),
+                        metadata: retryReplyMetadata({}, presentation),
+                        thoughts: state.thoughts.length ? [...state.thoughts] : undefined,
+                    }, presentation) : messages,
+                    streaming: false, streamingContent: '', retryPresentation: { ...presentation, error: undefined },
+                };
+            });
+        }
+        if (stoppedConversationId) {
+            // The reply is detached below, so its ending is never seen here. Read the list
+            // once the server has the request instead. An action the reply was still saving
+            // is picked up by the next read: window focus, Refresh, or a collaboration event.
+            const cancellation = activeStreamCancellation ? activeStreamCancellation() : cancelStream(
+                stoppedConversationId,
+                streamingConversationKind === 'collaborative'
+                    ? cancelCollaborationStreamUrl(stoppedConversationId)
+                    : undefined,
+            );
+            void cancellation.then(() => refreshPendingActionsAfterReply(stoppedConversationId)).catch(() => {
+                if (get().activeConversationId === stoppedConversationId) {
+                    set({ streamError: 'Stopping could not be confirmed. Refresh the conversation to check saved work.' });
+                }
+            });
+        }
+        detachActiveStream();
+    },
+
+    setDrawerMode: (drawerMode) => {
+        set({ drawerMode });
+        // Documents are derived from conversation metadata, so opening that mode loads it
+        // on demand rather than on every conversation switch.
+        const { activeConversationId, metadata, metadataLoading } = get();
+        if (
+            drawerMode === 'documents' &&
+            activeConversationId &&
+            !metadata &&
+            !metadataLoading
+        ) {
+            void get().loadMetadata(activeConversationId);
+        }
+    },
+
+    beginOrchestrationTurn: (
+        conversationId,
+        text,
+        addUserMessage = true,
+        turnId,
+        promptInfo,
+        phase = 'planning',
+    ) => {
+        const trimmed = text.trim();
+        const pendingUserMessageId = addUserMessage ? `pending-user-${Date.now()}` : '';
+        // Recorded whether or not the conversation is on screen, so opening it while this turn
+        // is still in flight shows it working.
+        orchestrationSurfaces.set(conversationId, { phase, turnId: turnId ?? null });
+        // Guarded on the open conversation, exactly like sendMessage's optimistic write: a run
+        // started here keeps going after the reader opens another thread, and its question must
+        // not appear inside that other thread.
+        if (get().activeConversationId === conversationId) {
+            const question = !addUserMessage && turnId
+                ? get().messages.find((message) => message.role === 'user' && messageOrchestrationTurn(message) === turnId)
+                : undefined;
+            const existingRetry = get().retryPresentation;
+            const retryPresentation = question && savedResponseAttempt(question).kind === 'orchestration'
+                ? existingRetry?.userMessageId === question.id ? existingRetry
+                    : { ...beginRetryPresentation(get().messages, question, 'orchestration'), admitted: true }
+                : null;
+            set((state) => ({
+                retryPresentation,
+                messages: addUserMessage
+                    ? [
+                          ...state.messages,
+                          {
+                              id: pendingUserMessageId,
+                              conversation_id: conversationId,
+                              role: 'user',
+                              content: trimmed,
+                              timestamp: new Date().toISOString(),
+                              // Stamp the turn so the plan map can scroll back to the question a
+                              // run belongs to; it survives the id reconciliation on completion,
+                              // which only swaps the id and keeps every other field.
+                              metadata: turnId || promptInfo
+                                  ? {
+                                        ...(turnId ? { orchestration_turn_id: turnId } : {}),
+                                        ...(promptInfo
+                                            ? { prompt_selection: promptSelectionMetadata(promptInfo) }
+                                            : {}),
+                                    }
+                                  : undefined,
+                          },
+                      ]
+                    : state.messages,
+                streaming: true,
+                orchestrationSurface: phase,
+                analysisTurnRevision: state.analysisContextRevision,
+                streamingContent: '',
+                thoughts: [],
+                streamingReasoningAdjustments: [],
+                streamError: null,
+                streamAuthUrl: null,
+                reconnectPhase: null,
+            }));
+        }
+        return pendingUserMessageId;
+    },
+
+    pushOrchestrationThought: (conversationId, event) => {
+        const surface = orchestrationSurfaces.get(conversationId);
+        if (get().activeConversationId !== conversationId || !surface
+            || (surface.turnId && event.turn_id && surface.turnId !== event.turn_id)) {
+            return;
+        }
+        const content =
+            typeof event.content === 'string' ? event.content : String(event.thought ?? '');
+        if (!content) {
+            return;
+        }
+        // Built exactly like buildStreamHandlers.onThought so a planner reasoning step feeds the
+        // same activity lane a chat run's thoughts do — the orchestration lane keys on the
+        // `orchestration_*` step types these carry.
+        set((state) => ({
+            thoughts: [
+                ...state.thoughts,
+                {
+                    id: `${state.thoughts.length}`,
+                    title: String(event.title ?? event.step_type ?? 'Planning'),
+                    content,
+                    stepType: typeof event.step_type === 'string' ? event.step_type : undefined,
+                    detail: typeof event.detail === 'string' ? event.detail : undefined,
+                    activity: event.activity as ThoughtEntry['activity'],
+                    progress: event.progress as ThoughtEntry['progress'],
+                    stepIndex:
+                        typeof event.step_index === 'number' ? event.step_index : undefined,
+                },
+            ],
+        }));
+    },
+
+    pushOrchestrationContent: (conversationId, accumulated, turnId) => {
+        const surface = orchestrationSurfaces.get(conversationId);
+        if (get().activeConversationId !== conversationId || !surface
+            || (surface.turnId && turnId && surface.turnId !== turnId)) {
+            return;
+        }
+        set({ streamingContent: accumulated });
+    },
+
+    settleOrchestrationTurn: (conversationId, outcome) => {
+        const settledTurnId = outcome.turnId ?? ('event' in outcome ? outcome.event.turn_id : undefined);
+        const surface = orchestrationSurfaces.get(conversationId);
+        if (surface?.turnId && settledTurnId && surface.turnId !== settledTurnId) return;
+        const presentation = get().retryPresentation;
+        if (presentation && (presentation.kind !== 'orchestration'
+            || (settledTurnId && messageOrchestrationTurn(get().messages.find(
+                (message) => message.id === presentation.userMessageId,
+            )) !== settledTurnId))) {
+            return;
+        }
+        if (activeStreamController && !get().orchestrationSurface) return;
+        // Released whether or not the conversation is on screen, so reopening it later does not
+        // bring back a Thinking state for a turn that has already finished.
+        orchestrationSurfaces.delete(conversationId);
+        // The reader is elsewhere: there is no streaming surface of this conversation's to
+        // resolve, and the run's own record in the orchestration store is what remembers it ran.
+        if (get().activeConversationId !== conversationId) {
+            return;
+        }
+
+        if (outcome.status === 'planned') {
+            // Planning is over and the card takes the stage; leave the thinking state without
+            // adding a message. Thoughts are cleared because the planning reasoning is ephemeral —
+            // the plan is the artifact worth keeping, and stale thoughts would otherwise flash in
+            // the next turn's streaming bubble.
+            set((state) => ({
+                messages: outcome.attemptState
+                    ? updateRetryState(state.messages, state.retryPresentation, outcome.attemptState) : state.messages,
+                streaming: false,
+                orchestrationSurface: null,
+                streamingContent: '',
+                thoughts: [],
+                streamingReasoningAdjustments: [],
+                reconnectPhase: null,
+            }));
+            return;
+        }
+
+        if (outcome.status === 'failed' && !('event' in outcome)) {
+            set((state) => ({
+                streaming: false,
+                orchestrationSurface: null,
+                streamingContent: '',
+                reconnectPhase: null,
+                messages: updateRetryState(state.messages, state.retryPresentation, 'failed', outcome.error),
+                retryPresentation: state.retryPresentation
+                    ? { ...state.retryPresentation, error: outcome.error } : null,
+                streamError: state.retryPresentation ? null : outcome.error,
+                streamAuthUrl: null,
+            }));
+            return;
+        }
+
+        if (outcome.status === 'cancelled' && !('event' in outcome)) {
+            // Partial output is kept, matching a cancelled chat stream: discarding a long answer
+            // someone stopped is more annoying than useful.
+            const { accumulated } = outcome;
+            set((state) => ({
+                messages: accumulated
+                    ? insertRetryReply(
+                          updateRetryState(state.messages, state.retryPresentation, 'interrupted'),
+                          {
+                              id: `cancelled-${Date.now()}`,
+                              conversation_id: conversationId,
+                              role: 'assistant',
+                              content: accumulated,
+                              timestamp: new Date().toISOString(),
+                              metadata: retryReplyMetadata({}, state.retryPresentation),
+                              thoughts:
+                                  state.thoughts.length > 0 ? [...state.thoughts] : undefined,
+                          }, state.retryPresentation,
+                      )
+                    : updateRetryState(state.messages, state.retryPresentation, 'interrupted'),
+                streaming: false,
+                orchestrationSurface: null,
+                streamingContent: '',
+                reconnectPhase: null,
+            }));
+            return;
+        }
+
+        // Completed: the terminal frame is chat-shaped, so the assistant message is built exactly
+        // as buildStreamHandlers.onDone builds it, and merged by id for the same reason — a shared
+        // conversation echoes the same message over its event stream and the second copy must
+        // update the first rather than double it.
+        const { event, accumulated, pendingUserMessageId } = outcome;
+        const attempt = normalizeOrchestrationAttempt(event);
+        const fallback = outcome.status === 'unknown'
+            ? 'The connection to this run ended before a final result was confirmed. Checking its saved status; execution may still be running.'
+            : attempt.failure?.message || (outcome.status === 'cancelled'
+                ? 'This run was stopped. Any available partial results have been kept.'
+                : 'This run could not complete. Review the saved attempt for recovery options.');
+        const persistedUserId = String(event.user_message_id ?? '').trim();
+        const finalConversationRefs = storedConversationReferences(
+            event.conversation_references ?? event.metadata?.conversation_references,
+        );
+        const finalMessage: ChatMessage = {
+            id: String(event.message_id ?? (attempt.run_id ? `orchestration-status-${attempt.run_id}` : STREAMING_MESSAGE_ID)),
+            conversation_id: conversationId,
+            role: event.blocked ? 'safety' : event.role ?? 'assistant',
+            content: resolveStreamContent(event, accumulated || (outcome.status === 'completed' ? '' : fallback)),
+            timestamp: new Date().toISOString(),
+            model_deployment_name: event.model_deployment_name,
+            agent_display_name: event.agent_display_name,
+            augmented: event.augmented,
+            ...completionCitations(event),
+            ...(event.blocked ? {} : { m365_pending_actions: event.m365_pending_actions }),
+            metadata: {
+                ...event.metadata,
+                ...(finalConversationRefs.length > 0 ? { conversation_references: finalConversationRefs } : {}),
+                ...reasoningMetadataForEvent(event),
+                orchestration: {
+                    // The terminal frame lists the answer's saved images at the top level too,
+                    // so its image cards know them before the thread is read again.
+                    ...(Array.isArray(event.generated_images) ? { generated_images: event.generated_images } : {}),
+                    ...(event.metadata?.orchestration && typeof event.metadata.orchestration === 'object'
+                        ? event.metadata.orchestration : {}),
+                    ...attempt,
+                },
+            },
+            thoughts: !event.blocked && get().thoughts.length > 0 ? [...get().thoughts] : undefined,
+        };
+        set((state) => {
+            // Reconcile the optimistic user bubble with the server id when the run reports one, so
+            // per-message actions address a message the server knows. Matched on the exact pending
+            // id rather than any `pending-user-` bubble, so an earlier cancelled turn's unresolved
+            // bubble is left alone.
+            const existing = attempt.run_id && event.message_id
+                ? state.messages.filter((message) => message.id !== `orchestration-status-${attempt.run_id}`)
+                : state.messages;
+            const messages =
+                persistedUserId && pendingUserMessageId
+                    ? existing.map((message) =>
+                          message.id === pendingUserMessageId
+                              ? { ...message, id: persistedUserId }
+                              : message,
+                      )
+                    : existing;
+            return {
+                messages: insertRetryReply(
+                    updateRetryState(messages, state.retryPresentation, outcome.status === 'cancelled' ? 'interrupted' : outcome.status),
+                    { ...finalMessage, metadata: retryReplyMetadata(finalMessage.metadata ?? {}, state.retryPresentation) },
+                    state.retryPresentation,
+                ),
+                ...(outcome.status === 'completed'
+                    ? { completedReply: { conversationId, messageId: finalMessage.id } }
+                    : {}),
+                streaming: false,
+                orchestrationSurface: null,
+                streamingContent: '',
+                reconnectPhase: null,
+                streamError: null,
+                streamAuthUrl: null,
+                ...(event.blocked ? { thoughts: [] } : {}),
+            };
+        });
+
+        if (!event.blocked) chatPendingActionsStore.getState().trackMessage(finalMessage);
+        const descriptor = outcome.status === 'completed' ? latestSavedAnalysis([finalMessage]) : null;
+        const analysisRevision = get().analysisTurnRevision;
+        if (descriptor && analysisRevision !== null) {
+            get().selectAnalysisResult(descriptor, analysisRevision);
+        }
+
+        // The Documents drawer reads the conversation's used-document list rather than the
+        // message's citations, and the server only extends that list once the run finishes.
+        // Without this refetch the drawer keeps reporting the state it was fetched in --
+        // "No documents yet" under an answer that plainly used one.
+        if (event.augmented) {
+            void get().loadMetadata(conversationId);
+        }
+    },
+
+    reconcileOrchestrationUserMessage: ({ conversationId, turnId, optimisticId, savedId }) => {
+        if (!savedId || !optimisticId || savedId === optimisticId) return;
+        set((state) => {
+            if (state.activeConversationId !== conversationId) return state;
+            const matches = (message: ChatMessage) => message.conversation_id === conversationId
+                && message.role === 'user' && message.metadata?.orchestration_turn_id === turnId;
+            const optimistic = state.messages.find((message) => matches(message) && message.id === optimisticId);
+            if (!optimistic) return state;
+            const saved = state.messages.find((message) =>
+                message.id === savedId || mirroredSourceId(message) === savedId);
+            if (saved && !matches(saved)) return state;
+            return {
+                messages: state.messages.flatMap((message) =>
+                    message === optimistic ? saved ? [] : [{ ...message, id: savedId }] : [message]),
+                retryPresentation: state.retryPresentation?.userMessageId === optimisticId
+                    ? { ...state.retryPresentation, userMessageId: savedId } : state.retryPresentation,
+            };
+        });
+        const pending = chatPendingActionsStore.getState();
+        if (pending.conversationId === conversationId
+            && pending.liveStream?.userMessageId === optimisticId) {
+            pending.setLiveStream({ ...pending.liveStream, userMessageId: savedId });
+        }
+    },
+
+    reassignOrchestrationTurn: ({
+        fromConversationId,
+        toConversationId,
+        fromTurnId,
+        toTurnId,
+    }) => {
+        const conversationChanged =
+            Boolean(toConversationId) && toConversationId !== fromConversationId;
+        const turnChanged = Boolean(toTurnId) && toTurnId !== fromTurnId;
+        if (!conversationChanged && !turnChanged) {
+            return;
+        }
+        // The turn's claim on the streaming surface follows it to the id the server named.
+        const surface = orchestrationSurfaces.get(fromConversationId);
+        if (surface && (!surface.turnId || surface.turnId === fromTurnId)) {
+            if (conversationChanged) orchestrationSurfaces.delete(fromConversationId);
+            orchestrationSurfaces.set(conversationChanged ? toConversationId : fromConversationId, {
+                ...surface,
+                turnId: turnChanged ? toTurnId : surface.turnId,
+            });
+        }
+        set((state) => {
+            const messages = state.messages.map((message) => {
+                if (message.conversation_id !== fromConversationId) {
+                    return message;
+                }
+                // The turn stamp is what tells this turn's bubble apart from an earlier turn's in
+                // the same thread, so the turn id is rewritten only on the bubble carrying the old
+                // one. The conversation id moves with any bubble of a just-created conversation,
+                // which holds nothing but this turn.
+                const stamp = (
+                    message.metadata as { orchestration_turn_id?: string } | undefined
+                )?.orchestration_turn_id;
+                const metadata =
+                    turnChanged && stamp === fromTurnId
+                        ? ({
+                              ...(message.metadata as Record<string, unknown>),
+                              orchestration_turn_id: toTurnId,
+                          } as ChatMessage['metadata'])
+                        : message.metadata;
+                return {
+                    ...message,
+                    conversation_id: conversationChanged
+                        ? toConversationId
+                        : message.conversation_id,
+                    metadata,
+                };
+            });
+            // The optimistic write guarded on the open conversation, so a reader looking at the old
+            // id is looking at this turn; keep them attached to it under the real id.
+            const activeConversationId =
+                conversationChanged && state.activeConversationId === fromConversationId
+                    ? toConversationId
+                    : state.activeConversationId;
+            return { messages, activeConversationId };
+        });
+    },
+
+    loadMetadata: async (conversationId) => {
+        const epoch = conversationEpoch;
+        const ownsLoad = () => get().activeConversationId === conversationId && conversationEpoch === epoch;
+        if (!ownsLoad()) return;
+        set({ metadataLoading: true, metadataError: null });
+        const collaborative = isCollaborativeConversation(get(), conversationId);
+        try {
+            // A shared conversation has no entry in the personal metadata route, and its own
+            // detail response carries everything that one does plus the membership. It is
+            // mapped onto the metadata shape so the badges, classification pills, document
+            // drawer and summary all keep working untouched.
+            const metadata = collaborative
+                ? await fetchCollaborationConversation(conversationId).then((result) => {
+                      if (ownsLoad()) useCollaborationStore.getState().setConversation(result.conversation);
+                      return metadataFromCollaboration(result.conversation);
+                  })
+                : await fetchConversationMetadata(conversationId);
+            // Discard if the user moved on while this was in flight.
+            if (!ownsLoad()) return;
+            set((state) => ({
+                metadata,
+                metadataLoading: false,
+                // A conversation reached by a link can be older than the first page of the
+                // feed, or hidden, in which case the list has no row for it: the rail
+                // highlights nothing and the header falls back to "New chat" for a thread
+                // that is plainly open. Metadata is already being fetched here, so the row
+                // is built from it rather than costing another request. It goes to the top
+                // because the list is cursor-paged — there is no correct place to insert an
+                // older conversation into a page that has not been loaded.
+                conversations: state.conversations.some((item) => item.id === conversationId)
+                    ? state.conversations
+                    : [
+                          {
+                              ...conversationFromMetadata(conversationId, metadata),
+                              // Carried so the row's own actions keep routing to the right
+                              // API family after a reload that does not go through the feed.
+                              conversation_kind: collaborative ? 'collaborative' : undefined,
+                          },
+                          ...state.conversations,
+                      ],
+            }));
+        } catch (error) {
+            if (!ownsLoad()) return;
+            set({
+                metadataLoading: false,
+                metadataError:
+                    error instanceof Error ? error.message : 'Failed to load conversation details.',
+            });
+        }
+    },
+
+    reloadMessages: async (options) => {
+        const conversationId = get().activeConversationId;
+        const epoch = conversationEpoch;
+        const analysisRevision = get().analysisContextRevision;
+        const shownBefore = get().messages;
+        if (!conversationId) {
+            return 'done';
+        }
+        try {
+            const { messages: loadedMessages } =
+                get().activeConversationKind === 'collaborative'
+                    ? await fetchCollaborationMessages(conversationId)
+                    : await fetchMessages(conversationId);
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) {
+                return 'done';
+            }
+            // Checked before anything is written, so a dropped re-read changes nothing at all.
+            if (options?.onlyIfUnchanged && (get().streaming || get().messages !== shownBefore)) {
+                return 'superseded';
+            }
+            // A message deleted while archiving was enabled is never shown, not even as a
+            // masked one; see deletedMessages.ts.
+            const messages = withoutDeletedMessages(loadedMessages);
+            set({ messages });
+            const selected = get().analysisResultContext;
+            if (selected && get().analysisContextRevision === analysisRevision && !messages.some((message) =>
+                message.role === 'assistant' && !message.metadata?.masked &&
+                !(Array.isArray(message.metadata?.masked_ranges) && message.metadata.masked_ranges.length) &&
+                readSavedAnalyses(message.metadata).some((descriptor) =>
+                    descriptor?.available !== false && sameAnalysis(selected, descriptor)),
+            )) {
+                get().clearAnalysisResultContext();
+            }
+            if (!get().analysisContextChosen) {
+                const descriptor = latestSavedAnalysis(messages);
+                if (descriptor) {
+                    get().selectAnalysisResult(descriptor, analysisRevision);
+                }
+            }
+            // Inherited from the latest answer, never cleared for being absent: a result picked
+            // with Ask in chat is in no message until its first answer arrives. A result that
+            // became unavailable is refused, and its chip removed, when it is next asked about.
+            if (!get().analysisContextChosen) {
+                const workflowResult = latestWorkflowResult(messages);
+                if (workflowResult) {
+                    get().selectWorkflowResult(workflowResult, conversationId, analysisRevision);
+                }
+            }
+            // Attempt switches and deletions change which documents the conversation
+            // cites, so cached metadata is no longer trustworthy.
+            set({ metadata: null });
+        } catch (error) {
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) return 'done';
+            set({
+                messagesError:
+                    error instanceof Error ? error.message : 'Failed to reload messages.',
+            });
+        }
+        return 'done';
+    },
+
+    removeMessage: async (messageId, deleteThread = false) => {
+        const previous = get().messages;
+        const conversationId = get().activeConversationId;
+        const collaborative = get().activeConversationKind === 'collaborative';
+        set({ messages: previous.filter((message) => message.id !== messageId) });
+        try {
+            if (collaborative && conversationId) {
+                // A shared conversation deletes one message at a time and has no thread
+                // model, so `deleteThread` has nothing to address there.
+                await deleteCollaborationMessage(conversationId, messageId);
+            } else {
+                await deleteMessageApi(messageId, deleteThread);
+            }
+            // The authoritative list is re-read rather than trusting the optimistic removal:
+            // deleting a question removes its whole turn, every attempt included, which the
+            // client cannot work out from the one message it removed.
+            await get().reloadMessages();
+        } catch (error) {
+            set({
+                messages: previous,
+                streamError:
+                    error instanceof Error ? error.message : 'Could not delete the message.',
+                streamAuthUrl: null,
+            });
+        }
+    },
+
+    retryMessage: async (messageId, options) => {
+        if (get().streaming) {
+            return;
+        }
+        // Retry builds its request on the server, without the selected run, so a question
+        // about a workflow result would come back as an ordinary answer. Refused before the
+        // server is asked to create a new attempt.
+        if (turnAsksAboutWorkflowResult(get().messages, messageId)) {
+            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null });
+            return;
+        }
+        const message = get().messages.find((candidate) => candidate.id === messageId);
+        const recoveryConversationId = get().activeConversationId;
+        const planning = initialPlanningState(message);
+        if (messageId.startsWith('pending-user-') || (planning.status && !savedResponseAttempt(message).kind && (
+            !planning.runId || (planning.runStarted === false && ['failed', 'interrupted'].includes(planning.status))
+        ))) {
+            const turnId = messageOrchestrationTurn(message);
+            const result = recoveryConversationId && typeof turnId === 'string' && turnId
+                ? await retryOrchestrationPlanning(recoveryConversationId, turnId, messageId)
+                : {
+                    ok: false,
+                    error: 'This message has not been saved. Copy the original message to the composer, review your selections, and send it again.',
+                };
+            if (!result.ok && get().activeConversationId === recoveryConversationId
+                && get().messages.some((candidate) => candidate.id === messageId)) {
+                set({ streamError: result.error, streamAuthUrl: null });
+            }
+            return;
+        }
+        const question = message && retryQuestion(get().messages, message);
+        if (!question || !recoveryConversationId || question.conversation_id !== recoveryConversationId) {
+            set({ streamError: 'The original question is unavailable. Reload the conversation before retrying.', streamAuthUrl: null });
+            return;
+        }
+        const kind = messageOrchestrationTurn(message) || messageOrchestrationTurn(question)
+            || savedResponseAttempt(question).kind === 'orchestration' ? 'orchestration' : 'chat';
+        let presentation = beginRetryPresentation(get().messages, question, kind);
+        const epoch = conversationEpoch;
+        const ownsPresentation = () => get().activeConversationId === recoveryConversationId
+            && conversationEpoch === epoch && get().retryPresentation?.id === presentation.id;
+        set({
+            streaming: true,
+            orchestrationSurface: null,
+            streamingContent: '',
+            thoughts: [],
+            streamingReasoningAdjustments: [],
+            streamError: null,
+            streamAuthUrl: null,
+            reconnectPhase: null,
+            retryPresentation: presentation,
+        });
+        try {
+            const bootstrap = useBootstrapStore.getState().data;
+            // Overrides are deliberate; without them the server restores the viewed attempt.
+            const selection = buildSelectionFields({
+                agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                agentSelection: options?.agentSelection,
+                modelDeployment: options?.modelDeployment,
+                reasoningEffort: options?.reasoningEffort,
+            });
+            if (options?.agentSelection && !selection.agent_info) {
+                throw new Error('The selected agent is unavailable. Review your selection.');
+            }
+            if (options?.modelDeployment && !selection.model_deployment) {
+                throw new Error('The selected model is unavailable. Review your selection.');
+            }
+            if (kind === 'orchestration') {
+                const result = await regenerateOrchestrationMessageApi(messageId, selection);
+                if (!ownsPresentation() || !get().streaming) return;
+                if (!result.plan_request || result.requires_fresh_review !== true
+                    || result.plan_request.conversation_id !== recoveryConversationId) {
+                    throw new Error('The server did not return a review-required planning request.');
+                }
+                presentation = adoptPreparedRetry(result, presentation);
+                await planRegeneratedMessage(result);
+                return;
+            }
+            const result = await retryMessageApi(messageId, selection);
+            if (!ownsPresentation() || !get().streaming) return;
+            if (!result?.chat_request || result.chat_request.conversation_id !== recoveryConversationId) {
+                throw new Error('The server did not return a retry request.');
+            }
+            presentation = adoptPreparedRetry(result, presentation);
+            await runChatStream(
+                result.chat_request,
+                result.chat_request.conversation_id,
+                { reloadOnDone: true, pendingUserMessageId: result.user_message_id },
+            );
+        } catch (error) {
+            if (!ownsPresentation()) return;
+            const failure = error instanceof Error ? error.message : 'Retry failed.';
+            set((state) => ({
+                streaming: false,
+                messages: presentation.admitted ? updateRetryState(state.messages, presentation, 'unknown', failure) : state.messages,
+                retryPresentation: { ...presentation, hiddenMessageIds: [], error: failure },
+                streamError: null,
+                streamAuthUrl: null,
+            }));
+        }
+    },
+
+    editMessage: async (messageId, content) => {
+        const trimmed = content.trim();
+        if (!trimmed || get().streaming) {
+            return;
+        }
+        // For the same reason as retry: the edit endpoint rebuilds the request without the run.
+        if (turnAsksAboutWorkflowResult(get().messages, messageId)) {
+            set({ streamError: WORKFLOW_RESULT_RETRY_UNSUPPORTED_MESSAGE, streamAuthUrl: null });
+            return;
+        }
+        const question = get().messages.find((message) => message.id === messageId && message.role === 'user');
+        const conversationId = get().activeConversationId;
+        if (!question || !conversationId) return;
+        let presentation = beginRetryPresentation(get().messages, question, 'chat');
+        const epoch = conversationEpoch;
+        const ownsPresentation = () => get().activeConversationId === conversationId
+            && conversationEpoch === epoch && get().retryPresentation?.id === presentation.id;
+        set({
+            streaming: true,
+            orchestrationSurface: null,
+            streamingContent: '',
+            thoughts: [],
+            streamingReasoningAdjustments: [],
+            streamError: null,
+            streamAuthUrl: null,
+            reconnectPhase: null,
+            retryPresentation: presentation,
+        });
+        try {
+            const result = await editMessageApi(messageId, trimmed);
+            if (!ownsPresentation() || !get().streaming) return;
+            if (!result?.chat_request || result.chat_request.conversation_id !== conversationId) {
+                throw new Error('The server did not return an edit request.');
+            }
+            presentation = adoptPreparedRetry(result, presentation);
+            await runChatStream(
+                result.chat_request,
+                result.chat_request.conversation_id,
+                { reloadOnDone: true, pendingUserMessageId: result.user_message_id },
+            );
+        } catch (error) {
+            if (!ownsPresentation()) return;
+            const failure = error instanceof Error ? error.message : 'Edit failed.';
+            set((state) => ({
+                streaming: false,
+                messages: presentation.admitted ? updateRetryState(state.messages, presentation, 'unknown', failure) : state.messages,
+                retryPresentation: { ...presentation, hiddenMessageIds: [], error: failure },
+                streamError: null,
+                streamAuthUrl: null,
+            }));
+        }
+    },
+
+    changeAttempt: async (messageId, direction) => {
+        if (get().streaming) return;
+        const conversationId = get().activeConversationId;
+        const epoch = conversationEpoch;
+        try {
+            const result = await switchAttemptApi(messageId, direction);
+            if (get().activeConversationId !== conversationId || conversationEpoch !== epoch) return;
+            set({ retryPresentation: null, streamError: null, streamAuthUrl: null });
+
+            // The only place the server reports the full attempt set, so it is remembered
+            // against the thread rather than discarded.
+            const threadId = messageThreadId(
+                get().messages.find((message) => message.id === messageId),
+            );
+            if (threadId && Array.isArray(result?.available_attempts)) {
+                set((state) => ({
+                    attemptsByThread: {
+                        ...state.attemptsByThread,
+                        [threadId]: result.available_attempts,
+                    },
+                }));
+            }
+
+            // The server flips active_thread in storage and /api/get_messages filters on
+            // it, so the list must be re-read rather than reordered locally.
+            await get().reloadMessages();
+        } catch (error) {
+            set({
+                streamError:
+                    error instanceof Error ? error.message : 'Could not switch attempt.',
+                streamAuthUrl: null,
+            });
+        }
+    },
+
+    applyMask: async (messageId, action, selection) => {
+        const conversationId = get().activeConversationId;
+        if (!conversationId) {
+            return;
+        }
+
+        try {
+            const result =
+                get().activeConversationKind === 'collaborative'
+                    ? await maskCollaborationMessage(conversationId, messageId, {
+                          action,
+                          selection,
+                      })
+                    : await maskMessageApi(messageId, {
+                          action,
+                          conversation_id: conversationId,
+                          selection,
+                      });
+
+            // The response carries the authoritative mask state, including ranges the
+            // server merged or re-placed, so it replaces the local copy rather than being
+            // assumed to match what was sent.
+            //
+            // It does NOT return the whole-message attribution fields
+            // (route_backend_chats.py returns only `masked` and `masked_ranges`), so they
+            // are filled in from the acting user -- who, for a mask just applied, is
+            // exactly who applied it. A reload replaces them with the stored values.
+            const actor = useBootstrapStore.getState().data?.user;
+            const attribution =
+                action === 'mask_all'
+                    ? {
+                          masked_by_display_name: actor?.display_name || actor?.email || undefined,
+                          masked_by_user_id: actor?.id,
+                          masked_timestamp: new Date().toISOString(),
+                      }
+                    : {
+                          masked_by_display_name: undefined,
+                          masked_by_user_id: undefined,
+                          masked_timestamp: undefined,
+                      };
+
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === messageId
+                        ? {
+                              ...message,
+                              metadata: {
+                                  ...(message.metadata as Record<string, unknown>),
+                                  ...attribution,
+                                  masked: result.masked,
+                                  masked_ranges: result.masked_ranges ?? [],
+                              },
+                          }
+                        : message,
+                ),
+            }));
+
+            toast.success(
+                action === 'mask_all'
+                    ? 'Message masked. It will not be sent to the model.'
+                    : action === 'mask_selection'
+                      ? 'Selection masked.'
+                      : 'Mask removed.',
+            );
+        } catch (error) {
+            // A selection the server cannot place in the stored content is rejected, and
+            // saying so is more useful than a generic failure.
+            const message =
+                error instanceof ApiError && error.status === 400
+                    ? 'That selection could not be matched to the stored message. Try selecting a distinct phrase.'
+                    : error instanceof ApiError && error.status === 403
+                      ? 'You can only mask your own messages.'
+                      : error instanceof Error
+                        ? error.message
+                        : 'The mask could not be updated.';
+            toast.error(message);
+        }
+    },
+
+    /**
+     * Save or clear the colours of one block, then reflect the result on the message.
+     *
+     * The conversation is passed in rather than read from `activeConversationId`. A pending
+     * change is flushed when the block unmounts, and switching conversations is one of the ways
+     * a block unmounts — by which point the active conversation is already the new one, and the
+     * write would be addressed to a conversation the message is not in.
+     *
+     * A shared conversation has its own endpoint. Its messages are in a different Cosmos
+     * container, so the personal route cannot even find the conversation to authorize the
+     * write and answers 404 — which is what made recolouring a chart in a shared thread report
+     * that the change could not be saved.
+     *
+     * The server returns the whole stored map rather than just the entry that changed, so the
+     * local copy is replaced by it: a block whose entry the server dropped as stale should stop
+     * showing its old colours here too.
+     */
+    applyVisualStyle: async (
+        messageId,
+        conversationId,
+        conversationKind,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        style,
+        height,
+    ) => {
+        if (!conversationId) {
+            return false;
+        }
+
+        // The kind recorded when the change was made is authoritative. Falling back to the
+        // store only covers the case where it was not yet known, and the rail row it consults
+        // may be gone by the time a flushed change is written.
+        const collaborative =
+            conversationKind === null
+                ? isCollaborativeConversation(get(), conversationId)
+                : conversationKind === 'collaborative';
+        const payloadStyle = style
+            ? {
+                  palette: style.palette,
+                  background: style.background,
+                  colors: style.colors,
+              }
+            : null;
+        // Spread rather than always sent: the server distinguishes an absent key, which keeps
+        // the stored height, from an explicit null, which clears it.
+        const heightFields = height === undefined ? {} : { height };
+
+        try {
+            const result = collaborative
+                ? await setCollaborationMessageVisualStyle(conversationId, messageId, {
+                      block_kind: blockKind,
+                      block_index: blockIndex,
+                      source_hash: sourceHash,
+                      style: payloadStyle,
+                      ...heightFields,
+                  })
+                : await setMessageVisualStyleApi(messageId, {
+                      conversation_id: conversationId,
+                      block_kind: blockKind,
+                      block_index: blockIndex,
+                      source_hash: sourceHash,
+                      style: payloadStyle,
+                      ...heightFields,
+                  });
+
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === messageId
+                        ? {
+                              ...message,
+                              metadata: {
+                                  ...(message.metadata as Record<string, unknown>),
+                                  visual_styles: result.visual_styles ?? {},
+                              },
+                          }
+                        : message,
+                ),
+            }));
+
+            return true;
+        } catch (error) {
+            toast.error(
+                error instanceof ApiError && error.status === 403
+                    ? collaborative
+                        ? 'You need write access to this shared conversation to restyle its blocks.'
+                        : 'You can only restyle blocks in your own conversations.'
+                    : error instanceof Error
+                      ? error.message
+                      : 'Those colours could not be saved.',
+            );
+            return false;
+        }
+    },
+
+    saveBlockRevision: async ({
+        messageId,
+        conversationId,
+        conversationKind,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        source,
+        originalSource,
+        origin,
+        note,
+        expectedRevisionCount,
+    }) => {
+        // A shared conversation's messages live in different Cosmos containers behind
+        // `/api/collaboration/*`. Sending its id to the personal route 404s as
+        // "Conversation not found", so the endpoint is chosen from the conversation's kind
+        // exactly as every other conversation-scoped action here does.
+        const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
+        const body = {
+            block_kind: blockKind,
+            block_index: blockIndex,
+            source_hash: sourceHash,
+            source,
+            original_source: originalSource,
+            origin,
+            note,
+            ...(expectedRevisionCount === undefined
+                ? {}
+                : { expected_revision_count: expectedRevisionCount }),
+        };
+
+        try {
+            const result = shared
+                ? await addCollaborationBlockRevision(conversationId, messageId, body)
+                : await addMessageBlockRevisionApi(messageId, {
+                      conversation_id: conversationId,
+                      ...body,
+                  });
+            get().mergeBlockRevisions(messageId, result.block_revisions);
+            return null;
+        } catch (error) {
+            return describeBlockRevisionError(error, 'That change could not be saved.');
+        }
+    },
+
+    restoreBlockRevision: async ({
+        messageId,
+        conversationId,
+        conversationKind,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        revisionId,
+    }) => {
+        const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
+        const body = {
+            block_kind: blockKind,
+            block_index: blockIndex,
+            source_hash: sourceHash,
+            revision_id: revisionId,
+        };
+
+        try {
+            const result = shared
+                ? await setCollaborationBlockRevision(conversationId, messageId, body)
+                : await setMessageBlockRevisionApi(messageId, {
+                      conversation_id: conversationId,
+                      ...body,
+                  });
+            get().mergeBlockRevisions(messageId, result.block_revisions);
+            return null;
+        } catch (error) {
+            return describeBlockRevisionError(error, 'That version could not be restored.');
+        }
+    },
+
+    askBlockRevision: async ({
+        messageId,
+        conversationId,
+        conversationKind,
+        blockKind,
+        blockIndex,
+        sourceHash,
+        instruction,
+        originalSource,
+        expectedRevisionCount,
+        submissionId,
+        signal,
+        earlierSubmissionIds,
+    }) => {
+        const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
+        const body = {
+            block_kind: blockKind,
+            block_index: blockIndex,
+            source_hash: sourceHash,
+            instruction,
+            original_source: originalSource,
+            ...(expectedRevisionCount === undefined
+                ? {}
+                : { expected_revision_count: expectedRevisionCount }),
+            ...(submissionId ? { submission_id: submissionId } : {}),
+        };
+
+        try {
+            const result = shared
+                ? await assistCollaborationBlockRevision(conversationId, messageId, body, signal)
+                : await assistMessageBlockRevisionApi(messageId, {
+                      conversation_id: conversationId,
+                      ...body,
+                  }, signal);
+            get().mergeBlockRevisions(messageId, result.block_revisions);
+            return { error: null };
+        } catch (error) {
+            if (signal?.aborted || isAbortError(error)) {
+                return { error: null, aborted: true };
+            }
+            // A request the reader cancelled can still finish on the server, which moves the
+            // revision count this one was sent against. The conflict carries what is stored, and
+            // when that includes the cancelled request it is the reader's own change showing.
+            // The same goes for a retry that raced the request it repeats: that one already won.
+            const stored = revisionConflictPayload(error)?.block_revisions;
+            const storedChat = stored ? storedBlockChat(stored, blockKind, blockIndex) : null;
+            if (stored && submissionId && chatHoldsSubmission(storedChat, [submissionId])) {
+                get().mergeBlockRevisions(messageId, stored as MessageBlockRevisions);
+                return { error: null };
+            }
+            if (stored && chatHoldsSubmission(storedChat, earlierSubmissionIds)) {
+                get().mergeBlockRevisions(messageId, stored as MessageBlockRevisions);
+                return { error: null, earlierApplied: true };
+            }
+            return { error: describeBlockRevisionError(error, 'The diagram could not be updated.') };
+        }
+    },
+
+    mergeBlockRevisions: (messageId, blockRevisions) => {
+        set((state) => ({
+            messages: state.messages.map((message) =>
+                message.id === messageId
+                    ? {
+                          ...message,
+                          metadata: {
+                              ...(message.metadata as Record<string, unknown>),
+                              block_revisions: blockRevisions ?? {},
+                          },
+                      }
+                    : message,
+            ),
+        }));
+    },
+
+    mergeImageRevisions: (messageId, entry, imageUrl) => {
+        set((state) => ({
+            messages: state.messages.map((message) =>
+                message.id === messageId
+                    ? {
+                          ...message,
+                          // The URL carries the revision, so replacing it is what actually makes
+                          // the new image appear: the old one is still in the browser's cache
+                          // under the URL it was fetched with.
+                          content: imageUrl || message.content,
+                          metadata: {
+                              ...(message.metadata as Record<string, unknown>),
+                              image_revisions: entry ?? {},
+                          },
+                      }
+                    : message,
+            ),
+        }));
+    },
+
+    reviseImage: async ({
+        messageId,
+        conversationId,
+        conversationKind,
+        origin,
+        operation,
+        instruction,
+        prompt,
+        mask,
+        maskRegions,
+        size,
+        quality,
+        background,
+        expectedRevisionCount,
+        expectedCurrentRevisionId,
+        submissionId,
+        signal,
+        earlierSubmissionIds,
+        revisionUrl,
+    }) => {
+        // A shared conversation's messages live in different Cosmos containers behind
+        // `/api/collaboration/*`, so the endpoint is chosen from the conversation's kind rather
+        // than tried and fallen back from, exactly as the diagram actions do.
+        const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
+        const body = {
+            conversation_id: conversationId,
+            ...(origin ? { origin } : {}),
+            ...(operation ? { operation } : {}),
+            ...(instruction ? { instruction } : {}),
+            ...(prompt ? { prompt } : {}),
+            ...(mask ? { mask } : {}),
+            ...(maskRegions ? { mask_regions: maskRegions } : {}),
+            ...(size ? { size } : {}),
+            ...(quality ? { quality } : {}),
+            ...(background ? { background } : {}),
+            ...(expectedRevisionCount === undefined
+                ? {}
+                : { expected_revision_count: expectedRevisionCount }),
+            ...(expectedCurrentRevisionId
+                ? { expected_current_revision_id: expectedCurrentRevisionId }
+                : {}),
+            ...(submissionId ? { submission_id: submissionId } : {}),
+        };
+
+        try {
+            const result = shared
+                ? await addCollaborationImageRevision(conversationId, messageId, body, signal)
+                : await addMessageImageRevisionApi(messageId, body, signal);
+            get().mergeImageRevisions(messageId, result.image_revisions, result.image_url);
+            return { error: null };
+        } catch (error) {
+            if (signal?.aborted || isAbortError(error)) {
+                return { error: null, aborted: true };
+            }
+            const stored = revisionConflictPayload(error)?.image_revisions as ImageRevisionEntry | undefined;
+            const ownChange = Boolean(stored && submissionId && chatHoldsSubmission(stored.chat, [submissionId]));
+            if (stored && (ownChange || chatHoldsSubmission(stored.chat, earlierSubmissionIds))) {
+                // See askBlockRevision: the conflict is the reader's own earlier or repeated request.
+                const revisions = Array.isArray(stored.revisions) ? stored.revisions : [];
+                const current = revisions[typeof stored.current === 'number' ? stored.current : 0];
+                get().mergeImageRevisions(messageId, stored, current?.id ? revisionUrl?.(current.id) : undefined);
+                return ownChange ? { error: null } : { error: null, earlierApplied: true };
+            }
+            return { error: describeImageRevisionError(error, 'That image could not be changed.') };
+        }
+    },
+
+    restoreImageRevision: async ({
+        messageId,
+        conversationId,
+        conversationKind,
+        revisionId,
+    }) => {
+        const shared = isSharedBlockRevision(get(), conversationId, conversationKind);
+        const body = { conversation_id: conversationId, revision_id: revisionId };
+
+        try {
+            const result = shared
+                ? await setCollaborationImageRevision(conversationId, messageId, body)
+                : await setMessageImageRevisionApi(messageId, body);
+            get().mergeImageRevisions(messageId, result.image_revisions, result.image_url);
+            return null;
+        } catch (error) {
+            return describeImageRevisionError(error, 'That version could not be restored.');
+        }
+    },
+
+    forkFromMessage: async (messageId) => {
+        const conversationId = get().activeConversationId;
+        if (!conversationId) {
+            return;
+        }
+
+        try {
+            const result = await forkConversationApi(conversationId, messageId);
+            const forkedId = result?.conversation_id;
+            if (!forkedId) {
+                throw new Error('The server did not return the forked conversation.');
+            }
+            // Refresh the rail first so the new conversation exists in it before it is
+            // selected, otherwise the header has no title to show.
+            await get().loadConversations({ reset: true });
+            await get().selectConversation(forkedId);
+        } catch (error) {
+            set({
+                streamError:
+                    error instanceof Error ? error.message : 'Could not fork the conversation.',
+                streamAuthUrl: null,
+            });
+        }
+    },
+
+    sendFeedback: async (messageId, feedbackType, reason = '') => {
+        const conversationId = get().activeConversationId;
+        if (!conversationId) {
+            return;
+        }
+        // Recorded locally first so the control reflects the choice immediately; feedback
+        // is advisory and a failure should not disrupt the conversation.
+        set((state) => ({
+            messages: state.messages.map((message) =>
+                message.id === messageId ? { ...message, feedbackType } : message,
+            ),
+        }));
+        try {
+            await submitFeedbackApi(messageId, conversationId, feedbackType, reason);
+        } catch {
+            set((state) => ({
+                messages: state.messages.map((message) =>
+                    message.id === messageId ? { ...message, feedbackType: undefined } : message,
+                ),
+            }));
+        }
+    },
+
+    approveImageProposal: async (conversationId, assistantMessageId, proposal) => {
+        if (!conversationId) {
+            throw new Error('Open a conversation before generating the image.');
+        }
+
+        const result = await generateImageFromProposal({
+            conversation_id: conversationId,
+            assistant_message_id: assistantMessageId,
+            proposal: { ...proposal },
+        });
+
+        const imageMessage = result?.image_message;
+        if (!imageMessage?.id || !imageMessage.content) {
+            throw new Error('The server did not return the generated image.');
+        }
+
+        // Approval is slow, so the thread may have been switched or reloaded underneath it.
+        // Dropping the message into a conversation it does not belong to would show someone
+        // else's image, so it is discarded instead — it is stored server-side either way and
+        // appears the next time this conversation is opened.
+        if (get().activeConversationId !== conversationId) {
+            return;
+        }
+
+        // Appended to the thread rather than held beside it. MessageList folds any image
+        // carrying a source assistant message id into that message's proposal card, so this
+        // one path serves both a fresh approval and a reloaded conversation, and there is no
+        // second copy of the result to keep in step.
+        set((state) => {
+            if (state.messages.some((message) => message.id === imageMessage.id)) {
+                return {};
+            }
+            return {
+                messages: [
+                    ...state.messages,
+                    { ...imageMessage, conversation_id: conversationId } as ChatMessage,
+                ],
+            };
+        });
+
+        if (!proposalSourceMessageId(imageMessage)) {
+            // Without the metadata the image cannot be placed under its card, so it lands in
+            // the thread as an ordinary image. Re-reading gives the server the last word on
+            // where it belongs.
+            void get().reloadMessages();
+        }
+    },
+}));
+
+// The open conversation's outgoing Microsoft 365 actions follow the thread on screen. Done here,
+// off every change to the open conversation, rather than in each action that can change it:
+// there are many (selecting, a new chat, a deep link, a reload), and one missed would leave the
+// cards of the conversation the reader just left standing under the next one. The store is
+// pointed at the conversation first so the messages it is then shown are attributed to it.
+useChatStore.subscribe((state, previous) => {
+    const pendingActions = chatPendingActionsStore.getState();
+    const conversationChanged = state.activeConversationId !== previous.activeConversationId;
+    if (conversationChanged) {
+        // Run before a send can start preflight. React observes the same identity
+        // idempotently instead of invalidating it later during effect cleanup.
+        setActionRecoveryConversation(state.activeConversationId);
+        pendingActions.setConversation(state.activeConversationId ?? '');
+    }
+    if (conversationChanged || state.messages !== previous.messages) {
+        pendingActions.ingestMessages(state.messages);
+    }
+});

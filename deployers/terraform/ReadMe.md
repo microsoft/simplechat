@@ -75,7 +75,7 @@ Terraform also assigns the application managed identity the `SimpleChat Cosmos T
 
 ## Key Vault secret-management permissions
 
-Implemented in deployer version **1.0.32** (`deployers/version.txt`). This is the deployer portion of the application 0.261.125 fix (#1511), backported to Development. Use Terraform **1.12.0 or later**, as required by `main.tf`.
+Implemented in application version **0.261.125** (`application/single_app/config.py`) and deployer version **1.0.32** (`deployers/version.txt`). Use Terraform **1.12.0 or later**, as required by `main.tf`.
 
 This deployer uses Key Vault RBAC and grants **Key Vault Secrets Officer**, built-in role ID `b86a8fe4-44ce-4948-aee5-eccb2c155cd7`, at the **vault scope** to both supported application identities:
 
@@ -86,7 +86,7 @@ This deployer uses Key Vault RBAC and grants **Key Vault Secrets Officer**, buil
 
 The app has both identities attached; the template does not set an `AZURE_CLIENT_ID` override. Use a user-assigned identity's **client ID** to select it in the application, but its **principal/object ID** when checking IAM. The separate `kv_secrets_officer_current_user` grant is for the deploying user/service principal and is not a substitute for either runtime grant.
 
-**Key Vault Secrets User** only allows reading secrets. Saving application credentials writes secrets and removing them deletes secrets, so the application needs secret-management access, including get/list/set/delete. Officer supplies these operations without granting control over vault RBAC. Do not move the application assignments to resource-group or subscription scope. For a manually managed or code-only upgrade, assign Officer to the selected runtime identity under the vault's **Access control (IAM)**, leaving existing grants intact. This Terraform path does not configure legacy access policies; the Azure CLI deployer supports that mode.
+**Key Vault Secrets User** only allows reading secrets. Saving application credentials and running the write/read/delete connection probe require secret-management access, including get/list/set/delete. Officer supplies these operations without granting control over vault RBAC. Do not move the application assignments to resource-group or subscription scope. For a manually managed or code-only upgrade, assign Officer to the selected runtime identity under the vault's **Access control (IAM)**, leaving existing grants intact. This Terraform path does not configure legacy access policies; the Azure CLI deployer supports that mode.
 
 ### State migration and existing Officer assignments
 
@@ -117,9 +117,28 @@ Import only assignments that already exist and are not already managed at the in
 
 Review the next plan: the old User grant should be forgotten, not destroyed; imported Officer grants should not be replaced; missing Officer grants should be added. Keep manual grants rather than deleting them to work around `RoleAssignmentExists`. Neither an import nor these instructions authorizes applying an unreviewed infrastructure plan.
 
-**Test Key Vault connection** in **Admin Settings > Secrets** only lists secret properties in this release, so it does not prove that credential saves can write secrets. Network restrictions still apply independently of IAM.
+After a reviewed deployment and RBAC propagation, test the chosen identity under **Admin Settings > Secrets**. The probe uses a synthetic temporary secret and deletes it afterward; soft-deleted metadata may remain under vault retention. Network restrictions still apply independently of IAM.
 
 Offline coverage in [test_deployer_key_vault_secret_permissions.py](../../functional_tests/test_deployer_key_vault_secret_permissions.py) checks both runtime assignments, vault scopes, and the non-destructive legacy state migration.
+
+## Video Indexer region and permissions
+
+Implemented in application version **0.261.264** (`application/single_app/config.py`) and deployer version **1.0.33** (`deployers/version.txt`).
+
+Azure Video Indexer is not offered in every region. When `param_location` does not offer it, set `param_video_indexer_location` to a region that does; leave it blank to keep Video Indexer in `param_location`:
+
+```hcl
+param_deploy_video_indexer_service = true
+param_video_indexer_location       = "centralus"
+```
+
+A Video Indexer region that differs from `param_location` also creates `azurerm_storage_account.video_indexer_sa`, a Standard general-purpose v2 account named `<param_base_name><param_environment>vi` in that region, because Video Indexer keeps its media in a storage account in its own region. Only Video Indexer uses it. With `param_enable_private_networking = true`, its firewall denies public traffic and admits trusted Azure services, which is how Video Indexer reaches firewalled storage. Choose the region before Video Indexer is first deployed; an existing account cannot move regions.
+
+SimpleChat calls the Video Indexer `generateAccessToken` API with the App Service **system-assigned** identity. `azurerm_role_assignment.app_service_smi_video_indexer_access` grants that identity **Video Indexer Account Contributor** for `AzureCloud` and **Contributor** for `AzureUSGovernment`, where the newer role has not been confirmed. If you already added the same role by hand at the Video Indexer account scope, import that assignment into this address before applying, as described for Key Vault above, rather than deleting it.
+
+The Video Indexer identity is read from `azapi_resource.video_indexer[0].output` directly. azapi 2.x, which `main.tf` requires, returns `output` as an object rather than a JSON string, so it is no longer passed through `jsondecode()`.
+
+Terraform does not write application settings. After `terraform apply`, enter the `video_indexer_account_name`, `video_indexer_account_id`, and `video_indexer_location` outputs, with the resource group and subscription, under **Admin Settings > AI Video Intelligence**.
 
 ## Deploy initial container
 
@@ -188,6 +207,8 @@ param_existing_azure_openai_subscription_id = "00000000-0000-0000-0000-000000000
 #### Private Networking Variables
 
 param_enable_private_networking = true
+# Default off; private-only monitoring is optional in either cloud
+# param_enable_azure_monitor_private_link = true
 
 # Option 1: let Terraform create the VNet and required subnets
 # param_existing_virtual_network_id = ""
@@ -229,6 +250,14 @@ terraform apply -var-file="./params/rudy1.tfvars" -auto-approve
 terraform destroy -var-file="./params/rudy1.tfvars" -auto-approve
 
 ## Post-Deployment Manual Steps
+
+### AMPLS and Network Sizing
+
+`param_enable_azure_monitor_private_link` defaults false and requires `param_enable_private_networking=true`. It associates monitoring resources with AMPLS and disables public ingestion and queries. Telemetry senders and monitoring users need private DNS/routing. Coordinate with the owner of any existing AMPLS in the shared DNS boundary before opting into a new scope.
+
+This uses the generated [shared ARM template](../bicep/modules/azureMonitorPrivateNetworking.json) through Terraform's template-deployment resource. Retain the adjacent Bicep directory when distributing the deployer. With no existing network IDs, the default VNet is `10.0.0.0/21` with two `/24` subnets. See the [Commercial fresh/compact tables](../../docs/guides/enterprise-networking.md#networking-in-azure-commercial) and [Government fresh/compact tables](../../docs/guides/enterprise-networking.md#networking-in-azure-government). AMPLS needs `/27` or larger and at least 11 monitoring IPs; plan `/26` or larger for shared platform endpoints. Existing-VNet reuse does not implement the five-subnet compact reference automatically.
+
+DNS overrides accept `monitor`, `monitorOms`, `monitorOds`, `monitorAgent`, `monitorAdx` (Government), and `videoIndexer`, in addition to core service keys, using `zone_resource_id`/`create_vnet_link`. AMPLS reuses Blob DNS. Video Indexer uses dedicated Commercial DNS only when supported. Government Key Vault uses `privatelink.vaultcore.usgovcloudapi.net`. Terraform does not provision Redis.
 
 ### Private Networking Notes
 

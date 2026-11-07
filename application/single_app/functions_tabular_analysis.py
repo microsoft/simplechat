@@ -8,6 +8,14 @@ route_backend_chats.py. Keeping workflow code pointed here lets the remaining
 implementation move incrementally without changing workflow callers again.
 """
 
+from functions_native_analysis_results import open_native_tabular_result
+from functions_native_tabular_compute import (
+    NATIVE_TABULAR_DATA_ONLY,
+    NativeTabularComputeError,
+    build_native_tabular_compute_callback,
+)
+
+
 def _load_chat_helper(helper_name):
     # Import lazily because route_backend_chats imports functions_workflow_runner during app startup.
     from route_backend_chats import (

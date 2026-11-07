@@ -302,7 +302,11 @@ def test_notification_read_boundaries_scrub_old_alerts_but_preserve_approval_pay
         "config": {"cosmos_notifications_container": types.SimpleNamespace(query_items=query_items)},
         "functions_appinsights": {"log_event": Mock()},
         "functions_debug": {"debug_print": logger},
-        "functions_group": {"find_group_by_id": Mock(), "get_user_groups": lambda user: []},
+        "functions_group": {
+            "assert_group_role": Mock(),
+            "find_group_by_id": Mock(),
+            "get_user_groups": lambda user: [],
+        },
         "functions_public_workspaces": {"find_public_workspace_by_id": Mock(), "get_user_public_workspaces": lambda user: []},
     }.items():
         module = types.ModuleType(name)

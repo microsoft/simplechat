@@ -1,5 +1,9 @@
 # offline_bootstrap.py
-"""External-I/O-only bootstrap seams for fresh-process application integration tests."""
+"""External-I/O-only bootstrap seams for fresh-process application integration tests.
+
+Version: 0.261.324
+Implemented in: 0.261.324 (SDK-shaped point response default)
+"""
 
 import asyncio
 from contextlib import contextmanager
@@ -11,23 +15,29 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.cosmos._cosmos_responses import CosmosDict
 
 
 class OfflineContainer:
-    def __init__(self):
+    def __init__(self, *, sdk_responses=True):
+        self.sdk_responses = sdk_responses
         self.items = {}
         self.revision = 0
+
+    def _response(self, body):
+        value = deepcopy(dict(body))
+        return CosmosDict(value, response_headers={}) if self.sdk_responses else value
 
     def read_item(self, item, partition_key, **kwargs):
         if item not in self.items:
             raise CosmosResourceNotFoundError(status_code=404)
-        return deepcopy(self.items[item])
+        return self._response(self.items[item])
 
     def upsert_item(self, body, **kwargs):
         self.revision += 1
         saved = {**deepcopy(body), "_etag": str(self.revision)}
         self.items[saved["id"]] = saved
-        return deepcopy(saved)
+        return self._response(saved)
 
     create_item = upsert_item
 

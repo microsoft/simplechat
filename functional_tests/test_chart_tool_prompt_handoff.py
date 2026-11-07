@@ -21,7 +21,6 @@ sys.path.append(os.path.join(ROOT_DIR, 'application', 'single_app'))
 
 ROUTE_FILE = os.path.join(ROOT_DIR, 'application', 'single_app', 'route_backend_chats.py')
 TARGET_FUNCTIONS = {
-    'user_requested_chart_visualization',
     'build_chart_tool_usage_system_message',
     'insert_system_message_after_existing_system_messages',
     'maybe_append_chart_tool_system_message',
@@ -40,15 +39,19 @@ def load_prompt_helpers():
             selected_nodes.append(node)
 
     module = ast.Module(body=selected_nodes, type_ignores=[])
+    # Chart intent detection moved to functions_chart_operations in 0.261.132 so
+    # orchestration can share it; the route imports it under the same name.
     from functions_chart_operations import (  # pylint: disable=import-error,import-outside-toplevel
         build_proactive_chart_guidance_message,
         user_request_supports_proactive_charts,
+        user_requested_chart_visualization,
     )
 
     namespace = {
         're': re,
         'build_proactive_chart_guidance_message': build_proactive_chart_guidance_message,
         'user_request_supports_proactive_charts': user_request_supports_proactive_charts,
+        'user_requested_chart_visualization': user_requested_chart_visualization,
     }
     exec(compile(module, ROUTE_FILE, 'exec'), namespace)
     return namespace, route_content

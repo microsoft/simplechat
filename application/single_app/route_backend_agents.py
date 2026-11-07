@@ -5,14 +5,16 @@ import uuid
 import logging
 import builtins
 from copy import deepcopy
-from flask import Blueprint, jsonify, request, current_app, session
+from azure.cosmos.exceptions import CosmosHttpResponseError
+from flask import Blueprint, jsonify, redirect, request, current_app, session
 from config import (
     cosmos_global_agents_container,
     cosmos_group_agents_container,
     cosmos_personal_agents_container,
 )
-from semantic_kernel_loader import get_agent_orchestration_types
+from semantic_kernel_loader import get_agent_orchestration_types, resolve_agent_config
 from functions_settings import get_settings, update_settings, get_user_settings, update_user_settings, sanitize_model_endpoints_for_frontend
+from functions_ai_connections import filter_model_endpoints_by_capability, supports_model_capability
 from functions_global_agents import get_global_agents, save_global_agent, delete_global_agent, update_global_agent_enabled
 from functions_personal_agents import get_personal_agents, ensure_migration_complete, save_personal_agent, delete_personal_agent
 from functions_group import require_active_group, assert_group_role
@@ -38,6 +40,8 @@ from functions_group_agents import (
 )
 from functions_debug import debug_print
 from functions_authentication import *
+from functions_authentication import _build_msal_app, _build_plugin_auth_response, _load_cache
+from foundry_agent_runtime import _resolve_foundry_authentication_type, _resolve_foundry_scope
 from functions_appinsights import log_event
 from functions_agent_catalog import (
     apply_agent_popular_promotions,
@@ -56,9 +60,140 @@ from functions_activity_logging import (
 )
 from functions_governance import ensure_governance_access, filter_governed_model_endpoints, upsert_item_policy
 from functions_documents import resolve_metadata_extraction_client
+from functions_agent_delegation import (
+    AgentDelegationConflictError,
+    resolve_delegation_agent,
+    resolve_delegation_group_scope,
+    update_agent_delegation_bindings,
+    validate_agent_delegation_bindings,
+)
+from functions_workspace_authoring import (
+    build_agent_editor_options,
+    editor_error_response,
+    ensure_editor_options_access,
+    personal_editor_response,
+)
+from functions_group_agent_policy import group_agent_write_roles, group_agents_available
+from functions_settings import is_agent_assistant_enabled
+from functions_editor_assist import EditorAssistError
+from functions_editor_assist_runtime import (
+    authorize_group_editor_scope,
+    editor_assist_error_response,
+    handle_editor_assist_request,
+    is_session_admin,
+)
 
 bpa = Blueprint('admin_agents', __name__)
 bpa.before_request(login_required_blueprint())
+
+
+@bpa.route('/api/agents/foundry-auth', methods=['GET'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+def initiate_delegated_foundry_auth():
+    """Persist current, server-derived consent scopes before redirecting to Entra."""
+    if set(request.args) != {'id', 'scope_type', 'scope_id'}:
+        return jsonify({'error': 'Select an available Foundry agent to sign in.'}), 400
+    user_id = get_current_user_id()
+    try:
+        settings = get_settings()
+        target = resolve_delegation_agent(
+            {key: request.args[key] for key in ('id', 'scope_type', 'scope_id')},
+            user_id=user_id, settings=settings,
+        )
+        kind = {
+            'aifoundry': 'azure_ai_foundry',
+            'new_foundry': 'new_foundry',
+            'foundry_workflow': 'foundry_workflow',
+        }.get(target.get('agent_type'))
+        if kind is None:
+            return jsonify({'error': 'This agent does not use Foundry sign-in.'}), 400
+        config = resolve_agent_config(
+            target, settings, group_scope_id=target.get('group_id'), execution_user_id=user_id,
+        )
+        foundry_settings = (config.get('other_settings') or {}).get(kind) or {}
+        if _resolve_foundry_authentication_type(foundry_settings, settings) != 'delegated_user':
+            return jsonify({'error': 'This agent does not use delegated-user sign-in.'}), 400
+        scope = _resolve_foundry_scope(foundry_settings, settings)
+        auth_response = _build_plugin_auth_response(
+            _build_msal_app(cache=_load_cache(), authority_override=get_graph_authority()),
+            session.get('user') or {}, [scope],
+            error='interactive_auth_required',
+            message='Sign in to use the selected Foundry agent.',
+        )
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to sign in for this agent.'}), 403
+    except LookupError:
+        return jsonify({'error': 'The selected agent is unavailable.'}), 404
+    except ValueError:
+        return jsonify({'error': 'The selected agent authentication configuration is invalid.'}), 400
+    except CosmosHttpResponseError as exc:
+        log_event(
+            "[AGENT_DELEGATION] Unable to prepare Foundry authentication.",
+            level=logging.ERROR, extra={'error_type': type(exc).__name__},
+        )
+        return jsonify({'error': 'Unable to prepare Foundry sign-in.'}), 503
+    response = redirect(auth_response['auth_url'])
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
+def _save_agent_action_bindings_response(scope_type, agent_id):
+    user_id = get_current_user_id()
+    try:
+        result = update_agent_delegation_bindings(
+            user_id, scope_type, agent_id, request.get_json(silent=True),
+            request.args.get('group_id') if scope_type == 'group' else None,
+        )
+        return jsonify(result)
+    except AgentDelegationConflictError:
+        return jsonify({'error': 'Agent actions changed. Reload the agent before saving.'}), 409
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to configure these agent calls.'}), 403
+    except LookupError:
+        return jsonify({'error': 'An agent or action is no longer available.'}), 404
+    except ValueError:
+        return jsonify({'error': 'Invalid Call agent action selection.'}), 400
+    except CosmosHttpResponseError as exc:
+        log_event(
+            "[AGENT_DELEGATION] Unable to save agent action bindings.",
+            level=logging.ERROR,
+            extra={'agent_id': agent_id, 'scope_type': scope_type, 'error_type': type(exc).__name__},
+        )
+        return jsonify({'error': 'Unable to save agent actions.'}), 503
+
+
+@bpa.route('/api/user/agents/<agent_id>/agent-actions', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+@enabled_required('allow_user_agents')
+def update_personal_agent_action_bindings(agent_id):
+    return _save_agent_action_bindings_response('personal', agent_id)
+
+
+@bpa.route('/api/group/agents/<agent_id>/agent-actions', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+@enabled_required('enable_semantic_kernel')
+@enabled_required('enable_group_workspaces')
+@enabled_required('allow_group_agents')
+def update_group_agent_action_bindings(agent_id):
+    return _save_agent_action_bindings_response('group', agent_id)
+
+
+@bpa.route('/api/admin/agents/<agent_id>/agent-actions', methods=['PATCH'])
+@swagger_route(security=get_auth_security())
+@login_required
+@admin_required
+@enabled_required('enable_semantic_kernel')
+def update_global_agent_action_bindings(agent_id):
+    return _save_agent_action_bindings_response('global', agent_id)
+
 
 AGENT_INSTRUCTION_FIELD_LIMIT = 6000
 AGENT_INSTRUCTION_OUTPUT_TOKEN_LIMIT = 1400
@@ -496,6 +631,15 @@ def _summarize_model_binding(endpoint_candidates, binding):
         }
 
     resolved_provider = str(endpoint_cfg.get('provider') or provider or '').strip().lower()
+    if not supports_model_capability(model_cfg, provider=resolved_provider or 'aoai'):
+        return {
+            'valid': False,
+            'state': 'model_incompatible',
+            'endpoint_id': endpoint_id,
+            'model_id': model_id,
+            'provider': resolved_provider,
+            'label': 'Saved model is not available for chat',
+        }
     endpoint_name = endpoint_cfg.get('name') or endpoint_cfg.get('connection', {}).get('endpoint') or endpoint_id
     model_name = model_cfg.get('displayName') or model_cfg.get('deploymentName') or model_cfg.get('modelName') or model_id
     scope_name = str(endpoint_cfg.get('scope') or '').strip().title()
@@ -842,13 +986,30 @@ def draft_agent_instructions():
     if agent_scope == 'group':
         if not settings.get('allow_group_agents', False):
             return jsonify({'error': 'Group agents are disabled.'}), 403
-        try:
-            require_active_group(
-                user_id,
-                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-            )
-        except (LookupError, PermissionError, ValueError) as exc:
-            return jsonify({'error': str(exc)}), 403
+        draft_group_id = request_data.get('group_id')
+        if draft_group_id:
+            # A named group authorizes membership of THAT group and its agent
+            # availability, never the account's active group (M4C §3).
+            try:
+                assert_group_role(
+                    user_id, str(draft_group_id),
+                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                )
+            except LookupError:
+                return jsonify({'error': 'The selected group was not found.'}), 404
+            except (PermissionError, ValueError):
+                return jsonify({'error': 'You do not have access to the selected group.'}), 403
+            available, reason = group_agents_available(user_id, settings)
+            if not available:
+                return jsonify({'error': reason}), 403
+        else:
+            try:
+                require_active_group(
+                    user_id,
+                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+                )
+            except (LookupError, PermissionError, ValueError) as exc:
+                return jsonify({'error': str(exc)}), 403
     elif agent_scope not in {'personal', 'global'}:
         return jsonify({'error': 'Invalid agent scope.'}), 400
     elif agent_scope == 'personal' and not settings.get('allow_user_agents', False):
@@ -898,6 +1059,42 @@ def draft_agent_instructions():
         )
         return jsonify({'error': 'Failed to draft instructions.'}), 500
 
+
+@bpa.route('/api/agents/assist', methods=['POST'])
+@swagger_route(security=get_auth_security())
+@login_required
+@user_required
+def assist_agent_editor():
+    """Ask AI for the agent editor: propose edits to the caller's unsaved agent draft.
+
+    Nothing is saved. The answer is a candidate draft the editor shows for review.
+    """
+    settings = get_settings()
+    user_id = get_current_user_id()
+    if not is_agent_assistant_enabled(settings):
+        return editor_assist_error_response(EditorAssistError('agent_assistant_disabled'), user_id=user_id)
+
+    def authorize(scope, group_id):
+        if scope == 'global':
+            if not is_session_admin(session.get('user')):
+                raise EditorAssistError('scope_forbidden')
+        elif scope == 'group':
+            authorize_group_editor_scope(
+                user_id, group_id,
+                write_roles=group_agent_write_roles(settings),
+                available=group_agents_available(user_id, settings),
+            )
+        elif not settings.get('allow_user_agents', False):
+            raise EditorAssistError('scope_forbidden')
+
+    return handle_editor_assist_request(
+        kind='agent',
+        user_id=user_id,
+        settings=settings,
+        authorize=authorize,
+        client_factory=lambda: _resolve_agent_instruction_client(settings),
+    )
+
 # === USER AGENTS ENDPOINTS ===
 @bpa.route('/api/user/agents', methods=['GET'])
 @swagger_route(
@@ -906,6 +1103,11 @@ def draft_agent_instructions():
 @login_required
 @user_required
 def get_user_agents():
+    if request.args.get('view') == 'editor':
+        return personal_editor_response(
+            'agents', get_current_user_id(), _prepare_personal_agent_for_editor,
+            migrate=ensure_migration_complete,
+        )
     settings = get_settings()
     if not settings.get('allow_user_agents', False):
         return jsonify([])
@@ -990,13 +1192,240 @@ def get_assigned_knowledge_catalog_route():
         if not is_admin:
             return jsonify({'error': 'Admin role required for global assigned knowledge.'}), 403
 
-    catalog = build_assigned_knowledge_catalog(
-        user_id=user_id,
-        agent_scope=agent_scope,
-        group_id=active_group_id,
-        is_admin=is_admin,
-    )
+    try:
+        catalog = build_assigned_knowledge_catalog(
+            user_id=user_id,
+            agent_scope=agent_scope,
+            group_id=active_group_id,
+            is_admin=is_admin,
+        )
+    except AssignedKnowledgeError:
+        return jsonify({'error': 'The document catalog is temporarily unavailable. Please retry.'}), 503
     return jsonify(catalog), 200
+
+def _find_personal_agent(user_id, agent_ref):
+    """Resolve a personal agent by id first, then by name.
+
+    Personal agents were addressed by name historically, but ``GET /api/user/agents`` can
+    merge personal and global agents and a name is editable, so an id is the only stable
+    handle. Both are accepted: the id keeps new clients correct, the name keeps the classic
+    interface working.
+    """
+    reference = str(agent_ref or '')
+    if not reference:
+        return None
+    agents = get_personal_agents(user_id)
+    for agent in agents:
+        if str(agent.get('id') or '') == reference:
+            return agent
+    for agent in agents:
+        if agent.get('name') == reference:
+            return agent
+    return None
+
+
+def _prepare_personal_agent_for_editor(user_id, agent, settings, existing):
+    return _prepare_personal_agent_payload(user_id, agent, settings, editor_existing=existing)
+
+
+def _prepare_personal_agent_payload(user_id, agent, settings, *, editor_existing=None):
+    """Clean, enrich and validate a single personal agent.
+
+    This is the per-agent half of the bulk save, factored out so the per-item create and
+    update routes cannot drift from it. Returns ``(cleaned_agent, error_response)`` where
+    exactly one of the two is None.
+    """
+    if not settings.get('allow_user_custom_endpoints', False) and editor_existing is None:
+        _strip_disallowed_local_custom_connection_fields(agent)
+
+    try:
+        cleaned_agent = sanitize_agent_payload(agent)
+    except AgentPayloadError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    cleaned_agent['is_global'] = False
+    cleaned_agent['is_group'] = False
+
+    try:
+        if editor_existing is None or (
+            cleaned_agent.get('other_settings', {}).get('assigned_knowledge')
+            != (editor_existing.get('other_settings') or {}).get('assigned_knowledge')
+        ):
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=user_id,
+                agent_scope='personal',
+                is_admin=False,
+            )
+    except AssignedKnowledgeError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    validation_error = validate_agent(cleaned_agent)
+    if validation_error:
+        return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
+
+    try:
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type='personal', scope_id=user_id,
+            settings=settings,
+            existing_agent=(
+                editor_existing if editor_existing is not None else (
+                    _find_personal_agent(user_id, cleaned_agent.get('id'))
+                    if cleaned_agent.get('actions_to_load') else None
+                )
+            ),
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403)
+    except (ValueError, LookupError):
+        return None, (jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400)
+
+    return cleaned_agent, None
+
+
+def _prepare_group_agent_payload(user_id, group_id, agent, settings, existing):
+    """Clean, enrich and validate one group agent for the immutable editor routes.
+
+    Mirrors ``_prepare_personal_agent_payload`` but binds every scope-sensitive
+    check to the named group: custom-connection permission comes from the group
+    flag, assigned knowledge resolves in group scope, and delegation bindings
+    validate against ``group_id`` (M4C §3). Returns ``(cleaned_agent, error_response)``
+    with exactly one set. The prepare signature matches ``apply_group_agent_write``.
+    """
+    if not settings.get('allow_group_custom_endpoints', False) and existing is None:
+        _strip_disallowed_local_custom_connection_fields(agent)
+
+    try:
+        cleaned_agent = sanitize_agent_payload(agent)
+    except AgentPayloadError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    cleaned_agent['is_global'] = False
+    cleaned_agent['is_group'] = True
+
+    try:
+        if existing is None or (
+            cleaned_agent.get('other_settings', {}).get('assigned_knowledge')
+            != (existing.get('other_settings') or {}).get('assigned_knowledge')
+        ):
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=user_id,
+                agent_scope='group',
+                group_id=group_id,
+                is_admin=False,
+            )
+    except AssignedKnowledgeError as exc:
+        return None, (jsonify({'error': str(exc)}), 400)
+
+    validation_error = validate_agent(cleaned_agent)
+    if validation_error:
+        return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
+
+    try:
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type='group', scope_id=group_id,
+            settings=settings, existing_agent=existing,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403)
+    except (ValueError, LookupError):
+        return None, (jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400)
+
+    return cleaned_agent, None
+
+
+def _prepare_global_agent_payload(user_id, agent, settings, existing):
+    """Clean, enrich and validate one global agent for the V2 admin editor routes.
+
+    Applies the rules the classic ``/api/admin/agents`` routes apply: the payload is
+    sanitized and marked global, assigned knowledge resolves in global scope with the
+    administrator's access, the schema validates, and Call agent attachments validate
+    against the global scope. Returns ``(cleaned_agent, error_response)`` with exactly
+    one set; the signature matches ``apply_global_agent_write``.
+    """
+    action = 'create' if existing is None else 'edit'
+    # A refusal carries a fixed message and keeps the reason in the server log, so no
+    # exception text reaches a response (CodeQL py/stack-trace-exposure).
+    try:
+        cleaned_agent = sanitize_agent_payload(agent)
+    except AgentPayloadError as exc:
+        log_event(
+            "Global agent save refused: invalid payload",
+            level=logging.WARNING,
+            extra={"scope": "global", "action": action, "error": str(exc)},
+        )
+        return None, (jsonify({'error': 'Invalid agent configuration.'}), 400)
+
+    cleaned_agent['is_global'] = True
+    cleaned_agent['is_group'] = False
+
+    try:
+        if existing is None or (
+            cleaned_agent.get('other_settings', {}).get('assigned_knowledge')
+            != (existing.get('other_settings') or {}).get('assigned_knowledge')
+        ):
+            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
+                cleaned_agent,
+                user_id=user_id,
+                agent_scope='global',
+                is_admin=True,
+            )
+    except AssignedKnowledgeError as exc:
+        log_event(
+            "Global agent save refused: assigned knowledge",
+            level=logging.WARNING,
+            extra={"scope": "global", "action": action, "error": str(exc)},
+        )
+        return None, (jsonify({'error': 'Invalid assigned knowledge configuration.'}), 400)
+
+    validation_error = validate_agent(cleaned_agent)
+    if validation_error:
+        return None, (jsonify({'error': f'Agent validation failed: {validation_error}'}), 400)
+
+    try:
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type='global', scope_id='global',
+            settings=settings, existing_agent=existing,
+        )
+    except PermissionError:
+        return None, (jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403)
+    except (ValueError, LookupError):
+        return None, (jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400)
+
+    return cleaned_agent, None
+
+
+def _create_personal_agent(user_id, payload):
+    """Create one personal agent from an object body."""
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    if payload.get('is_global'):
+        return jsonify({'error': 'Global agents cannot be created here.'}), 400
+
+    settings = get_settings()
+    cleaned_agent, error = _prepare_personal_agent_payload(user_id, dict(payload), settings)
+    if error:
+        return error
+
+    existing = _find_personal_agent(user_id, cleaned_agent.get('name'))
+    if existing:
+        return jsonify({'error': f"An agent named '{cleaned_agent.get('name')}' already exists."}), 409
+
+    saved = save_personal_agent(user_id, cleaned_agent) or cleaned_agent
+    log_agent_creation(
+        user_id=user_id,
+        agent_id=saved.get('id', ''),
+        agent_name=saved.get('name', ''),
+        agent_display_name=saved.get('display_name', saved.get('name', '')),
+        scope='personal',
+    )
+    log_event("User agent created", extra={"user_id": user_id, "agent_name": saved.get('name', '')})
+    return jsonify(saved), 201
+
 
 @bpa.route('/api/user/agents', methods=['POST'])
 @swagger_route(
@@ -1006,37 +1435,33 @@ def get_assigned_knowledge_catalog_route():
 @user_required
 @enabled_required("allow_user_agents")
 def set_user_agents():
+    """Create one agent, or replace the whole collection.
+
+    An object body creates a single agent and is the supported form. An array body replaces
+    every personal agent at once; it is retained because the classic interface still saves
+    that way, but it is deprecated -- concurrent editors overwrite each other's work, and a
+    dropped element is an unintended delete. New callers should use POST with an object,
+    PATCH for edits and DELETE for removals.
+    """
     user_id = get_current_user_id()
-    agents = request.json if isinstance(request.json, list) else []
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor)
+    payload = request.get_json(silent=True)
+
+    if isinstance(payload, dict):
+        return _create_personal_agent(user_id, payload)
+
+    agents = payload if isinstance(payload, list) else []
     settings = get_settings()
-    # If custom endpoints are not allowed, strip deployment settings for endpoint, key, and api-revision
-    if not settings.get('allow_user_custom_endpoints', False):
-        for agent in agents:
-            _strip_disallowed_local_custom_connection_fields(agent)
 
     # Remove any global agents before saving
     filtered_agents = []
     for agent in agents:
         if agent.get('is_global', False):
             continue  # Skip global agents
-        try:
-            cleaned_agent = sanitize_agent_payload(agent)
-        except AgentPayloadError as exc:
-            return jsonify({'error': str(exc)}), 400
-        cleaned_agent['is_global'] = False
-        cleaned_agent['is_group'] = False
-        try:
-            cleaned_agent = apply_assigned_knowledge_to_agent_payload(
-                cleaned_agent,
-                user_id=user_id,
-                agent_scope='personal',
-                is_admin=False,
-            )
-        except AssignedKnowledgeError as exc:
-            return jsonify({'error': str(exc)}), 400
-        validation_error = validate_agent(cleaned_agent)
-        if validation_error:
-            return jsonify({'error': f'Agent validation failed: {validation_error}'}), 400
+        cleaned_agent, error = _prepare_personal_agent_payload(user_id, agent, settings)
+        if error:
+            return error
         filtered_agents.append(cleaned_agent)
 
     # Enforce global agent only if per_user_semantic_kernel is False
@@ -1083,42 +1508,132 @@ def set_user_agents():
     log_event("User agents updated", extra={"user_id": user_id, "agents_count": len(filtered_agents)})
     return jsonify({'success': True})
 
-# Add a DELETE endpoint for user agents (if not present)
-@bpa.route('/api/user/agents/<agent_name>', methods=['DELETE'])
+@bpa.route('/api/user/agents/<agent_id>', methods=['GET'])
 @swagger_route(
     security=get_auth_security()
 )
 @login_required
 @user_required
 @enabled_required("allow_user_agents")
-def delete_user_agent(agent_name):
+def get_user_agent(agent_id):
+    """Return one personal agent, addressed by id or by name."""
     user_id = get_current_user_id()
-    # Get current agents from personal_agents container
-    agents = get_personal_agents(user_id)
-    agent_to_delete = next((a for a in agents if a['name'] == agent_name), None)
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor, agent_id)
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    agent = _find_personal_agent(user_id, agent_id)
+    if not agent or not _is_agent_allowed_for_user_selection(user_id, agent):
+        return jsonify({'error': 'Agent not found.'}), 404
+
+    agent['is_global'] = False
+    agent['is_group'] = False
+    agent.setdefault('agent_type', 'local')
+    return jsonify(agent), 200
+
+
+@bpa.route('/api/user/agents/<agent_id>', methods=['PATCH'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@user_required
+@enabled_required("allow_user_agents")
+def update_user_agent(agent_id):
+    """Apply a partial update to one personal agent.
+
+    Only the supplied keys change, so an editor that knows about a subset of the agent's
+    fields cannot blank the rest -- which is what the whole-collection POST does whenever a
+    client round-trips a stale copy.
+    """
+    user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor, agent_id)
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    updates = request.get_json(silent=True)
+    if not isinstance(updates, dict):
+        return jsonify({'error': 'Agent payload must be an object.'}), 400
+
+    existing = _find_personal_agent(user_id, agent_id)
+    if not existing:
+        return jsonify({'error': 'Agent not found.'}), 404
+
+    merged = dict(existing)
+    merged.update(updates)
+    # The stored document is keyed on id, so it is carried over rather than taken from the
+    # body. That is also what makes a rename safe: the name changes, the document does not
+    # move, and no orphan is left behind.
+    merged['id'] = existing.get('id')
+
+    settings = get_settings()
+    cleaned_agent, error = _prepare_personal_agent_payload(user_id, merged, settings)
+    if error:
+        return error
+
+    saved = save_personal_agent(user_id, cleaned_agent) or cleaned_agent
+    log_agent_update(
+        user_id=user_id,
+        agent_id=saved.get('id', ''),
+        agent_name=saved.get('name', ''),
+        agent_display_name=saved.get('display_name', saved.get('name', '')),
+        scope='personal',
+    )
+    log_event("User agent updated", extra={"user_id": user_id, "agent_name": saved.get('name', '')})
+    return jsonify(saved), 200
+
+
+@bpa.route('/api/user/agents/<agent_id>', methods=['DELETE'])
+@swagger_route(
+    security=get_auth_security()
+)
+@login_required
+@user_required
+@enabled_required("allow_user_agents")
+def delete_user_agent(agent_id):
+    """Delete one personal agent, addressed by id or by name."""
+    user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        return personal_editor_response('agents', user_id, _prepare_personal_agent_for_editor, agent_id)
+    # The collection save enforces governance; deleting is just as destructive, so it is
+    # enforced here too rather than left to the container helper, which does not check.
+    try:
+        ensure_governance_access('governance_user_agents', user_id)
+    except PermissionError as exc:
+        return jsonify({'error': str(exc)}), 403
+
+    agent_to_delete = _find_personal_agent(user_id, agent_id)
     if not agent_to_delete:
         return jsonify({'error': 'Agent not found.'}), 404
-    
-    # Prevent deleting the agent that matches global_selected_agent
-    settings = get_settings()
-    global_selected_agent = settings.get('global_selected_agent', {})
-    global_selected_name = global_selected_agent.get('name')
-    if agent_to_delete.get('name') == global_selected_name:
-        return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
-    
-    # Delete from personal_agents container
-    delete_personal_agent(user_id, agent_name)
-    
-    # Log agent deletion activity
-    log_agent_deletion(user_id=user_id, agent_id=agent_to_delete.get('id', agent_name), agent_name=agent_name, scope='personal')
 
-    # Check if there are any agents left and if they match global_selected_agent
-    remaining_agents = get_personal_agents(user_id)
-    if len(remaining_agents) > 0:
-        found = any(a.get('name') == global_selected_name for a in remaining_agents)
-        if not found:
-            return jsonify({'error': 'There must be at least one agent matching the global_selected_agent.'}), 400
-  
+    agent_name = agent_to_delete.get('name', agent_id)
+
+    # Checked before the delete, not after. The previous implementation deleted the agent
+    # and then returned 400 if the remaining agents did not match global_selected_agent,
+    # which reported failure for work that had already succeeded -- and did so on every
+    # delete whenever no global agent was configured, because the comparison was against
+    # None. The classic interface avoided this route entirely as a result.
+    settings = get_settings()
+    global_selected_agent = settings.get('global_selected_agent', {}) or {}
+    global_selected_name = global_selected_agent.get('name')
+    if global_selected_name and agent_name == global_selected_name:
+        return jsonify({'error': 'Cannot delete the agent set as global_selected_agent. Please set another agent as global first.'}), 400
+
+    if not delete_personal_agent(user_id, agent_to_delete.get('id') or agent_name):
+        return jsonify({'error': 'Agent not found.'}), 404
+
+    log_agent_deletion(
+        user_id=user_id,
+        agent_id=agent_to_delete.get('id', agent_name),
+        agent_name=agent_name,
+        scope='personal',
+    )
     log_event("User agent deleted", extra={"user_id": user_id, "agent_name": agent_name})
     return jsonify({'success': True})
 
@@ -1134,7 +1649,7 @@ def delete_user_agent(agent_name):
 def get_group_agents_route():
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1166,7 +1681,7 @@ def get_group_agents_route():
 def get_group_agent_route(agent_id):
     user_id = get_current_user_id()
     try:
-        active_group = require_active_group(user_id)
+        active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         assert_group_role(
             user_id,
             active_group,
@@ -1232,6 +1747,8 @@ def create_group_agent_route():
 
     try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
     except Exception as exc:
@@ -1306,6 +1823,8 @@ def update_group_agent_route(agent_id):
 
     try:
         saved = save_group_agent(active_group, cleaned_payload, user_id=user_id)
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except PermissionError as exc:
         return jsonify({'error': str(exc)}), 403
     except Exception as exc:
@@ -1414,6 +1933,19 @@ def set_user_selected_agent():
 @user_required
 def get_global_agent_settings_for_users():
     user_id = get_current_user_id()
+    if request.args.get('view') == 'editor':
+        try:
+            settings = get_settings()
+            can_manage_agents = ensure_editor_options_access(user_id, settings)
+            result = build_agent_editor_options(
+                user_id, settings,
+                build_combined_model_endpoints(settings, user_id=user_id) if can_manage_agents else [],
+            )
+            response = jsonify(result)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except Exception as exc:
+            return editor_error_response(exc)
     return get_global_agent_settings(include_admin_extras=False, user_id=user_id)
 
 @bpa.route('/api/group/agent/settings', methods=['GET'])
@@ -1851,6 +2383,10 @@ def add_agent():
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except Exception as e:
         log_event(f"Error adding agent: {e}", level=logging.ERROR)
         return jsonify({'error': 'Failed to add agent.'}), 500
@@ -1995,6 +2531,10 @@ def edit_agent(agent_name):
         # --- HOT RELOAD TRIGGER ---
         setattr(builtins, "kernel_reload_needed", True)
         return jsonify({'success': True})
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to attach these agent actions.'}), 403
+    except (ValueError, LookupError):
+        return jsonify({'error': 'Invalid or unavailable Call agent action selection.'}), 400
     except Exception as e:
         log_event(f"Error editing agent: {e}", level=logging.ERROR, exceptionTraceback=True)
         return jsonify({'error': 'Failed to edit agent.'}), 500
@@ -2143,7 +2683,10 @@ def build_combined_model_endpoints(settings, user_id=None, group_id=None):
             except PermissionError:
                 pass
 
-    return sanitize_model_endpoints_for_frontend(endpoints)
+    return sanitize_model_endpoints_for_frontend(
+        filter_model_endpoints_by_capability(endpoints, preserve_empty=True),
+        include_connection_details=False,
+    )
 
 
 def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id=None):    
@@ -2158,7 +2701,7 @@ def get_global_agent_settings(include_admin_extras=False, user_id=None, group_id
     if should_include_endpoints:
         combined_endpoints = build_combined_model_endpoints(settings, user_id=user_id, group_id=group_id)
 
-    effective_multi_flag = bool(multi_flag or combined_endpoints)
+    effective_multi_flag = bool(multi_flag or any(endpoint.get("models") for endpoint in combined_endpoints))
     
     # Return selected_agent and any other relevant settings for admin UI
     return jsonify({

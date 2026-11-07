@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for conversation summary model endpoint protocol routing.
-Version: 0.241.182
+Version: 0.261.107
 Implemented in: 0.241.182
 
 This test ensures export summary intros and Chat Details summary generation can
@@ -22,6 +22,8 @@ ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = ROOT / "application" / "single_app"
 sys.path.insert(0, str(APP_DIR))
 
+from functions_ai_connections import require_model_capability  # noqa: E402
+from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model  # noqa: E402
 from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -115,9 +117,13 @@ def load_summary_helpers():
         "get_user_groups": lambda user_id: [],
         "get_user_settings": lambda user_id: {"settings": {}},
         "infer_model_endpoint_protocol": infer_model_endpoint_protocol,
+        "get_model_endpoint_api_type": get_model_endpoint_api_type,
+        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "keyvault_model_endpoint_get_helper": lambda endpoint, *args, **kwargs: endpoint,
         "normalize_model_endpoints": normalize_model_endpoints_for_test,
         "resolve_authority": lambda auth_settings: None,
+        "require_model_capability": require_model_capability,
+        "build_model_endpoint_identity_headers": lambda *args, **kwargs: {},
     }
     exec(compile(helper_module, export_source_path, "exec"), namespace)
     return namespace

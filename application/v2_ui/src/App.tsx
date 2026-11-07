@@ -1,0 +1,329 @@
+// App.tsx
+// Loads bootstrap, then renders the shell and routes.
+
+import { lazy, Suspense, useEffect } from 'react';
+import { Navigate, Route, Routes, useLocation, useParams } from 'react-router-dom';
+import { LogIn, TriangleAlert } from 'lucide-react';
+import { AppShell } from './components/layout/AppShell';
+import { GlassPanel, Skeleton } from './components/ui/primitives';
+import { ErrorBoundary } from './components/ui/ErrorBoundary';
+import { useBootstrapStore } from './stores/bootstrapStore';
+import { useUserSettingsStore } from './stores/userSettingsStore';
+import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
+import { startImageApprovalTracking } from './lib/imageProposalResume';
+import { useNotificationRuntime } from './lib/useNotificationRuntime';
+import { useSafetyWarningRuntime } from './lib/useSafetyWarningRuntime';
+import { useWorkflowAlertRuntime } from './lib/useWorkflowAlertRuntime';
+import { useWorkflowRunTracker } from './lib/useWorkflowRunTracker';
+import { workflowRunTrackerShouldRun } from './lib/workflowRunTracker';
+import { restorePersistedRuns } from './stores/orchestrationStore';
+import { ChatPage } from './pages/ChatPage';
+import { HomePage } from './pages/HomePage';
+import { AdminSettingsPage } from './pages/AdminSettingsPage';
+import { AdminActionEditorPage, AdminAgentEditorPage } from './pages/AdminGlobalEditorPages';
+import { SettingsPage } from './pages/SettingsPage';
+import { WorkspacePage } from './pages/workspace/WorkspacePage';
+import { safeSameOriginUrl } from './lib/adminOperations';
+import { AgentsCatalogPage } from './pages/AgentsCatalogPage';
+import { GroupWorkspacePage } from './pages/GroupWorkspacePage';
+import { GroupDirectoryPage } from './pages/GroupDirectoryPage';
+import { PublicWorkspacePage } from './pages/PublicWorkspacePage';
+import { PublicDirectoryPage } from './pages/PublicDirectoryPage';
+import { clearWorkspaceEditorDrafts } from './lib/workspaceEditorDrafts';
+import { clearAgentAssistHandoffs, pruneAgentAssistHandoffs } from './lib/editorAssistHandoff';
+import { useEditorAssistStore } from './stores/editorAssistStore';
+import { useAssistThreadStore } from './stores/assistThreadStore';
+import { ContentReviewPage } from './pages/ContentReviewPage';
+import { TermsOfUsePage } from './pages/TermsOfUsePage';
+import { AccessRestrictedPage } from './pages/AccessRestrictedPage';
+import { ApprovalsPage } from './pages/ApprovalsPage';
+import { ControlCenterPage } from './pages/ControlCenterPage';
+import { ReviewCenterPage } from './pages/review/ReviewCenterPage';
+import { SupportLatestFeaturesPage } from './pages/SupportLatestFeaturesPage';
+import { SupportSendFeedbackPage } from './pages/SupportSendFeedbackPage';
+
+// Dev only: the workflow alert lab. Its one dynamic import is created only when
+// import.meta.env.DEV, which a production build replaces with false, so production never
+// references the module or emits a chunk for it, whatever the lab's files come to contain.
+// functional_tests/test_v2_alert_lab_excluded_from_build.py checks.
+const AlertLabPage = import.meta.env.DEV
+    ? lazy(() => import('./dev/AlertLabPage').then((lab) => ({ default: lab.AlertLabPage })))
+    : null;
+
+/** Focus and visibility changes refresh bootstrap at most this often. */
+const FOCUS_REFRESH_MIN_INTERVAL_MS = 15_000;
+
+function BootScreen() {
+    return (
+        <div className="flex h-full items-center justify-center p-6">
+            <div className="w-full max-w-sm space-y-3">
+                <Skeleton className="h-10 w-40" />
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-3/4" />
+                <span className="sr-only">Loading SimpleChat</span>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Admin Settings opened on one section, as `/admin/settings/<section id>`.
+ *
+ * Lets another page link to the exact setting it needs, such as the Control Center's dashboard
+ * chat requirements. An unknown section simply opens Admin Settings.
+ */
+function AdminSettingsSectionRoute() {
+    const { sectionId } = useParams<{ sectionId?: string }>();
+    return <AdminSettingsPage focusSection={sectionId} />;
+}
+
+function BootError({ message, authExpired }: { message: string; authExpired: boolean }) {
+    return (
+        <div className="flex h-full items-center justify-center p-6">
+            <GlassPanel edge className="max-w-md p-6">
+                <div className="flex items-start gap-3">
+                    {authExpired ? (
+                        <LogIn size={20} className="mt-0.5 shrink-0 text-accent" />
+                    ) : (
+                        <TriangleAlert size={20} className="mt-0.5 shrink-0 text-danger" />
+                    )}
+                    <div>
+                        <h1 className="font-semibold text-text-1">
+                            {authExpired ? 'Your session has expired' : 'Could not start SimpleChat'}
+                        </h1>
+                        <p className="mt-1 text-sm text-text-3">
+                            {authExpired
+                                ? 'Sign in again to continue where you left off.'
+                                : message}
+                        </p>
+                        <a
+                            href={authExpired ? '/login' : '/chats'}
+                            className="mt-4 inline-block rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover"
+                        >
+                            {authExpired ? 'Sign in' : 'Open the classic interface'}
+                        </a>
+                    </div>
+                </div>
+            </GlassPanel>
+        </div>
+    );
+}
+
+export function App() {
+    const { data, loading, error, authExpired, load } = useBootstrapStore();
+    const refreshBootstrapWhenStale = useBootstrapStore((state) => state.refreshWhenStale);
+    const loadUserSettings = useUserSettingsStore((state) => state.load);
+    const fontSize = useUserSettingsStore(
+        (state) => (state.settings.fontSizePreference as string) || 'm',
+    );
+    const location = useLocation();
+    // Every other call is refused until the terms are accepted, so this page loads nothing
+    // the shell needs and renders on its own.
+    const onTermsPage = location.pathname === '/terms-of-use';
+    // The same holds while an administrator has suspended or blocked the account: the server
+    // sends every V2 page here, and only this page's own call is answered.
+    const onAccessRestrictedPage = location.pathname === '/access-restricted';
+    const standalonePage = onTermsPage || onAccessRestrictedPage;
+
+    useEffect(() => {
+        clearWorkspaceEditorDrafts();
+        clearAgentAssistHandoffs();
+        for (const record of Object.values(useEditorAssistStore.getState().turns)) {
+            useAssistThreadStore.getState().forgetThread(record.threadKey);
+        }
+        useEditorAssistStore.getState().reset();
+    }, [data?.user?.id, authExpired]);
+
+    useEffect(() => {
+        pruneAgentAssistHandoffs(authExpired ? '' : data?.user?.id ?? '', location.pathname, location.search);
+    }, [data?.user?.id, authExpired, location.pathname, location.search]);
+
+    useEffect(() => {
+        initializeTheme();
+        if (standalonePage) {
+            return;
+        }
+        void load();
+        // Loaded at startup rather than when the settings page opens, because preferences
+        // shape the chat interface itself — the conversation list reads one of them.
+        // Advisory: a failure leaves defaults in place rather than blocking the app.
+        void loadUserSettings().then(() => {
+            hydrateUiPreferences(useUserSettingsStore.getState().settings);
+        });
+        // An image approval survives the page that started it, so this runs in the shell
+        // rather than in the chat page: a reload can land anywhere, and the approval still
+        // has to be picked back up and reported.
+        startImageApprovalTracking();
+        // Same reasoning for orchestration runs, which have been written to session storage
+        // since the feature shipped but were never read back, so a reload silently forgot a
+        // run that was still going. The restored record has no stream behind it; the run
+        // history fetched when the panel opens is what settles it.
+        restorePersistedRuns();
+    }, [load, loadUserSettings, standalonePage]);
+
+    /**
+     * Re-read the payload when the tab comes back to the front.
+     *
+     * Bootstrap decides what the interface offers -- which capabilities the composer draws,
+     * whether orchestration exists at all -- and it was otherwise fetched once at startup.
+     * The V2 admin surface refreshes it after its own saves, but the classic Admin Settings
+     * page is a different page in a different tab and cannot reach into this one. So the
+     * ordinary way to enable a feature left an open chat tab insisting the feature did not
+     * exist, with nothing on screen to explain why, until somebody thought to reload.
+     *
+     * Refreshing on re-focus closes that gap for every setting at once rather than for
+     * whichever one is being complained about. `refresh` is advisory -- it leaves the page
+     * alone if the request fails, and never shows the boot screen -- so the worst case of a
+     * spurious wake-up is one wasted request. Window switches arrive in bursts, though, and
+     * the payload takes seconds to build, so a refresh is skipped while one is running or
+     * one started in the last few seconds.
+     */
+    useEffect(() => {
+        if (standalonePage) {
+            return undefined;
+        }
+        const onVisible = () => {
+            if (document.visibilityState === 'visible') {
+                void refreshBootstrapWhenStale(FOCUS_REFRESH_MIN_INTERVAL_MS);
+            }
+        };
+        document.addEventListener('visibilitychange', onVisible);
+        // Also on window focus: switching between two windows of the same browser does not
+        // always change visibility, and moving from the admin page to the chat page is
+        // exactly that journey.
+        window.addEventListener('focus', onVisible);
+        return () => {
+            document.removeEventListener('visibilitychange', onVisible);
+            window.removeEventListener('focus', onVisible);
+        };
+    }, [refreshBootstrapWhenStale, standalonePage]);
+
+    useEffect(() => {
+        const title = data?.branding?.app_title;
+        if (title) {
+            document.title = title;
+        }
+    }, [data]);
+
+    /**
+     * Keep the tab icon in step with the stored favicon.
+     *
+     * The SPA shell is a build artefact, so the server rewrites its icon link on the way
+     * out. That covers a page load but not an upload made in this session: the static file
+     * keeps a stable name, so only the version in the URL tells the browser to fetch it
+     * again.
+     */
+    useEffect(() => {
+        const faviconUrl = data?.branding?.favicon_url;
+        const safeFaviconUrl = faviconUrl
+            ? safeSameOriginUrl(faviconUrl, window.location.origin)
+            : null;
+        if (!safeFaviconUrl) {
+            return;
+        }
+        const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+        if (link && link.getAttribute('href') !== safeFaviconUrl) {
+            link.setAttribute('href', safeFaviconUrl);
+        }
+    }, [data]);
+
+    // Applied from the stored preference on every load. The attribute name and its scale
+    // are shared with the classic interface, so a size chosen in either applies to both.
+    useEffect(() => {
+        document.documentElement.dataset.fontSize = fontSize;
+    }, [fontSize]);
+
+    // The bell's unread count and desktop notifications for finished replies. Started only
+    // once a session has loaded, and kept running across every page.
+    useNotificationRuntime(Boolean(data) && !error);
+    // Workflow alerts that ask to pop up. It listens to the bell's count rather than polling.
+    useWorkflowAlertRuntime(Boolean(data) && !error);
+    // Safety warnings an administrator sent, which stay on screen until acknowledged.
+    // Bootstrap says how many are waiting; they are read only when there are some.
+    useSafetyWarningRuntime(
+        data && !error && !standalonePage ? data.safety_warnings?.pending ?? 0 : null,
+        data,
+    );
+    // The saved workflows chats started: one tracker for the tab, for the run cards, the chat
+    // list's running tag and the results each run posts back to its chat.
+    useWorkflowRunTracker(Boolean(data) && !error && workflowRunTrackerShouldRun(data?.features));
+
+    if (onTermsPage) {
+        return <TermsOfUsePage />;
+    }
+
+    if (onAccessRestrictedPage) {
+        return <AccessRestrictedPage />;
+    }
+
+    if (loading) {
+        return <BootScreen />;
+    }
+
+    if (error || !data) {
+        return <BootError message={error ?? 'Unknown error'} authExpired={authExpired} />;
+    }
+
+    return (
+        <AppShell>
+            {/* Scoped to the content pane so a failed page never takes the rail with it,
+            and keyed on the route so navigating away clears the error. */}
+            <ErrorBoundary resetKey={location.pathname}>
+            <Routes>
+                <Route path="/" element={<HomePage />} />
+                <Route path="/chat" element={<ChatPage />} />
+                <Route path="/workspace" element={<WorkspacePage />} />
+                {/* Sections are real paths rather than a query parameter, so a link to one
+                    reads as what it is and survives being shared. */}
+                <Route path="/workspace/:section" element={<WorkspacePage />} />
+                <Route path="/workspace/:section/:resourceId" element={<WorkspacePage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/admin" element={<AdminSettingsPage />} />
+                {/* Feedback and safety review, one section each, with each section's pages
+                    and a record's editor as real paths. */}
+                <Route path="/admin/review" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section/:view" element={<ReviewCenterPage />} />
+                <Route path="/admin/review/:section/:view/:recordId" element={<ReviewCenterPage />} />
+                {/* The pages the Review center replaced, kept as links that still arrive. */}
+                <Route path="/admin/feedback-review" element={<Navigate to={{ pathname: '/admin/review/feedback/queue', search: location.search }} replace />} />
+                <Route path="/admin/safety-violations" element={<Navigate to={{ pathname: '/admin/review/safety/violations', search: location.search }} replace />} />
+                {/* The global editors return here, with their section in view. */}
+                <Route path="/admin/agents" element={<AdminSettingsPage focusSection="organization-agents-section" />} />
+                <Route path="/admin/actions" element={<AdminSettingsPage focusSection="actions-config" />} />
+                <Route path="/admin/settings/:sectionId" element={<AdminSettingsSectionRoute />} />
+                <Route path="/admin/agents/:resourceId" element={<AdminAgentEditorPage />} />
+                <Route path="/admin/actions/:resourceId" element={<AdminActionEditorPage />} />
+                <Route path="/control-center" element={<ControlCenterPage />} />
+                <Route path="/control-center/:section" element={<ControlCenterPage />} />
+                <Route path="/content-review" element={<ContentReviewPage />} />
+                {/* Categories and the selected request are real paths, so a notification
+                    or a shared link opens the exact request. */}
+                <Route path="/approvals" element={<ApprovalsPage />} />
+                <Route path="/approvals/:category" element={<ApprovalsPage />} />
+                <Route path="/approvals/:category/:itemId" element={<ApprovalsPage />} />
+                <Route path="/agents" element={<AgentsCatalogPage />} />
+                <Route path="/groups" element={<GroupWorkspacePage />} />
+                <Route path="/groups/directory" element={<GroupDirectoryPage />} />
+                <Route path="/groups/:groupId" element={<GroupWorkspacePage />} />
+                <Route path="/groups/:groupId/:section" element={<GroupWorkspacePage />} />
+                <Route path="/groups/:groupId/:section/:resourceId" element={<GroupWorkspacePage />} />
+                <Route
+                    path="/public"
+                    element={<PublicWorkspacePage />}
+                />
+                <Route path="/public/directory" element={<PublicDirectoryPage />} />
+                <Route path="/public/:workspaceId" element={<PublicWorkspacePage />} />
+                <Route path="/public/:workspaceId/:section" element={<PublicWorkspacePage />} />
+                <Route path="/public/:workspaceId/:section/:resourceId" element={<PublicWorkspacePage />} />
+                {/* The Support menu's destinations, offered from the rail. */}
+                <Route path="/support/latest-features" element={<SupportLatestFeaturesPage />} />
+                <Route path="/support/send-feedback" element={<SupportSendFeedbackPage />} />
+                {/* The workflow alert lab (dev/AlertLabPage.tsx). Never in a production build. */}
+                {import.meta.env.DEV && AlertLabPage ? <Route path="/dev/alert-lab" element={<Suspense fallback={<BootScreen />}><AlertLabPage /></Suspense>} /> : null}
+                <Route path="*" element={<Navigate to="/" replace />} />
+                </Routes>
+            </ErrorBoundary>
+        </AppShell>
+    );
+}

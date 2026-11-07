@@ -179,7 +179,7 @@ the change outside business hours.
 - Azure Managed Redis is unavailable in Azure Government and Azure operated by 21Vianet.
   Deployments in those clouds must set `redisCacheKind` to `classic`.
 - Azure Managed Redis does not support virtual network injection. Network isolation requires
-  Azure Private Link, which this deployer does not provision for Redis.
+   Azure Private Link. From **0.261.333** (deployer **1.0.34**, [#1765](https://github.com/microsoft/simplechat/issues/1765)), Bicep/AZD creates Redis private endpoints when private networking is enabled. Redis public access stays open during bootstrap and is disabled by the final `azd up` hook; separate provision/deploy workflows must perform equivalent lockdown after configuration succeeds. See the [networking guide](../../guides/enterprise-networking.md) for fresh and compact layouts.
 - Some Redis `INFO` counters shown in Redis Metrics are unavailable on the Redis Enterprise
   engine and render as "Not available".
 - Keyspace notifications are not available on Azure Managed Redis. SimpleChat does not use
