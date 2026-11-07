@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.421)**
+
+#### Bug Fixes
+
+*   **React V2 Dependency Pins And Visible Unicode Fixtures**
+    *   Pins frontend dependencies to their existing resolved versions without library upgrades or lockfile metadata churn.
+    *   Replaces three invisible screening-fixture joiners with visible source escapes while preserving the same Unicode selection coverage and runtime values.
+    *   Leaves the security checks and broader integration validation findings intact.
+    *   (Ref: `application/v2_ui/package.json`, `application/v2_ui/package-lock.json`, `test_v2_content_screening_logic.mjs`, `test_v2_static_security_fix.py`, [PR #1903](https://github.com/microsoft/simplechat/pull/1903))
+
 ### **(v0.261.420)**
 
 #### Bug Fixes
