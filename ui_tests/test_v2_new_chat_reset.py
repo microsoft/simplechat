@@ -1,7 +1,7 @@
 # test_v2_new_chat_reset.py
 """
 Browser regressions for starting a new chat in V2 while the open conversation is busy.
-Version: 0.261.415
+Version: 0.261.419
 Implemented in: 0.261.226
 
 Clicking New chat while an orchestration turn was planning or running kept the old turn's
@@ -397,7 +397,7 @@ def planning(page):
 
 def running_card(page):
     """The plan card's running row, the only progress shown while a plan runs."""
-    return page.get_by_role("button", name="Review the running plan")
+    return page.get_by_test_id("quiet-activity")
 
 
 def stop_button(page):

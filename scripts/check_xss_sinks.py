@@ -81,6 +81,7 @@ SAFE_ATTRIBUTE_PRIMITIVE_RE = re.compile(
 VENDOR_BROWSER_ASSET_PREFIXES = (
     'application/single_app/static/js/openlayers/',
     'application/single_app/static/js/simplemde/',
+    'application/single_app/static/js/mermaid/',
     'application/v2_ui/public/vendor/',
 )
 HTML_ASSIGNMENT_RE = re.compile(

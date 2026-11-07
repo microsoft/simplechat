@@ -322,6 +322,7 @@ function AgentEditorSession({ resourceId, scope, adapter }: { resourceId: string
             <AgentNotice error>{bootError || 'Editor options are unavailable.'} Any restored draft remains in memory.</AgentNotice>
             <div className="flex flex-wrap gap-2">
                 <GlassButton type="button" onClick={() => setBootRevision((value) => value + 1)}>Retry editor</GlassButton>
+                {/* xss-check: ignore reviewed: adapter.basePath comes from the fixed personal/global/group workbench factories. */}
                 <Link to={adapter.basePath} className="rounded-lg px-3 py-2 text-sm text-accent">Back to agents</Link>
             </div>
         </div>

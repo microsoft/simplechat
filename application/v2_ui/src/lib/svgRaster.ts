@@ -142,6 +142,7 @@ export function svgElementToPngDataUri(svg: SVGElement, background: string): Pro
 /** Trigger a download of a data URI under the given file name. */
 export function downloadDataUri(dataUri: string, fileName: string) {
     const link = document.createElement('a');
+    // xss-check: ignore reviewed: the sole caller passes the PNG data URI returned by svgElementToPngDataUri, never an input URL.
     link.href = dataUri;
     link.download = fileName;
     link.click();

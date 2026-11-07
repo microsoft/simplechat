@@ -355,6 +355,7 @@ export function GroupWorkspacePage() {
         if (!externalTarget || !groupId) return;
         let mounted = true;
         void useGroupWorkspaceStore.getState().activate(groupId, () => true).then((result) => {
+            // xss-check: ignore reviewed: externalTarget is set only to local classic workspace literals with encoded group ids.
             if (mounted && result.status === 'activated') window.location.assign(externalTarget);
         }).catch((cause: unknown) => {
             if (mounted && !(cause instanceof WorkspaceRequestSuperseded)) {

@@ -1,7 +1,7 @@
 # test_v2_onenote_uploads.py
 """
 Functional coverage for the native OneNote port to React v2.
-Version: 0.261.142
+Version: 0.261.419
 Implemented in: 0.261.142
 
 Execute the shared format catalog and v2 projection with isolated storage state.
@@ -109,6 +109,14 @@ class V2OneNoteUploadTests(unittest.TestCase):
             value for key, value in zip(payload.keys, payload.values)
             if isinstance(key, ast.Constant) and key.value == "workspace_uploads"
         )
+        if isinstance(projection, ast.Name):
+            bindings = [
+                node.value for node in ast.walk(bootstrap)
+                if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == projection.id for target in node.targets)
+            ]
+            self.assertEqual(len(bindings), 1)
+            projection = bindings[0]
         self.assertEqual(ast.unparse(projection), "_build_workspace_uploads(public_settings)")
 
     def test_real_adapter_cold_import_never_initializes_the_app(self):
@@ -156,13 +164,18 @@ if functions_onenote.OneNoteExtractionError("runtime_unavailable").code != "runt
             final_stage.index("COPY --from=v2uibuilder"),
         )
         ignored = (ROOT / ".dockerignore").read_text(encoding="utf-8")
+        ignored_paths = {
+            line.strip().rstrip("/")
+            for line in ignored.splitlines()
+            if line.strip() and not line.lstrip().startswith("#")
+        }
         for path in (
             "application/v2_ui/node_modules/",
             "application/single_app/static/v2/",
             "application/single_app/native/onenote_extractor/target/",
             "application/single_app/native/onenote_extractor/bin/",
         ):
-            self.assertIn(path, ignored)
+            self.assertIn(path.rstrip("/"), ignored_paths)
         self.assertIn("!LICENSE", ignored)
 
 

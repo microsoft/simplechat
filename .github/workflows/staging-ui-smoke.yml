@@ -7,7 +7,7 @@ on:
   pull_request:
     branches:
       - Staging
-      - paullizer-react-v2-ui
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
     paths:
       - .github/workflows/staging-ui-smoke.yml
       - ui_tests/test_staging_chat_smoke.py

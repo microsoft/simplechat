@@ -1,7 +1,7 @@
 # test_workspace_metadata_search_sync_toast.py
 """
 UI test for saving workspace document metadata with a queued search index sync.
-Version: 0.261.268
+Version: 0.261.419
 Implemented in: 0.261.268
 
 This test ensures the classic personal workspace Save Metadata dialog sends a single PATCH
@@ -151,6 +151,9 @@ def test_workspace_metadata_save_reports_queued_search_sync():
 
     assert len(patch_payloads) == 1, f"Expected one metadata PATCH, got {patch_payloads!r}."
     assert patch_payloads[0].get("title") == "Large XML Export (2026)"
+    assert "_metadata_chunk_sync" not in patch_payloads[0], (
+        "The browser must not drive chunk sync continuations; the server queues the sync."
+    )
 
 
 @pytest.mark.ui

@@ -21,6 +21,7 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import {
     isGroupVisible,
+    normalizeNavigationUrl,
     toCustomPageLinks,
     toExternalLinks,
     type NavExtraLink,
@@ -34,7 +35,7 @@ import {
 function NavAnchor({ link, collapsed }: { link: NavExtraLink; collapsed: boolean }) {
     return (
         <a
-            href={link.href}
+            href={normalizeNavigationUrl(link.href)}
             title={link.label}
             {...(link.newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
             className={clsx(

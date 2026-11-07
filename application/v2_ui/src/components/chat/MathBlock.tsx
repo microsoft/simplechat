@@ -168,6 +168,7 @@ function MathExpression({ tex, display }: { tex: string; display: boolean }) {
             // Sanitized immediately above by DOMPurify, after KaTeX rendered it with
             // `trust: false`. KaTeX positions glyphs with inline styles, so this markup
             // cannot be expressed as React children.
+            // xss-check: ignore reviewed: render() and its cache only return DOMPurify-sanitized KaTeX output with trust disabled.
             dangerouslySetInnerHTML={{ __html: state.html }}
             className={display ? 'block overflow-x-auto py-1' : undefined}
         />

@@ -1,7 +1,7 @@
 # test_v2_orchestration_planning_persistence.py
 """
 Browser regressions for durable initial Orchestrate turns.
-Version: 0.261.415
+Version: 0.261.419
 Implemented in: 0.261.415
 
 The production controller, stores, SSE reader, message list, composer, and CSS run
@@ -118,7 +118,9 @@ class DurablePlanningApi(planning_tests.PlanningApi):
         return events
 
     def make_record(self, mode="auto"):
-        self.plan = editor_tests.make_plan(CONVERSATION, self.turn["turn_id"], mode)
+        self.plan = editor_tests.make_plan(
+            CONVERSATION, self.turn["turn_id"], mode, revision=self.request.get("revision", 0),
+        )
         if mode in ("auto", "timed"):
             self.plan["approval"]["state"] = "approved"
             self.plan["status"] = "approved"
@@ -338,6 +340,7 @@ def test_clarification_is_restored_and_answered_after_reload(durable_ui):
     assert submitted["message"] == PROMPT
     assert submitted["elicitation_id"] == "saved-style-question"
     assert submitted["elicitation_response"]["content"] == {"style": "A concise explanation."}
+    assert api.calls(editor_tests.RUN) == []
     expect(page.get_by_text(PROMPT, exact=True)).to_have_count(1)
 
 

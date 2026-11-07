@@ -216,6 +216,7 @@ export function PublicWorkspacePage() {
         navigate(`${location.pathname}${params.size ? `?${params}` : ''}`, { replace: true });
     }, [location.pathname, location.search, navigate]);
 
+    // xss-check: ignore reviewed: callers pass only the fixed local CLASSIC_WORKSPACE_HREF.
     const openClassic = useCallback((href: string) => { window.location.assign(href); }, []);
 
     // The Settings danger zone hands the delete to the classic manage page. As the group page does, the
@@ -231,6 +232,7 @@ export function PublicWorkspacePage() {
         if (!classicTarget || !workspaceId) return;
         let mounted = true;
         void PUBLIC_WORKSPACES.setActive(workspaceId).then(() => {
+            // xss-check: ignore reviewed: classicTarget is a local manage-page path built with an encoded workspace id.
             if (mounted) window.location.assign(classicTarget);
         }).catch((cause: unknown) => {
             if (!mounted) return;

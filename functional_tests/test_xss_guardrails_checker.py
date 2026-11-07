@@ -2,7 +2,7 @@
 # test_xss_guardrails_checker.py
 """
 Functional test for XSS PR guardrail checker.
-Version: 0.261.203
+Version: 0.261.419
 Implemented in: 0.241.021
 V2 React/TypeScript coverage added in: 0.261.203 (#1571)
 
@@ -393,6 +393,11 @@ def test_typescript_file_types_route_to_the_right_rules() -> None:
     require(module.is_skipped_vendor_browser_asset(vendor_file), 'V2 vendored browser assets must be skipped')
     require(not module.is_skipped_vendor_browser_asset(source_file), 'V2 source files must not be skipped')
     require(module.inspect_file(vendor_file) == [], 'inspect_file must skip V2 vendored assets before reading them')
+    classic_mermaid = module.REPO_ROOT / 'application' / 'single_app' / 'static' / 'js' / 'mermaid' / 'mermaid-11.17.2.min.js'
+    classic_source = module.REPO_ROOT / 'application' / 'single_app' / 'static' / 'js' / 'chat' / 'chat-inline-diagrams.js'
+    require(module.is_skipped_vendor_browser_asset(classic_mermaid), 'The pinned classic Mermaid distribution is vendor code')
+    require(module.inspect_file(classic_mermaid) == [], 'Classic Mermaid must use the existing vendor boundary')
+    require(not module.is_skipped_vendor_browser_asset(classic_source), 'First-party Mermaid wrappers must still be scanned')
 
 
 def test_typescript_suppression_requires_a_justification() -> None:

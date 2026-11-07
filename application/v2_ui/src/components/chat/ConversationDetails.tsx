@@ -637,6 +637,7 @@ export function ConversationDetails({ onClose }: { onClose: () => void }) {
                                             <li key={source.label} className="text-xs">
                                                 {source.href ? (
                                                     <a
+                                                        // xss-check: ignore reviewed: webSources() only supplies href for an anchored HTTP(S) URL.
                                                         href={source.href}
                                                         target="_blank"
                                                         rel="noopener noreferrer"

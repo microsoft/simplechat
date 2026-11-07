@@ -29,6 +29,7 @@ import {
 import { currentConversationEpoch, useChatStore, type ComposerOptions } from '../../stores/chatStore';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { selectActiveTurnRunInFlight, selectPlan, useOrchestrationStore } from '../../stores/orchestrationStore';
+import { isOrchestrationRunWaiting } from '../../lib/orchestration';
 import { useCollaborationStore } from '../../stores/collaborationStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { sendCollaborationTyping } from '../../lib/collaboration';
@@ -1530,8 +1531,15 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
         stopTyping();
     };
 
-    const activePlanInFlight = useOrchestrationStore((state) =>
-        selectActiveTurnRunInFlight(state, activeConversationId ?? ''));
+    // A durable wait stays tracked, but does not own the composer's stream or Stop button.
+    const activePlanInFlight = useOrchestrationStore((state) => {
+        const conversationId = activeConversationId ?? '';
+        const turnId = state.activeTurns[conversationId];
+        const plan = turnId ? selectPlan(state, conversationId, turnId) : null;
+        const recovery = plan ? state.runRecovery[plan.run_id] : undefined;
+        const waiting = recovery ? isOrchestrationRunWaiting(recovery) : plan?.status === 'waiting';
+        return selectActiveTurnRunInFlight(state, conversationId) && !waiting;
+    });
     /** Stop the visible stream's owner, not another orchestration running in the background. */
     const handleStop = () => {
         if (activeConversationId && (useChatStore.getState().orchestrationSurface || (!streaming && activePlanInFlight))

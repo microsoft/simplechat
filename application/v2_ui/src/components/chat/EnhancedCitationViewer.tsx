@@ -147,6 +147,7 @@ function PdfViewer({ docId, location, onFail }: ViewerProps) {
             */}
             <iframe
                 title="Cited document"
+                // xss-check: ignore reviewed: objectUrl is created by URL.createObjectURL from the authenticated PDF blob, never caller text.
                 src={`${objectUrl}#page=${subPage}`}
                 className="min-h-0 w-full flex-1 border-0"
             />

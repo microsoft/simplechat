@@ -348,7 +348,7 @@ CLASSIFICATION_BANNER_DEFAULT_TEXT_COLOR = "#ffffff"
 
 # Schemes permitted for administrator-configured navigation links. These render
 # into an anchor href, so allowing arbitrary schemes would let a saved link
-# carry javascript: into every page's navigation.
+# execute a script from every page's navigation.
 EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
 
 # Placeholder a stored secret is replaced with before it is sent to a browser.
@@ -423,7 +423,7 @@ DOCUMENT_ACTION_MERGE_WORKFLOW_DEFAULT_ROWS = 1_000_000
 
 # Schemes permitted for administrator-configured navigation links. These render
 # into an anchor href, so allowing arbitrary schemes would let a saved link
-# carry javascript: into every page's navigation.
+# execute a script from every page's navigation.
 EXTERNAL_LINK_ALLOWED_SCHEMES = ("http", "https")
 
 # Front Door terminates TLS and rewrites the host, so the value here becomes the

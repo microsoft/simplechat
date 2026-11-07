@@ -388,14 +388,17 @@ export function alertLabScenarioAlerts(id: AlertLabScenarioId, stamp: string, no
                 priority: 'high',
                 category: 'alert',
                 title: '<script>alert("title")</script> Reset your password <a href="https://evil.example">here</a>',
+                // xss-check: ignore reviewed: intentionally hostile fixture text exercises the inert/sanitized alert renderer.
                 summary: 'Quoted from an email: <img src=x onerror="alert(\'summary\')"> Click [this link](javascript:alert(1)) to claim.',
                 detail: '<iframe src="https://evil.example"></iframe>\n<style>body{display:none}</style>\n**Not bold**, `not code`.',
                 // Not the runner's log line, so the card shows it, as text.
                 triggerReason: 'The rule "Phishing words" matched: <em>reset your password</em>.',
                 rules: [{ name: '<u>Phishing</u> words', severity: 'high', reason: '"Click here" and "reset your password" appear together.' }],
+                // xss-check: ignore reviewed: hostile fixture values are rendered as text, not navigation or HTML.
                 enrichments: ['<b>chip</b>', 'javascript:alert(1)'],
                 links: [
                     { label: 'Open <b>site</b>', url: 'https://evil.example/phish' },
+                    // xss-check: ignore reviewed: this deliberate unsafe fixture proves alert links reject executable schemes.
                     { label: 'Run script', url: 'javascript:alert(1)' },
                     conversationLink('Open conversation', `lab-conv-hostile-${stamp}`),
                 ],

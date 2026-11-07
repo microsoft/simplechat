@@ -2,6 +2,9 @@
 
 Fixed/Implemented in version: **0.241.021**
 
+Latest integration update: **0.261.419**, tracked in
+`application/single_app/config.py`.
+
 ## Overview
 
 This feature adds a prevention-focused XSS guardrail for pull requests into Development. It is designed to catch new browser-side sink regressions before they merge, especially when code arrives from contributors who are not using the local Copilot or CLAUDE instruction set.
@@ -49,7 +52,7 @@ It also explicitly blocks the sink patterns that caused the recurring XSS findin
 Key behaviors:
 
 - Scans only supported source files: `.js`, `.html`, and `.py`, plus the TypeScript-family files `.ts`, `.tsx`, `.jsx`, and `.mjs` described below
-- Skips vendored browser assets, such as the classic OpenLayers and SimpleMDE copies and the V2 libraries under `application/v2_ui/public/vendor/`
+- Skips vendored browser assets, such as the classic OpenLayers, SimpleMDE, and pinned Mermaid copies and the V2 libraries under `application/v2_ui/public/vendor/`
 - Supports pull-request diff mode through `--base-sha` and `--head-sha`
 - Limits checks to added lines in CI when revision metadata is provided
 - Emits GitHub Actions error annotations for each blocking issue
@@ -121,6 +124,7 @@ The classic regexes also match JSX text, comments and type annotations as if the
 | `.ts`, `.mjs` | The TypeScript pipeline with JSX disabled, so `<T>` generics and comparisons are not read as tags. |
 | `.d.ts`, `.d.mts`, `.d.cts` | Skipped. Declaration files hold types only. |
 | `application/v2_ui/public/vendor/` | Skipped. These are vendored minified builds of Chart.js, DOMPurify, KaTeX and Mermaid. |
+| `application/single_app/static/js/mermaid/` | Skipped pinned classic Mermaid distribution. First-party chat/rendering wrappers remain scanned. |
 
 The V2 build output in `application/single_app/static/v2` is not tracked, so it is never scanned.
 

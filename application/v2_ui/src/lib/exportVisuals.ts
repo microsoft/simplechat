@@ -193,6 +193,7 @@ export async function fetchConversationVisualSources(
  * defeat the point of attaching it; the host is instead positioned far outside the viewport.
  */
 async function rasterizeSvgMarkup(markup: string): Promise<string> {
+    // xss-check: ignore reviewed: the sole caller supplies renderMermaidSvgForExport's strict, DOMPurify-sanitized output.
     const parsed = new DOMParser().parseFromString(markup, 'image/svg+xml');
     const svg = parsed.documentElement;
     if (!svg || svg.nodeName === 'parsererror' || svg.nodeName.toLowerCase() !== 'svg') {

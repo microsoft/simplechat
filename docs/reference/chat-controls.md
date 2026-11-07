@@ -1062,6 +1062,11 @@ saved effective plan, not the current composer selections or a new planner call.
 | Check saved status | Reconciles the displayed state with the existing server execution, without running or retrying work. | Check a waiting computation, or find out whether work finished after connection loss. | A waiting attempt, execution-status error, or recovery-detail error |
 | Stop execution | Requests server cancellation of the potentially active attempt. | Stop work even when it is waiting for retained computation or its stream was interrupted. | A waiting or interrupted connection with a tracked in-flight attempt |
 
+Since **0.261.419**, restoring a durable waiting run does not replace the
+composer's Send control with Stop when no reply is streaming. The run stays
+tracked in the plan, where **Check saved status** and **Stop execution** remain
+available. This does not approve or start another execution.
+
 Steps restored from checkpoints show **Reused saved result**. Retry is always
 manual, including when normal approval is Auto or timed. An older attempt cannot
 create a competing retry after a newer attempt has been prepared.

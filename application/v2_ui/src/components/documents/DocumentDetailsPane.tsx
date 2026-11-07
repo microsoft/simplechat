@@ -436,6 +436,7 @@ function DocumentProvenance({
         <Section title="Origin">
             {loading ? <p role="status" className="text-xs text-text-3">Checking where this document came from...</p>
                 : summary?.href ? (
+                    // xss-check: ignore reviewed: every reader passes origin_summary through readDocumentOriginSummary and its strict same-origin route allowlist.
                     <Link to={summary.href} className="text-xs font-medium break-words text-accent underline underline-offset-2">
                         {text}
                     </Link>
