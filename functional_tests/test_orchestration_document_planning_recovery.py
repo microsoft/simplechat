@@ -2,9 +2,10 @@
 #!/usr/bin/env python3
 """
 Functional regressions for picked-document planning and debug diagnostics.
-Version: 0.261.415
+Version: 0.261.419
 Implemented in: 0.261.413
 Server-owned Auto handoff integration: 0.261.415
+Shared draft-contract recovery integration: 0.261.419
 
 Real authenticated routes, source metadata, planner, validation and logger
 serialization run with external model/storage I/O isolated. Diagnostics must
@@ -177,7 +178,7 @@ def test_debug_options_show_exact_owner_rule_before_defaulting(planning, caplog,
 
 def test_diagnostic_hashes_survive_serialization_without_expanding_text_allowlists(planning):
     fingerprint = hashlib.sha256(PRIVATE.encode()).hexdigest()
-    for key in ("document_id_hash", "planner_binding_hash", "document_set_hash"):
+    for key in ("document_id_hash", "planner_binding_hash", "document_set_hash", "consumer_run_id_hash"):
         valid = planning.telemetry._build_logger_extra("Diagnostic", {key: fingerprint})
         invalid = planning.telemetry._build_logger_extra("Diagnostic", {key: PRIVATE})
         assert valid[f"sc_{key}"] == fingerprint
@@ -371,9 +372,9 @@ def test_every_failure_path_shares_exactly_one_correction(planning, caplog, firs
     assert terminal.sc_attempt == 2 and terminal.sc_stage == stage
 
 
-def test_unrelated_malformed_arguments_are_not_made_repairable(planning):
+def test_unavailable_capabilities_are_not_made_repairable(planning):
     invalid = proposal([LEFT])
-    invalid["steps"][0]["arguments"][PRIVATE] = PRIVATE
+    invalid["steps"][0]["capability_id"] = "unavailable_capability"
     with pytest.raises(planning.harness.planner.PlannerError):
         run_plan(planning, [invalid, proposal([LEFT])])
     assert len(planning.harness.model_calls) == 1

@@ -57,6 +57,26 @@ From **0.261.399**, workspace Excel files also expose native workbook properties
 
 See [Document accessibility, structure, and comment extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for what is extracted for each file type.
 
+### Selected sources in Orchestrate
+
+Implemented in version: **0.261.419** (`application/single_app/config.py`).
+When an orchestration plan uses this action for selected workspace files, it can
+declare their exact IDs as `arguments.document_ids`. Inspect the Run view's source
+chips before approval; its existing narrowing controls can remove individual
+files from that step.
+
+This declaration is enforced on the server, not just added to a model instruction.
+Native metadata, chunk, summary and search reads stay within the bound files and
+the action's configured workspace restrictions. Omitting an ID filter on a tool
+search does not broaden it to the whole workspace.
+
+No separate Search or Analyze step is required solely to make native inspection
+count as selected-source work. Supported native facts and citations travel through
+the retained action result to the answer, including explicit inspection limits.
+A denied or unavailable report is not a successful inspection; a missing property
+inside an available report must still be distinguished from an inaccessible one.
+This does not add native-report access for chat-only attachments.
+
 ### Paged Excel inspection
 
 Implemented in version: **0.261.408** (`application/single_app/config.py`).

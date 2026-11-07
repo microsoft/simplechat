@@ -30,7 +30,7 @@ from copy import deepcopy
 from jsonschema import Draft202012Validator
 
 from content_screening.contracts import ScreeningError
-from functions_appinsights import log_event, workflow_log_context
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE, normalize_inline_chart_markdown
 from functions_diagram_operations import MERMAID_BLOCK_LANGUAGE
 from functions_document_citations import build_inline_citation_marker
@@ -624,6 +624,17 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     if source_cov is not None:
                         entry['source_coverage'] = source_cov
                 inputs[name] = entry
+        if is_debug_enabled():
+            log_event('[ORCHESTRATION_EXECUTOR] Composition input contract verified.', extra={
+                **workflow_log_context(
+                    conversation_id=producer.conversation_id, turn_id=getattr(context, 'turn_id', None),
+                    run_id=producer.run_id, step_id=producer.step_id,
+                ),
+                'stage': 'compose_inputs', 'input_count': len(readers),
+                'document_citation_count': sum(len(entry['document_citations']) for entry in inputs.values()),
+                'declared_output_count': len(step['outputs']),
+                'available_information': uses_available_information(step),
+            })
         # A saved workflow's result reaches the model only as fenced, untrusted notes, read again
         # for this call; the retained value it replaces never does. That includes a run the plan
         # waited for, which only a setting-gated plan can have compose read.
@@ -1061,6 +1072,16 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         )
         if completeness_report:
             result['task_completeness'] = completeness_report
+        if is_debug_enabled():
+            log_event('[ORCHESTRATION_EXECUTOR] Prepared content retained.', extra={
+                **workflow_log_context(
+                    conversation_id=producer.conversation_id, turn_id=getattr(context, 'turn_id', None),
+                    run_id=producer.run_id, step_id=producer.step_id,
+                ),
+                'stage': 'compose_retained', 'output_count': len(named), 'input_count': len(readers),
+                'completeness_check_enabled': check_policy['enabled'],
+                'available_information': uses_available_information(step), 'partial': partial,
+            })
         return result
     except MixedSourceCancellationError:
         raise

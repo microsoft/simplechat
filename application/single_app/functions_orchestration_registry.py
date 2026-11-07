@@ -1472,6 +1472,9 @@ CAPABILITY_REGISTRY = (
             "The step can use the selected action's functions within execution limits. "
             "Use execution_intent operate for requested operations, following the action's policies. "
             "Bind earlier research or prepared content as named inputs. Do not duplicate agent work."
+            " When the action catalog says document_binding_supported, bind selected workspace "
+            "documents in arguments.document_ids. Native metadata inspection can then satisfy "
+            "the selected-source requirement without a redundant Search or Analyze step."
         ),
         'settings_gates': (
             'enable_chat_orchestration',
@@ -1497,6 +1500,15 @@ CAPABILITY_REGISTRY = (
                 'execution_intent': {
                     'type': 'string', 'enum': ['gather', 'operate'], 'default': 'gather',
                     'description': 'Gather information, or perform the requested operation under existing policies.',
+                },
+                'document_ids': {
+                    'type': 'array', 'minItems': 1, 'maxItems': 100, 'uniqueItems': True,
+                    'items': {'type': 'string', 'minLength': 1},
+                    'description': (
+                        'Exact selected workspace document IDs. Only an action whose catalog says '
+                        'document_binding_supported may use this field. Every read is confined to '
+                        'these sources and the action/user permissions.'
+                    ),
                 },
                 'visuals': {
                     'type': 'array', 'items': {'type': 'string', 'enum': [VISUAL_CHART]},
@@ -2421,6 +2433,28 @@ def build_planner_capability_projection(capabilities):
     """
     projection = []
     for capability in capabilities or ():
+        outputs = capability['result_outputs']
+        optional_outputs = capability.get('optional_result_outputs', {})
+        variants = capability.get('result_output_variants')
+        defaults = {}
+        if capability['id'] == CAPABILITY_DOCUMENT_ANALYZE:
+            # The analysis owner reaches bootstrap dependencies; load it only for planning,
+            # not while registering capabilities or reading their administrative projection.
+            from functions_document_analysis_results import narrative_analysis_options
+
+            defaults = {'analysis_options': narrative_analysis_options()}
+            outputs, optional_outputs = get_capability_result_outputs(capability, defaults)
+            variants = []
+            for options in (
+                {key: defaults['analysis_options'][key] for key in ('version', 'mode')},
+                {'version': 'analysis-options-v2', 'mode': 'reconciled_records'},
+                {'version': 'analysis-options-v1', 'mode': 'narrative_findings'},
+            ):
+                required, optional = get_capability_result_outputs(capability, {'analysis_options': options})
+                variants.append({
+                    'analysis_options': options,
+                    'result_outputs': required, 'optional_result_outputs': optional,
+                })
         projection.append({
             'id': capability['id'],
             'label': capability['label'],
@@ -2441,11 +2475,11 @@ def build_planner_capability_projection(capabilities):
             **({'optional_inputs_supported': True} if capability.get('optional_inputs_supported') else {}),
             **({'required_result_inputs': list(capability['required_result_inputs'])}
                if capability.get('required_result_inputs') else {}),
-            'result_outputs': capability['result_outputs'],
-            'optional_result_outputs': capability.get('optional_result_outputs', {}),
+            'result_outputs': outputs,
+            'optional_result_outputs': optional_outputs,
             'result_output_kinds': list(capability.get('result_output_kinds') or ()),
-            **({'result_output_variants': capability['result_output_variants']}
-               if 'result_output_variants' in capability else {}),
+            **({'default_arguments': defaults} if defaults else {}),
+            **({'result_output_variants': variants} if variants is not None else {}),
         })
     return projection
 

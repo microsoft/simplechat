@@ -58,7 +58,7 @@ import json
 import logging
 from copy import deepcopy
 
-from functions_appinsights import log_event
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_orchestration_context import build_elicitation_user_request, execution_conversation_messages
 from functions_orchestration_execution_policy import orchestration_file_policy
 from functions_orchestration_invocation_capture import (
@@ -2266,6 +2266,62 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         settings = deepcopy(settings)
         access('action', settings=settings, selector=action_ref)
         invocation_kwargs = {}
+        if 'document_ids' in arguments:
+            document_ids = arguments['document_ids']
+            binding_log_context = workflow_log_context(
+                conversation_id=_ctx(context, 'conversation_id'), turn_id=_ctx(context, 'turn_id'),
+                run_id=_ctx(context, 'run_id'), step_id=step['step_id'],
+            )
+            if is_debug_enabled():
+                log_event('[ORCHESTRATION_ADAPTERS] Document action binding started.', extra={
+                    **binding_log_context, 'stage': 'document_action_binding',
+                    'selected_source_count': len(document_ids),
+                })
+            sources = resolve_context_source_manifest(
+                context, document_ids, settings=settings, user_id=user_id,
+                cancel_requested=cancel_requested,
+            )
+            if (
+                not document_ids or [source.get('document_id') for source in sources] != document_ids
+                or any(source.get('authorization_status') != 'authorized' for source in sources)
+            ):
+                raise PermissionError('The selected document sources are unavailable.')
+            if is_debug_enabled():
+                log_event('[ORCHESTRATION_ADAPTERS] Document action binding verified.', extra={
+                    **binding_log_context, 'stage': 'document_action_binding',
+                    'selected_source_count': len(document_ids), 'source_count': len(sources),
+                    'source_authorized': True,
+                })
+
+            def recheck_document_sources():
+                fresh = resolve_context_source_manifest(
+                    context, document_ids, settings=settings, user_id=user_id,
+                    cancel_requested=cancel_requested,
+                )
+                same_count = len(fresh) == len(sources)
+                same_identity = same_count and all(
+                    all(current.get(key) == original.get(key) for key in ('document_id', 'scope', 'scope_id'))
+                    for current, original in zip(fresh, sources)
+                )
+                same_revision = same_count and all(
+                    all(current.get(key) == original.get(key) for key in ('source_version', 'source_revision'))
+                    for current, original in zip(fresh, sources)
+                )
+                authorized = all(source.get('authorization_status') == 'authorized' for source in fresh)
+                valid = same_identity and same_revision and authorized
+                if is_debug_enabled():
+                    log_event('[ORCHESTRATION_ADAPTERS] Document action binding rechecked.', extra={
+                        **binding_log_context, 'stage': 'document_action_recheck',
+                        'source_count': len(fresh), 'expected_source_count': len(sources),
+                        'source_identity_matches': same_identity, 'source_revision_matches': same_revision,
+                        'source_authorized': authorized, 'outcome': 'completed' if valid else 'failed',
+                    })
+                if not valid:
+                    raise PermissionError('The selected document sources changed or are unavailable.')
+
+            invocation_kwargs.update(
+                document_sources=sources, document_source_check=recheck_document_sources,
+            )
         if visual_request:
             invocation_kwargs['visual_request'] = visual_request
         invocation_kwargs['m365_request_key'], invocation_kwargs['m365_origin'] = _m365_step_identity(step, context)

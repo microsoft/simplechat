@@ -48,7 +48,7 @@ from action_credential_deadline import execution_deadline
 
 from content_screening.access import assert_current_request_sources_available
 from content_screening.contracts import ScreeningError
-from functions_appinsights import log_event, workflow_log_context
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from public_chat_scope import public_chat_execution_scope
 from functions_mixed_source_orchestration import (
     AUTHORIZATION_STATUS_AUTHORIZED,
@@ -1069,7 +1069,18 @@ def _run_dependency_step(
                 entry['document_id'] for entry in [*(result.get('evidence') or []), *(result.get('citations') or [])]
                 if isinstance(entry, dict) and entry.get('document_id')
             )) if step['capability_id'] == 'document_search' else []
+            bound_document_action = (
+                step['capability_id'] == 'action_invoke' and bool(runtime_step['arguments'].get('document_ids'))
+            )
+            if bound_document_action:
+                gathered_ids = list(document_ids)
             manifest = _dependency_source_manifest(context, gathered_ids, settings, after_return)
+            if is_debug_enabled():
+                log_event('[ORCHESTRATION_EXECUTOR] Gather source handoff verified.', extra={
+                    **_step_log_context(context, step), 'stage': 'gather_source_handoff',
+                    'planned_source_count': len(document_ids), 'source_count': len(manifest),
+                    'bound_document_action': bound_document_action,
+                })
             task = retain_gather_result(step, scoped, result, source_manifest=manifest)
         validate_task_outputs(step, context, task)
         if task.status == 'pending':
@@ -1430,6 +1441,7 @@ def _execute_dependency_plan(
         plan, settings=settings, available_capability_ids=available,
         agent_names=[agent.get('name') for agent in context.agent_catalog or []],
         action_refs=[action.get('action_ref') for action in context.action_catalog],
+        actions=context.action_catalog,
         existing_results=context.result_aliases, composition_profiles=context.composition_profiles,
         export_catalog=context.export_catalog, contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION,
         seeds=getattr(context, 'seeds', None),

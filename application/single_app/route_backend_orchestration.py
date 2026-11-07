@@ -420,7 +420,7 @@ def _stream_planning(events, holder, context, user_id, settings, run_plan):
                     '[ORCHESTRATION] Planning failure could not update its saved question.',
                     level=logging.WARNING, extra={'stage': 'planning_finalize', 'error_type': type(exc).__name__},
                 )
-        emit(serialize_sse({'error': message, 'code': code, 'done': True}))
+        emit(serialize_sse({'error': message, 'code': code, 'done': True, **fields}))
 
     @copy_current_request_context
     def worker():
@@ -450,7 +450,11 @@ def _stream_planning(events, holder, context, user_id, settings, run_plan):
                     if holder.get('owned'):
                         _require_planning_owner(holder)
                         if payload.get('error'):
-                            fail(payload['error'], payload.get('code') or 'planning_failed')
+                            fail(
+                                payload['error'], payload.get('code') or 'planning_failed',
+                                **{key: payload[key] for key in ('error_stage', 'error_rule', 'error_attempt')
+                                   if key in payload},
+                            )
                             terminal = True
                             continue
                         if payload.get('type') == 'orchestration_elicitation':
@@ -3557,7 +3561,12 @@ def register_route_backend_orchestration(bp):
                     'Conversation context could not be used. Retry or create a new plan.',
                     conversation_id,
                 )
-            except (PlannerError, OrchestrationMemoryError) as exc:
+            except PlannerError as exc:
+                yield build_error_event(
+                    exc.message, resolved_conversation_id,
+                    code=exc.code, stage=exc.stage, rule=exc.rule, attempt=exc.attempt,
+                )
+            except OrchestrationMemoryError as exc:
                 yield build_error_event(exc.message, resolved_conversation_id)
             except ModelCatalogError as exc:
                 log_event('[ORCHESTRATION] Model routing failed.', level=logging.WARNING, extra={'code': exc.code})

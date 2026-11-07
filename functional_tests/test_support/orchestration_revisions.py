@@ -2,10 +2,11 @@
 """
 In-memory Cosmos boundary for conditional orchestration revision tests.
 
-Version: 0.261.324
+Version: 0.261.419
 Implemented in: 0.261.102
 SDK-shaped point response coverage added in: 0.261.140
 SDK responses default in: 0.261.324; sdk_responses=False is a compatibility probe.
+Bounded SDK read transport options supported in: 0.261.419
 
 Batch operations are formatted by the installed SDK and applied to a copy. A failed
 operation never makes preceding operations visible. Hooks permit deterministic races.
@@ -66,7 +67,9 @@ class AtomicMemoryContainer:
                 raise exceptions.CosmosResourceExistsError(status_code=409, message='Test record exists')
             return self._save(body)
 
-    def read_item(self, item, partition_key):
+    def read_item(self, item, partition_key, **kwargs):
+        if set(kwargs) - {'connection_timeout', 'read_timeout', 'retry_total'}:
+            raise TypeError('Unsupported test-container read options.')
         with self._lock:
             if self.fail_reads:
                 raise AzureError('Private test read failure')

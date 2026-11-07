@@ -9,13 +9,15 @@ from dataclasses import replace
 import json
 
 from content_screening.contracts import DocumentHeldError, ScreeningError
+from functions_action_manifest import is_document_search_action
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_analysis_access import analysis_source_snapshot
 from functions_evidence_status import evidence_status_from_sources
 from functions_orchestration_invocation_capture import (
     OrchestrationInvocationCancelledError, OrchestrationInvocationControlError, OrchestrationInvocationServiceError,
 )
 from functions_orchestration_registry import (
-    DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
+    CAPABILITY_ACTION_INVOKE, DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
 )
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, MAX_DESCRIPTOR_BYTES, MAX_EXTERNAL_SOURCES, Completeness, Coverage, ExternalSourceRef,
@@ -160,7 +162,23 @@ def read_result_document_citations(context, reference, *, evidence_status_out=No
     """Project document provenance from the exact final result, never ambient work."""
     service = require_result_service(context)
     with service.read_operation():
-        return _read_result_document_citations(service, reference, evidence_status_out=evidence_status_out)
+        citations = _read_result_document_citations(service, reference, evidence_status_out=evidence_status_out)
+    if is_debug_enabled():
+        producer = reference.producer
+        consumer = workflow_log_context(run_id=getattr(context, 'run_id', None))
+        log_event('[ORCHESTRATION_EXECUTOR] Retained document citation projection verified.', extra={
+            **workflow_log_context(
+                conversation_id=producer.conversation_id, run_id=producer.run_id, step_id=producer.step_id,
+            ),
+            **({'consumer_run_id_hash': consumer['run_id_hash']} if consumer else {}),
+            'stage': 'retained_citation_projection', 'capability_id': producer.capability_id,
+            'citation_count': len(citations),
+            'located_citation_count': sum(
+                bool(citation.get('citation_id')) and citation.get('location_value', citation.get('page_number'))
+                not in (None, '') for citation in citations
+            ),
+        })
+    return citations
 
 
 def read_result_evidence_status(context, reference):
@@ -341,6 +359,20 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     native_reference = prepared_reader.reference.to_dict()
                 for source in lineage['sources']:
                     search_counts.setdefault(source_key(source), set())
+        elif producer.capability_id == CAPABILITY_ACTION_INVOKE and lineage['sources']:
+            prepared = read_complete_input(reader)
+            if (
+                current.output_name != 'prepared' or current.kind != 'structured-v1'
+                or type(prepared) is not dict
+                or prepared.get('version') != 'orchestration-gathered-content-v1'
+                or prepared.get('capability_id') != CAPABILITY_ACTION_INVOKE
+                or type(prepared.get('citations')) is not list
+            ):
+                raise ResultContractError('result_citations_invalid')
+            # The tool citation adapter reads config defaults; keep it out of bootstrap.
+            from functions_agent_document_citations import build_document_citations_from_agent_citations
+
+            retained_citations = build_document_citations_from_agent_citations(prepared['citations'])
         elif producer.capability_id in ('document_analyze', 'document_compare'):
             # Coverage is this producer's citation sidecar, not an implicit input from
             # another task. Reopen the exact committed digest, including after recovery.
@@ -675,6 +707,17 @@ def retain_gather_result(step, context, result, *, source_manifest):
     service = require_result_service(context)
     capability_id = step['capability_id']
     sources = analysis_source_snapshot(source_manifest)
+    producer = context.result_producer(step)
+    trace = workflow_log_context(
+        conversation_id=producer.conversation_id, turn_id=getattr(context, 'turn_id', None),
+        run_id=producer.run_id, step_id=producer.step_id,
+    )
+    if is_debug_enabled():
+        log_event('[ORCHESTRATION_EXECUTOR] Gather retention started.', extra={
+            **trace, 'stage': 'gather_retention', 'capability_id': capability_id,
+            'workspace_source_count': len(sources),
+            'document_binding_declared': 'document_ids' in (step.get('arguments') or {}),
+        })
     evidence = deepcopy(result.get('evidence') or [])
     citations = deepcopy(result.get('citations') or [])
     notes = deepcopy(result.get('notes') or [])
@@ -723,8 +766,21 @@ def retain_gather_result(step, context, result, *, source_manifest):
         ))
     else:
         admission = getattr(context, 'external_source_admission', None)
+        arguments = step.get('arguments') or {}
+        bound_action = (
+            capability_id == CAPABILITY_ACTION_INVOKE
+            and bool(arguments.get('document_ids'))
+            and arguments['document_ids'] == [source['document_id'] for source in sources]
+            and all(source.get('scope') in ('personal', 'group', 'public') for source in sources)
+            and any(
+                action.get('action_ref') == arguments.get('action_ref') and is_document_search_action(action)
+                for action in (getattr(context, 'action_catalog', None) or ()) if isinstance(action, dict)
+            )
+        )
         if (
-            sources or not callable(admission)
+            ((sources or (capability_id == CAPABILITY_ACTION_INVOKE and 'document_ids' in arguments))
+             and not bound_action)
+            or not callable(admission)
             or not callable(service.access.external_source_authorizer)
         ):
             raise ResultContractError('result_external_lineage_unsupported')
@@ -744,11 +800,18 @@ def retain_gather_result(step, context, result, *, source_manifest):
         service.access.external_source_catalog.update(admitted)
         external_sources = tuple(admitted)
     outputs.append(NamedOutput('prepared', 'structured-v1', prepared, _complete(1, limitations, partial=partial)))
-    return service.persist_task_result(
-        producer=context.result_producer(step), role='gather', status='partial' if partial else 'complete',
+    task = service.persist_task_result(
+        producer=producer, role='gather', status='partial' if partial else 'complete',
         outputs=outputs, sources=sources, origin='grounded' if sources or external_sources else 'generated',
         guard_token=context.result_guard_token_for_step(step['step_id']),
         input_fingerprint=context.result_input_fingerprint_for_step(step['step_id']),
         upstream=tuple(dict.fromkeys(reader.reference for reader in readers.values())),
         **({'external_sources': external_sources} if external_sources else {}),
     )
+    if is_debug_enabled():
+        log_event('[ORCHESTRATION_EXECUTOR] Gather result retained.', extra={
+            **trace, 'stage': 'gather_retained', 'capability_id': capability_id,
+            'workspace_source_count': len(sources), 'external_source_count': len(external_sources),
+            'output_count': len(outputs), 'upstream_input_count': len(readers), 'partial': partial,
+        })
+    return task
