@@ -103,7 +103,7 @@ from content_screening.access import (
     assert_current_request_sources_available, guard_model_callable, strict_source_authority,
 )
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_chat_execution_outcome, log_event, workflow_log_context
+from functions_appinsights import debug_print, log_chat_execution_outcome, log_event, workflow_log_context
 from functions_orchestration_adapters import resolve_context_source_manifest
 from functions_orchestration_checkpoints import (
     CheckpointError, fingerprint, orchestration_answer_message_id, publication_documents_match,
@@ -1838,6 +1838,24 @@ class HarnessExecution:
             document, {key: value for key, value in saved.items() if not key.startswith("_")},
         ):
             raise HarnessExecutionError("message_not_saved")
+        for descriptor in (saved.get("metadata") or {}).get("saved_analyses") or []:
+            binding = descriptor.get("binding") or {}
+            debug_print(
+                "[SAVED_ANALYSIS] Findings published",
+                category="DOCUMENT_ANALYSIS",
+                **workflow_log_context(
+                    conversation_id=self.record["conversation_id"],
+                    turn_id=self.record.get("turn_id"), run_id=self.record["id"],
+                    message_id=message_id, producer_run_id=binding.get("run_id"),
+                    producer_step_id=binding.get("step_id"),
+                ),
+                descriptor_count=len(saved["metadata"]["saved_analyses"]),
+                record_count=descriptor.get("record_count"),
+                source_count=descriptor.get("source_count"),
+                available=descriptor.get("available", True),
+                analysis_validation_status=descriptor.get("validation_status"),
+                analysis_semantics=(descriptor.get("semantics") or {}).get("mode"),
+            )
         # Publication preserves an administrator's earlier retraction of this reply.
         blocked = document.get("role") == "safety"
         if blocked:

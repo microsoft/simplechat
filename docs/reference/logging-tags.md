@@ -430,6 +430,7 @@ for availability states and live-UI validation limits.
 - `[SAFETY_REMEDIATION]`
 - `[SAFETY_VIOLATIONS]`
 - `[SAFETY_WARNINGS]`
+- `[SAVED_ANALYSIS]`
 - `[SAVE_CHUNKS]`
 - `[SAVE_CHUNKS_BATCH]`
 - `[SEARCH_CACHE_DEBUG]`
@@ -794,12 +795,32 @@ findings, caveats, notes, prompts, file names, or model responses.
 | Event message | Severity | Properties |
 | --- | --- | --- |
 | `[DOCUMENT_ANALYSIS] Final findings validated` | Information when the result is `valid`; otherwise Warning | `sc_validation_code`, the record, window and evidence counts described below, and one `sc_issue_<code>_count` per validation issue code. |
+| `[SAVED_ANALYSIS] Findings published` | Debug, only while debug logging is enabled | Confirmed saved-reply correlation and retained-result counts described below. |
 | `[ORCHESTRATION_EXECUTOR] A dependency-bound step could not complete.` | Warning | `sc_failure_code`, `sc_execution_code`, `sc_error_type`, `sc_authority_reason` when an access check refused the step (its `[ORCHESTRATION_EXTERNAL_SOURCES]` refusal event names the check), and, when the step refused a partial input, the `sc_producer_*` fields described below. |
 
 Analyze writes its event each time it validates newly assembled final findings. A
 step that resumes from an already saved final result does not write it again. The
 event carries `sc_conversation_id_hash` when the analysis runs for a conversation,
 but no run or step hash, so match it by time to the step events that follow it.
+Since **0.261.419**, the debug-only publication event links a retained analysis to
+its confirmed saved reply with `sc_conversation_id_hash`, `sc_turn_id_hash` when
+present, `sc_run_id_hash`, `sc_message_id_hash`, `sc_producer_run_id_hash`, and
+`sc_producer_step_id_hash`. Producer hashes describe the original producer, which
+can differ from the publishing run after a retry. The event also includes
+`sc_descriptor_count`, `sc_record_count`, `sc_source_count`, `sc_available`,
+`sc_analysis_validation_status`, and `sc_analysis_semantics` when recorded.
+One event is emitted per descriptor only after message persistence and read-back
+verification. A model-free delivery refresh can emit it again. It reaches the
+debug console and configured App Insights debug logger through `debug_print`;
+`log_event(debug_only=True)` alone is console-only. With debug logging disabled,
+neither sink emits this event. It contains no prompts, passages, filenames,
+record values, raw identifiers, or raw result payloads.
+
+These are publication timestamps, not analysis durations or proof that a user's
+full request was satisfied. Correlate by the hashes even when distributed
+`OperationId` is missing. The application version is tracked in
+`application/single_app/config.py`.
+
 The executor event carries the run, conversation and step hashes and
 `sc_capability_id`, like the other executor events.
 
