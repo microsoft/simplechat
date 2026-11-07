@@ -107,7 +107,7 @@ def callbacks():
         "functions_debug": route_fixtures.module_stub("functions_debug", debug_print=Mock()),
         "functions_settings": route_fixtures.module_stub(
             "functions_settings", get_settings=settings,
-            sanitize_settings_for_user=lambda value: dict(value),
+            sanitize_settings_for_user=dict,
         ),
         "swagger_wrapper": route_fixtures.module_stub(
             "swagger_wrapper", swagger_route=lambda **kwargs: lambda function: function,

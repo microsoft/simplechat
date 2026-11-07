@@ -20,6 +20,9 @@ analysis `2117078539` used `.github/workflows/codeql.yml:analyze` and category
 `/language:python`. No new issue or changes to scanning configuration are part
 of this fix.
 
+Historical, non-closing reference: [#1903](https://github.com/microsoft/simplechat/pull/1903),
+which supplied that Development integration baseline.
+
 ## Implementation
 
 ### Response and diagnostic boundary
@@ -55,8 +58,10 @@ Successful application login, API token exchange, and Teams OBO session
 creation retain their existing contracts.
 
 No shared authentication/cache helper, Microsoft 365 implementation, app
-security-header hook, CSP setting, browser asset, deployer, or release note was
-changed. `config.py` changes only the application version.
+security-header hook, CSP setting, browser asset, or deployer was changed.
+`config.py` changes only the application version. The coordinator-assigned
+release-note entry and regenerated split pages use the same `0.261.423` version;
+this documentation-only addition does not advance the version again.
 
 ### Files changed
 
@@ -67,6 +72,8 @@ changed. `config.py` changes only the application version.
 | `functional_tests/test_oauth_error_responses.py` | Real Flask HTTP regressions plus sign-in, Teams, and real MSAL-backed Microsoft 365 callback compatibility checks. |
 | `functional_tests/test_m365_routes.py` | Minimal repair of an existing notification fixture's stale group-helper imports; current version header. |
 | `docs/explanation/fixes/OAUTH_ERROR_RESPONSE_XSS_FIX.md` | Root cause, response contract, scope, and validation evidence. |
+| `docs/explanation/release_notes.md` | Concise Bug Fix entry under `v0.261.423`, with the historical non-closing reference. |
+| `docs/explanation/release-notes/*.md` | Regenerated split release pages derived from the release-note source. |
 
 ## Validation
 
@@ -128,6 +135,16 @@ body in `text/plain; charset=utf-8` with HTTP 400 and safe diagnostics.
 | `python .\functional_tests\test_docs_app_surface_coverage.py` | 7/7 passed; the committed inventory remains current. |
 | `python .\functional_tests\test_docs_site_quality.py` | 6/6 source-site checks passed; no built-site validation was performed. |
 | `python -m py_compile .\application\single_app\route_frontend_authentication.py .\application\single_app\config.py .\functional_tests\test_oauth_error_responses.py .\functional_tests\test_m365_routes.py` | Passed. |
+| `python .\scripts\build_release_notes_pages.py` | Regenerated 15 pages while preserving all 317 source release sections. |
+| `python .\scripts\build_release_notes_pages.py --check` | Passed; split release pages are current. |
+| `python .\scripts\build_latest_release_docs.py --check` | Passed; the independent app-driven Latest Features catalog is unchanged. |
+| `python -m pytest -q -p test_support.cosmos_network_guard functional_tests\test_docs_release_notes_integrity.py functional_tests\test_docs_app_surface_coverage.py functional_tests\test_docs_site_quality.py functional_tests\test_docs_latest_release_catalog_parity.py functional_tests\test_docs_published_references.py::test_release_generation_rejects_source_relative_reader_links` | 21 passed after the assigned release-note/reference update. |
+
+The initial PR scan also identified one redundant wrapper in the new test-only
+settings seam. Using the identical `dict` callable directly removes that
+`py/unnecessary-lambda` finding without changing production code or the 33
+runtime cases. The full 150-test/119-subtest selection passed again after this
+correction. Final exact-head CodeQL and CI evidence is recorded on the PR.
 
 Route policy, Swagger, access-control, XSS diff guardrails, and the documentation
 inventory/site checks are also required before the PR handoff. Fresh PR-ref
