@@ -134,23 +134,27 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
 })
 LOGGER_WORKFLOW_HASH_KEYS = frozenset({
     "conversationidhash", "turnidhash", "runidhash", "stepidhash", "producerstepidhash",
-    "documentidhash", "plannerbindinghash", "documentsethash",
+    "documentidhash", "plannerbindinghash", "documentsethash", "messageidhash", "producerrunidhash",
 })
 # Application-owned snake_case codes; any other text under these keys is dropped.
 LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
     "failurecode", "authorityreason", "capabilityid", "outputformat", "producercapabilityid",
-    "executionpath", "outcome",
+    "executionpath", "outcome", "analysisvalidationstatus", "analysissemantics",
 })
 
 
-def workflow_log_context(*, conversation_id=None, turn_id=None, run_id=None, step_id=None):
+def workflow_log_context(
+    *, conversation_id=None, turn_id=None, run_id=None, step_id=None,
+    message_id=None, producer_run_id=None, producer_step_id=None,
+):
     """Correlate workflow requests without recording their raw identifiers."""
     return {
         f"{name}_hash": hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
         for name, value in (
             ("conversation_id", conversation_id), ("turn_id", turn_id), ("run_id", run_id),
-            ("step_id", step_id),
+            ("step_id", step_id), ("message_id", message_id),
+            ("producer_run_id", producer_run_id), ("producer_step_id", producer_step_id),
         )
         if isinstance(value, str) and value
     }

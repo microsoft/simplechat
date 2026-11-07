@@ -43,7 +43,6 @@ import {
 import { InlineMapCards } from './InlineMapCard';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
-import { AnalysisResult } from './AnalysisResult';
 import type { SavedAnalysisDescriptor } from '../../lib/types';
 import { IconButton, MessageActions } from './MessageActions';
 import { isCheckingFailureNotice, OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
@@ -1262,16 +1261,17 @@ function MessageBubbleInner({
                         ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
-                        {hasSavedAnalysis && (masks.ranges.length > 0 ? (
+                        {hasSavedAnalysis && masks.ranges.length > 0 ? (
                             <p className="mt-2 text-xs text-text-3">Saved findings are hidden while this message is masked.</p>
-                        ) : savedAnalyses.map((descriptor, index) => descriptor ? (
-                            <AnalysisResult key={`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`}
-                                descriptor={descriptor} onUnavailable={markAnalysisUnavailable} />
-                        ) : (
-                            <p key={`unavailable-analysis-${index}`} role="status" className="mt-2 text-sm text-text-2">
+                        ) : analysisUnavailable ? (
+                            <p role="status" className="mt-2 text-sm text-text-2">
                                 {analysisUnavailableMessage()}
                             </p>
-                        )))}
+                        ) : hasSavedAnalysis && savedAnalyses.some((descriptor) => descriptor?.validation_status !== 'valid') ? (
+                            <p role="status" className="mt-2 text-xs text-text-2">
+                                This review has unresolved checks or incomplete findings. Open Sources to inspect its limits.
+                            </p>
+                        ) : null}
                         {!analysisUnavailable && (!hasSavedAnalysis || masks.ranges.length === 0) && (
                             hasSavedAnalysis ? artifactCards.length > 0 && (
                                 <details className="mt-2">
@@ -1319,7 +1319,12 @@ function MessageBubbleInner({
                     inspector || replayExpanded ? 'opacity-100' : 'opacity-0',
                 )}
             >
-                {!analysisUnavailable && <MessageActions
+                {analysisUnavailable ? (
+                    <IconButton label="Show sources" active={inspector === 'sources'}
+                        onClick={() => inspectMessage('sources')}>
+                        <BookOpen size={15} />
+                    </IconButton>
+                ) : <MessageActions
                     message={message}
                     onEdit={isUser ? () => setEditing(true) : undefined}
                     inspector={inspector}
@@ -1354,6 +1359,8 @@ function MessageBubbleInner({
                     section={inspector}
                     onSection={inspectMessage}
                     onClose={() => setInspector(null)}
+                    onAnalysisUnavailable={markAnalysisUnavailable}
+                    unavailableAnalysisKeys={unavailableAnalysisKeys}
                 />
             )}
         </div>

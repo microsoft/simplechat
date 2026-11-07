@@ -4,7 +4,7 @@
 // One panel with three sections rather than three separate panels: a user comparing what a
 // response cited against how it was generated should not have to close one to open another.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     Braces,
@@ -31,7 +31,7 @@ import {
 import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { openOrchestrationRecovery } from '../../lib/orchestrationController';
 import { m365ChipLabel, m365SecondaryLine } from '../../lib/m365Citations';
-import type { ChatMessage, Json, PersistedThought } from '../../lib/types';
+import type { ChatMessage, Json, PersistedThought, SavedAnalysisDescriptor } from '../../lib/types';
 import { buildToolResultView, type RowMode } from '../../lib/agentCitationRows';
 import { GlassButton } from '../ui/primitives';
 import { M365KindIcon, M365OpenLink } from './M365CitationChip';
@@ -42,8 +42,14 @@ import { readEvidenceStatus, type EvidenceStatus } from '../../lib/evidenceStatu
 import { readMaskState } from '../../lib/masking';
 import { WebProviderBadge } from './WebCitationCards';
 import { safeWebSourceUrl } from '../../lib/webCitations';
+import { analysisUnavailableMessage, readSavedAnalyses } from '../../lib/savedAnalysis';
+import { AnalysisDiagnostics, AnalysisResult } from './AnalysisResult';
+import { CitationChip } from './CitationChip';
+import { documentCitationGroups } from '../../lib/citations';
 
 export type InspectorSection = 'details' | 'sources' | 'reasoning';
+
+const ignoreUnavailableAnalysis = () => {};
 
 const SECTION_LABEL: Record<InspectorSection, string> = {
     details: 'Details',
@@ -170,15 +176,21 @@ function DetailsSection({ message }: { message: ChatMessage }) {
     );
 }
 
-function SourcesSection({ sources, evidence }: { sources: MessageSources; evidence: EvidenceStatus | null }) {
+function SourcesSection({ sources, evidence, hasFindings = false }: {
+    sources: MessageSources; evidence: EvidenceStatus | null; hasFindings?: boolean;
+}) {
+    const empty = hasFindings
+        ? 'No citations were attached to the answer. Saved findings may still include supporting passages.'
+        : 'This response did not cite any sources.';
+    const documentGroups = documentCitationGroups(sources.documents);
     if (sources.total === 0 && !evidence) {
-        return <Empty>This response did not cite any sources.</Empty>;
+        return <Empty>{empty}</Empty>;
     }
 
     return (
         <div className="space-y-4">
             <EvidenceStatusDetails status={evidence} />
-            {sources.total === 0 && <Empty>This response did not cite any sources.</Empty>}
+            {sources.total === 0 && <Empty>{empty}</Empty>}
             {sources.conversations.length > 0 && (
                 <div>
                     <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
@@ -190,14 +202,22 @@ function SourcesSection({ sources, evidence }: { sources: MessageSources; eviden
             {sources.documents.length > 0 && (
                 <div>
                     <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
-                        <FileText size={12} /> Documents ({sources.documents.length})
+                        <FileText size={12} /> Document citations ({sources.documents.length})
                     </h4>
                     <ul className="space-y-1">
                         {sources.documents.map((citation, index) => {
                             const described = describeDocumentCitation(citation);
+                            const id = typeof citation.citation_id === 'string'
+                                ? citation.citation_id.trim().replace(/^#/, '') : '';
+                            const group = documentGroups.get(id);
+                            if (group && !described.isSummary) {
+                                return <li key={`${citation.citation_id ?? ''}-${index}`} className="min-w-0">
+                                    <CitationChip group={group} />
+                                </li>;
+                            }
                             return (
                                 <li
-                                    key={`${citation.citation_id ?? index}`}
+                                    key={`${citation.citation_id ?? ''}-${index}`}
                                     className="flex items-start gap-2 rounded-lg bg-surface-sunken px-2.5 py-1.5 text-xs"
                                 >
                                     {described.isSummary ? (
@@ -454,15 +474,22 @@ export function MessageInspector({
     section,
     onSection,
     onClose,
+    onAnalysisUnavailable = ignoreUnavailableAnalysis,
+    unavailableAnalysisKeys,
 }: {
     message: ChatMessage;
     section: InspectorSection;
     onSection: (next: InspectorSection) => void;
     onClose: () => void;
+    onAnalysisUnavailable?: (descriptor: SavedAnalysisDescriptor) => void;
+    unavailableAnalysisKeys?: ReadonlySet<string>;
 }) {
     const sources = readSources(message as unknown as Json);
     const masks = readMaskState(message);
     const evidence = masks.hasAnyMask ? null : readEvidenceStatus(message.metadata?.evidence_status);
+    const savedAnalyses = useMemo(() => masks.hasAnyMask ? [] : readSavedAnalyses(message.metadata),
+        [masks.hasAnyMask, message.metadata]);
+    const hasFindings = savedAnalyses.length > 0;
     // An uploaded file cites nothing and has no reasoning. Its sources are what ingestion
     // extracted from it, which is the material any later citation of the file comes from.
     const upload = message.role === 'file';
@@ -509,11 +536,16 @@ export function MessageInspector({
                 </button>
             </div>
 
-            <div className="max-h-96 overflow-y-auto px-3 py-2">
+            <div className={clsx('overflow-y-auto px-3 py-3',
+                hasFindings && active === 'sources' ? 'max-h-[min(55dvh,36rem)]' : 'max-h-96')}>
                 {active === 'details' && (
                     <>
                         <AttemptDetails message={message} />
                         <DetailsSection message={message} />
+                        {savedAnalyses.map((descriptor, index) => descriptor && descriptor.available !== false
+                            && !unavailableAnalysisKeys?.has(`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`) ? (
+                            <AnalysisDiagnostics key={`${descriptor.result_sha256}-${index}`} descriptor={descriptor} />
+                        ) : null)}
                     </>
                 )}
                 {active === 'sources' && upload && (
@@ -527,7 +559,26 @@ export function MessageInspector({
                         <Empty>This upload has no stored extraction to show.</Empty>
                     )
                 )}
-                {active === 'sources' && !upload && <SourcesSection sources={sources} evidence={evidence} />}
+                {active === 'sources' && !upload && (
+                    <div className={clsx(hasFindings && 'grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]')}>
+                        <section aria-label="Answer citations" className="min-w-0">
+                            {hasFindings && <h3 className="mb-2 text-sm font-semibold text-text-1">Cited in the answer</h3>}
+                            <SourcesSection sources={sources} evidence={evidence} hasFindings={hasFindings} />
+                        </section>
+                        {hasFindings && <div className="min-w-0 space-y-5 border-t border-edge pt-4 lg:border-t-0 lg:border-l lg:pt-0 lg:pl-5">
+                            {savedAnalyses.map((descriptor, index) => descriptor ? (
+                                <AnalysisResult
+                                    key={`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`}
+                                    descriptor={unavailableAnalysisKeys?.has(
+                                        `${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`,
+                                    ) ? { ...descriptor, available: false } : descriptor}
+                                    onUnavailable={onAnalysisUnavailable}
+                                    reviewNumber={savedAnalyses.length > 1 ? index + 1 : undefined}
+                                />
+                            ) : <p key={index} role="status" className="text-sm text-text-2">{analysisUnavailableMessage()}</p>)}
+                        </div>}
+                    </div>
+                )}
                 {active === 'reasoning' && <ReasoningSection message={message} />}
             </div>
         </div>

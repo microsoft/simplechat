@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.418"
+version: "0.261.419"
 ---
 
 ## How to use this reference
@@ -488,7 +488,7 @@ conclusions are complete or correct.
 
 | Existing control | What it shows | Why you would use it |
 | --- | --- | --- |
-| Show sources | The reply's recorded document, web, tool, and Microsoft 365 evidence; the accessible name includes a count when evidence exists. An empty panel says the response did not cite any sources. | Check whether an answer has supporting evidence rather than relying on plausible prose. |
+| Show sources | The reply's recorded document, web, tool, and Microsoft 365 evidence, plus saved Analyze findings when present. Its count describes citations, not findings. Document citations use the existing source viewer. An answer with no citations can still have saved findings and supporting passages. | Inspect provenance and retained findings in one place rather than relying on plausible prose. |
 | Tool-call disclosure in Sources | Recorded operation label, arguments, result when available, execution outcome, and error when recorded. A failure without a result still shows its arguments and error. | Distinguish an executed operation's result from a failed request or the assistant's description of what it intended to do. |
 | Show reasoning | The reply's recorded reasoning activities, including failed tool activity when execution recorded a failure. | Understand the progression of work without treating reasoning text as proof of a tool result. |
 
@@ -690,8 +690,10 @@ also depends on configured storage and current source access.
 
 Implemented in version **0.261.109**. These response-specific controls appear in
 classic chat and React V2 when an assistant message has a saved Analyze result.
-They are rendered with the response rather than added to the always-visible
-toolbar. See [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
+In V2, since **0.261.419**, they live in the existing per-message **Sources**
+inspector, not an automatic analysis block or another drawer. Classic retains
+its inline saved-analysis section. Application version alignment is tracked in
+`application/single_app/config.py`. See [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
 
 The answer remains the readable overview, even after a supporting export finishes.
 The overview and download previews are not the full findings set. Ordinary
@@ -699,19 +701,20 @@ narrative requests such as “Explain the risks in these documents” do not req
 a report schema, scoring setup, or configuration interview.
 
 Since **0.261.398**, new orchestration replies may show several saved reviews
-even when a later step failed. Each section is labelled by its producing step
-and keeps its own validation notice and pages. Those plural results require
+even when a later step failed. Each keeps its own validation notice and pages.
+V2 numbers these saved reviews; internal producing-step labels remain in
+**Details**. Classic continues to label the producing steps. Those plural results require
 explicit selection before a follow-up; inspecting them does not complete the
 failed answer or promote partial findings to complete input.
 
 | Control or notice | What it does | Why you would use it | Available when |
 | --- | --- | --- | --- |
-| **Saved analysis** | Identifies the saved result and shows displayed-versus-total record counts, separate source counts, and its validation notice. | Distinguish a readable overview or one page from the full saved findings set. | The assistant message carries a saved result; an unavailable result shows a notice instead of result controls |
-| **Findings and limitations** | Expands accepted findings and any **Limitations and validation issues**, loading up to 25 complete records at a time. | Inspect details without downloading a file or displaying the whole result at once. | The saved result is available |
+| **Saved findings** / **Saved review** (V2), **Saved analysis** (classic) | Identifies the saved result and shows displayed-versus-total record counts and separate source counts. V2 loads pages only while Sources is open and keeps unresolved validation notices visible. | Distinguish a readable overview or one page from the full saved findings set. | The assistant message carries a saved result; an unavailable result shows a notice instead of result controls |
+| **Finding** / **Analysis limits** (V2), **Findings and limitations** (classic) | In V2, numbered findings expand to complete saved values; Analysis limits holds the validation explanation and saved limitations/issues. Classic expands findings and limits together. Pages contain up to 25 complete records. | Read useful details on demand rather than a dump of internal result fields beneath the answer. | The saved result is available |
 | **Previous findings** / **Next findings** | Reads the preceding or following page of the same saved result. | Review records outside the currently displayed range. A page's source count may be smaller than the result's total source count. | A corresponding page exists and the current page has loaded |
-| **Evidence for finding …** | Loads that finding's saved supporting passages and any saved filename, page, or chunk location. The label includes the finding's identifier. | Understand what supports a finding without treating it as independently verified. | The finding has saved evidence references |
-| **Ask about this analysis** | Selects this saved result for the next message and focuses the composer. | Ask for an explanation of these findings instead of another original-source pass. | The saved result is available |
-| **View diagnostics (JSON)** | Opens a separate, bounded diagnostic-data response in a new tab; `next_offset` identifies further byte pages. | Audit processing details without mixing them into findings, reports, or model input. | The saved result is available and access through its conversation is confirmed |
+| **Supporting passages** (V2), **Evidence for finding …** (classic) | Loads that finding's explicitly referenced supporting passages and saved filename, page, or chunk location. A citation elsewhere in the answer is not substituted for missing finding evidence. | Understand what supports a finding without treating it as independently verified. | The finding has saved evidence references |
+| **Ask about this saved review** (V2), **Ask about this analysis** (classic) | Selects the whole saved result for the next message and focuses the composer, not just the expanded record. | Explain retained findings instead of another original-source pass. | The saved result is available |
+| **View diagnostics (JSON)** | In V2's existing **Details** section, opens a separate, bounded diagnostic-data response in a new tab; `next_offset` identifies further byte pages. Classic retains its existing inline link. | Audit processing details without mixing them into findings, reports, or model input. | The saved result is available and access through its conversation is confirmed |
 | **Saved analysis selected.** | Shows the composer notice: “Explaining the saved analysis — not running a new pass over the original sources.” A completed result can select this context automatically. | Confirm what the next ordinary follow-up will discuss. | Saved-analysis context is selected |
 | **Remove saved analysis context** | The accessible label of the notice's close button; removes the saved-result selection without deleting the result or draft. | Leave explanation mode before choosing a different task or source pass. | The saved-analysis composer notice is present |
 | **Downloads** | Expands the existing generated-file cards and their format-specific actions, such as **Download CSV**. | Obtain a supporting output after reviewing the answer and findings. | The available saved result has generated outputs; existing output readiness and approval rules still apply |
