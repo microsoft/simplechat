@@ -4,6 +4,7 @@ import logging
 import os
 import jwt
 import requests
+from flask import Response
 
 from config import *
 from config import DISABLE_APP_SERVICE_EASY_AUTH_LOGOUT
@@ -19,6 +20,34 @@ from functions_debug import debug_print
 from functions_settings import get_settings, sanitize_settings_for_user
 from functions_m365_connections import CHAT_AUTH_STATE_PREFIX, WORKFLOW_AUTH_STATE_PREFIX
 from swagger_wrapper import swagger_route, get_auth_security
+
+
+_OAUTH_LOGIN_ERROR_CODES = frozenset({
+    "invalid_request", "invalid_client", "invalid_grant", "unauthorized_client",
+    "access_denied", "unsupported_response_type", "invalid_scope", "server_error",
+    "temporarily_unavailable", "interaction_required", "login_required",
+    "account_selection_required", "consent_required",
+})
+
+
+def _oauth_login_error_response():
+    """Return an inert sign-in failure and log only recognized diagnostic codes."""
+    error = request.args.get('error')
+    log_event(
+        "[AUTH_CALLBACK] OAuth sign-in was not completed.",
+        extra={
+            'path': request.path,
+            'oauth_error': error if error in _OAUTH_LOGIN_ERROR_CODES else 'unrecognized_error',
+            'error_description_present': bool(request.args.get('error_description')),
+        },
+        level=logging.WARNING,
+    )
+    return Response(
+        "Login failed. Please try signing in again.",
+        status=400,
+        mimetype="text/plain",
+    )
+
 
 def build_front_door_urls(front_door_url):
     """
@@ -245,10 +274,7 @@ def register_route_frontend_authentication(bp):
             return complete_m365_workflow_connection_callback()
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
-            error = request.args.get('error')
-            error_description = request.args.get('error_description', 'No description provided.')
-            print(f"Azure AD Login Error: {error} - {error_description}")
-            return f"Login Error: {error} - {error_description}", 400 # Or render an error page
+            return _oauth_login_error_response()
 
         code = request.args.get('code')
         if not code:
@@ -360,10 +386,7 @@ def register_route_frontend_authentication(bp):
     def authorized_api():
         # Check for errors passed back from Azure AD
         if request.args.get('error'):
-            error = request.args.get('error')
-            error_description = request.args.get('error_description', 'No description provided.')
-            print(f"Azure AD Login Error: {error} - {error_description}")
-            return f"Login Error: {error} - {error_description}", 400 # Or render an error page
+            return _oauth_login_error_response()
 
         code = request.args.get('code')
         if not code:

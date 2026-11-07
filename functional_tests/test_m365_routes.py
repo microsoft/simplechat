@@ -1,9 +1,10 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.374
+Version: 0.261.423
 Implemented in: 0.261.029
 Workflow authorization names and visibility implemented in: 0.261.374
+Notification fixture import parity repaired in: 0.261.423
 
 Imports the real route module with scoped authentication/logging I/O seams.
 Exercises exact subject/object scope, CSRF, safe errors, callback registration,
@@ -992,6 +993,8 @@ class M365RouteTests(unittest.TestCase):
     def test_real_notification_helper_only_targets_subject_and_deduplicates(self):
         notification_container = CosmosContainer("user_id")
         logger = Mock()
+        group_role = Mock(side_effect=LookupError("Group not found"))
+        user_groups = Mock(return_value=[])
         spec = importlib.util.spec_from_file_location(
             "m365_test_notifications", APP_DIR / "functions_notifications.py",
         )
@@ -999,7 +1002,9 @@ class M365RouteTests(unittest.TestCase):
         with patch.dict(sys.modules, {
             "config": module_stub("config", cosmos_notifications_container=notification_container),
             "functions_appinsights": module_stub("functions_appinsights", log_event=logger),
-            "functions_group": module_stub("functions_group", find_group_by_id=lambda value: None),
+            "functions_group": module_stub(
+                "functions_group", assert_group_role=group_role, get_user_groups=user_groups,
+            ),
             "functions_debug": module_stub("functions_debug", debug_print=lambda *args, **kwargs: None),
             "functions_public_workspaces": module_stub(
                 "functions_public_workspaces",
@@ -1045,6 +1050,8 @@ class M365RouteTests(unittest.TestCase):
             if item["metadata"]["approval_id"] == cancel_id
         ]
         self.assertEqual(statuses, ["cancelled"])
+        group_role.assert_not_called()
+        user_groups.assert_not_called()
 
 
 def test_workflow_authorization_sdk_contract():

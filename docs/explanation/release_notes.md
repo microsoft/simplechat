@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.423)**
+
+#### Bug Fixes
+
+*   **Safe Plain-Text OAuth Sign-In Errors**
+    *   `/getAToken` and `/getATokenApi` now return a consistent plain-text HTTP 400 login-failure message without exposing provider error contents.
+    *   Keeps safe diagnostic fields server-side and preserves missing-code handling, Teams sign-in, and separate Microsoft 365 chat/workflow connection callbacks.
+    *   (Ref: `route_frontend_authentication.py`, `test_oauth_error_responses.py`, `OAUTH_ERROR_RESPONSE_XSS_FIX.md`, [#1903](https://github.com/microsoft/simplechat/pull/1903) as a historical non-closing reference)
+
 ### **(v0.261.422)**
 
 #### Bug Fixes
