@@ -2314,10 +2314,6 @@ async function testSavedOperationModel(model, capability) {
     }
 }
 
-async function testSavedImageModel(model) {
-    return testSavedOperationModel(model, "image_generation");
-}
-
 async function fetchModels() {
     if (isCustomProvider()) {
         showToast("Model discovery is unavailable for Custom endpoints. Add models manually.", "warning");

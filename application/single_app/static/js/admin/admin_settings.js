@@ -10079,9 +10079,10 @@ document.addEventListener('DOMContentLoaded', () => {
         for (const type of indexTypes) {
             await checkIndex(type);
             if (indexSettingsConflict) {
-                break;
+                return false;
             }
         }
+        return true;
     })().finally(() => {
         indexChecksPending = false;
         updateSaveButtonState();
@@ -10099,9 +10100,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         submissionQueued = true;
         const submitter = event.submitter;
-        await checksFinished;
+        const settingsCurrent = await checksFinished;
         submissionQueued = false;
-        if (!indexSettingsConflict) {
+        if (settingsCurrent) {
             adminForm.requestSubmit(submitter || undefined);
         }
     }, { capture: true });

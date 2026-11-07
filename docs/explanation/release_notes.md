@@ -2,6 +2,20 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.420)**
+
+#### Bug Fixes
+
+*   **Queued Admin Saves Preserve Late Conflict Protection**
+    *   Settings saves wait for all initial index checks and remain blocked if a later group or public check detects a concurrent edit.
+    *   Duplicate queued submissions still produce only one save, and unsaved form values remain available to copy before reloading.
+    *   (Ref: `admin_settings.js`, `test_admin_settings_save_consistency.py`, [#1903](https://github.com/microsoft/simplechat/pull/1903))
+
+*   **Action Recovery Editor Links Use Encoded Local Routes**
+    *   Recovery notices retain literal diagnostics, reporting, and recheck controls while rebuilding editor links from permitted local routes and encoded identifiers.
+    *   Malformed or nonlocal links show the existing owner/admin guidance instead of a clickable destination; image/embedding button dispatch and reasoning notices retain their existing behavior.
+    *   (Ref: `chat-action-recovery.js`, `admin_model_endpoints.js`, `chat-messages.js`, `test_chat_action_recovery_rendering.py`, [#1903](https://github.com/microsoft/simplechat/pull/1903))
+
 ### **(v0.261.419)**
 
 #### New Features

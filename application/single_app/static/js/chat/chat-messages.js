@@ -39,7 +39,6 @@ import {
 } from './chat-analysis-results.js';
 import {
     getCurrentReasoningEffort,
-    isReasoningEffortEnabled,
     getMessageReasoningAdjustments,
     renderMessageReasoningAdjustments,
 } from './chat-reasoning.js';

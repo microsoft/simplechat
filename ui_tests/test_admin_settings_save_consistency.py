@@ -1,9 +1,10 @@
 # test_admin_settings_save_consistency.py
 """
 Admin form concurrency contract and optional authenticated browser regression.
-Version: 0.261.125
+Version: 0.261.420
 Implemented in: 0.261.025
 Index diagnostic revision and queued-submit regressions: 0.261.125
+Late-conflict and duplicate-submit regressions: 0.261.420
 
 The live test submits only an invalid revision, so it cannot change any settings.
 """
@@ -62,7 +63,8 @@ def test_save_after_index_checks_uses_only_its_own_revision(diagnostics_ui, reco
 
 
 @pytest.mark.ui
-def test_submission_waits_for_initial_metadata_checks(diagnostics_ui):
+@pytest.mark.parametrize("submit_count", [1, 3])
+def test_submission_waits_for_initial_metadata_checks(diagnostics_ui, submit_count):
     fixture = diagnostics_ui
     fixture.hold_indexes = True
     fixture.record_metadata = True
@@ -70,11 +72,17 @@ def test_submission_waits_for_initial_metadata_checks(diagnostics_ui):
     page = fixture.page
     page.locator("#key_vault_name").fill("unsaved-vault")
     expect(page.locator("#floating-save-btn")).to_be_disabled()
-    page.evaluate("document.getElementById('admin-settings-form').requestSubmit()")
+    page.evaluate("""(submitCount) => {
+        const form = document.getElementById('admin-settings-form');
+        for (let index = 0; index < submitCount; index += 1) {
+            form.requestSubmit();
+        }
+    }""", submit_count)
     assert fixture.submissions == []
     assert len(fixture.index_requests) == 1
     fixture.release_indexes()
     expect(page.get_by_text("Saved fixture settings.", exact=True)).to_be_visible()
+    assert len(fixture.submissions) == 1
     assert fixture.submissions[0]["admin_settings_etag"] == ['"revision-4"']
 
 
@@ -114,6 +122,36 @@ def test_concurrent_settings_edit_does_not_fast_forward_or_discard_draft(diagnos
 
 
 @pytest.mark.ui
+@pytest.mark.parametrize("conflict_type", ["group", "public"])
+def test_late_index_conflict_blocks_queued_submission_and_preserves_draft(diagnostics_ui, conflict_type):
+    fixture = diagnostics_ui
+    fixture.hold_indexes = True
+    fixture.record_metadata = True
+    fixture.index_errors[conflict_type] = (409, {
+        "code": "settings_conflict",
+        "needsReload": True,
+        "error": "Settings changed since this page was loaded.",
+    })
+    fixture.open()
+    page = fixture.page
+    page.locator("#key_vault_name").fill("unsaved-vault")
+    page.evaluate("document.getElementById('admin-settings-form').requestSubmit()")
+    assert fixture.submissions == []
+    fixture.release_indexes()
+    expect(page.locator(f"#index-warning-{conflict_type}")).to_contain_text("Settings changed since this page was loaded")
+    expect(page.locator("#fixture-toasts")).to_contain_text("Copy them before reloading")
+    expect(page.locator("#floating-save-btn")).to_be_disabled()
+    expect(page.locator("#floating-save-btn")).to_have_text("Reload Settings to Save")
+    expected_scopes = ["user", "group", "public"][:["user", "group", "public"].index(conflict_type) + 1]
+    assert [request["indexType"] for request in fixture.index_requests] == expected_scopes
+    expect(page.locator('input[name="admin_settings_etag"]')).to_have_value(f'"revision-{len(expected_scopes)}"')
+    expect(page.locator("#key_vault_name")).to_have_value("unsaved-vault")
+    assert fixture.submissions == []
+    page.evaluate("document.getElementById('admin-settings-form').requestSubmit()")
+    assert fixture.submissions == []
+
+
+@pytest.mark.ui
 @pytest.mark.parametrize("status,payload,action_visible", [
     (500, {"error": "Unable to inspect Azure AI Search.", "code": "index_check_failed"}, False),
     (404, {"error": "The user index does not exist yet.", "needsCreation": True}, True),
@@ -132,6 +170,13 @@ def test_index_failures_are_visible_without_claiming_success(diagnostics_ui, sta
     else:
         expect(button).not_to_be_visible()
         expect(page.locator("#fixture-toasts")).to_contain_text("An AI Search index check failed")
+    page.locator("#key_vault_name").fill("unsaved-vault")
+    save = page.locator("#floating-save-btn")
+    expect(save).to_be_enabled()
+    save.click()
+    expect(page.get_by_text("Saved fixture settings.", exact=True)).to_be_visible()
+    assert len(fixture.submissions) == 1
+    assert fixture.submissions[0]["admin_settings_etag"] == ['"revision-1"']
 
 
 @pytest.mark.ui

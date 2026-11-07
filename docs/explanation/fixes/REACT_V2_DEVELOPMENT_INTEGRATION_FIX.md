@@ -1,7 +1,10 @@
-# React V2 Development Integration (v0.261.419)
+# React V2 Development Integration (v0.261.420)
 
-Fixed/Implemented in version: **0.261.419**, tracked in
+Integration implemented in version: **0.261.419**.
+Fixed/Implemented in version: **0.261.420** (review follow-ups), tracked in
 `application/single_app/config.py`.
+
+Tracking item: [PR #1903](https://github.com/microsoft/simplechat/pull/1903).
 
 ## Issue and root cause
 
@@ -95,3 +98,42 @@ Local browser fixtures and SDK contracts do not prove a live Azure deployment.
 Native OneNote executable/container checks require their documented build and
 fixtures. No deployment, resource provisioning, GitHub default-branch change,
 or promotion to Staging/main is performed by these tests.
+
+## Review follow-ups in 0.261.420
+
+The four supplied review comments were evaluated together rather than removing
+guards or rewriting already-safe diagnostic rendering.
+
+- `admin_settings.js` captures the initial checks' explicit success/conflict
+  result before resubmitting. Late group/public conflicts still block saves;
+  duplicate queued submissions save once, and form drafts remain intact.
+- `chat-action-recovery.js` rebuilds permitted personal, group, and global
+  editor routes with encoded identifiers. Malformed encodings, dot segments,
+  nonlocal destinations, and controls cannot become links. Unexpected decoder
+  errors propagate rather than being silently treated as invalid input.
+  Diagnostics already used `textContent`; that behavior and report/recheck
+  controls remain unchanged.
+- The unused image-test wrapper and reasoning import are removed. Regression
+  coverage now clicks the actual image and embedding buttons, retaining the
+  saved-binding and unsaved-edit checks.
+
+| Review follow-up verification | Result |
+| --- | --- |
+| Four changed classic JavaScript assets: `node --check` | Passed |
+| Admin editor integration and recovery URL Node selection | 16 tests passed, including 40 URL/failure-propagation contracts |
+| Admin consistency and recovery rendering browser selection | 24 passed; one authenticated-environment test skipped |
+| Reasoning runtime and initial-sync selection in its own process | 9 passed; existing return-value warnings remain |
+| Expanded admin and both-interface recovery selection | 65 passed, one skipped, two V2 empty-draft recovery checks failed |
+
+The first all-in-one browser selection encountered a Playwright fixture
+lifecycle collision when two independent synchronous browser owners shared one
+process. The focused selections above pass in their respective processes; no
+fixture or assertion was weakened.
+
+The expanded V2 failures occur in creation/CSRF recovery with no newer draft.
+An isolated DOM probe also confirmed an empty textarea value after the send
+settled, so the failure is not merely a text-versus-value assertion mismatch.
+V2 production sources and those recovery tests/fixtures are unchanged from the
+published integration head; these failures remain a broader validation gap,
+not a passing result or a reason to disable coverage. PR checks and these
+unresolved gaps must be reviewed before the integration is merged.

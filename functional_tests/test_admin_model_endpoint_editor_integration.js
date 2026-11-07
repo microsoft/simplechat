@@ -1,9 +1,10 @@
 // test_admin_model_endpoint_editor_integration.js
 /**
  * Offline integration regressions for the combined classic AI Connections editor.
- * Version: 0.261.137
+ * Version: 0.261.420
  * Implemented in: 0.261.122
  * The editor's catalog profile picker and planner model dropdown modules are linked since 0.261.137.
+ * Saved image/embedding button dispatch regressions updated in: 0.261.420.
  *
  * Loads the real editor, shared modal markup, and capacity editor with a small DOM
  * fixture. Covers Custom auth, images, embeddings, capacity, and draft preservation.
@@ -343,7 +344,7 @@ async function createHarness(endpoint = endpointFixture(), { visionLookup, opera
     const editor = new vm.SourceTextModule(`${fs.readFileSync(editorPath, "utf8")}
         export {
             init, openModalForEndpoint, collectModalModels, buildEndpointPayload,
-            saveEndpoint, testModelConnection, testSavedImageModel, testSavedOperationModel,
+            saveEndpoint, testModelConnection, testSavedOperationModel,
             cloneEndpointForDuplicate, requestModelName, validateEmbeddingModels
         };
         export const readState = () => ({
@@ -630,15 +631,20 @@ test("image tests use only a saved binding and duplicates need new credentials",
     const h = await createHarness();
     await h.open();
     const model = h.api.collectModalModels()[0];
-    await h.api.testSavedImageModel(model);
+    await h.rows()[0].querySelector('[data-action="test-image"]').fire("click");
+    await h.flush();
+    assert.equal(h.requests.at(-1).url, "/api/v2/admin/settings/test-connection");
     assert.deepEqual(h.requests.at(-1).body, {
         test_type: "image",
         selection: { endpoint_id: "saved-endpoint", model_id: model.id, provider: "custom" }
     });
+    assert.equal(h.toasts.at(-1).tone, "success");
+    assert.match(h.toasts.at(-1).message, /generated an image successfully/);
     const count = h.requests.length;
     h.get("model-endpoint-name").value = "Unsaved name";
     await h.get("model-endpoint-name").fire("input");
-    await h.api.testSavedImageModel(model);
+    await h.rows()[0].querySelector('[data-action="test-image"]').fire("click");
+    await h.flush();
     assert.equal(h.requests.length, count);
     assert.match(h.toasts.at(-1).message, /Save the connection first/);
 
@@ -813,7 +819,9 @@ test("embedding tests require saved bindings, validate dimensions, and never cha
     await h.open();
     const before = h.get("default_model_selection_json").value;
     const model = h.api.collectModalModels()[0];
-    await h.api.testSavedOperationModel(model, "embeddings");
+    await h.rows()[0].querySelector('[data-action="test-embeddings"]').fire("click");
+    await h.flush();
+    assert.equal(h.requests.at(-1).url, "/api/v2/admin/settings/test-connection");
     assert.deepEqual(h.requests.at(-1).body, {
         test_type: "embedding",
         selection: { endpoint_id: "saved-endpoint", model_id: model.id, provider: "openai_compatible" }
@@ -826,7 +834,8 @@ test("embedding tests require saved bindings, validate dimensions, and never cha
     h.rows()[0].querySelector('[data-config-key="dimensions"]').value = "1024";
     await h.rows()[0].querySelector('[data-config-key="dimensions"]').fire("input");
     const count = h.requests.length;
-    await h.api.testSavedOperationModel(model, "embeddings");
+    await h.rows()[0].querySelector('[data-action="test-embeddings"]').fire("click");
+    await h.flush();
     assert.equal(h.requests.length, count);
     assert.match(h.toasts.at(-1).message, /Save the connection first/);
 
