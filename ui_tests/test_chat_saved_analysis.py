@@ -1,7 +1,7 @@
 # test_chat_saved_analysis.py
 """
 Saved Analyze findings, evidence, and explanation context in both chat interfaces.
-Version: 0.261.419
+Version: 0.261.420
 Implemented in: 0.261.109
 Retained analyses on failed orchestration replies covered in: 0.261.398
 Unified V2 Sources and saved findings implemented in: 0.261.419

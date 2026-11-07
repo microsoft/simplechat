@@ -3,6 +3,15 @@
 Fixed/Implemented in version: **0.261.413**, recorded in
 `application/single_app/config.py`.
 
+Current behavior updated in version: **0.261.419**.
+The [planner contract recovery follow-up](ORCHESTRATION_PLANNER_CONTRACT_RECOVERY_FIX.md)
+aligns defaulted Analyze output variants, gives native document actions an enforced
+source binding, and carries their provenance/citations through retention and
+composition. It also classifies additional model-draft contract failures within
+the same single correction allowance and preserves typed failure information on
+the saved question. These changes do not identify the exact historical model
+JSON behind a generic rejection.
+
 ## Issue and root cause
 
 Document-backed turns could finish upload/source preparation but stop with

@@ -1,12 +1,14 @@
 # Chat Orchestration Action Access
 
-Version: **0.261.321**
+Version: **0.261.420**
 
 Implemented in version: **0.261.098**
 
 Retrieved-data charts added in version: **0.261.132**
 
 Operation intent and named inputs implemented in version: **0.261.321**
+
+Selected-document action binding implemented in version: **0.261.419**
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -99,6 +101,32 @@ The top-level planner chooses the action and task; the focused loop chooses func
 and binds their arguments. Avoiding agent setup does **not** mean avoiding model calls.
 Conversational follow-ups retain their resolved request and bounded, authorized
 conversation reference when handed to an action, including accepted clarification answers.
+
+### Selected documents and native inspection
+
+Since **0.261.419**, a registered Document Search action can bind exact workspace
+`document_ids` in its plan step. Its native metadata inspection then counts as work
+on those sources without an extra Search or Analyze step added just for source
+accounting. A filename or ID mentioned only in the task text is not that binding.
+
+The server checks the action's actual type, current user access, workspace
+restrictions, and source snapshots. Native report, chunk and summary calls cannot
+read an unbound document; a search with no model-supplied ID filter receives the
+bound selection. The existing Run view shows the source chips and narrowing
+controls before approval.
+
+Authorized workspace provenance and the action reference survive retention and
+restart. Composition receives citations from those exact retained tool results,
+not unrelated work in the conversation. Input reads still require current
+authority; retained findings keep their existing conversation/run and integration
+access policies. No source binding makes missing native metadata available,
+establishes conformance, or permits an outgoing operation.
+
+The planner's single correction can repair classified contract declarations
+without changing its model or executing tools. Invalid source permissions and
+unsupported integrations remain explicit failures. See the
+[planner contract recovery explanation](../fixes/ORCHESTRATION_PLANNER_CONTRACT_RECOVERY_FIX.md)
+for defaulted Analyze output variants, diagnostics, and full-path coverage.
 
 ### Charting retrieved data
 

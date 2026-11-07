@@ -656,6 +656,16 @@ Analyze rules include `options_object_required`, `unsupported_option_fields`,
 `calculation_rules_conflict`, `calculation_rules_invalid`,
 `observation_requirements_conflict`, and `analysis_options_schema_invalid`.
 
+Since **0.261.419**, model-draft contract diagnostics also distinguish
+`plan_structure_invalid`, `plan_arguments_invalid`, `plan_outputs_invalid`, and
+`plan_inputs_invalid`, alongside specific graph-binding codes. Owned rules include
+`step_shape_invalid`, `argument_schema_invalid`, `unknown_argument`,
+`fixed_output_not_supported`, `fixed_output_missing`, `input_binding_invalid`,
+and `input_kind_mismatch`. `sc_schema_keyword` and `sc_argument_field` contain only
+a schema keyword and registered argument name (or `unknown`), never an arbitrary
+model-supplied property name. `sc_result_kind` uses a known underscore-form code;
+`sc_accepts_*` flags describe compatible kinds.
+
 A picked document missing from both `plan_proposal` and `plan_normalized` indicates
 an omitted recognized binding in the proposal, not a normalization loss. These
 structural diagnostics do not establish extraction fidelity or prove that every
@@ -680,6 +690,63 @@ traces
     rule=tostring(customDimensions.sc_validation_rule),
     omittedDocuments=toint(customDimensions.sc_omitted_document_count)
 | order by timestamp asc
+| take 500
+```
+
+### Native action and retained-result lifecycle checkpoints
+
+Implemented in version **0.261.419**, tracked in
+`application/single_app/config.py`. These content-free checkpoints use the same
+**Enable Debug Logging** switch as planning snapshots. They explicitly gate the
+normal structured `log_event` path so both console and Application Insights receive
+them. The existing console-only behavior of `debug_only=True` is not widened.
+
+| Event message | Stage and useful fields |
+| --- | --- |
+| `[ORCHESTRATION_ADAPTERS] Document action binding started.` / `Document action binding verified.` | `document_action_binding`: selected/resolved counts and verified authorization. |
+| `[ORCHESTRATION_ADAPTERS] Document action binding rechecked.` | `document_action_recheck`: expected/actual counts, identity/revision match flags, authorization flag, and outcome. |
+| `[ORCHESTRATION_ADAPTERS] Document action read checkpoint.` | `document_action_read`: started/completed/failed, known operation, call index, bound count, object/metadata/citation presence, safe error type, and an authorized document hash when known. |
+| `[ORCHESTRATION_EXECUTOR] Gather source handoff verified.` | `gather_source_handoff`: planned/resolved source counts and whether an explicit document-action binding is in use. |
+| `[ORCHESTRATION_EXECUTOR] Gather retention started.` / `Gather result retained.` | `gather_retention` / `gather_retained`: workspace/integration lineage counts, output/upstream counts, and partial status. |
+| `[ORCHESTRATION_EXECUTOR] Retained document citation projection verified.` | `retained_citation_projection`: total and located citation counts for the selected producer; `sc_consumer_run_id_hash` links a later consuming run. |
+| `[ORCHESTRATION_EXECUTOR] Composition input contract verified.` / `Prepared content retained.` | `compose_inputs` / `compose_retained`: input/citation/output counts, narrative policy, partial status, and whether completeness checking ran. |
+
+Correlation uses hashed conversation/run/step identity and the turn when available.
+`sc_consumer_run_id_hash`, like other identity hashes, is retained only as a valid
+64-character lowercase SHA-256 value. No new checkpoint logs document text,
+filenames, prompts, model replies, source versions, provider URLs, credentials or
+exception messages. Counts and presence flags do not claim whole-document
+coverage or formal conformance.
+
+Start and verification markers distinguish a read attempt from verified findings.
+For example, a failed native read must not be followed by a retained result for that
+step. A bound action must not lose its workspace-source count between the source
+handoff and retention. A result can retain provenance yet have no located citation;
+the citation count makes that different boundary visible. Existing step-failure
+and `CHAT_EXECUTION` outcome events remain available without debug logging.
+
+For workspace-based Log Analytics, correlate a single conversation without
+recording its raw identifier:
+
+```kusto
+let conversationHash = hash_sha256("<conversation-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_conversation_id_hash) == conversationHash
+| extend event=tostring(Properties.sc_message)
+| where event startswith "[ORCHESTRATION_" or event startswith "[CHAT_EXECUTION]"
+| project TimeGenerated, event,
+    stage=tostring(Properties.sc_stage),
+    runHash=tostring(Properties.sc_run_id_hash),
+    consumerRunHash=tostring(Properties.sc_consumer_run_id_hash),
+    stepHash=tostring(Properties.sc_step_id_hash),
+    outcome=tostring(Properties.sc_outcome),
+    sourceCount=coalesce(toint(Properties.sc_workspace_source_count), toint(Properties.sc_source_count)),
+    externalCount=toint(Properties.sc_external_source_count),
+    citationCount=toint(Properties.sc_citation_count),
+    locatedCitations=toint(Properties.sc_located_citation_count),
+    rule=tostring(Properties.sc_validation_rule)
+| order by TimeGenerated asc
 | take 500
 ```
 

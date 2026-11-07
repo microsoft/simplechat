@@ -1,7 +1,7 @@
 # test_orchestration_analysis_citation_delivery.py
 """Native Analyze/Compare citations reach Compose, messages and streamed delivery.
 
-Version: 0.261.419
+Version: 0.261.420
 Implemented in: 0.261.356
 Retained analyses after downstream failure covered in: 0.261.398
 Debug-only saved-findings publication correlation implemented in: 0.261.419

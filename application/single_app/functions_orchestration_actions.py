@@ -12,6 +12,7 @@ Explicit operation intent and named input consumption added in: 0.261.321
 """
 
 import asyncio
+import hashlib
 import inspect
 import json
 import logging
@@ -27,7 +28,8 @@ from agent_execution_context import (
     agent_execution,
 )
 from functions_action_catalog import resolve_action_manifest
-from functions_appinsights import log_event
+from functions_action_manifest import is_document_search_action
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_chart_operations import (
     CHART_PLUGIN_TYPE,
     CORE_CHART_PLUGIN_NAME,
@@ -57,11 +59,15 @@ from functions_orchestration_registry import (
     resolve_available_capability_ids,
 )
 from functions_orchestration_visuals import gathering_visual_addendum, instruction_memory_messages
+from functions_workflow_document_selection import selected_document_sources
 
 
 RETRIEVED_CHARTS_PLUGIN_NAME = 'retrieved_data_charts'
 CHART_STEP_CALL_LIMIT = 4
 CHART_STEP_RESULT_SUMMARY_LIMIT = 8000
+DOCUMENT_SOURCE_READ_FUNCTIONS = frozenset({
+    'search_documents', 'retrieve_document_chunks', 'get_document_accessibility_report', 'summarize_document',
+})
 RETRIEVED_ROWS_CHART_KINDS = ('line', 'area', 'bar', 'stacked_line', 'stacked_bar')
 CHART_STEP_INSTRUCTIONS = (
     'Create the chart or charts this knowledge-collection step needs, using only the supplied chart '
@@ -517,7 +523,7 @@ def _step_chart_titles(invocations):
 async def invoke_action(
     action_ref, task, context, *, settings, user_id, cancel_requested, invocation_capture=None,
     visual_request=None, m365_request_key=None, m365_origin=None,
-    execution_intent='gather', named_inputs=None,
+    execution_intent='gather', named_inputs=None, document_sources=None, document_source_check=None,
 ):
     """Run only this action's enabled functions and return its findings and invocation scope.
 
@@ -598,6 +604,33 @@ async def invoke_action(
             user_groups=getattr(context, 'active_group_ids', None) or None,
             user_roles=list(identity.roles),
         )
+        bound_ids = []
+        if document_sources is not None:
+            if (
+                not is_document_search_action(manifest)
+                or not isinstance(document_sources, list) or not document_sources
+                or not callable(document_source_check)
+                or any(
+                    not isinstance(source, dict) or source.get('scope') not in ('personal', 'group', 'public')
+                    or not isinstance(source.get('document_id'), str) or not source['document_id']
+                    for source in document_sources
+                )
+            ):
+                raise ActionExecutionError('The document action source binding is unavailable.')
+            bound_ids = [source['document_id'] for source in document_sources]
+            if len(set(bound_ids)) != len(bound_ids):
+                raise ActionExecutionError('The document action source binding is ambiguous.')
+            document_source_check()
+            m365_scope.enter_context(selected_document_sources([
+                {'document': {
+                    'document_id': source['document_id'], 'scope_type': source['scope'],
+                    'scope_id': source.get('scope_id') or user_id,
+                }} for source in document_sources
+            ], user_id, restrict_ids=True))
+            # Native readers must surface authority failures rather than use legacy fallbacks.
+            from content_screening.access import strict_source_authority
+
+            m365_scope.enter_context(strict_source_authority())
         if invocation_capture is not None:
             current_settings = deepcopy(current_settings)
             manifest = deepcopy(manifest)
@@ -640,6 +673,32 @@ async def invoke_action(
                 selector=action_ref,
             )
 
+        def trace_document_read(invocation, outcome, call_index, *, payload=None, error=None):
+            if not is_debug_enabled():
+                return
+            operation = getattr(invocation.function, 'name', '')
+            value = payload if isinstance(payload, dict) else {}
+            document_id = invocation.arguments.get('document_id')
+            log_event(
+                '[ORCHESTRATION_ADAPTERS] Document action read checkpoint.',
+                extra={
+                    **workflow_log_context(
+                        conversation_id=getattr(context, 'conversation_id', None),
+                        turn_id=getattr(context, 'turn_id', None), run_id=getattr(context, 'run_id', None),
+                        step_id=m365_origin.get('step_id') if isinstance(m365_origin, dict) else None,
+                    ),
+                    'stage': 'document_action_read', 'outcome': outcome,
+                    'operation': operation if operation in DOCUMENT_SOURCE_READ_FUNCTIONS else 'unknown',
+                    'function_call_index': call_index, 'bound_source_count': len(bound_ids),
+                    'result_is_object': isinstance(payload, dict),
+                    'native_metadata_present': isinstance(value.get('accessibility_metadata'), dict),
+                    'citation_present': isinstance(value.get('citation'), str) and bool(value['citation']),
+                    'error_type': type(error).__name__ if error is not None else None,
+                    **({'document_id_hash': hashlib.sha256(document_id.encode('utf-8', errors='replace')).hexdigest()}
+                       if isinstance(document_id, str) and document_id in bound_ids else {}),
+                },
+            )
+
         async def guard_function(invocation, next):
             nonlocal calls, failure
             # Providers can return a batch despite parallel_tool_calls=False. Serialize it
@@ -654,6 +713,9 @@ async def invoke_action(
                 if calls >= limit:
                     failure = ActionExecutionError('The action function-call limit was reached.')
                     raise failure
+                call_index = calls + 1
+                if bound_ids:
+                    trace_document_read(invocation, 'started', call_index)
                 try:
                     current = get_settings()
                     _check_access(current, catalog, action_ref)
@@ -666,6 +728,19 @@ async def invoke_action(
                         raise ActionExecutionError('The selected action changed during execution.')
                     if invocation_capture is not None:
                         capture_manifest(fresh, current)
+                    if bound_ids:
+                        document_source_check()
+                        function = getattr(invocation.function, 'name', '')
+                        if function == 'search_documents':
+                            requested = _split_list(invocation.arguments.get('document_ids'))
+                            if set(requested) - set(bound_ids):
+                                raise ActionExecutionError('The action requested an unselected document.')
+                            invocation.arguments['document_ids'] = ','.join(requested or bound_ids)
+                        elif function in DOCUMENT_SOURCE_READ_FUNCTIONS:
+                            if invocation.arguments.get('document_id') not in bound_ids:
+                                raise ActionExecutionError('The action requested an unselected document.')
+                        else:
+                            raise ActionExecutionError('This function does not support the document source binding.')
                     calls += 1
                     for reader in getattr(context, 'integration_input_readers', {}).values():
                         reader.recheck()
@@ -681,6 +756,8 @@ async def invoke_action(
                     failure = step_error(exc)
                     raise failure from exc
                 except Exception as exc:
+                    if bound_ids:
+                        trace_document_read(invocation, 'failed', call_index, error=exc)
                     credential_stop = find_credential_stop(exc)
                     if credential_stop is not None:
                         failure = credential_stop
@@ -703,6 +780,18 @@ async def invoke_action(
                 if refusal is not None:
                     # A refused Microsoft 365 call is not data: the model would report it as findings.
                     failure = refusal
+                    raise failure
+                document_error = (
+                    bound_ids and invocation.result is not None
+                    and isinstance(invocation.result.value, dict) and invocation.result.value.get('error')
+                )
+                if bound_ids:
+                    trace_document_read(
+                        invocation, 'failed' if document_error else 'completed', call_index,
+                        payload=invocation.result.value if invocation.result is not None else None,
+                    )
+                if document_error:
+                    failure = ActionExecutionError('The selected document could not be read by this action.')
                     raise failure
                 if invocation.result is not None:
                     outputs.append(invocation.result.value)
@@ -741,6 +830,12 @@ async def invoke_action(
                 capture_manifest(manifest, current_settings)
             if not loader.load_plugin_from_manifest(prepared, user_id):
                 raise ActionExecutionError('The selected action could not be loaded.')
+            if bound_ids:
+                # The actual native reader, not a configured name or description, owns these reads.
+                from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
+
+                if not any(isinstance(plugin, DocumentSearchPlugin) for plugin in loader.plugin_instances):
+                    raise ActionExecutionError('The action does not provide the native document reader.')
             functions = kernel.get_list_of_function_metadata({})
             if not functions:
                 raise ActionExecutionError('The selected action has no enabled functions.')
@@ -789,6 +884,10 @@ async def invoke_action(
                 'task': task,
                 'execution_intent': execution_intent,
                 'named_inputs': named_inputs,
+                **({'document_sources': [
+                    {key: source.get(key) for key in ('document_id', 'scope', 'scope_id')}
+                    for source in document_sources
+                ]} if bound_ids else {}),
             }))
             require_integration_model_budget(
                 model_budget, [message.to_dict() for message in history.messages],

@@ -1,9 +1,10 @@
 # test_v2_orchestration_actions.py
 """
 Browser coverage for action identity and tool citations in orchestration.
-Version: 0.261.321
+Version: 0.261.420
 Implemented in: 0.261.098
 Operation intent added in: 0.261.321
+Document action source binding coverage added in: 0.261.419
 
 Use the existing orchestration harness and real stores/components. Serve its
 local bundle through request interception so local and Azure Playwright browsers
@@ -281,6 +282,29 @@ def test_action_step_keeps_existing_narrowing_controls(action_page):
     assert disabled["disabled_step_ids"] == ["lookup"]
     row.get_by_role("checkbox").click()
     expect(row.get_by_text("Run Look up the ticket", exact=True)).to_be_visible()
+
+
+def test_native_action_bound_sources_are_visible_and_can_be_narrowed(action_page):
+    plan = _plan()
+    plan["intent"]["summary"] = "Inspect native document evidence"
+    plan["inputs"]["documents"] = [
+        {"document_id": "native-pdf", "display_name": "Selected PDF.pdf", "selected_by_user": True},
+        {"document_id": "native-word", "display_name": "Selected Word.docx", "selected_by_user": True},
+    ]
+    step = plan["steps"][0]
+    step["arguments"]["document_ids"] = ["native-pdf", "native-word"]
+    step["outputs"] = [{"name": "prepared", "kind": "structured-v1"}]
+    _seed(action_page, plan)
+    row = _action_row(action_page)
+    expect(row.get_by_text("Selected PDF.pdf", exact=True)).to_be_visible()
+    expect(row.get_by_text("Selected Word.docx", exact=True)).to_be_visible()
+    row.get_by_role("button", name="Remove document native-pdf from this step", exact=True).click()
+    edits = action_page.evaluate("""({conversation, turn}) => {
+        const api = window.OrchHarness.stores.orchestration;
+        return api.selectEdits(api.useOrchestrationStore.getState(), conversation, turn);
+    }""", {"conversation": CONVERSATION, "turn": TURN})
+    assert edits["removed_document_ids"] == {"lookup": ["native-pdf"]}
+    expect(row.get_by_text("Selected Word.docx", exact=True)).to_be_visible()
 
 
 @pytest.mark.parametrize("status,summary", [

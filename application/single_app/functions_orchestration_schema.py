@@ -56,6 +56,7 @@ from agent_execution_context import AgentDelegationTimeout
 from functions_m365_operations import M365_SOURCES
 from functions_model_catalog import ModelCatalogError
 from functions_document_analysis_results import AnalysisOptionsError, normalize_analysis_options
+from functions_action_manifest import is_document_search_action
 from functions_web_iq import WebIQError, get_web_search_provider, resolve_web_iq_types
 from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
@@ -229,10 +230,21 @@ PLAN_BUDGET_EXCEEDED_CODE = 'plan_budget_exceeded'
 class PlanValidationError(ValueError):
     """Raised when a plan cannot be repaired into something safe to run."""
 
-    def __init__(self, message, *, code='plan_invalid', rule=None):
+    def __init__(self, message, *, code='plan_invalid', rule=None, diagnostics=None):
         self.code = code
         self.rule = rule
+        self.diagnostics = diagnostics or {}
         super().__init__(message)
+
+
+def _step_contract_error(message, step, *, code, rule, **diagnostics):
+    step_id = step.get('step_id')
+    return PlanValidationError(message, code=code, rule=rule, diagnostics={
+        **({'step_id_hash': hashlib.sha256(step_id.encode('utf-8')).hexdigest()}
+           if isinstance(step_id, str) else {}),
+        'capability_id': step.get('capability_id'),
+        **diagnostics,
+    })
 
 
 class LegacyPlanError(PlanValidationError):
@@ -424,32 +436,44 @@ def validate_inline_output_schema(schema):
 def step_input_specs(step):
     capability = get_capability(step.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
     if capability is None or type(step.get('inputs', {})) is not dict:
-        raise PlanValidationError('The step has invalid named inputs.')
+        raise _step_contract_error('The step has invalid named inputs.', step,
+                                   code='plan_inputs_invalid', rule='inputs_object_required')
     accepted = capability['result_input_kinds']
     if not set(capability.get('required_result_inputs') or ()).issubset(step.get('inputs', {})):
-        raise PlanValidationError('The capability requires an explicit named input.')
+        raise _step_contract_error('The capability requires an explicit named input.', step,
+                                   code='plan_inputs_invalid', rule='required_input_missing')
     specs = []
     for name, value in step.get('inputs', {}).items():
         if type(value) is not dict or set(value) - {'binding', 'allow_partial', 'optional'} or 'binding' not in value:
-            raise PlanValidationError('Each named input requires an explicit result binding.')
+            raise _step_contract_error('Each named input requires an explicit result binding.', step,
+                                       code='plan_inputs_invalid', rule='input_binding_required')
         kinds = accepted.get(name, accepted.get('*'))
         if not kinds:
-            raise PlanValidationError('This capability does not accept that named input.')
+            raise _step_contract_error('This capability does not accept that named input.', step,
+                                       code='plan_inputs_invalid', rule='input_name_unsupported')
         if value.get('allow_partial') is True and not capability['partial_inputs_supported']:
-            raise PlanValidationError('This capability requires complete named inputs.')
+            raise _step_contract_error('This capability requires complete named inputs.', step,
+                                       code='plan_inputs_invalid', rule='input_partial_unsupported')
         if (
             value.get('allow_partial') is True and step.get('capability_id') == 'render_file'
             and step.get('arguments', {}).get('profile') not in NARRATIVE_EXPORT_PROFILES
         ):
-            raise PlanValidationError('This file profile requires complete source data.')
+            raise _step_contract_error('This file profile requires complete source data.', step,
+                                       code='plan_inputs_invalid', rule='input_partial_unsupported')
         if type(value.get('optional', False)) is not bool:
-            raise PlanValidationError('Input optionality must be a boolean.')
+            raise _step_contract_error('Input optionality must be a boolean.', step,
+                                       code='plan_inputs_invalid', rule='input_optionality_invalid')
         if value.get('optional') is True and not capability.get('optional_inputs_supported'):
-            raise PlanValidationError('This capability cannot proceed without a named input.')
-        specs.append(InputSpec(
-            name, InputBinding.from_dict(value['binding']), tuple(kinds), value.get('allow_partial', False),
-            value.get('optional', False),
-        ))
+            raise _step_contract_error('This capability cannot proceed without a named input.', step,
+                                       code='plan_inputs_invalid', rule='input_optional_unsupported')
+        try:
+            specs.append(InputSpec(
+                name, InputBinding.from_dict(value['binding']), tuple(kinds), value.get('allow_partial', False),
+                value.get('optional', False),
+            ))
+        except ResultContractError as exc:
+            raise _step_contract_error('The named input binding is malformed.', step,
+                                       code='plan_inputs_invalid', rule='input_binding_invalid') from exc
     return tuple(specs)
 
 
@@ -513,20 +537,29 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
         return prepared
     if capability['role'] == 'render':
         if outputs != []:
-            raise PlanValidationError('Render delivers files, not named retained data outputs.')
+            raise _step_contract_error('Render delivers files, not named retained data outputs.', raw,
+                                       code='plan_outputs_invalid', rule='render_outputs_must_be_empty')
         return []
     if type(outputs) is not list or not 1 <= len(outputs) <= 32:
-        raise PlanValidationError('Each step must declare its supported named outputs.')
+        raise _step_contract_error('Each step must declare its supported named outputs.', raw,
+                                   code='plan_outputs_invalid', rule='outputs_list_required')
     if capability['id'] != CAPABILITY_COMPOSE:
         allowed = {**required, **optional}
         for output in outputs:
             if type(output) is not dict or set(output) != {'name', 'kind'}:
-                raise PlanValidationError('The output declaration does not match the producing capability.')
-            OutputSpec(output['name'], output['kind'])
+                raise _step_contract_error('The output declaration does not match the producing capability.', raw,
+                                           code='plan_outputs_invalid', rule='fixed_output_shape_invalid')
+            try:
+                OutputSpec(output['name'], output['kind'])
+            except ResultContractError as exc:
+                raise _step_contract_error('The output declaration is invalid.', raw,
+                                           code='plan_outputs_invalid', rule='output_name_or_kind_invalid') from exc
             if allowed.get(output['name']) != output['kind']:
-                raise PlanValidationError('The output declaration does not match the producing capability.')
+                raise _step_contract_error('The output declaration does not match the producing capability.', raw,
+                                           code='plan_outputs_invalid', rule='fixed_output_not_supported')
         if not set(required).issubset({output['name'] for output in outputs}):
-            raise PlanValidationError('The output declaration does not match the producing capability.')
+            raise _step_contract_error('The output declaration omits a required producing-capability output.', raw,
+                                       code='plan_outputs_invalid', rule='fixed_output_missing')
         return deepcopy(outputs)
     supported = capability['result_output_kinds']
     for item in outputs:
@@ -534,14 +567,21 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
             type(item) is not dict or set(item) - {'name', 'kind', 'columns', 'schema', 'profile'}
             or not {'name', 'kind'}.issubset(item)
         ):
-            raise PlanValidationError('The composition output declaration is invalid.')
-        OutputSpec(item['name'], item['kind'])
+            raise _step_contract_error('The composition output declaration is invalid.', raw,
+                                       code='plan_outputs_invalid', rule='compose_output_shape_invalid')
+        try:
+            OutputSpec(item['name'], item['kind'])
+        except ResultContractError as exc:
+            raise _step_contract_error('The composition output declaration is invalid.', raw,
+                                       code='plan_outputs_invalid', rule='output_name_or_kind_invalid') from exc
         if item['kind'] not in supported:
-            raise PlanValidationError('The composition output kind is unsupported.')
+            raise _step_contract_error('The composition output kind is unsupported.', raw,
+                                       code='plan_outputs_invalid', rule='compose_output_kind_unsupported')
         if item['kind'] == 'records-v1':
             columns = item.get('columns')
             if type(columns) is not list or not columns:
-                raise PlanValidationError('Records require an explicit ordered column schema.')
+                raise _step_contract_error('Records require an explicit ordered column schema.', raw,
+                                           code='plan_outputs_invalid', rule='record_columns_required')
             parsed = tuple(RecordColumn.from_dict(column) for column in columns)
             if len(parsed) > 256 or len({column.name for column in parsed}) != len(parsed):
                 raise PlanValidationError('The record column schema is invalid.')
@@ -942,7 +982,7 @@ def validate_dependency_plan(
     plan, *, settings=None, authorized_document_ids=None, available_capability_ids=None,
     agent_names=None, action_refs=None, existing_results=None, composition_profiles=None,
     export_catalog=None, deliverable_availability=None, image_selected=False, seeds=None,
-    workflow_planning=None,
+    workflow_planning=None, actions=None,
 ):
     """Compile a plan without dropping required work, arguments, outputs, or dependencies.
 
@@ -1001,22 +1041,37 @@ def validate_dependency_plan(
         'delivers', 'deliverable_context',
     }
     try:
-        for raw in raw_steps:
+        for step_index, raw in enumerate(raw_steps):
             if type(raw) is not dict or set(raw) - fields:
-                raise PlanValidationError('The plan contains an invalid step field.')
-            output_name(raw.get('step_id'))
+                raise PlanValidationError(
+                    'The plan contains an invalid step field.',
+                    code='plan_structure_invalid', rule='step_shape_invalid',
+                    diagnostics={'step_index': step_index},
+                )
+            try:
+                output_name(raw.get('step_id'))
+            except ResultContractError as exc:
+                raise PlanValidationError(
+                    'Each step requires a valid unique identifier.',
+                    code='plan_structure_invalid', rule='step_id_invalid',
+                    diagnostics={'step_index': step_index},
+                ) from exc
             capability = get_capability(raw.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
             if capability is None or capability['id'] not in available or capability.get('runtime_unavailable_reason'):
                 raise PlanValidationError('A required capability is unknown or disabled.', code='capability_unavailable')
             capability_id = capability['id']
             if 'role' in raw and raw['role'] != capability['role']:
-                raise PlanValidationError('Capability purpose is server-owned.')
+                raise _step_contract_error('Capability purpose is server-owned.', raw,
+                                           code='plan_structure_invalid', rule='step_role_invalid')
             if any(type(raw.get(key, default)) is not bool for key, default in (('enabled', True), ('optional', False))):
-                raise PlanValidationError('Step enablement and optionality must be booleans.')
+                raise _step_contract_error('Step enablement and optionality must be booleans.', raw,
+                                           code='plan_structure_invalid', rule='step_flags_invalid')
             if type(raw.get('depends_on', [])) is not list:
-                raise PlanValidationError('Dependencies must be a list of step IDs.')
+                raise _step_contract_error('Dependencies must be a list of step IDs.', raw,
+                                           code='plan_structure_invalid', rule='dependencies_list_required')
             if 'model_task' in raw and (type(raw['model_task']) is not str or not raw['model_task'].strip()):
-                raise PlanValidationError('A model task must be a named task category.')
+                raise _step_contract_error('A model task must be a named task category.', raw,
+                                           code='plan_structure_invalid', rule='model_task_invalid')
             if 'model_binding' in raw and type(raw['model_binding']) is not dict:
                 raise PlanValidationError('A model binding is server-owned structured data.')
             if capability_id == CAPABILITY_WORKFLOW_RUN:
@@ -1041,7 +1096,8 @@ def validate_dependency_plan(
                 raise PlanValidationError('The plan exceeds a capability work limit.', code='result_step_limit')
             arguments = raw.get('arguments', {})
             if type(arguments) is not dict:
-                raise PlanValidationError('Step arguments must be an object.')
+                raise _step_contract_error('Step arguments must be an object.', raw,
+                                           code='plan_arguments_invalid', rule='arguments_object_required')
             canonical_bytes(arguments)
             analysis_options = None
             if capability_id == 'document_analyze' and 'analysis_options' in arguments:
@@ -1059,8 +1115,27 @@ def validate_dependency_plan(
                         'The declared Analyze options do not match their contract.',
                         code='analysis_options_invalid', rule='analysis_options_schema_invalid',
                     )
-            if not Draft202012Validator(capability['inputs']).is_valid(arguments):
-                raise PlanValidationError('Step arguments do not match the capability contract.')
+            argument_error = next(Draft202012Validator(capability['inputs']).iter_errors(arguments), None)
+            if argument_error is not None:
+                if capability_id in (
+                    CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN,
+                    CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_HANDOFF,
+                ):
+                    # These owners have their own correction/drop policy; preserve its boundary.
+                    raise PlanValidationError('Step arguments do not match the capability contract.')
+                field = next(iter(argument_error.absolute_path), None)
+                if field is None and argument_error.validator == 'required':
+                    field = next((
+                        name for name in capability['inputs'].get('required', ()) if name not in arguments
+                    ), None)
+                field = field if field in capability['inputs']['properties'] else 'unknown'
+                keyword = argument_error.validator.lower()
+                raise _step_contract_error(
+                    'Step arguments do not match the capability contract.', raw,
+                    code='plan_arguments_invalid',
+                    rule='unknown_argument' if keyword == 'additionalproperties' else 'argument_schema_invalid',
+                    schema_keyword=keyword, argument_field=field,
+                )
             arguments = deepcopy(arguments)
             if analysis_options is not None:
                 arguments['analysis_options'] = analysis_options
@@ -1136,6 +1211,16 @@ def validate_dependency_plan(
                 raise PlanValidationError('The selected agent is unavailable.')
             if 'action_ref' in arguments and arguments['action_ref'] not in (action_refs or ()):
                 raise PlanValidationError('The selected action is unavailable.')
+            if capability_id == CAPABILITY_ACTION_INVOKE and 'document_ids' in arguments:
+                action = next((
+                    item for item in actions or ()
+                    if isinstance(item, dict) and item.get('action_ref') == arguments['action_ref']
+                ), None)
+                if action is None or not is_document_search_action(action):
+                    raise _step_contract_error(
+                        'The selected action cannot bind workspace documents.', raw,
+                        code='source_binding_invalid', rule='action_document_reader_required',
+                    )
             limit = get_capability_document_limit(capability, settings=settings)
             for name in ('document_ids', 'right_document_ids'):
                 if name in arguments:
@@ -1311,7 +1396,10 @@ def validate_dependency_plan(
             availability=deliverable_availability, image_selected=image_selected,
         )
     except ResultContractError as exc:
-        raise PlanValidationError('The plan has an invalid or unavailable result binding.', code=exc.code) from exc
+        raise PlanValidationError(
+            'The plan has an invalid or unavailable result binding.',
+            code=exc.code, rule=exc.rule or exc.code, diagnostics=exc.diagnostics,
+        ) from exc
     except DeliverableError as exc:
         raise PlanValidationError(exc.message, code=exc.code, rule=exc.rule) from exc
     compiled = deepcopy(plan)
@@ -1344,7 +1432,7 @@ def validate_plan(
     deliverable_availability=None,
     image_selected=False,
     seeds=None,
-    workflow_planning=None,
+    workflow_planning=None, actions=None,
 ):
     """Make a planner-authored plan safe to run, or refuse it.
 
@@ -1372,7 +1460,7 @@ def validate_plan(
         composition_profiles=composition_profiles,
         export_catalog=export_catalog,
         deliverable_availability=deliverable_availability, image_selected=image_selected,
-        seeds=seeds, workflow_planning=workflow_planning,
+        seeds=seeds, workflow_planning=workflow_planning, actions=actions,
     )
 
 
@@ -1758,6 +1846,7 @@ def normalize_plan(
         action_refs=[
             action.get('action_ref') for action in actions or () if isinstance(action, dict)
         ],
+        actions=actions,
         existing_results=existing_results,
         composition_profiles=composition_profiles,
         export_catalog=export_catalog,
@@ -1891,7 +1980,10 @@ def apply_plan_edits(
             plan.get('deliverables'), plan['steps'], final_response=plan.get('final_response'),
         )
     except ResultContractError as exc:
-        raise PlanValidationError('This edit leaves a required result unavailable.', code=exc.code) from exc
+        raise PlanValidationError(
+            'This edit leaves a required result unavailable.',
+            code=exc.code, rule=exc.rule, diagnostics=exc.diagnostics,
+        ) from exc
     except DeliverableError as exc:
         raise PlanValidationError(exc.message, code=exc.code, rule=exc.rule) from exc
     original.update(plan)

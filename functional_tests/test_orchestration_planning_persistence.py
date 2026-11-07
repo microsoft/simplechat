@@ -1,8 +1,9 @@
 # test_orchestration_planning_persistence.py
 """
 Regression coverage for durable initial orchestration turns.
-Version: 0.261.415
+Version: 0.261.420
 Implemented in: 0.261.415
+Typed planner failure persistence added in: 0.261.419
 
 Real authenticated routes and SDK-default offline storage exercise admission,
 clarification, failure, disconnect, Auto handoff, cancellation, and explicit retry.
@@ -85,7 +86,7 @@ def test_initial_question_and_outcome_are_saved(empty_history_runtime, outcome):
     if outcome == "clarification":
         assert current["elicitation"]["message"] == "Choose a response style."
     if outcome == "failed":
-        assert current["error"] and current["error_code"] == "planning_failed"
+        assert current["error"] and current["error_code"] == "invalid_plan_work"
     if outcome == "success":
         record = runtime.harness.runs.read_item(current["run_id"], CONVERSATION)
         assert record["conversation_context"]["messages"] == []
@@ -281,6 +282,39 @@ def test_explicit_retry_uses_saved_inputs_and_one_question(empty_history_runtime
     assert plan["requires_fresh_review"] is True
     assert plan["approval"]["mode"] == "manual"
     assert current["status"] == "awaiting_review"
+
+
+def test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry(empty_history_runtime):
+    runtime = empty_history_runtime
+    invalid = plan_doc()
+    invalid["steps"][0]["outputs"] = []
+    runtime.harness.replies.extend([json.dumps(invalid), json.dumps(invalid)])
+    response = runtime.client.post(PLAN_PATH, json=body(), buffered=True)
+    failure = next(frame for frame in sse_frames(response) if frame.get("error"))
+    expected = {
+        "error_stage": "plan_normalization",
+        "error_rule": "outputs_list_required",
+        "error_attempt": 2,
+    }
+    assert failure["code"] == "plan_outputs_invalid"
+    assert all(failure.get(key) == value for key, value in expected.items())
+    calls = len(runtime.harness.model_calls)
+    saved = status(runtime, include_request=True)
+    reloaded = status(runtime)
+    assert calls == len(runtime.harness.model_calls) == 2
+    assert saved["status"] == reloaded["status"] == "failed"
+    assert saved["error_code"] == reloaded["error_code"] == failure["code"]
+    assert all(saved.get(key) == reloaded.get(key) == value for key, value in expected.items())
+    assert not runtime.harness.runs.items and not runtime.harness.assistant_messages()
+    runtime.harness.replies.append(json.dumps(plan_doc()))
+    retried = runtime.client.post(PLAN_PATH, json={
+        **saved["request"], "planning_submission_id": "contract-retry",
+        "requires_fresh_review": True, "approval_mode": "manual",
+    }, buffered=True)
+    assert any(frame.get("type") == "orchestration_plan" for frame in sse_frames(retried))
+    current = status(runtime)
+    assert current["status"] == "awaiting_review" and len(questions(runtime)) == 1
+    assert not any(key in current for key in ("error", "error_code", *expected))
 
 
 def test_stop_before_acknowledgement_is_durable(empty_history_runtime):
