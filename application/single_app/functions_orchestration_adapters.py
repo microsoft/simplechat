@@ -2357,13 +2357,30 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         raise
     except Exception as exc:
         # This is the boundary for arbitrary plugin/provider code; never expose its exceptions.
+        failed_result = _failed_result('The action could not complete.', exc)
+        failure_code = failed_result['failure']['code']
+        failure_stage = {
+            'action_initialization_failed': 'action_initialization',
+            'document_reader_identity_mismatch': 'action_initialization',
+            'document_action_read_failed': 'document_action_read',
+            'action_results_missing': 'action_results',
+        }.get(failure_code, 'action_invocation')
         log_event(
             f'{_LOG_PREFIX} Direct action execution failed.',
             level=logging.ERROR,
-            extra={'action_ref': action_ref, 'step_id': (step or {}).get('step_id'),
-                   'error_type': type(exc).__name__},
+            extra={
+                **workflow_log_context(
+                    conversation_id=_ctx(context, 'conversation_id'), turn_id=_ctx(context, 'turn_id'),
+                    run_id=_ctx(context, 'run_id'), step_id=step['step_id'],
+                ),
+                'capability_id': CAPABILITY_ACTION_INVOKE,
+                'stage': failure_stage, 'failure_code': failure_code,
+                'error_type': type(exc).__name__,
+                **({'function_calls_attempted': failure_stage == 'document_action_read'}
+                   if failure_stage in ('action_initialization', 'document_action_read') else {}),
+            },
         )
-        return _failed_result('The action could not complete.', exc)
+        return failed_result
     citations = _agent_citations(
         None, user_id, _ctx(context, 'conversation_id'), set(),
         root_id=result['root_id'], scoped_invocations=result['invocations'],

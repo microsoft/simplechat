@@ -1,12 +1,18 @@
-import os
-import importlib.util
+# plugin_loader.py
+"""Discover installed plugins without duplicating their runtime class identities."""
+
+import importlib
 import inspect
 import logging
-from functions_appinsights import log_event
+import os
 from typing import Dict, Type, List
+
+from functions_appinsights import log_event
 from semantic_kernel_plugins.base_plugin import BasePlugin
 
+
 PLUGIN_DIR = os.path.dirname(__file__)
+
 
 def discover_plugins() -> Dict[str, Type[BasePlugin]]:
     """
@@ -18,23 +24,25 @@ def discover_plugins() -> Dict[str, Type[BasePlugin]]:
     for filename in os.listdir(PLUGIN_DIR):
         if filename.endswith('.py') and not filename.startswith('__') and filename != 'base_plugin.py' and filename != 'plugin_loader.py':
             module_name = filename[:-3]
-            module_path = os.path.join(PLUGIN_DIR, filename)
-            
+
             try:
-                spec = importlib.util.spec_from_file_location(f"semantic_kernel_plugins.{module_name}", module_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                
+                # Runtime guards and other loaders must see the same imported classes.
+                module = importlib.import_module(f"semantic_kernel_plugins.{module_name}")
+
                 for name, obj in inspect.getmembers(module, inspect.isclass):
                     if issubclass(obj, BasePlugin) and obj is not BasePlugin:
                         plugins[name] = obj
-                        
-            except Exception as e:
-                # Log the error but continue with other plugins
-                log_event(f"Failed to load plugin module {module_name}: {str(e)}")
+
+            except Exception as exc:
+                log_event(
+                    "[PLUGIN_LOADER] Plugin module could not be loaded.",
+                    level=logging.WARNING,
+                    extra={"plugin_name": module_name, "error_type": type(exc).__name__},
+                )
                 continue
-                
+
     return plugins
+
 
 def get_all_plugin_metadata() -> List[dict]:
     """

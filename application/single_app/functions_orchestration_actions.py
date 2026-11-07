@@ -5,10 +5,11 @@ When the request asks for a chart, a separate chart sub-step runs after gatherin
 kernel holds only the built-in chart tools, never the action's own functions, so saved
 visual preferences can be applied there without reaching calls to the integration.
 
-Version: 0.261.321
+Version: 0.261.421
 Microsoft 365 actions authorized for their own step in: 0.261.238
 SharePoint and OneDrive steps bind their model's token budget and analysis model in: 0.261.300
 Explicit operation intent and named input consumption added in: 0.261.321
+Canonical plugin identity and safe action-stage failures added in: 0.261.421
 """
 
 import asyncio
@@ -86,6 +87,10 @@ CHART_STEP_INSTRUCTIONS = (
 
 class ActionExecutionError(RuntimeError):
     """A user-safe failure of the selected action."""
+
+    def __init__(self, message="", *, failure_code=None):
+        super().__init__(message)
+        self.orchestration_failure_code = failure_code
 
 
 def _check_access(settings, catalog, action_ref):
@@ -791,7 +796,10 @@ async def invoke_action(
                         payload=invocation.result.value if invocation.result is not None else None,
                     )
                 if document_error:
-                    failure = ActionExecutionError('The selected document could not be read by this action.')
+                    failure = ActionExecutionError(
+                        'The selected document could not be read by this action.',
+                        failure_code='document_action_read_failed',
+                    )
                     raise failure
                 if invocation.result is not None:
                     outputs.append(invocation.result.value)
@@ -829,16 +837,25 @@ async def invoke_action(
                 }
                 capture_manifest(manifest, current_settings)
             if not loader.load_plugin_from_manifest(prepared, user_id):
-                raise ActionExecutionError('The selected action could not be loaded.')
+                raise ActionExecutionError(
+                    'The selected action could not be loaded.',
+                    failure_code='action_initialization_failed',
+                )
             if bound_ids:
                 # The actual native reader, not a configured name or description, owns these reads.
                 from semantic_kernel_plugins.document_search_plugin import DocumentSearchPlugin
 
                 if not any(isinstance(plugin, DocumentSearchPlugin) for plugin in loader.plugin_instances):
-                    raise ActionExecutionError('The action does not provide the native document reader.')
+                    raise ActionExecutionError(
+                        'The action does not provide the native document reader.',
+                        failure_code='document_reader_identity_mismatch',
+                    )
             functions = kernel.get_list_of_function_metadata({})
             if not functions:
-                raise ActionExecutionError('The selected action has no enabled functions.')
+                raise ActionExecutionError(
+                    'The selected action has no enabled functions.',
+                    failure_code='action_initialization_failed',
+                )
             if cancel_requested():
                 raise AgentExecutionCancelled('Action execution was cancelled.')
             kernel.add_filter(FilterTypes.FUNCTION_INVOCATION, guard_function)
@@ -853,7 +870,10 @@ async def invoke_action(
                     service = _build_action_model(current_settings, context, user_id)
                 kernel.add_service(service)
             if not getattr(service, 'SUPPORTS_FUNCTION_CALLING', False):
-                raise ActionExecutionError('The selected model does not support action functions.')
+                raise ActionExecutionError(
+                    'The selected model does not support action functions.',
+                    failure_code='action_initialization_failed',
+                )
             if file_source:
                 # Chat binds these through the selected agent; this step's own model stands in.
                 kernel.add_filter(FilterTypes.AUTO_FUNCTION_INVOCATION, file_step_filter(
@@ -938,7 +958,10 @@ async def invoke_action(
             if invocation_capture is not None:
                 invocation_capture.require_valid(captured=True)
             if not calls or not outputs:
-                raise ActionExecutionError('The action did not return any function results.')
+                raise ActionExecutionError(
+                    'The action did not return any function results.',
+                    failure_code='action_results_missing',
+                )
             findings = '\n\n'.join(str(reply) for reply in replies or [] if str(reply).strip())
             if not findings:
                 findings = '\n\n'.join(

@@ -2,6 +2,22 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.421)**
+
+#### Bug Fixes
+
+*   **Selected-Document Orchestration Tool Loading**
+    *   Fixed document-backed runs failing before their first read because plugin discovery created a different copy of the document-reader class than the source-binding safety check expected.
+    *   Shared discovery now reuses registered plugin classes while preserving separate instances, current permissions, selected-file restrictions, and native-inspection limits.
+    *   Explicitly pins the existing Handlebars template-parser dependency so fresh container installations do not report a successful install and then fail to import Semantic Kernel.
+    *   Added production-loader, fresh-start, concurrent-user, and config-derived supported-format retrieval regressions instead of substituting a simplified loader in the end-to-end test.
+    *   (Ref: `semantic_kernel_plugins/plugin_loader.py`, `functions_orchestration_actions.py`, `docs/explanation/fixes/ORCHESTRATION_PLUGIN_DISCOVERY_IDENTITY_FIX.md`)
+
+*   **Action Failure Reasons Retained Through Recovery Details**
+    *   Tool initialization, document-reader identity, failed document reads, and missing function results now retain distinct safe reasons in saved steps and the final failure explanation.
+    *   The first action error includes hashed run/step correlation with debug logging on or off, without exposing private exception text. Code faults are not automatically retried; existing permitted manual recovery remains available.
+    *   (Ref: `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `docs/reference/logging-tags.md`)
+
 ### **(v0.261.410)**
 
 #### New Features
@@ -11,7 +27,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Built-in model selections preconfigure canonical model identity while retaining automatic exact name matching, deployment names, explicit overrides, and publication choices.
     *   Preserved Custom/APIM base paths, authentication headers, and request aliases. MAI keeps its native Chat Completions contract even when the shared connection prefers Responses for compatible OpenAI-style models.
     *   Added the verified MAI profile, generation limits, token audience, and setup guidance without changing existing chat, planner, image, or embedding defaults.
-    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, `functions_model_capabilities.py`, `ModelConnectionsManager.tsx`, `model_capabilities.json`, [AI connection configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models), [Microsoft MAI Connection Compatibility Fix](fixes/MICROSOFT_MAI_MODEL_CONNECTIONS_FIX.md))
+    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, `functions_model_capabilities.py`, `ModelConnectionsManager.tsx`, `model_capabilities.json`, [AI connection configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models), `docs/explanation/fixes/MICROSOFT_MAI_MODEL_CONNECTIONS_FIX.md`)
 
 ### **(v0.261.408)**
 
