@@ -1,7 +1,7 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.419
+Version: 0.261.420
 Implemented in: 0.261.419
 
 Real registry, planner, validation, source preparation and logger owners run with

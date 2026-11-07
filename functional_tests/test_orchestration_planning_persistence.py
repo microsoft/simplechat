@@ -1,7 +1,7 @@
 # test_orchestration_planning_persistence.py
 """
 Regression coverage for durable initial orchestration turns.
-Version: 0.261.419
+Version: 0.261.420
 Implemented in: 0.261.415
 Typed planner failure persistence added in: 0.261.419
 

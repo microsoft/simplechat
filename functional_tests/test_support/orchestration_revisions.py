@@ -2,7 +2,7 @@
 """
 In-memory Cosmos boundary for conditional orchestration revision tests.
 
-Version: 0.261.419
+Version: 0.261.420
 Implemented in: 0.261.102
 SDK-shaped point response coverage added in: 0.261.140
 SDK responses default in: 0.261.324; sdk_responses=False is a compatibility probe.

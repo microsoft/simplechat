@@ -1,7 +1,7 @@
 # test_v2_orchestration_actions.py
 """
 Browser coverage for action identity and tool citations in orchestration.
-Version: 0.261.419
+Version: 0.261.420
 Implemented in: 0.261.098
 Operation intent added in: 0.261.321
 Document action source binding coverage added in: 0.261.419

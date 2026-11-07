@@ -3,6 +3,13 @@
 Fixed/Implemented in version: **0.261.419**, tracked in
 `application/single_app/config.py`.
 
+Current integrated version: **0.261.420**. The updated React V2 base adds
+saved-findings publication identifiers and status codes to the logger; those
+properties and this fix's consumer-run/schema diagnostics are preserved together.
+Post-integration validation passed 179 logging/native/saved-findings functional
+tests and 75 browser source-inspector checks. The merged V2 build, documentation
+checks and reviewed Cosmos inventory also passed.
+
 ## Issue and root cause
 
 Similar document requests could either run normally or stop with "The request
