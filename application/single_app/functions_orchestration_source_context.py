@@ -159,10 +159,11 @@ conversation_attachments lists other authorized attachments, not chosen sources.
 Multiple plausible images require a focused source_selection question. Use normal
 presentation defaults rather than blocking on optional formatting preferences.
 
-For Excel Notes or threaded comments, use document_search native_section="comments"
-with explicit document_ids, then compose from prepared/evidence. This native inventory
-contains available authors, replies, dates, resolution and saved worksheet/cell values,
-including blank/out-of-table cells. Do not replace it with row previews or tabular_analyze.
+For Word review comments (.docx, .docm, .dotx), or Excel Notes/threaded comments, use
+document_search native_section="comments" with document_ids, then compose from
+prepared/evidence. This native inventory contains available anchors, authors, replies,
+dates and resolution; Excel also includes saved worksheet/cell values, including
+blank/out-of-table cells. Do not replace it with row previews or tabular_analyze.
 Use tabular computation additionally only for actual calculations. Reviewer feedback
 is not a replacement worksheet value. Respect native coverage and unavailable metadata.
 

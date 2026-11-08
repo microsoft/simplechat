@@ -3,12 +3,14 @@
 Fixed/Implemented in version: **0.261.413**, recorded in
 `application/single_app/config.py`.
 
-Current behavior updated in version: **0.261.419**.
+Current behavior updated in version: **0.261.422**.
+The [pipeline reliability follow-up](ORCHESTRATION_RELIABILITY_PIPELINE_FIX.md)
+adds conservative single-source wiring and two shared model corrections.
 The [planner contract recovery follow-up](ORCHESTRATION_PLANNER_CONTRACT_RECOVERY_FIX.md)
 aligns defaulted Analyze output variants, gives native document actions an enforced
 source binding, and carries their provenance/citations through retention and
 composition. It also classifies additional model-draft contract failures within
-the same single correction allowance and preserves typed failure information on
+the same shared correction allowance and preserves typed failure information on
 the saved question. These changes do not identify the exact historical model
 JSON behind a generic rejection.
 
@@ -67,7 +69,9 @@ omissions separately.
 `functions_orchestration_planner.py` validates selected requirements inside the
 existing correction loop. Targeted feedback preserves every selection and asks
 for compatible, explicit source bindings. All repairable categories share
-`PLAN_REPAIR_ATTEMPTS = 1`: a second different error does not start another budget.
+`PLAN_REPAIR_ATTEMPTS = 2` since **0.261.422** (originally 1): a different error
+does not start another budget. The initial proposal and at most two corrections
+share that limit.
 An unrenderable clarification stays in that same loop rather than recursively
 restarting the planner and resetting its allowance.
 The same planner/model is used, and uncorrectable proposals return stable, specific
@@ -105,7 +109,7 @@ for event names, properties, and a bounded query.
 request/context/planner/validator/logger boundaries with external I/O isolated.
 It covers PNG, PDF, DOCX, CSV and XLSX selections, manual/automatic approval,
 Auto routing, correctable and terminal option/source failures, mixed errors
-sharing one correction, implicit scoped search, multiple/disabled sources, source-free
+sharing one allowance, implicit scoped search, multiple/disabled sources, source-free
 controls, existing-plan narrowing, legacy semantics, explicit requirement bounds,
 provider failures, and debug privacy/gating/serialization.
 

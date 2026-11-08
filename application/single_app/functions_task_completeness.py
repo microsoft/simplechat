@@ -190,14 +190,22 @@ def context_only_review_step_ids(steps):
     return frozenset((step["step_id"],))
 
 
-def assessment_response_format(previous=()):
-    """Close known obligation identities in the transport, not in model-authored prose."""
+def assessment_response_format(previous=(), *, evidence=None):
+    """Close obligation identities and supplied evidence labels in the transport."""
+    refs = {"type": "array", "items": {"type": "string"}}
+    if evidence is not None:
+        if type(evidence) is not dict or any(type(key) is not str for key in evidence):
+            raise CompletenessError("completeness_input_invalid")
+        if evidence:
+            refs["items"]["enum"] = list(evidence)
+        else:
+            refs["maxItems"] = 0
     judgment = {
         "type": "object",
         "properties": {
             "status": {"type": "string", "enum": sorted(REQUIREMENT_STATUSES)},
             "reason": {"type": "string"},
-            "evidence_refs": {"type": "array", "items": {"type": "string"}},
+            "evidence_refs": refs,
             "answer_quote": {"type": "string"},
         },
         "required": ["status", "reason", "evidence_refs", "answer_quote"],
@@ -356,12 +364,19 @@ def _evidence_aliases(evidence):
 
 
 def _resolve_evidence_refs(refs, evidence, aliases):
+    def invalid(rule):
+        raise CompletenessError("completeness_evidence_invalid", details={
+            "evidence_rule": rule, "allowed_evidence_refs": list(evidence),
+            "evidence_ref_count": len(refs) if type(refs) is list else 0,
+            "evidence_refs_list": type(refs) is list,
+        })
+
     if type(refs) is not list or len(refs) > 100:
-        raise CompletenessError("completeness_evidence_invalid")
+        invalid("evidence_reference_list_invalid")
     resolved = []
     for ref in refs:
         if type(ref) is not str:
-            raise CompletenessError("completeness_evidence_invalid")
+            invalid("evidence_reference_string_required")
         cleaned = ref.strip()
         if not cleaned:
             continue
@@ -378,7 +393,7 @@ def _resolve_evidence_refs(refs, evidence, aliases):
         if owners:
             resolved.extend(key for key in evidence if key in owners and key not in resolved)
             continue
-        raise CompletenessError("completeness_evidence_invalid")
+        invalid("evidence_reference_unknown")
     return resolved
 
 
@@ -504,7 +519,7 @@ def public_completeness_report(state):
 def check_and_correct(
     candidate, *, instruction, contract, evidence, policy, invoke, validate,
     checkpoint=None, saved_state=None, recheck=None, on_error=None, owner_step_id=None,
-    evidence_basis=None, legacy_evidence=None,
+    evidence_basis=None, legacy_evidence=None, on_diagnostic=None,
 ):
     """Check every candidate, with one persisted allowance shared by all validators.
 
@@ -581,6 +596,30 @@ def check_and_correct(
         save()
         return state["candidate"], state
 
+    def assessment_error(error):
+        code = str(error) if isinstance(error, CompletenessError) else type(error).__name__
+        if callable(on_error):
+            on_error(code)
+        if callable(on_diagnostic):
+            known = code in _REPAIRABLE_REPORT_CODES or code in _OPTIONAL_CHECKER_ERRORS
+            diagnostic = {
+                "error_type": code if known else type(error).__name__,
+                "validation_code": code if known else "completeness_verification_unavailable",
+                "report_repair_count": state.get("report_repairs", 0),
+                "evidence_key_count": len(evidence),
+            }
+            if isinstance(error, CompletenessError):
+                for key in ("evidence_ref_count", "evidence_refs_list"):
+                    if type(error.details.get(key)) in (int, bool):
+                        diagnostic[key] = error.details[key]
+                rule = error.details.get("evidence_rule")
+                if rule in (
+                    "evidence_reference_list_invalid", "evidence_reference_string_required",
+                    "evidence_reference_unknown",
+                ):
+                    diagnostic["validation_rule"] = rule
+            on_diagnostic(diagnostic)
+
     if state["status"] in ("complete", "incomplete", "verification_unavailable"):
         return state["candidate"], state
     if state["status"] == "correcting":
@@ -637,9 +676,13 @@ def check_and_correct(
                 return skipped
             state["semantic_status"] = "running"
             save()
-            response_format = assessment_response_format(state["requirements"])
+            response_format = assessment_response_format(state["requirements"], evidence=evidence)
             payload = {
                 **request, "candidate": current,
+                "evidence_reference_rule": (
+                    "Use only the top-level evidence labels permitted by assessment_schema. "
+                    "Use [] when an obligation needs no source reference; never invent a label."
+                ),
                 "assessment_schema": response_format["json_schema"]["schema"],
                 "previous_requirements": [
                     {"id": item["id"], "requirement": item["requirement"]}
@@ -661,8 +704,7 @@ def check_and_correct(
             try:
                 requirements = assess()
             except Exception as error:
-                if callable(on_error):
-                    on_error(str(error) if isinstance(error, CompletenessError) else type(error).__name__)
+                assessment_error(error)
                 if isinstance(error, CompletenessError):
                     skipped = skip_optional_error(str(error))
                     if skipped is not None:
@@ -679,8 +721,7 @@ def check_and_correct(
                 try:
                     requirements = assess()
                 except Exception as repair_error:
-                    if callable(on_error):
-                        on_error(str(repair_error) if isinstance(repair_error, CompletenessError) else type(repair_error).__name__)
+                    assessment_error(repair_error)
                     return stop(
                         str(repair_error) if isinstance(repair_error, CompletenessError)
                         else "completeness_verification_unavailable"

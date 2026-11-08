@@ -1073,7 +1073,10 @@ def validate_dependency_plan(
                 raise _step_contract_error('A model task must be a named task category.', raw,
                                            code='plan_structure_invalid', rule='model_task_invalid')
             if 'model_binding' in raw and type(raw['model_binding']) is not dict:
-                raise PlanValidationError('A model binding is server-owned structured data.')
+                raise _step_contract_error(
+                    'A model binding is server-owned structured data.', raw,
+                    code='plan_structure_invalid', rule='model_binding_object_required',
+                )
             if capability_id == CAPABILITY_WORKFLOW_RUN:
                 # Loaded only when a plan starts a workflow. It runs before the generic limit and
                 # contract checks, so each problem with the step is reported with its own rule.
@@ -1115,26 +1118,33 @@ def validate_dependency_plan(
                         'The declared Analyze options do not match their contract.',
                         code='analysis_options_invalid', rule='analysis_options_schema_invalid',
                     )
-            argument_error = next(Draft202012Validator(capability['inputs']).iter_errors(arguments), None)
-            if argument_error is not None:
+            argument_problems = []
+            for argument_error in Draft202012Validator(capability['inputs']).iter_errors(arguments):
+                field = next(iter(argument_error.absolute_path), None)
+                if field is None and argument_error.validator == 'required':
+                    field = next((
+                        name for name in capability['inputs'].get('required', ()) if name not in arguments
+                    ), None)
+                argument_problems.append({
+                    'argument_field': field if field in capability['inputs']['properties'] else 'unknown',
+                    'schema_keyword': argument_error.validator.lower(),
+                })
+                if len(argument_problems) == 8:
+                    break
+            if argument_problems:
                 if capability_id in (
                     CAPABILITY_WORKFLOW_PROPOSE, CAPABILITY_WORKFLOW_RUN,
                     CAPABILITY_WORKFLOW_RESULTS, CAPABILITY_WORKFLOW_HANDOFF,
                 ):
                     # These owners have their own correction/drop policy; preserve its boundary.
                     raise PlanValidationError('Step arguments do not match the capability contract.')
-                field = next(iter(argument_error.absolute_path), None)
-                if field is None and argument_error.validator == 'required':
-                    field = next((
-                        name for name in capability['inputs'].get('required', ()) if name not in arguments
-                    ), None)
-                field = field if field in capability['inputs']['properties'] else 'unknown'
-                keyword = argument_error.validator.lower()
+                field = argument_problems[0]['argument_field']
+                keyword = argument_problems[0]['schema_keyword']
                 raise _step_contract_error(
                     'Step arguments do not match the capability contract.', raw,
                     code='plan_arguments_invalid',
                     rule='unknown_argument' if keyword == 'additionalproperties' else 'argument_schema_invalid',
-                    schema_keyword=keyword, argument_field=field,
+                    schema_keyword=keyword, argument_field=field, argument_problems=argument_problems,
                 )
             arguments = deepcopy(arguments)
             if analysis_options is not None:
@@ -1203,14 +1213,19 @@ def validate_dependency_plan(
                 ):
                     raise PlanValidationError('A destination conversation cannot reference itself as a source.')
             if any(isinstance(value, str) and not value.strip() for value in arguments.values()):
-                raise PlanValidationError('String arguments must not be empty or whitespace.')
+                raise _step_contract_error(
+                    'String arguments must not be empty or whitespace.', raw,
+                    code='plan_arguments_invalid', rule='argument_string_empty',
+                )
             for name, rule in capability['inputs']['properties'].items():
                 if name not in arguments and 'default' in rule:
                     arguments[name] = deepcopy(rule['default'])
             if 'agent_name' in arguments and arguments['agent_name'] not in (agent_names or ()):
-                raise PlanValidationError('The selected agent is unavailable.')
+                raise PlanValidationError('The selected agent is unavailable.',
+                                          code='capability_unavailable', rule='agent_unavailable')
             if 'action_ref' in arguments and arguments['action_ref'] not in (action_refs or ()):
-                raise PlanValidationError('The selected action is unavailable.')
+                raise PlanValidationError('The selected action is unavailable.',
+                                          code='capability_unavailable', rule='action_unavailable')
             if capability_id == CAPABILITY_ACTION_INVOKE and 'document_ids' in arguments:
                 action = next((
                     item for item in actions or ()
@@ -1225,9 +1240,15 @@ def validate_dependency_plan(
             for name in ('document_ids', 'right_document_ids'):
                 if name in arguments:
                     if any(not value or value != value.strip() for value in arguments[name]):
-                        raise PlanValidationError('Document IDs must be exact, nonempty identifiers.')
+                        raise _step_contract_error(
+                            'Document IDs must be exact, nonempty identifiers.', raw,
+                            code='plan_arguments_invalid', rule='document_id_invalid', argument_field=name,
+                        )
                     if len(set(arguments[name])) != len(arguments[name]):
-                        raise PlanValidationError('Document selections must not contain duplicates.')
+                        raise _step_contract_error(
+                            'Document selections must not contain duplicates.', raw,
+                            code='plan_arguments_invalid', rule='document_selection_duplicate', argument_field=name,
+                        )
                     if limit and len(arguments[name]) > limit:
                         if handoff_offered:
                             raise PlanValidationError(
@@ -1235,9 +1256,15 @@ def validate_dependency_plan(
                                 'plan, or hand the work off with one workflow_handoff step.',
                                 code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_document_budget',
                             )
-                        raise PlanValidationError('The complete source selection exceeds the document limit.')
+                        raise _step_contract_error(
+                            'The complete source selection exceeds the document limit.', raw,
+                            code='source_binding_invalid', rule='document_limit_exceeded', argument_field=name,
+                        )
                     if authorized_document_ids is not None and set(arguments[name]) - set(authorized_document_ids):
-                        raise PlanValidationError('A required source is unavailable.')
+                        raise _step_contract_error(
+                            'A required source is unavailable.', raw,
+                            code='source_unavailable', rule='document_authorization_required',
+                        )
             if 'reference_document_ids' in arguments:
                 _validate_reference_id_list(arguments['reference_document_ids'], 'Reference document IDs')
                 if authorized_document_ids is not None and set(arguments['reference_document_ids']) - set(authorized_document_ids):
@@ -1289,7 +1316,10 @@ def validate_dependency_plan(
                     code='source_binding_required', rule='document_sources_required',
                 )
             if capability_id == 'document_analyze' and arguments.get('document_ids') and 'sources' in step['inputs']:
-                raise PlanValidationError('Use either explicit document IDs or a named source-set input.')
+                raise _step_contract_error(
+                    'Use either explicit document IDs or a named source-set input.', raw,
+                    code='plan_inputs_invalid', rule='source_binding_conflict',
+                )
             if capability_id == CAPABILITY_TABULAR_MERGE:
                 if not arguments.get('document_ids') and 'sources' not in step['inputs']:
                     raise PlanValidationError(
@@ -1496,11 +1526,26 @@ def effective_plan_document_ids(plan, seeds=None):
     return list(dict.fromkeys(document_ids))
 
 
-def validate_plan_document_source_kinds(plan, document_source_kinds):
+def validate_plan_document_source_kinds(plan, document_source_kinds, *, document_source_formats=None):
     """Check known source kinds without treating model-supplied labels as authority."""
     if not isinstance(document_source_kinds, dict):
         raise PlanValidationError('Document type metadata is unavailable.', code='source_metadata_invalid')
     for step in plan.get('steps') or []:
+        if (
+            step.get('enabled', True) and step.get('capability_id') == 'document_search'
+            and (step.get('arguments') or {}).get('native_section') == 'comments'
+            and any(
+                (document_source_formats or {}).get(document_id) not in (
+                    None, 'xlsx', 'xlsm', 'xls', 'docx', 'docm', 'dotx',
+                )
+                for document_id in plan_document_ids({'steps': [step]})
+            )
+        ):
+            raise _step_contract_error(
+                'Native comments require a supported Word or Excel source. Use another offered '
+                'reader for this format without dropping the selected document.', step,
+                code='source_kind_invalid', rule='native_comments_format_unsupported',
+            )
         if step.get('enabled', True) and step.get('capability_id') in (
             CAPABILITY_TABULAR_MERGE, CAPABILITY_TABULAR_INSPECT,
         ):

@@ -4,6 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
+version: "0.261.422"
 ---
 
 <!-- action-slug: document-search -->
@@ -50,12 +51,39 @@ The action includes a `get_document_accessibility_report` function for agents th
 
 From **0.261.399**, workspace Excel files also expose native workbook properties, cell notes/threaded comments, object alternative text/decorative flags, formatting/layout and header/footer expressions. Modern `.xlsx`/`.xlsm` inspection has explicit saved-state coverage limits; legacy `.xls` is best effort. Use the report for the bounded workbook-wide inventory and document search for sheet/cell-addressed `Excel native inspection` evidence. Enhanced-citation workbooks still index a schema preview plus native evidence, not the complete worksheet data.
 
-- Choose which parts to return with `sections` (`accessibility`, `style`, `issues`); all are returned by default.
+- Choose which stored parts to return with `sections` (`accessibility`, `style`, `issues`); all three are returned by default. Opt-in Word `comments` inspection is separate.
 - Pass `page_number` to also get that page, slide or Excel indexed evidence segment's stored text. Excel segment numbers are not physical print-page numbers.
 - The stored workspace report does not grant access to chat uploads. For an existing workspace Excel file, retained active source bytes can be inspected on demand without re-uploading; unavailable originals need the normal re-upload/reprocessing workflow.
 - The issues list is heuristic. It is not a formal WCAG, Section 508, or PDF/UA conformance check. To apply your own rules, write them into the agent's instructions and have it compare them with the returned values.
 
 See [Document accessibility, structure, and comment extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for what is extracted for each file type.
+
+### Native Word review comments
+
+Fixed/Implemented in version: **0.261.422**
+(`application/single_app/config.py`).
+
+For workspace `.docx`, `.docm`, or `.dotx` files, call
+`get_document_accessibility_report(document_id=..., sections="comments")`.
+This uses the existing authorized original-file reader and Word parser, returning
+`word_inspection` with parsed comments, supported linked replies, inventory counts,
+and limitations. Normal accessibility/style/issue calls do not add this original
+file read.
+
+This is useful for checking what a reviewer actually wrote, independently of
+document prose or a search summary. Anchors are limited to 300 characters;
+`anchor_complete` distinguishes a complete parsed range from bounded or
+unavailable text. Resolution is known only when `resolution_available` is true.
+Relationships come from supported Word metadata, not guesses about author names
+or reply wording.
+
+Excel cursors, worksheet/cell filters, and non-comment native sections do not apply
+to Word. A comment-only request for an unsupported format, missing original, or
+malformed package fails explicitly; it does not certify that there are no comments.
+Stored Word style metadata can be absent while original comment inspection is
+available. A combined comments/style/accessibility/issue request still requires
+the stored sections; a successful comment read does not certify missing style or
+issue data as empty. This does not grant native-report access to chat-only uploads.
 
 ### Selected sources in Orchestrate
 

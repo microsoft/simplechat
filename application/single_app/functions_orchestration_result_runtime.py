@@ -347,7 +347,9 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     or type(prepared) is not dict
                     or prepared.get('version') != 'orchestration-gathered-content-v1'
                     or prepared.get('capability_id') != 'document_search'
-                    or prepared.get('content_scope') not in ('returned_excerpts', 'native_excel_annotations')
+                    or prepared.get('content_scope') not in (
+                        'returned_excerpts', 'native_excel_annotations', 'native_document_annotations',
+                    )
                     or type(prepared.get('citations')) is not list
                 ):
                     raise ResultContractError('result_citations_invalid')
@@ -355,7 +357,7 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     _search_evidence_citations(reader, prepared)
                     if current.output_name == 'evidence' else prepared['citations']
                 )
-                if prepared['content_scope'] == 'native_excel_annotations':
+                if prepared['content_scope'] in ('native_excel_annotations', 'native_document_annotations'):
                     native_reference = prepared_reader.reference.to_dict()
                 for source in lineage['sources']:
                     search_counts.setdefault(source_key(source), set())
@@ -454,7 +456,7 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     """Resolve an exact committed annotation, with current source access and version.
 
     Unlike ordinary retained-result inspection, a source citation also authorizes the
-    workbook it offers to preview. Never search a current inventory by cell or decode
+    document it offers to preview. Never search a current inventory by location or decode
     a document identity from the synthetic citation ID.
     """
     if (
@@ -465,7 +467,9 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     reader = service.open_result(reference, allow_partial=True, require_current_sources=True)
     prepared = read_complete_input(reader)
     if (
-        type(prepared) is not dict or prepared.get('content_scope') != 'native_excel_annotations'
+        type(prepared) is not dict or prepared.get('content_scope') not in (
+            'native_excel_annotations', 'native_document_annotations',
+        )
         or type(prepared.get('citations')) is not list or type(prepared.get('search_results')) is not list
     ):
         raise ResultContractError('native_citation_reference_invalid')
@@ -489,6 +493,7 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     if type(value) is not dict:
         raise ResultContractError('native_citation_evidence_invalid')
     annotation = value.get('excel_annotation')
+    word_annotation = value.get('word_annotation')
     coverage = value.get('native_coverage')
     if type(annotation) is dict:
         citation = citations[0]
@@ -497,6 +502,13 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
         )):
             raise ResultContractError('native_citation_evidence_invalid')
         response = {'native_annotation': deepcopy(annotation), 'cited_text': annotation.get('text') or ''}
+    elif type(word_annotation) is dict:
+        if (
+            citations[0].get('annotation_id') != word_annotation.get('id')
+            or citations[0].get('evidence_kind') != 'native_word_annotation'
+        ):
+            raise ResultContractError('native_citation_evidence_invalid')
+        response = {'native_annotation': deepcopy(word_annotation), 'cited_text': word_annotation.get('text') or ''}
     elif type(coverage) is dict:
         response = {'native_coverage': deepcopy(coverage), 'cited_text': ''}
     else:
@@ -506,7 +518,10 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     return {
         **response, 'citation_id': citation_id, 'document_id': document_id,
         'file_name': hits[0].get('file_name') or '', 'source_version': sources[0]['source_version'],
-        'evidence_kind': 'native_excel_annotation' if annotation is not None else 'native_annotation_coverage',
+        'evidence_kind': (
+            'native_word_annotation' if type(word_annotation) is dict
+            else 'native_excel_annotation' if type(annotation) is dict else 'native_annotation_coverage'
+        ),
     }
 
 
@@ -627,8 +642,8 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
     partial = bool(native_coverage and any(item.get('partial') for item in native_coverage))
     if native_coverage:
         limitations = (
-            'Native annotation evidence contains saved workbook records, not recalculated worksheet data.',
-            'Reviewer feedback is distinct from the saved cell value; missing metadata must not be inferred.',
+            'Native annotation evidence contains saved document records, not inferred or recalculated data.',
+            'Reviewer feedback is distinct from document text or a saved cell value; missing metadata must not be inferred.',
         )
         if partial:
             limitations += ('The native annotation inventory is partial; remaining records were not inspected.',)
@@ -666,7 +681,11 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         },
     }
     if native_coverage:
-        prepared['content_scope'] = 'native_excel_annotations'
+        prepared['content_scope'] = (
+            'native_excel_annotations' if all(
+                item.get('format') in (None, 'xlsx', 'xlsm', 'xls') for item in native_coverage
+            ) else 'native_document_annotations'
+        )
         prepared['coverage']['native_inspection'] = deepcopy(native_coverage)
     return service.persist_task_result(
         producer=context.result_producer(step), role='gather', status='partial' if partial else 'complete',

@@ -1,12 +1,12 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.420
-Implemented in: 0.261.419
+Version: 0.261.422
+Implemented in: 0.261.419; 0.261.422
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
-scope, model, deliverables and single correction budget without executing tools.
+scope, model, deliverables and shared correction budget without executing tools.
 """
 
 import importlib
@@ -55,13 +55,22 @@ def action_proposal(document_ids=(LEFT,), *, action=ACTION):
     }
 
 
-def run_action_plan(runtime, replies, *, identifiers=(LEFT,), action=ACTION):
+def run_action_plan(runtime, replies, *, identifiers=(LEFT,), action=ACTION, prepare_sources=False):
     harness = runtime.harness
     harness.settings.update(enable_semantic_kernel=True, enable_chat_orchestration_actions=True)
     selected, seeds = candidates(runtime, identifiers)
-    context = runtime.context.build_planner_context(
-        PRIVATE, candidates=enrich(runtime, selected, seeds), seeds=seeds, actions=[action],
-    )
+    if prepare_sources:
+        from functions_orchestration_source_context import build_selected_source_context
+
+        offered = runtime.context.enrich_planner_candidates(
+            selected, "owner", conversation_id="conversation-1", seeds=seeds,
+            selected_source_context_reader=lambda sources: build_selected_source_context(
+                sources, read_bytes=lambda *args, **kwargs: pytest.fail("Narrative planning must not read file bytes."),
+            ),
+        )
+    else:
+        offered = enrich(runtime, selected, seeds)
+    context = runtime.context.build_planner_context(PRIVATE, candidates=offered, seeds=seeds, actions=[action])
     caller = {**harness.services().capability_request_bindings(), "action_catalog": [action]}
     harness.replies = [json.dumps(reply) for reply in replies]
     return harness.planner.plan_request(
@@ -184,6 +193,62 @@ def test_missing_action_source_declaration_is_corrected_without_extra_work(plann
     assert correction_records(caplog)[0].sc_validation_rule == "selected_documents_missing"
 
 
+def test_single_selected_action_source_is_connected_locally(planning, caplog):
+    raw = action_proposal(None)
+    original = deepcopy(raw)
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_action_plan(planning, [raw], prepare_sources=True)
+    assert kind == "plan" and len(planning.harness.model_calls) == 1
+    assert raw == original
+    assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
+    assert [step["capability_id"] for step in plan["steps"]] == ["action_invoke", "compose"]
+    assert plan["validation"]["ok"] and plan["validation"]["repairs"]
+    assert not correction_records(caplog)
+    context = json.loads(planning.harness.model_calls[0]["messages"][1]["content"])
+    assert context["actions"][0]["default_arguments"]["document_ids"] == [LEFT]
+    assert planning.harness.assistant_messages() == [] and planning.harness.blobs.file_uploads == 0
+
+
+def test_single_selected_analyze_source_is_connected_before_validation(planning):
+    raw = proposal([LEFT], capability="document_analyze")
+    del raw["steps"][0]["arguments"]["document_ids"]
+    kind, plan = run_plan(planning, [raw], prepare_sources=True)
+    assert kind == "plan" and len(planning.harness.model_calls) == 1
+    assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
+    assert plan["steps"][0]["arguments"]["analysis_options"]["mode"] == "source_observations"
+    assert plan["steps"][-1]["inputs"]["source"]["binding"]["step_id"] == "read"
+    assert plan["validation"]["repairs"]
+    context = json.loads(planning.harness.model_calls[0]["messages"][1]["content"])
+    analyze = next(item for item in context["capabilities"] if item["id"] == "document_analyze")
+    assert analyze["default_arguments"]["document_ids"] == [LEFT]
+
+
+@pytest.mark.parametrize("change", ["explicit", "disabled", "dynamic", "ambiguous", "unavailable"])
+def test_local_source_wiring_never_replaces_explicit_or_ambiguous_work(planning, change):
+    planner = planning.harness.planner
+    raw = action_proposal(None)
+    selected_sources = [{
+        "document_id": LEFT, "source_kind": "narrative", "availability": "available",
+    }]
+    if change == "explicit":
+        raw["steps"][0]["arguments"]["document_ids"] = []
+    elif change == "disabled":
+        raw["steps"][0]["enabled"] = False
+    elif change == "dynamic":
+        raw["steps"][0]["inputs"] = {"sources": {"binding": input_binding("discover", "sources")}}
+    elif change == "ambiguous":
+        selected_sources.append({"document_id": RIGHT, "source_kind": "tabular", "availability": "available"})
+    else:
+        selected_sources[0]["availability"] = "unavailable"
+    original = deepcopy(raw)
+    result, repairs = planner._with_selected_source_bindings(
+        raw, selected_sources=selected_sources,
+        selected_document_ids=[item["document_id"] for item in selected_sources],
+        authorized_document_ids=[LEFT, RIGHT], actions=[ACTION],
+    )
+    assert result == original and raw == original and repairs == []
+
+
 def test_non_document_action_cannot_claim_sources_using_a_forged_catalog_flag(planning):
     action = {**ACTION, "type": "openapi", "document_binding_supported": True}
     with pytest.raises(planning.harness.planner.PlannerError):
@@ -207,22 +272,37 @@ def test_source_set_cannot_be_passed_as_prepared_action_findings(planning, caplo
     assert plan["steps"][1]["inputs"]["evidence"]["binding"]["output_name"] == "prepared"
 
 
-def test_different_contract_errors_share_one_correction_and_keep_private_values_out(planning, caplog):
+def test_different_contract_errors_share_two_corrections_and_keep_private_values_out(planning, caplog):
     first = proposal([LEFT])
     first["steps"][0]["outputs"] = []
     second = proposal([LEFT])
     second["steps"][-1]["inputs"] = {"private": {}}
     with caplog.at_level(logging.INFO, logger=planning.logger.name):
-        with pytest.raises(planning.harness.planner.PlannerError) as failure:
-            run_plan(planning, [first, second, proposal([LEFT])])
-    assert len(planning.harness.model_calls) == 2 and len(planning.harness.replies) == 1
-    assert len(correction_records(caplog)) == 1
-    assert "inputs and outputs" in str(failure.value)
+        kind, plan = run_plan(planning, [first, second, proposal([LEFT])])
+    assert kind == "plan" and plan["validation"]["ok"]
+    assert len(planning.harness.model_calls) == 3 and not planning.harness.replies
+    assert len(correction_records(caplog)) == 2
     records = [
         {name: value for name, value in record.__dict__.items() if name.startswith("sc_")}
         for record in caplog.records
     ]
     assert PRIVATE not in json.dumps(records)
+
+
+def test_third_invalid_proposal_stops_without_a_new_error_budget(planning, caplog):
+    first = proposal([LEFT])
+    first["steps"][0]["outputs"] = []
+    second = proposal([LEFT], capability="document_analyze", options={"version": "invalid"})
+    third = proposal([LEFT])
+    third["steps"][-1]["inputs"] = {"evidence": {}}
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        with pytest.raises(planning.harness.planner.PlannerError) as failure:
+            run_plan(planning, [first, second, third, proposal([LEFT])])
+    assert len(planning.harness.model_calls) == 3 and len(planning.harness.replies) == 1
+    assert len(correction_records(caplog)) == 2
+    assert failure.value.code == "plan_inputs_invalid"
+    assert failure.value.rule == "input_binding_required"
+    assert planning.harness.assistant_messages() == []
 
 
 def test_source_free_draft_uses_the_same_contract_correction_without_adding_retrieval(planning):

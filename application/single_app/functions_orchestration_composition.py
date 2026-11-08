@@ -184,6 +184,16 @@ _OUTPUT_PROBLEMS = {
 }
 
 
+def _log_completeness_diagnostic(step, context, diagnostic, message):
+    log_event(message, level=logging.WARNING, extra={
+        **workflow_log_context(
+            conversation_id=context.conversation_id, run_id=context.run_id,
+            turn_id=getattr(context, 'turn_id', None), step_id=step['step_id'],
+        ),
+        **diagnostic, 'stage': 'task_completeness_assessment',
+    })
+
+
 def _quoted(value):
     return json.dumps(value, ensure_ascii=False)
 
@@ -537,9 +547,9 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
             validate=lambda value: [], checkpoint=checkpoint, saved_state=saved, recheck=recheck,
             owner_step_id=step['step_id'],
             evidence_basis='mixed' if legacy_evidence else 'request', legacy_evidence=legacy_evidence,
-            on_error=lambda error_type: log_event(
+            on_diagnostic=lambda diagnostic: _log_completeness_diagnostic(
+                step, context, diagnostic,
                 '[ORCHESTRATION_EXECUTOR] Retained final-answer verification unavailable.',
-                level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
             ),
         )
     except MixedSourceCancellationError:
@@ -547,7 +557,11 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
     except Exception as error:
         log_event(
             '[ORCHESTRATION_EXECUTOR] Retained final-answer verification could not complete.',
-            level=logging.WARNING, extra={'error_type': type(error).__name__, 'step_id': step['step_id']},
+            level=logging.WARNING, extra={
+                **workflow_log_context(
+                    conversation_id=context.conversation_id, run_id=context.run_id, step_id=step['step_id'],
+                ), 'error_type': type(error).__name__, 'stage': 'task_completeness_assessment',
+            },
         )
     checked = {**result, 'task_completeness': public_completeness_report(state)}
     if state['status'] != 'complete':
@@ -944,9 +958,9 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     ) else 'request'
                 ),
                 legacy_evidence=legacy_evidence,
-                on_error=lambda error_type: log_event(
+                on_diagnostic=lambda diagnostic: _log_completeness_diagnostic(
+                    step, context, diagnostic,
                     '[ORCHESTRATION_EXECUTOR] Task completeness verification unavailable.',
-                    level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
                 ),
             )
             completeness_report = public_completeness_report(completeness_state)

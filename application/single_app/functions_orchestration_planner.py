@@ -102,8 +102,8 @@ from functions_orchestration_workflow_run_wait import (
 
 PLANNER_MAX_TOKENS = 4000
 PLANNER_TEMPERATURE = 0.1
-# Known declaration and source-binding failures share one correction round.
-PLAN_REPAIR_ATTEMPTS = 1
+# All correctable draft failures share this allowance; the initial proposal is separate.
+PLAN_REPAIR_ATTEMPTS = 2
 PLANNER_DEBUG_MAX_ITEMS = 32
 # A workflow proposal gets the same correction round; one that still fails is dropped from the
 # plan, and the rest of the plan runs without it.
@@ -1633,6 +1633,57 @@ def _with_analysis_semantics(raw, edit_context=None):
     return plan
 
 
+def _selected_source_default(selected_sources, selected_document_ids, authorized_document_ids):
+    if (
+        not isinstance(selected_document_ids, (list, tuple)) or len(selected_document_ids) != 1
+        or not isinstance(selected_document_ids[0], str)
+        or authorized_document_ids is None
+        or selected_document_ids[0] not in authorized_document_ids
+    ):
+        return None
+    matches = [
+        source for source in selected_sources or ()
+        if isinstance(source, dict) and source.get('document_id') == selected_document_ids[0]
+    ]
+    if (
+        len(matches) != 1 or matches[0].get('availability') != 'available'
+        or matches[0].get('source_kind') not in ('narrative', 'tabular')
+    ):
+        return None
+    return matches[0]
+
+
+def _with_selected_source_bindings(
+    raw, *, selected_sources, selected_document_ids, authorized_document_ids, actions,
+):
+    """Fill only absent, unambiguous reader wiring; explicit and dynamic work is immutable."""
+    source = _selected_source_default(selected_sources, selected_document_ids, authorized_document_ids)
+    if source is None or not isinstance(raw, dict) or not isinstance(raw.get('steps'), list):
+        return raw, []
+    plan, repairs = deepcopy(raw), []
+    for step in plan['steps']:
+        if (
+            not isinstance(step, dict) or step.get('enabled', True) is not True
+            or step.get('inputs') or step.get('depends_on')
+            or not isinstance(step.get('arguments'), dict)
+            or 'document_ids' in step['arguments']
+        ):
+            continue
+        capability_id, arguments = step.get('capability_id'), step['arguments']
+        eligible = capability_id == 'document_search' or (
+            capability_id == CAPABILITY_DOCUMENT_ANALYZE and source['source_kind'] == 'narrative'
+        )
+        if capability_id == 'action_invoke':
+            eligible = any(
+                isinstance(action, dict) and action.get('action_ref') == arguments.get('action_ref')
+                and is_document_search_action(action) for action in actions or ()
+            )
+        if eligible:
+            arguments['document_ids'] = [source['document_id']]
+            repairs.append(f'Connected the selected document to step "{step.get("step_id")}".')
+    return plan, repairs
+
+
 def plan_request(
     user_message,
     planner_context,
@@ -1794,6 +1845,27 @@ def plan_request(
         for candidate in context.get('candidate_documents') or []
         if isinstance(candidate, dict) and candidate.get('source_kind')
     }
+    source_candidates = context.get('selected_sources') or context.get('candidate_documents') or []
+    source_default = _selected_source_default(
+        source_candidates, (seeds or {}).get('document_ids'), authorized_document_ids,
+    )
+    if source_default is not None:
+        for capability in context['capabilities']:
+            if capability['id'] == 'document_search' or (
+                capability['id'] == CAPABILITY_DOCUMENT_ANALYZE and source_default['source_kind'] == 'narrative'
+            ):
+                capability['default_arguments'] = {
+                    **capability.get('default_arguments', {}),
+                    'document_ids': [source_default['document_id']],
+                }
+        context['actions'] = [
+            {**action, 'default_arguments': {'document_ids': [source_default['document_id']]}}
+            if is_document_search_action(action) else action for action in context['actions']
+        ]
+    document_source_formats = {
+        candidate['document_id']: str(candidate.get('file_name') or '').rsplit('.', 1)[-1].lower()
+        for candidate in source_candidates if isinstance(candidate, dict) and candidate.get('file_name')
+    }
 
     def _diagnose(stage, proposal=None, *, attempt=None, error=None):
         if not is_debug_enabled():
@@ -1920,6 +1992,19 @@ def plan_request(
     def _normalize(raw, capability_ids, availability, selected_image, **options):
         raw = _with_analysis_semantics(raw, edit_context)
         _diagnose('analysis_defaults', raw, attempt=attempt)
+        local_repairs = []
+        if edit_context is None and not conversation_only:
+            raw, local_repairs = _with_selected_source_bindings(
+                raw, selected_sources=source_candidates,
+                selected_document_ids=(seeds or {}).get('document_ids'),
+                authorized_document_ids=authorized_document_ids, actions=actions,
+            )
+            if local_repairs:
+                log_event('[ORCHESTRATION_PLANNER] Selected source wiring repaired.', extra={
+                    **correlation, 'stage': 'selected_source_defaults', 'attempt': attempt,
+                    'source_binding_repair_count': len(local_repairs), 'selected_document_count': 1,
+                })
+                _diagnose('selected_source_defaults', raw, attempt=attempt)
         if conversation_only and any(
             step.get('enabled', True) and step.get('capability_id') in CONVERSATION_RETRIEVAL_CAPABILITIES
             for step in raw.get('steps') or [] if isinstance(step, dict)
@@ -1972,7 +2057,10 @@ def plan_request(
             image_selected=selected_image,
             **options,
         )
-        validate_plan_document_source_kinds(normalized, document_source_kinds)
+        validate_plan_document_source_kinds(
+            normalized, document_source_kinds, document_source_formats=document_source_formats,
+        )
+        normalized['validation']['repairs'].extend(local_repairs)
         return normalized
 
     log_event(
@@ -2022,6 +2110,7 @@ def plan_request(
         }
     reasoning_metadata = build_model_reasoning_metadata(planner_model, 'planner')
     token_usage, usage_seen = {}, False
+    elicitation_plan_correction = False
     for attempt in range(1, PLAN_REPAIR_ATTEMPTS + 2):
         try:
             reply, usage = _call_planner(client, deployment, messages, require_complete_response=True)
@@ -2134,6 +2223,7 @@ def plan_request(
                 if attempt > PLAN_REPAIR_ATTEMPTS:
                     return _failure('invalid_elicitation', exc, stage='plan_clarification', attempt=attempt)
                 allow_elicitation = False
+                elicitation_plan_correction = True
                 messages = [
                     *messages, {'role': 'assistant', 'content': reply},
                     {'role': 'user', 'content': (
@@ -2144,6 +2234,24 @@ def plan_request(
                 continue
 
         if kind == 'elicitation':
+            if elicitation_plan_correction and attempt <= PLAN_REPAIR_ATTEMPTS:
+                log_event(
+                    '[ORCHESTRATION_PLANNER] Discarding an unrenderable question set.',
+                    level=logging.WARNING, extra={
+                        **correlation, 'stage': 'plan_clarification', 'attempt': attempt,
+                        'validation_code': 'plan_structure_invalid', 'validation_rule': 'elicitation_not_allowed',
+                    },
+                )
+                messages = [
+                    *messages, {'role': 'assistant', 'content': reply},
+                    {'role': 'user', 'content': (
+                        'The rejected clarification is still not an executable plan. Use the remaining '
+                        'shared correction allowance to return the complete plan for the unchanged request, '
+                        'authorized sources and requested deliverables, not another elicitation. '
+                        'Do not invent choices, missing facts or source access.'
+                    )},
+                ]
+                continue
             return _failure('repeated_elicitation', stage='plan_clarification', attempt=attempt)
 
         raw_steps = parsed.get('steps')

@@ -1447,7 +1447,9 @@ export interface Citation {
     cited_text?: string;
     file_name?: string;
     page_number?: number | string;
+    evidence_kind?: string;
     native_annotation?: {
+        id?: string;
         kind?: string;
         author?: string;
         date?: string;
@@ -1457,8 +1459,21 @@ export interface Citation {
         resolved?: boolean;
         cell_value?: unknown;
         cell_value_status?: string;
+        anchor_text?: string;
+        anchor_complete?: boolean;
+        done?: boolean | null;
+        resolution_available?: boolean;
+        replies?: Array<{
+            id: string;
+            author?: string;
+            date?: string;
+            text?: string;
+            done?: boolean | null;
+            resolution_available?: boolean;
+        }>;
     };
     native_coverage?: {
+        format?: string;
         returned_records?: number;
         total_records?: number;
         partial?: boolean;

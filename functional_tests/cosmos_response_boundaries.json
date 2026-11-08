@@ -23447,10 +23447,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0afaa631fb35d52b9022fa8c7e777695aa84a450fc6fcbff2e7b6f1b04636a77"
+        "module_sha256": "8835a019046bdee0d13641133cc22180068071f27d8ec5f0258baec00c3e8859"
       },
       "classification": "sdk-compatible",
-      "contract": "_authorize_chat_upload_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_authorize_chat_upload_conversation consumes the pinned SDK dictionary subclass through isinstance/get and verifies the exact conversation owner; SDK representation does not bypass strict source authority. Review renewed for 0.261.422: this owner AST, point call and imported authority bindings are unchanged. Module-only Word original-comment parsing and the comment-only metadata guard do not change this chat-upload consumer. The representative real-owner SDK test verifies both allowed and denied users with network blocked.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"
@@ -23474,10 +23474,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0afaa631fb35d52b9022fa8c7e777695aa84a450fc6fcbff2e7b6f1b04636a77"
+        "module_sha256": "8835a019046bdee0d13641133cc22180068071f27d8ec5f0258baec00c3e8859"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_chat_upload_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_resolve_chat_upload_context reads pinned SDK point mappings and plain query rows via isinstance/get, applies conversation/source authority checks, and constructs the authorized upload projection from nested JSON fields. Review renewed for 0.261.422: this owner AST, point/query calls and authority imports are unchanged; module-only Word parsing and opt-in metadata behavior do not alter the chat-upload consumer. The existing real-owner SDK test verifies authorized text projection with network blocked.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"

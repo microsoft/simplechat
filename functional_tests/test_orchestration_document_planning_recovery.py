@@ -2,10 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional regressions for picked-document planning and debug diagnostics.
-Version: 0.261.420
+Version: 0.261.422
 Implemented in: 0.261.413
 Server-owned Auto handoff integration: 0.261.415
 Shared draft-contract recovery integration: 0.261.419
+Two shared corrective proposals and local source wiring: 0.261.422
 
 Real authenticated routes, source metadata, planner, validation and logger
 serialization run with external model/storage I/O isolated. Diagnostics must
@@ -91,12 +92,22 @@ def proposal(document_ids=(), *, capability="document_search", options=None):
 
 def run_plan(
     runtime, replies, *, identifiers=(LEFT,), context_updates=None, seed_updates=None,
-    message=PRIVATE, **options,
+    message=PRIVATE, prepare_sources=False, **options,
 ):
     harness = runtime.harness
     selected, seeds = candidates(runtime, identifiers)
     seeds.update(seed_updates or {})
-    offered = enrich(runtime, selected, seeds)
+    if prepare_sources:
+        from functions_orchestration_source_context import build_selected_source_context
+
+        offered = runtime.context.enrich_planner_candidates(
+            selected, "owner", conversation_id="conversation-1", seeds=seeds,
+            selected_source_context_reader=lambda sources: build_selected_source_context(
+                sources, read_bytes=lambda *args, **kwargs: pytest.fail("Narrative planning must not read file bytes."),
+            ),
+        )
+    else:
+        offered = enrich(runtime, selected, seeds)
     context = runtime.context.build_planner_context(message, candidates=offered, seeds=seeds)
     context.update(context_updates or {})
     harness.replies = [json.dumps(reply) if isinstance(reply, dict) else reply for reply in replies]
@@ -129,12 +140,12 @@ def test_debug_diagnostics_identify_model_omission_in_both_sinks(planning, caplo
     planning.debug_flags["enable_debug_logging"] = debug
     with caplog.at_level(logging.INFO, logger=planning.logger.name):
         with pytest.raises(planning.harness.planner.PlannerError):
-            run_plan(planning, [proposal(), proposal()])
+            run_plan(planning, [proposal(), proposal(), proposal()])
     records = diagnostic_records(caplog)
     assert bool(records) is debug
     if debug:
         initial = diagnostic_records(caplog, stage="planner_input", message="[ORCHESTRATION_PLANNER] Planning diagnostic.")[0]
-        assert initial.sc_remaining_corrections == 1
+        assert initial.sc_remaining_corrections == 2
         summaries = [
             record for record in diagnostic_records(caplog, stage="plan_normalized")
             if record.sc_message == "[ORCHESTRATION_PLANNER] Planning diagnostic."
@@ -165,7 +176,7 @@ def test_debug_options_show_exact_owner_rule_before_defaulting(planning, caplog,
     invalid = proposal([LEFT], capability="document_analyze", options={"mode": "source_observations"})
     with caplog.at_level(logging.INFO, logger=planning.logger.name):
         with pytest.raises(planning.harness.planner.PlannerError):
-            run_plan(planning, [invalid, invalid])
+            run_plan(planning, [invalid, invalid, invalid])
     steps = diagnostic_records(caplog, stage="plan_proposal", message="[ORCHESTRATION_PLANNER] Step binding diagnostic.")
     analysis = next(record for record in steps if record.sc_capability_id == "document_analyze")
     assert analysis.sc_options_mode_observations is True
@@ -194,7 +205,7 @@ def test_debug_snapshot_bounds_are_explicit(planning, caplog):
     identifiers = tuple(f"document-{index}" for index in range(101))
     with caplog.at_level(logging.INFO, logger=planning.logger.name):
         with pytest.raises(planning.harness.planner.PlannerError):
-            run_plan(planning, [proposal(), proposal()], identifiers=identifiers)
+            run_plan(planning, [proposal(), proposal(), proposal()], identifiers=identifiers)
     summary = diagnostic_records(caplog, stage="plan_proposal", message="[ORCHESTRATION_PLANNER] Planning diagnostic.")[0]
     assert summary.sc_selected_document_count == summary.sc_missing_document_count == 101
     assert summary.sc_omitted_document_count == 101 - planning.harness.planner.PLANNER_DEBUG_MAX_ITEMS
@@ -352,24 +363,21 @@ def test_http_picked_document_recovery_preserves_scope_and_does_not_execute(
     ("selection", "selection", "selected_requirements"),
     ("options", "options", "plan_normalization"),
 ])
-def test_every_failure_path_shares_exactly_one_correction(planning, caplog, first, second, stage):
+def test_every_failure_path_shares_two_corrections(planning, caplog, first, second, stage):
     bad = {
         "options": proposal([LEFT], capability="document_analyze", options={"mode": "source_observations"}),
         "selection": proposal(),
     }
     with caplog.at_level(logging.INFO, logger=planning.logger.name):
-        with pytest.raises(planning.harness.planner.PlannerError) as failure:
-            run_plan(planning, [bad[first], bad[second], proposal([LEFT])])
-    assert len(planning.harness.model_calls) == 2
-    assert len(planning.harness.replies) == 1
-    assert "PRIVATE_" not in str(failure.value)
-    expected_message = "selected" if second == "selection" else "document-analysis"
-    assert expected_message in str(failure.value)
-    terminal = next(
-        record for record in reversed(caplog.records)
-        if getattr(record, "sc_message", None) == "[ORCHESTRATION_PLANNER] The request could not be planned."
-    )
-    assert terminal.sc_attempt == 2 and terminal.sc_stage == stage
+        kind, plan = run_plan(planning, [bad[first], bad[second], proposal([LEFT])])
+    assert kind == "plan" and plan["validation"]["ok"]
+    assert len(planning.harness.model_calls) == 3 and not planning.harness.replies
+    corrections = [
+        record for record in caplog.records
+        if getattr(record, "sc_message", None) == "[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan."
+    ]
+    assert len(corrections) == 2
+    assert corrections[-1].sc_attempt == 2 and corrections[-1].sc_stage == stage
 
 
 def test_unavailable_capabilities_are_not_made_repairable(planning):
@@ -432,7 +440,7 @@ def test_edit_failure_preserves_previous_plan_and_legacy_options(planning):
     invalid = proposal([LEFT], capability="document_analyze", options={"mode": "source_observations"})
     invalid["revised_request"] = "Describe the selected source."
     with pytest.raises(planning.harness.planner.PlannerError) as failure:
-        run_plan(planning, [invalid, invalid], edit_context={"current_plan": previous})
+        run_plan(planning, [invalid, invalid, invalid], edit_context={"current_plan": previous})
     assert "previous plan is unchanged" in str(failure.value)
     assert previous == before
     omitted = proposal([LEFT], capability="document_analyze")
@@ -585,8 +593,8 @@ def test_unrenderable_question_cannot_reset_the_shared_correction_budget(plannin
         "question": question,
     }[first]
     with pytest.raises(planning.harness.planner.PlannerError):
-        run_plan(planning, [initial, question, proposal([LEFT])])
-    assert len(planning.harness.model_calls) == 2
+        run_plan(planning, [initial, question, question, proposal([LEFT])])
+    assert len(planning.harness.model_calls) == 3
     assert len(planning.harness.replies) == 1
 
 

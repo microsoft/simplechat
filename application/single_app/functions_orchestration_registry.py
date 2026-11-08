@@ -764,9 +764,10 @@ CAPABILITY_REGISTRY = (
             "The question asks about information likely held in the user's own documents, "
             "and no particular document has been named. Prefer this over analysing a whole "
             "document when a few passages would answer the question."
-            " For Excel Notes or threaded comments, use native_section=comments with explicit "
-            "document_ids. This reads the native inventory across pages, including available "
-            "authors, replies, dates, resolution, worksheet/cell and saved cell values. Bind "
+            " For Word review comments (.docx, .docm, .dotx), or Excel Notes/threaded comments, "
+            "use native_section=comments with document_ids. This reads the native inventory, "
+            "including available anchors, authors, replies, dates and resolution; Excel also "
+            "includes worksheet/cell and saved cell values. Bind "
             "prepared or evidence to compose; row analysis alone cannot read annotations."
         ),
         'settings_gates': (),
@@ -798,7 +799,7 @@ CAPABILITY_REGISTRY = (
                 'top_n': {'type': 'integer', 'minimum': 1, 'maximum': 50, 'default': 12},
                 'native_section': {
                     'type': 'string', 'enum': ['comments'],
-                    'description': 'Read actual Excel Notes/threaded comments instead of search excerpts.',
+                    'description': 'Read actual Word review comments or Excel Notes/threaded comments, not search excerpts.',
                 },
             },
             'required': ['query'],
