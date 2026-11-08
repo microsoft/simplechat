@@ -1,8 +1,8 @@
 # test_task_completeness_engine.py
 """Grounded, bounded task checking and recovery.
 
-Version: 0.261.418
-Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418
+Version: 0.261.422
+Implemented in: 0.261.382; 0.261.384; 0.261.416; 0.261.418; 0.261.422
 """
 
 import json
@@ -59,6 +59,52 @@ def test_complete_original_has_no_correction():
     assert state["status"] == "complete"
     assert calls == ["completeness_check"]
     assert state["corrections"] == 0
+
+
+@pytest.mark.parametrize("evidence", [{}, {"findings": {"private": "source text"}, "coverage": {}}])
+def test_assessment_transport_only_accepts_actual_evidence_keys(evidence):
+    response_format = assessment_response_format(evidence=evidence)
+    schema = response_format["json_schema"]["schema"]
+    validator = Draft202012Validator(schema)
+    report = json.loads(assessment(refs=list(evidence)))
+    valid_errors = list(validator.iter_errors(report))
+    assert not valid_errors
+    report["requirements"][0]["evidence_refs"] = ["invented_reference"]
+    invalid_errors = list(validator.iter_errors(report))
+    assert invalid_errors
+    assert "source text" not in json.dumps(schema)
+
+
+def test_evidence_reference_repair_gets_valid_labels_without_rewriting_the_answer():
+    calls, diagnostics = [], []
+    replies = iter([assessment(refs=["PRIVATE_WRONG_REFERENCE"]), assessment()])
+
+    def invoke(messages, stage, *, response_format=None):
+        calls.append((deepcopy(messages), stage, deepcopy(response_format)))
+        return next(replies)
+
+    candidate = "Evaluation"
+    result, state = check_and_correct(
+        candidate, instruction="Include the status.", contract={"kind": "text-v1"},
+        evidence={"record": {"status": "Evaluation"}},
+        policy={"enabled": True, "max_corrections": 2},
+        invoke=invoke, validate=lambda value: [], on_diagnostic=diagnostics.append,
+    )
+    assert result == candidate and state["status"] == "complete"
+    assert state["corrections"] == 0 and state["report_repairs"] == 1
+    assert [call[1] for call in calls] == ["completeness_check", "completeness_check"]
+    repair_payload = json.loads(calls[1][0][-1]["content"])
+    problem = repair_payload["assessment_problem"]
+    assert problem["code"] == "completeness_evidence_invalid"
+    assert problem["allowed_evidence_refs"] == ["record"]
+    assert problem["evidence_ref_count"] == 1
+    assert "PRIVATE_WRONG_REFERENCE" not in json.dumps(problem)
+    refs = calls[0][2]["json_schema"]["schema"]["properties"]["requirements"]["items"]["properties"]["evidence_refs"]
+    assert refs["items"]["enum"] == ["record"]
+    assert diagnostics[0]["validation_code"] == "completeness_evidence_invalid"
+    assert diagnostics[0]["validation_rule"] == "evidence_reference_unknown"
+    assert diagnostics[0]["report_repair_count"] == 0 and diagnostics[0]["evidence_ref_count"] == 1
+    assert "PRIVATE_WRONG_REFERENCE" not in json.dumps(diagnostics)
 
 
 def test_actual_missing_tool_facts_are_repaired_and_rechecked():

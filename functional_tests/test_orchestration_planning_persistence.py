@@ -1,9 +1,10 @@
 # test_orchestration_planning_persistence.py
 """
 Regression coverage for durable initial orchestration turns.
-Version: 0.261.420
+Version: 0.261.422
 Implemented in: 0.261.415
 Typed planner failure persistence added in: 0.261.419
+Shared two-correction allowance updated in: 0.261.422
 
 Real authenticated routes and SDK-default offline storage exercise admission,
 clarification, failure, disconnect, Auto handoff, cancellation, and explicit retry.
@@ -288,20 +289,20 @@ def test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry(emp
     runtime = empty_history_runtime
     invalid = plan_doc()
     invalid["steps"][0]["outputs"] = []
-    runtime.harness.replies.extend([json.dumps(invalid), json.dumps(invalid)])
+    runtime.harness.replies.extend([json.dumps(invalid)] * 3)
     response = runtime.client.post(PLAN_PATH, json=body(), buffered=True)
     failure = next(frame for frame in sse_frames(response) if frame.get("error"))
     expected = {
         "error_stage": "plan_normalization",
         "error_rule": "outputs_list_required",
-        "error_attempt": 2,
+        "error_attempt": 3,
     }
     assert failure["code"] == "plan_outputs_invalid"
     assert all(failure.get(key) == value for key, value in expected.items())
     calls = len(runtime.harness.model_calls)
     saved = status(runtime, include_request=True)
     reloaded = status(runtime)
-    assert calls == len(runtime.harness.model_calls) == 2
+    assert calls == len(runtime.harness.model_calls) == 3
     assert saved["status"] == reloaded["status"] == "failed"
     assert saved["error_code"] == reloaded["error_code"] == failure["code"]
     assert all(saved.get(key) == reloaded.get(key) == value for key, value in expected.items())

@@ -1,6 +1,6 @@
 # Chat Orchestration Action Access
 
-Version: **0.261.421**
+Version: **0.261.422**
 
 Implemented in version: **0.261.098**
 
@@ -11,6 +11,8 @@ Operation intent and named inputs implemented in version: **0.261.321**
 Selected-document action binding implemented in version: **0.261.419**
 
 Canonical plugin discovery and action-stage diagnostics implemented in version: **0.261.421**
+
+Source defaults and shared corrections fixed/implemented in version: **0.261.422**
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -134,11 +136,18 @@ authority; retained findings keep their existing conversation/run and integratio
 access policies. No source binding makes missing native metadata available,
 establishes conformance, or permits an outgoing operation.
 
-The planner's single correction can repair classified contract declarations
+Since **0.261.422**, the planner's two shared corrections can repair classified contract declarations
 without changing its model or executing tools. Invalid source permissions and
 unsupported integrations remain explicit failures. See the
 [planner contract recovery explanation](../fixes/ORCHESTRATION_PLANNER_CONTRACT_RECOVERY_FIX.md)
 for defaulted Analyze output variants, diagnostics, and full-path coverage.
+
+For exactly one verified available selection, an existing independent Document
+Search step can receive an absent binding locally before model correction.
+Explicit IDs, dynamic inputs, disabled work, and edited selections remain intact.
+Word comment-only metadata calls opt into the authorized original reader with
+`sections="comments"`; they do not send Word files to an Excel collector. See the
+[pipeline reliability fix](../fixes/ORCHESTRATION_RELIABILITY_PIPELINE_FIX.md).
 
 ### Charting retrieved data
 

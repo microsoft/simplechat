@@ -1,6 +1,7 @@
 # functions_search_service.py
 """Shared search, retrieval, and summarization services for documents."""
 
+import hashlib
 import io
 import json
 import logging
@@ -46,6 +47,7 @@ from functions_excel_inventory import (
 )
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
+from functions_office_media import extract_docx_comments
 from model_endpoint_clients import build_openai_client_timeout_options
 from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
@@ -1109,6 +1111,7 @@ def get_document_chunks_payload(
 
 
 ACCESSIBILITY_REPORT_SECTIONS = ("accessibility", "style", "issues")
+NATIVE_WORD_COMMENT_EXTENSIONS = (".docx", ".docm", ".dotx")
 ACCESSIBILITY_REPORT_STYLE_KEY = "style_inventory"
 ACCESSIBILITY_REPORT_ISSUES_KEY = "issues"
 
@@ -1118,8 +1121,30 @@ def _normalize_accessibility_sections(sections):
         requested = [part.strip().lower() for part in sections.split(",")]
     else:
         requested = [str(part or "").strip().lower() for part in (sections or [])]
-    requested = [part for part in requested if part in ACCESSIBILITY_REPORT_SECTIONS]
+    requested = [part for part in requested if part in (*ACCESSIBILITY_REPORT_SECTIONS, "comments")]
     return requested or list(ACCESSIBILITY_REPORT_SECTIONS)
+
+
+def _read_word_comment_inspection(document_context, user_id):
+    """Reuse the ingestion parser over the existing authorized original-file reader."""
+    document, source_bytes = screening_access.read_available_document_bytes(
+        document_context["document"], user_id=user_id,
+        group_id=document_context.get("group_id"),
+        public_workspace_id=document_context.get("public_workspace_id"), purpose="accessibility",
+    )
+    document_context["document"] = document
+    comments, total_body_words = extract_docx_comments(io.BytesIO(source_bytes), strict=True)
+    return {
+        "section": "comments", "source_sha256": hashlib.sha256(source_bytes).hexdigest(),
+        "records": comments, "total_records": len(comments),
+        "total_replies": sum(len(comment["replies"]) for comment in comments),
+        "total_body_words": total_body_words, "inventory_complete": True,
+        "limitations": [
+            "Anchored text is limited to 300 characters; anchor_complete identifies a bounded or unavailable anchor.",
+            "Resolution is unknown unless resolution_available is true; a missing flag is not an unresolved comment.",
+            "Reply relationships come from the available Word commentsExtended part, not inferred from comment text.",
+        ],
+    }
 
 
 def _read_excel_inspection(
@@ -1242,6 +1267,16 @@ def get_document_accessibility_payload(
     stored_metadata = current_document.get("accessibility_metadata")
     file_name = str(current_document.get("file_name") or "")
     extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
+    requested_sections = _normalize_accessibility_sections(sections)
+    word_inspection = None
+    if "comments" in requested_sections and extension in NATIVE_WORD_COMMENT_EXTENSIONS:
+        if native_cursor or cell_range or sheet_name or native_section != "comments":
+            raise ValueError("Word comments do not accept Excel sections, cursors or cell filters.")
+        word_inspection = _read_word_comment_inspection(document_context, user_id)
+        current_document = document_context["document"]
+        stored_metadata = current_document.get("accessibility_metadata")
+        if not stored_metadata and all(section == "comments" for section in requested_sections):
+            stored_metadata = {"format": extension.lstrip(".")}
     if not stored_metadata and extension in (".xlsx", ".xlsm", ".xls") and (
         current_document.get("source_file_available") or current_document.get("enhanced_citations")
         or current_document.get("blob_path") or current_document.get("archived_blob_path")
@@ -1270,8 +1305,11 @@ def get_document_accessibility_payload(
     elif native_cursor or cell_range:
         raise LookupError("The original workbook or full native inventory is unavailable for this inspection.")
 
-    requested_sections = _normalize_accessibility_sections(sections)
+    if "comments" in requested_sections and word_inspection is None and excel_inspection is None:
+        raise LookupError("The native comment inventory is unavailable for this document format.")
     report = {}
+    if word_inspection is not None:
+        report["word_inspection"] = word_inspection
     if "accessibility" in requested_sections:
         report["accessibility_metadata"] = {
             key: value

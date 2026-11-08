@@ -4,7 +4,7 @@ title: "Review and edit orchestration plans"
 description: "Refine proposed work with the planner before running it."
 section: "Guides"
 audience: user
-version: "0.261.418"
+version: "0.261.422"
 ---
 
 ## Decide what should run
@@ -109,6 +109,24 @@ planner may Analyze or Compare those inputs without adding a Search step merely
 because they were pinned. Explicitly selected Search still constrains the plan,
 and the validator still rejects a plan that omits selected documents.
 
+### Recover ordinary planning mistakes without widening the work
+
+Fixed/Implemented in version: **0.261.422**
+(`application/single_app/config.py`).
+
+A missing file ID should not require you to rebuild an otherwise useful plan.
+For a single verified available selection, SimpleChat can fill an absent binding
+on an existing independent reader. The visible plan then contains the source it
+will actually read. Explicit IDs, dependent/dynamic inputs, disabled work,
+unavailable sources, and ambiguous multi-file selections are not overwritten.
+
+Other recognized draft mistakes receive specific feedback to the same planner.
+The initial proposal and at most two corrections share one allowance across
+different validation errors. No source reader or external action runs during
+those corrections, and your selected approval mode still applies afterward.
+Permissions, unavailable capabilities, provider refusals, and exhausted correction
+attempts remain real failures rather than permission to run an invalid plan.
+
 ### Open the evidence behind document answers
 
 Since **0.261.356**, Analyze and Compare supply source references through the same
@@ -145,6 +163,18 @@ If several attachments are plausible, clarification can still be necessary.
 For workspace-backed Excel workbooks, annotation requests use native Notes and
 threaded-comment inspection, preserving available metadata and saved cell
 values. Reported pagination and resource limits still bound what was inspected.
+
+Since **0.261.422**, workspace Word `.docx`, `.docm`, and `.dotx` review comments
+use the Word reader instead. Ask to include reviewer text and replies, and open a
+native citation to inspect the retained comment, its available anchored text,
+author/date, and resolution metadata. A bounded or unavailable anchor is not a
+complete quotation, and a missing resolution flag is not proof that a comment is
+unresolved. Word evidence does not offer an Excel worksheet preview.
+
+The reader needs accessible original bytes; ordinary stored style metadata is not
+the structured Word comment inventory. Unavailable or malformed originals remain
+read failures. An inspected package with no comments is distinct from a failed
+inspection. Historical failed runs are not automatically replayed by this change.
 
 Fixed/Implemented in version: **0.261.341**
 (`application/single_app/config.py`).

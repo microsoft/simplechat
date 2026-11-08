@@ -88,6 +88,9 @@ function CitationDetail({
         return () => document.removeEventListener('keydown', onKeyDown);
     }, [onClose, preview]);
 
+    const wordAnnotation = data?.evidence_kind === 'native_word_annotation'
+        || ['docx', 'docm', 'dotx'].includes(data?.native_coverage?.format ?? '');
+
     if (preview) return <EnhancedCitationViewer
         type="tabular" docId={citation.documentId} location={data?.native_annotation?.sheet || ''}
         locationLabel="Sheet" metadata={{ document_id: citation.documentId, file_name: data?.file_name || group.fileName }}
@@ -130,20 +133,28 @@ function CitationDetail({
                 </div>
 
                 <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                    {data?.native_annotation && <section aria-label="Native workbook annotation" className="mb-4 space-y-2 text-sm">
+                    {data?.native_annotation && <section aria-label={wordAnnotation ? 'Native Word comment' : 'Native workbook annotation'} className="mb-4 space-y-2 text-sm">
                         <h3 className="font-semibold text-text-1">
-                            {data.native_annotation.kind === 'note' ? 'Workbook note'
+                            {wordAnnotation ? 'Word review comment' : data.native_annotation.kind === 'note' ? 'Workbook note'
                                 : data.native_annotation.parent_id ? 'Threaded comment reply' : 'Threaded comment'}
                         </h3>
                         <p>Author: {data.native_annotation.author || 'Unavailable'}</p>
-                        <p>Worksheet / cell: {data.native_annotation.sheet || 'Unavailable'} / {data.native_annotation.cell || 'Unavailable'}</p>
+                        {wordAnnotation
+                            ? <>
+                                <p className="break-words">Anchored text: {data.native_annotation.anchor_text || 'Unavailable'}</p>
+                                <p>Anchor coverage: {data.native_annotation.anchor_complete ? 'Complete' : 'Bounded or unavailable'}</p>
+                            </>
+                            : <p>Worksheet / cell: {data.native_annotation.sheet || 'Unavailable'} / {data.native_annotation.cell || 'Unavailable'}</p>}
                         <p>Date: {data.native_annotation.date || 'Unavailable'}</p>
                         {data.native_annotation.parent_id && <p>Reply to: {data.native_annotation.parent_id}</p>}
-                        <p>Resolved: {typeof data.native_annotation.resolved === 'boolean'
-                            ? data.native_annotation.resolved ? 'Yes' : 'No' : 'Unavailable'}</p>
-                        <p>Saved cell value: {data.native_annotation.cell_value_status === 'blank' ? 'Blank'
+                        <p>Resolved: {wordAnnotation
+                            ? data.native_annotation.resolution_available && typeof data.native_annotation.done === 'boolean'
+                                ? data.native_annotation.done ? 'Yes' : 'No' : 'Unavailable'
+                            : typeof data.native_annotation.resolved === 'boolean'
+                                ? data.native_annotation.resolved ? 'Yes' : 'No' : 'Unavailable'}</p>
+                        {!wordAnnotation && <p>Saved cell value: {data.native_annotation.cell_value_status === 'blank' ? 'Blank'
                             : data.native_annotation.cell_value == null ? 'Unavailable (not recalculated)'
-                            : JSON.stringify(data.native_annotation.cell_value)}</p>
+                            : JSON.stringify(data.native_annotation.cell_value)}</p>}
                         <h3 className="pt-2 font-semibold text-text-1">Reviewer text</h3>
                     </section>}
                     {data?.native_coverage && <section aria-label="Native annotation coverage" className="mb-4 space-y-2 text-sm">
@@ -151,7 +162,7 @@ function CitationDetail({
                         <p>{data.native_coverage.returned_records ?? 'Unknown'} of {data.native_coverage.total_records ?? 'unknown'} records retained.</p>
                         <p>{data.native_coverage.partial || !data.native_coverage.inventory_complete
                             ? 'Partial inventory; remaining annotations were not inspected.' : 'The saved annotation inventory was inspected completely.'}</p>
-                        <p>This is inventory coverage, not a cited worksheet cell or reviewer comment.</p>
+                        <p>This is inventory coverage, not a cited {wordAnnotation ? 'document passage' : 'worksheet cell'} or reviewer comment.</p>
                     </section>}
                     {notice && (
                         <p className="mb-3 flex items-start gap-2 rounded-xl border border-edge bg-warn-soft px-3 py-2 text-xs text-warn">
@@ -178,9 +189,24 @@ function CitationDetail({
                     )}
 
                     {data?.cited_text && (
-                        <p className="text-[15px] leading-relaxed whitespace-pre-wrap text-text-1">
+                        <p className="break-words text-[15px] leading-relaxed whitespace-pre-wrap text-text-1">
                             {data.cited_text}
                         </p>
+                    )}
+
+                    {wordAnnotation && data?.native_annotation?.replies && data.native_annotation.replies.length > 0 && (
+                        <section aria-label="Word comment replies" className="mt-4 space-y-3 text-sm">
+                            <h3 className="font-semibold text-text-1">Replies</h3>
+                            {data.native_annotation.replies.map((reply) => (
+                                <div key={reply.id} className="space-y-1">
+                                    <p>Author: {reply.author || 'Unavailable'}</p>
+                                    <p>Date: {reply.date || 'Unavailable'}</p>
+                                    <p>Resolved: {reply.resolution_available && typeof reply.done === 'boolean'
+                                        ? reply.done ? 'Yes' : 'No' : 'Unavailable'}</p>
+                                    <p className="break-words whitespace-pre-wrap">{reply.text || 'No stored reply text.'}</p>
+                                </div>
+                            ))}
+                        </section>
                     )}
 
                     {!loading && !error && !data?.cited_text && (
@@ -188,7 +214,7 @@ function CitationDetail({
                             This citation has no stored passage to show.
                         </p>
                     )}
-                    {!loading && !error && citation.nativeEvidence && <button type="button"
+                    {!loading && !error && citation.nativeEvidence && !wordAnnotation && <button type="button"
                         className="mt-4 rounded-lg border border-edge px-3 py-2 text-sm text-accent focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
                         onClick={() => setPreview(true)}>Open workbook preview (separate from annotation evidence)</button>}
                 </div>

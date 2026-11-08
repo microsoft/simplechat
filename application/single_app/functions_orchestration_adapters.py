@@ -666,7 +666,7 @@ def _read_conversation_image(message, query, context, *, settings, user_id, canc
 def run_document_search(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
     if arguments.get('native_section') == 'comments':
-        return _run_excel_comments(
+        return _run_native_comments(
             step, context, settings=settings, user_id=user_id, emit=emit,
             cancel_requested=cancel_requested,
         )
@@ -834,17 +834,23 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
 # document_analyze -> functions_document_analysis.run_document_analysis
 # --------------------------------------------------------------------------------------
 
-def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_requested):
+def _run_native_comments(step, context, *, settings, user_id, emit, cancel_requested):
     # Search/storage initialization belongs at execution, not registry discovery.
-    from functions_orchestration_excel import collect_excel_comments
+    from functions_orchestration_excel import collect_excel_comments, collect_word_comments
     from functions_search_service import get_document_accessibility_payload
 
+    correlation = workflow_log_context(
+        conversation_id=_ctx(context, 'conversation_id'), run_id=_ctx(context, 'run_id'),
+        turn_id=_ctx(context, 'turn_id'), step_id=step.get('step_id'),
+    )
+    failure_rule, source_format = 'native_source_binding', None
     try:
         identifiers = _resolve_step_document_ids(
             step, context, settings=settings, capability_id=CAPABILITY_DOCUMENT_SEARCH,
         )
         if not identifiers:
-            raise ValueError('Native annotation inspection requires selected workbooks.')
+            raise ValueError('Native annotation inspection requires selected documents.')
+        failure_rule = 'native_source_authorization'
         manifest = resolve_context_source_manifest(
             context, identifiers, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
         )
@@ -852,22 +858,42 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
             [source.get('document_id') for source in manifest] != identifiers
             or any(source.get('authorization_status') != 'authorized' for source in manifest)
         ):
-            raise PermissionError('The selected workbooks are unavailable.')
-        _emit(emit, _progress(step, CAPABILITY_DOCUMENT_SEARCH, 'Reviewing workbook comments'))
+            raise PermissionError('The selected documents are unavailable.')
+        _emit(emit, _progress(step, CAPABILITY_DOCUMENT_SEARCH, 'Reviewing native document comments'))
         results, coverage, citations = [], [], []
         for source in manifest:
-            if not _text(source.get('file_name')).lower().endswith(('.xlsx', '.xlsm', '.xls')):
-                raise ValueError('Native annotation inspection requires an Excel workbook.')
-            records, source_coverage = collect_excel_comments(
+            failure_rule = 'native_comments_format_unsupported'
+            extension = _text(source.get('file_name')).lower().rsplit('.', 1)[-1]
+            source_format = extension if extension in ('xlsx', 'xlsm', 'xls', 'docx', 'docm', 'dotx') else 'unsupported'
+            if source_format == 'unsupported':
+                raise ValueError('Native comments require a supported Word or Excel document.')
+            word = source_format in ('docx', 'docm', 'dotx')
+            collector = collect_word_comments if word else collect_excel_comments
+            log_event('[ORCHESTRATION_ADAPTERS] Native comment read checkpoint.', extra={
+                **correlation, 'stage': 'native_comment_read', 'outcome': 'started',
+                'source_format': source_format, 'selected_document_count': len(manifest),
+            })
+            failure_rule = 'native_comment_inventory_invalid'
+            records, source_coverage = collector(
                 source['document_id'], user_id, read_page=get_document_accessibility_payload,
-                cancel_check=lambda: raise_if_mixed_source_cancelled(cancel_requested, 'excel_comments'),
+                cancel_check=lambda: raise_if_mixed_source_cancelled(cancel_requested, 'native_comments'),
                 source_count=len(manifest),
                 conversation_id=_ctx(context, 'conversation_id'), doc_scope=source['scope'],
                 active_group_ids=[source['scope_id']] if source['scope'] == 'group' else None,
                 active_public_workspace_id=source['scope_id'] if source['scope'] == 'public' else None,
             )
+            source_coverage['format'] = source_format
+            log_event('[ORCHESTRATION_ADAPTERS] Native comment read checkpoint.', extra={
+                **correlation, 'stage': 'native_comment_read', 'outcome': 'completed',
+                'source_format': source_format, 'returned_record_count': len(records),
+                'total_record_count': source_coverage.get('total_records'),
+                **({
+                    'returned_reply_count': sum(len(record['replies']) for record in records),
+                } if word and all(type(record.get('replies')) is list for record in records) else {}),
+                'partial': bool(source_coverage.get('partial')),
+            })
             coverage.append({'document_id': source['document_id'], **source_coverage})
-            # Include an explicit coverage record even for an inspected, empty workbook.
+            # An inspected empty inventory is evidence; an unavailable read never reaches retention.
             results.append({
                 'document_id': source['document_id'], 'file_name': source.get('file_name'),
                 'id': f"{source['document_id']}:native-comments:coverage",
@@ -883,21 +909,24 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
                 results.append({
                     'document_id': source['document_id'], 'file_name': source.get('file_name'),
                     'id': f"{source['document_id']}:native-comments:{index}",
-                    'chunk_text': json.dumps({'excel_annotation': record}, ensure_ascii=False),
+                    'chunk_text': json.dumps({'word_annotation' if word else 'excel_annotation': record}, ensure_ascii=False),
                     'sheet': record.get('sheet'), 'cell': record.get('cell'),
                 })
                 citations.append({
                     'source_type': 'document', 'document_id': source['document_id'],
                     'file_name': source.get('file_name'), 'sheet': record.get('sheet'),
                     'cell': record.get('cell'), 'annotation_id': record.get('id'),
-                    'evidence_kind': 'native_excel_annotation',
+                    'evidence_kind': 'native_word_annotation' if word else 'native_excel_annotation',
                     'citation_id': results[-1]['id'], 'sheet_name': record.get('sheet'),
                     'location_label': 'Location',
                     'location_value': (
-                        f"{record['sheet']}!{record['cell']}"
-                        if record.get('sheet') and record.get('cell') else 'Workbook annotation'
+                        f"Word comment {record['id']}" if word else (
+                            f"{record['sheet']}!{record['cell']}"
+                            if record.get('sheet') and record.get('cell') else 'Workbook annotation'
+                        )
                     ),
                 })
+        failure_rule = 'native_source_changed'
         current_manifest = resolve_context_source_manifest(
             context, identifiers, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
         )
@@ -905,20 +934,26 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
         if any(source.get('authorization_status') != 'authorized' for source in current_manifest) or [
             tuple(source.get(key) for key in identity_fields) for source in current_manifest
         ] != [tuple(source.get(key) for key in identity_fields) for source in manifest]:
-            raise PermissionError('The selected workbook changed during inspection.')
+            raise PermissionError('The selected document changed during inspection.')
+        failure_rule = 'native_result_retention'
         task = retain_document_search_result(
             step, context, results, source_manifest=manifest, citations=citations,
             search_scope={'native_inspection': coverage},
         )
         return build_step_result(
             status=STEP_STATUS_PARTIAL if task.status == 'partial' else STEP_STATUS_COMPLETED,
-            summary=f'Retained native annotation evidence from {len(manifest)} workbook(s).',
+            summary=f'Retained native annotation evidence from {len(manifest)} document(s).',
             task_result=task, citations=citations,
         )
     except MixedSourceCancellationError:
-        return _cancelled_result('Workbook inspection was cancelled.')
+        return _cancelled_result('Native comment inspection was cancelled.')
     except Exception as exc:
-        return _failed_result('The workbook annotation inventory could not be read.', exc)
+        log_event('[ORCHESTRATION_ADAPTERS] Native comment read checkpoint.', level=logging.WARNING, extra={
+            **correlation, 'stage': 'native_comment_read', 'outcome': 'failed',
+            'source_format': source_format, 'validation_rule': failure_rule,
+            'error_type': type(exc).__name__,
+        })
+        return _failed_result('The native document annotation inventory could not be read.', exc)
 
 
 def _resolve_step_document_ids(step, context, *, settings=None, capability_id=None):

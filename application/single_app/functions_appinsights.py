@@ -142,7 +142,7 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
     "failurecode", "authorityreason", "capabilityid", "outputformat", "producercapabilityid",
     "executionpath", "outcome", "analysisvalidationstatus", "analysissemantics",
-    "schemakeyword", "argumentfield", "resultkind",
+    "schemakeyword", "argumentfield", "resultkind", "sourceformat",
 })
 
 

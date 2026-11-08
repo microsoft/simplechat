@@ -10,6 +10,11 @@ Post-integration validation passed 179 logging/native/saved-findings functional
 tests and 75 browser source-inspector checks. The merged V2 build, documentation
 checks and reviewed Cosmos inventory also passed.
 
+Current planning behavior updated in **0.261.422**:
+[pipeline reliability follow-up](ORCHESTRATION_RELIABILITY_PIPELINE_FIX.md).
+It adds conservative single-source defaults and two shared model corrections
+without changing the source, output, or approval contracts described here.
+
 ## Issue and root cause
 
 Similar document requests could either run normally or stop with "The request
@@ -102,7 +107,7 @@ native sources are provenance, not permission to reread an original. External
 integration access continues to be checked. The change does not replace those
 policies or promote partial findings into complete datasets.
 
-### One targeted correction, not blanket retries
+### Shared targeted corrections, not blanket retries
 
 `functions_orchestration_schema.py` and
 `functions_orchestration_result_contracts.py` identify owned step-shape,
@@ -110,8 +115,8 @@ argument, output, named-input and graph failures. The same planner receives
 contract-aware feedback, and the complete replacement plan passes every normal
 validator.
 
-All eligible failures share **one correction attempt total**. A different second
-error does not reset that allowance. Unknown model argument names can be
+All eligible failures share **two correction attempts total** since **0.261.422**
+(originally one). A different error does not reset that allowance. Unknown model argument names can be
 corrected without logging those names. Permission failures, unavailable
 capabilities, untrusted retained aliases, held sources, provider refusals and
 unclassified exceptions do not become blanket-retryable. Workflow-owned argument
