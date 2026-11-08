@@ -42,6 +42,52 @@ and capability codes. A cancelled stream is informational, not an error.
 Orchestration records an outcome only after its saved state is confirmed;
 replaying a cached response does not record another execution.
 
+## Plugin discovery and action failures
+
+Implemented in version **0.261.421**, tracked in
+`application/single_app/config.py`.
+
+`[PLUGIN_LOADER] Plugin module could not be loaded.` is a Warning with the
+installed module's `sc_plugin_name` and safe `sc_error_type`. Discovery continues
+for other modules; the exception's message is not logged.
+
+`[ORCHESTRATION_ADAPTERS] Direct action execution failed.` is an Error that
+records the first failed action's `sc_failure_code`, `sc_stage`,
+`sc_capability_id`, `sc_error_type`, and hashed conversation/run/step identifiers.
+These records are available with debug logging disabled. They distinguish the
+action failure from later steps that did not run because their dependency failed.
+
+| Failure code | Stage | Meaning |
+| --- | --- | --- |
+| `action_initialization_failed` | `action_initialization` | Tools could not load, expose functions, or use the selected model's function-calling capabilities. |
+| `document_reader_identity_mismatch` | `action_initialization` | The loaded plugin was not the application's verified document-reader class; no document-reading function ran. |
+| `document_action_read_failed` | `document_action_read` | A bound document function returned a failed read, not successful findings. |
+| `action_results_missing` | `action_results` | The action returned no usable function results, so none were retained as findings. |
+
+`sc_function_calls_attempted` is false for the two initialization classifications
+and true for a failed document-function result. It is omitted where that fact is
+unknown, including provider errors and missing-result cases. Other failures keep
+their existing provider/cancellation/authority classifications. The new codes do
+not enable automatic transient retries or disable permitted manual recovery.
+
+To inspect a specific failed run without logging its raw identifier:
+
+```kusto
+let runHash = hash_sha256("<run-id>");
+AppTraces
+| where TimeGenerated > ago(2h)
+| where tostring(Properties.sc_run_id_hash) == runHash
+| where tostring(Properties.sc_message) == "[ORCHESTRATION_ADAPTERS] Direct action execution failed."
+| project TimeGenerated,
+    code=tostring(Properties.sc_failure_code),
+    stage=tostring(Properties.sc_stage),
+    stepHash=tostring(Properties.sc_step_id_hash),
+    functionsAttempted=tostring(Properties.sc_function_calls_attempted),
+    errorType=tostring(Properties.sc_error_type)
+| order by TimeGenerated asc
+| take 50
+```
+
 ## SQL connection diagnostics
 
 Since **0.261.351**, `[SQL_CONNECTION]` records connection-check and runtime
@@ -404,6 +450,7 @@ for availability states and live-UI validation limits.
 - `[PLUGIN_FUNCTION_LOGGER]`
 - `[PLUGIN_HEALTH]`
 - `[PLUGIN_INVOCATION]`
+- `[PLUGIN_LOADER]`
 - `[PLUGIN_LOGGING_API]`
 - `[PLUGIN_RECOVERY]`
 - `[PLUGIN_REPAIR]`

@@ -2037,6 +2037,22 @@ FAILURE_MESSAGES = {
         "This step's agent or action isn't available to you right now, so it didn't run. Check "
         'that it still exists, is enabled and is shared with you, then retry.'
     ),
+    'action_initialization_failed': (
+        "The action's tools or model could not be initialized. Ask an admin to check the "
+        'action and model configuration, then retry.'
+    ),
+    'document_reader_identity_mismatch': (
+        "The document-reading tool did not match the application's expected tool. No "
+        'document-reading function ran. Ask an admin to repair or update the application, then retry.'
+    ),
+    'document_action_read_failed': (
+        'The action could not complete the selected document read. Check the file availability '
+        'and requested inspection, then retry.'
+    ),
+    'action_results_missing': (
+        'The action returned no usable function results. No findings from this step were used. '
+        'Ask an admin to check the action and model tool support if it keeps failing.'
+    ),
     'operation_recovery_required': (
         'An operation may already have run, or its material changed. Check its saved outgoing '
         'action and the external service before creating a new plan. It was not repeated.'
@@ -2213,6 +2229,8 @@ M365_STEP_FAILURE_CODES = frozenset({
 # Failures an exception may carry by code, through its ``orchestration_failure_code``.
 EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {
     'external_session_required', 'operation_recovery_required', 'integration_input_unavailable',
+    'action_initialization_failed', 'document_reader_identity_mismatch',
+    'document_action_read_failed', 'action_results_missing',
     STORAGE_FAILURE_CODE,
 }
 # Steps that hand work to an integration; input-reading failures have their own code.

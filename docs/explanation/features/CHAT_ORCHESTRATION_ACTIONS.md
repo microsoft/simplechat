@@ -1,6 +1,6 @@
 # Chat Orchestration Action Access
 
-Version: **0.261.420**
+Version: **0.261.421**
 
 Implemented in version: **0.261.098**
 
@@ -9,6 +9,8 @@ Retrieved-data charts added in version: **0.261.132**
 Operation intent and named inputs implemented in version: **0.261.321**
 
 Selected-document action binding implemented in version: **0.261.419**
+
+Canonical plugin discovery and action-stage diagnostics implemented in version: **0.261.421**
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -101,6 +103,16 @@ The top-level planner chooses the action and task; the focused loop chooses func
 and binds their arguments. Avoiding agent setup does **not** mean avoiding model calls.
 Conversational follow-ups retain their resolved request and bounded, authorized
 conversation reference when handed to an action, including accepted clarification answers.
+
+Shared discovery imports each installed plugin through its registered package module.
+The native-reader guard therefore sees the same class as the logged and classic loaders,
+without sharing plugin instances or their user-specific configuration.
+Loading/identity failures, failed document reads, and missing function results retain
+distinct safe failure codes through saved step details and the final failure explanation.
+They are not successful findings or automatic transient-retry conditions.
+
+See the [plugin discovery identity fix](../fixes/ORCHESTRATION_PLUGIN_DISCOVERY_IDENTITY_FIX.md)
+for the real-loader regression and recovery boundaries.
 
 ### Selected documents and native inspection
 

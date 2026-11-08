@@ -1,12 +1,14 @@
 # test_orchestration_document_action_end_to_end.py
 """
 Authenticated native-document orchestration from HTTP submission to saved answer.
-Version: 0.261.420
+Version: 0.261.421
 Implemented in: 0.261.419
+Production plugin discovery coverage added in: 0.261.421
 
-Real routes, approval/leases, native action filters, report/citation projection,
-retention, composition, completeness and publication run with external storage,
-configuration and model I/O isolated. No production service or data is touched.
+Real routes, plugin discovery, approval/leases, native action filters,
+report/citation projection, retention, composition, completeness and publication
+run with external storage, configuration and model I/O isolated. No production
+service or data is touched.
 """
 
 import asyncio
@@ -57,8 +59,6 @@ def native_http(source_runtime, modules, monkeypatch):
     settings_owner = importlib.import_module("functions_settings")
     governance = importlib.import_module("functions_governance")
     runner = importlib.import_module("functions_orchestration_actions")
-    loader = importlib.import_module("semantic_kernel_plugins.logged_plugin_loader")
-    plugin = importlib.import_module("semantic_kernel_plugins.document_search_plugin")
     search = importlib.import_module("functions_search_service")
     telemetry = importlib.import_module("functions_appinsights")
     logger = logging.getLogger("test.orchestration.native.http")
@@ -84,7 +84,6 @@ def native_http(source_runtime, modules, monkeypatch):
     monkeypatch.setattr(
         importlib.import_module("functions_group"), "get_user_groups", lambda user_id: [],
     )
-    monkeypatch.setattr(loader, "discover_plugins", lambda: {"DocumentSearchPlugin": plugin.DocumentSearchPlugin})
     monkeypatch.setattr(telemetry, "_load_logging_settings", lambda: {
         "enable_debug_logging": harness.settings.get("enable_debug_logging", False),
     })

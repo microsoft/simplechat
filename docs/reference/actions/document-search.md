@@ -77,6 +77,22 @@ A denied or unavailable report is not a successful inspection; a missing propert
 inside an available report must still be distinguished from an inaccessible one.
 This does not add native-report access for chat-only attachments.
 
+### Loading failures and recovery
+
+From **0.261.421** (`application/single_app/config.py`), shared plugin discovery
+reuses the registered Python module instead of creating another copy of the
+document reader. This fixes selected-document actions being rejected before their
+first read even when the plan and source permissions were valid.
+
+Run details distinguish a tool initialization or reader identity failure from a
+failed document read and an action that returned no function results. For a reader
+identity failure, ask an administrator to repair/update the application before
+retrying; changing the model, increasing timeouts, or re-uploading the same source
+does not fix that loading defect.
+
+The source checks and native-inspection limits are unchanged. A missing report or
+unavailable native property does not become evidence of absence or compliance.
+
 ### Paged Excel inspection
 
 Implemented in version: **0.261.408** (`application/single_app/config.py`).
