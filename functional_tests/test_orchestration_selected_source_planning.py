@@ -1,8 +1,9 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.415
+Version: 0.261.423
 Implemented in: 0.261.355
+Shared two-correction allowance updated in: 0.261.422
 
 Uses real source projection, parsers, resolution and HTTP planning with external
 storage/model I/O replaced. Previews must never become complete export records.
@@ -181,7 +182,7 @@ def test_full_planner_repairs_source_question_instead_of_publishing_it(source_ru
             "type": "object", "properties": {"rows": {"type": "string"}}, "required": ["rows"],
         },
     }
-    harness.replies = [json.dumps(question), json.dumps(question)]
+    harness.replies = [json.dumps(question)] * 3
     with pytest.raises(harness.planner.PlannerError) as failure:
         harness.planner.plan_request(
             "What columns does my file have?", context, "conversation-1", "owner",
@@ -190,7 +191,7 @@ def test_full_planner_repairs_source_question_instead_of_publishing_it(source_ru
             request_context=harness.services().capability_request_bindings(),
         )
     assert failure.value.reason == "selected_source_already_available"
-    assert len(harness.model_calls) == 2
+    assert len(harness.model_calls) == 3
     assert harness.blobs.file_uploads == 0
 
 
@@ -584,7 +585,7 @@ def test_source_diagnostics_survive_logging_without_source_text(source_runtime, 
         "kind": "elicitation", "message": "PRIVATE_MODEL_QUESTION",
         "clarification_context": {"reason": "source_content", "document_ids": ["tabular-doc"]},
     }
-    harness.replies = [json.dumps(question), json.dumps(question)]
+    harness.replies = [json.dumps(question)] * 3
     with pytest.raises(harness.planner.PlannerError):
         harness.planner.plan_request(
             request, context, "conversation-1", "owner", turn_id="private-turn",
@@ -595,7 +596,9 @@ def test_source_diagnostics_survive_logging_without_source_text(source_runtime, 
         logging._build_logger_extra(message, kwargs["extra"])
         for message, kwargs in recorded if (kwargs.get("extra") or {}).get("stage") == "plan_clarification"
     ]
-    assert len(diagnostics) >= 2
+    assert len(diagnostics) >= 3
+    assert {entry["sc_attempt"] for entry in diagnostics} == {1, 2, 3}
+    assert len(harness.model_calls) == 3
     assert diagnostics[0]["sc_stage"] == "plan_clarification"
     assert diagnostics[0]["sc_reason"] == "selected_source_already_available"
     assert diagnostics[0]["sc_selected_source_count"] == 1

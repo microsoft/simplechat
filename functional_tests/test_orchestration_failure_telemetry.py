@@ -1,12 +1,13 @@
 # test_orchestration_failure_telemetry.py
 """Specific orchestration failure rules reach telemetry without private plan text.
 
-Version: 0.261.342
+Version: 0.261.423
 Implemented in: 0.261.140
 Step, capability, format, and authority-reason codes covered in: 0.261.141
 Partial-input producer capability and step hash fields covered in: 0.261.191
 Semantic chat outcomes and persisted-state correlation implemented in: 0.261.341
 Bounded, non-regex application-version validation implemented in: 0.261.342
+Two shared planning corrections covered in: 0.261.422
 
 Uses real planner/validation/logging modules with offline provider replies.
 The synthetic invalid proposals test diagnostics, not the unknown historical
@@ -76,7 +77,7 @@ def test_repair_and_terminal_failure_retain_safe_specific_rule(
     monkeypatch.setattr(telemetry, "get_appinsights_logger", lambda: logger)
     monkeypatch.setattr(telemetry, "_load_logging_settings", lambda: {"enable_debug_logging": debug})
     proposal = invalid_proposal(rule)
-    harness.replies = [json.dumps(proposal), json.dumps(proposal)]
+    harness.replies = [json.dumps(proposal)] * 3
     with caplog.at_level(logging.INFO, logger=logger.name):
         with pytest.raises(harness.planner.PlannerError) as failure:
             harness.planner.plan_request(
@@ -92,8 +93,8 @@ def test_repair_and_terminal_failure_retain_safe_specific_rule(
             "[ORCHESTRATION_PLANNER] The request could not be planned.",
         }
     ]
-    assert len(records) == len(harness.model_calls) == 2
-    assert [record.sc_attempt for record in records] == [1, 2]
+    assert len(records) == len(harness.model_calls) == 3
+    assert [record.sc_attempt for record in records] == [1, 2, 3]
     for record in records:
         assert record.sc_validation_rule == rule
         assert record.sc_validation_code == "deliverables_invalid"

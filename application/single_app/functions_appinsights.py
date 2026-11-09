@@ -135,12 +135,14 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
 LOGGER_WORKFLOW_HASH_KEYS = frozenset({
     "conversationidhash", "turnidhash", "runidhash", "stepidhash", "producerstepidhash",
     "documentidhash", "plannerbindinghash", "documentsethash",
+    "consumerrunidhash",
 })
 # Application-owned snake_case codes; any other text under these keys is dropped.
 LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "validationcode", "validationrule", "responsefailure", "executioncode", "outputcode", "durablestatus",
     "failurecode", "authorityreason", "capabilityid", "outputformat", "producercapabilityid",
     "executionpath", "outcome",
+    "schemakeyword", "argumentfield", "resultkind", "sourceformat",
 })
 
 

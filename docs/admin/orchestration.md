@@ -684,7 +684,8 @@ without calling the integration again.
 Since **0.261.293**, what a plan gathers always reaches the user. Every gather step's
 results must be read by a step that writes the answer or prepares a file or image, and a
 chart or diagram must end up in the answer or a file. Starting a saved workflow is the one
-exception. A plan that breaks the rule gets the planner's usual single correction. A chart
+exception. Since **0.261.422**, recognized plan errors share at most two planner
+corrections without widening source permissions. A chart
 an action drew is always shown, and one the answer doesn't show is listed in the delivery
 notes and makes the run partially completed, so **Retry from failed step** can draw it
 again. Retrying runs the action again, so the user confirms it first.

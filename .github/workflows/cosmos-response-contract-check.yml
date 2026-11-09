@@ -40,5 +40,12 @@ jobs:
         run: python -c "import tiktoken; tiktoken.get_encoding('cl100k_base'); tiktoken.get_encoding('o200k_base')"
       - name: Require reviewed storage owners and doubles
         run: python scripts/check_cosmos_response_boundaries.py
+      - name: Verify real plugin discovery and document-action runtime
+        run: >-
+          python -m pytest -q -p no:cacheprovider -p test_support.cosmos_network_guard
+          --disable-warnings --tb=short
+          functional_tests/test_plugin_discovery_identity.py
+          functional_tests/test_orchestration_document_action_end_to_end.py
+          functional_tests/test_orchestration_document_loader_reliability.py
       - name: Run contracts with external network blocked before collection
         run: python scripts/check_cosmos_response_boundaries.py --run-contracts

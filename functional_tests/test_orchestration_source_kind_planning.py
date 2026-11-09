@@ -1,7 +1,7 @@
 # test_orchestration_source_kind_planning.py
 """Plan mixed document types from authorized metadata, not user-facing labels.
 
-Version: 0.261.355
+Version: 0.261.423
 Implemented in: 0.261.140
 
 The real manifest classifier, context projection, planner, compiler and HTTP
@@ -278,14 +278,14 @@ def test_source_kind_repair_stays_bounded_and_never_drops_selected_sources(sourc
     offered = enrich(runtime, selected, seeds)
     payload = runtime.context.build_planner_context("Compare the documents.", candidates=offered, seeds=seeds)
     rejected = proposal(narrative_comparison=True)
-    harness.replies = [json.dumps(rejected), json.dumps(rejected)]
+    harness.replies = [json.dumps(rejected)] * 3
     with pytest.raises(harness.planner.PlannerError) as failure:
         harness.planner.plan_request(
             "Compare the documents.", payload, "conversation-1", "owner",
             settings=harness.settings, seeds=seeds, authorized_document_ids=[LEFT, RIGHT],
             request_context=harness.services().capability_request_bindings(),
         )
-    assert len(harness.model_calls) == 2
+    assert len(harness.model_calls) == 3
     assert failure.value.message == harness.planner.SOURCE_KIND_FAILURE_MESSAGE
     assert harness.blobs.file_uploads == 0 and harness.assistant_messages() == []
 

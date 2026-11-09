@@ -30,7 +30,7 @@ from copy import deepcopy
 from jsonschema import Draft202012Validator
 
 from content_screening.contracts import ScreeningError
-from functions_appinsights import log_event, workflow_log_context
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE, normalize_inline_chart_markdown
 from functions_diagram_operations import MERMAID_BLOCK_LANGUAGE
 from functions_document_citations import build_inline_citation_marker
@@ -182,6 +182,16 @@ _OUTPUT_PROBLEMS = {
         'requested item fits'
     ),
 }
+
+
+def _log_completeness_diagnostic(step, context, diagnostic, message):
+    log_event(message, level=logging.WARNING, extra={
+        **workflow_log_context(
+            conversation_id=context.conversation_id, run_id=context.run_id,
+            turn_id=getattr(context, 'turn_id', None), step_id=step['step_id'],
+        ),
+        **diagnostic, 'stage': 'task_completeness_assessment',
+    })
 
 
 def _quoted(value):
@@ -537,9 +547,9 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
             validate=lambda value: [], checkpoint=checkpoint, saved_state=saved, recheck=recheck,
             owner_step_id=step['step_id'],
             evidence_basis='mixed' if legacy_evidence else 'request', legacy_evidence=legacy_evidence,
-            on_error=lambda error_type: log_event(
+            on_diagnostic=lambda diagnostic: _log_completeness_diagnostic(
+                step, context, diagnostic,
                 '[ORCHESTRATION_EXECUTOR] Retained final-answer verification unavailable.',
-                level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
             ),
         )
     except MixedSourceCancellationError:
@@ -547,7 +557,11 @@ def check_retained_final_response(step, result, context, *, settings, emit=None,
     except Exception as error:
         log_event(
             '[ORCHESTRATION_EXECUTOR] Retained final-answer verification could not complete.',
-            level=logging.WARNING, extra={'error_type': type(error).__name__, 'step_id': step['step_id']},
+            level=logging.WARNING, extra={
+                **workflow_log_context(
+                    conversation_id=context.conversation_id, run_id=context.run_id, step_id=step['step_id'],
+                ), 'error_type': type(error).__name__, 'stage': 'task_completeness_assessment',
+            },
         )
     checked = {**result, 'task_completeness': public_completeness_report(state)}
     if state['status'] != 'complete':
@@ -624,6 +638,17 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     if source_cov is not None:
                         entry['source_coverage'] = source_cov
                 inputs[name] = entry
+        if is_debug_enabled():
+            log_event('[ORCHESTRATION_EXECUTOR] Composition input contract verified.', extra={
+                **workflow_log_context(
+                    conversation_id=producer.conversation_id, turn_id=getattr(context, 'turn_id', None),
+                    run_id=producer.run_id, step_id=producer.step_id,
+                ),
+                'stage': 'compose_inputs', 'input_count': len(readers),
+                'document_citation_count': sum(len(entry['document_citations']) for entry in inputs.values()),
+                'declared_output_count': len(step['outputs']),
+                'available_information': uses_available_information(step),
+            })
         # A saved workflow's result reaches the model only as fenced, untrusted notes, read again
         # for this call; the retained value it replaces never does. That includes a run the plan
         # waited for, which only a setting-gated plan can have compose read.
@@ -933,9 +958,9 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     ) else 'request'
                 ),
                 legacy_evidence=legacy_evidence,
-                on_error=lambda error_type: log_event(
+                on_diagnostic=lambda diagnostic: _log_completeness_diagnostic(
+                    step, context, diagnostic,
                     '[ORCHESTRATION_EXECUTOR] Task completeness verification unavailable.',
-                    level=logging.WARNING, extra={'error_type': error_type, 'step_id': step['step_id']},
                 ),
             )
             completeness_report = public_completeness_report(completeness_state)
@@ -1061,6 +1086,16 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         )
         if completeness_report:
             result['task_completeness'] = completeness_report
+        if is_debug_enabled():
+            log_event('[ORCHESTRATION_EXECUTOR] Prepared content retained.', extra={
+                **workflow_log_context(
+                    conversation_id=producer.conversation_id, turn_id=getattr(context, 'turn_id', None),
+                    run_id=producer.run_id, step_id=producer.step_id,
+                ),
+                'stage': 'compose_retained', 'output_count': len(named), 'input_count': len(readers),
+                'completeness_check_enabled': check_policy['enabled'],
+                'available_information': uses_available_information(step), 'partial': partial,
+            })
         return result
     except MixedSourceCancellationError:
         raise

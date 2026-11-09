@@ -1,8 +1,9 @@
 # test_orchestration_conversation_sources.py
 """
 Functional regressions for exact conversation-source transformations.
-Version: 0.261.349
+Version: 0.261.423
 Implemented in: 0.261.341
+Shared two-correction allowance updated in: 0.261.422
 
 Exercises real discovery, resolver, Flask planning and initialized execution with
 offline storage/model boundaries. Discovery previews never substitute for full
@@ -200,10 +201,12 @@ def test_repeated_inconsistent_plan_fails_instead_of_broadening_scope(real_http_
     _replace_history(runtime.harness, long_sources())
     runtime.harness.replies = [
         transform_resolution(), _search_then_answer_plan(REQUEST), _search_then_answer_plan(REQUEST),
+        _search_then_answer_plan(REQUEST),
     ]
     events = _plan(runtime, REQUEST)
     assert any('not a workspace search' in event.get('error', '') for event in events), events
     assert not any(event.get('type') == 'orchestration_plan' for event in events)
+    assert len(runtime.harness.model_calls) == 4
 
 
 def test_explicit_workspace_retrieval_overrides_no_retrieval_resolution(real_http_harness):

@@ -3,7 +3,8 @@
 **Implemented in version: 0.261.391** (formatting, style inventory, and programmatic access added in **0.261.392**)  
 **Excel implemented in version: 0.261.399**
 **Excel native content/table improvements implemented in version: 0.261.408**
-**Related config.py version: `0.261.408`**
+**Native Word comment inspection fixed/implemented in version: 0.261.422**
+**Related config.py version: `0.261.423`**
 
 ## 1. Overview and Purpose
 
@@ -272,10 +273,38 @@ The **Document Search** action exposes a `get_document_accessibility_report` Sem
 |---|---|
 | `document_id` | The document to read (required). |
 | `doc_scope` | `all`, `personal`, `group`, or `public`. |
-| `sections` | Comma-separated subset of `accessibility`, `style`, `issues`. Defaults to all three. |
+| `sections` | Comma-separated subset of `accessibility`, `style`, `issues`. Defaults to all three. Since 0.261.422, opt-in `comments` reads a workspace Word original. |
 | `page_number` | Optional 1-based page, slide, or Excel indexed evidence segment. Also returns that segment's stored chunk text. Excel segments are not physical print pages. |
 
-Access follows the existing Document Search rules: the current user's workspace, group, and public access and the action's allowed scopes. Chat-scope uploads are refused, and documents without stored metadata return guidance to re-upload. There is deliberately no REST endpoint for this.
+Access follows the existing Document Search rules: the current user's workspace, group, and public access and the action's allowed scopes. Chat-scope uploads are refused. Stored-report requests without metadata return extraction guidance; Word comment inspection can use an available original even when stored style metadata is absent. There is deliberately no separate REST endpoint for this function.
+
+### Opt-in native Word comments (0.261.422)
+
+Fixed/Implemented in version: **0.261.422**
+(`application/single_app/config.py`).
+
+Structured Word comments are parsed during ingestion and incorporated into
+searchable comment chunks; ordinary stored Word accessibility/style metadata is
+not that structured inventory. `sections="comments"` reuses
+`functions_office_media.extract_docx_comments` over the authorized active original,
+with strict inspection that distinguishes an inspected empty package from
+unavailable, malformed, or over-limit parts.
+
+The `word_inspection` result contains parsed root comments and supported linked
+replies, available author/date/resolution, bounded anchored text, counts, and
+limitations. Anchors are at most 300 characters; clipped or unclosed ranges are
+not marked complete. Missing resolution or threading metadata is not invented.
+Default stored-metadata calls and default ingestion parsing keep their previous
+behavior. A comment-only request can proceed without stored metadata; a combined
+request still requires the stored sections rather than returning empty style or
+issue data for an uninspected section.
+
+Orchestration dispatches this work by actual source format and retains the parsed
+records before composition. Native citations reopen the exact saved result with
+source-access, version/revision, and integrity checks; they do not choose a fresh
+search hit. Both chat citation interfaces distinguish Word evidence from workbook
+cells. Existing Search, Analyze, accessibility, and OCR/vision paths for other
+formats are unchanged.
 
 ### Building Custom Checks
 
@@ -304,3 +333,7 @@ Rules that need data SimpleChat does not extract (for example full tint/shade co
   - Validates `get_document_accessibility_report` section filtering, page chunks, chat-scope and missing-metadata errors, and the plugin and citation wiring.
 - **Functional Test**: `functional_tests/test_excel_document_accessibility_extraction.py` (implemented in **0.261.399**)
   - Exercises real OOXML and synthetic legacy BIFF workbooks, native properties, comments/replies, alt text/decorative flags, controls, formatting, print metadata, unchanged source bytes, bounded/failing inspection, both tabular ingestion modes, workspace scope propagation, schema retries, authorized report/citations and native-versus-data question routing.
+- **Functional Test**: `functional_tests/test_orchestration_attachment_native_evidence.py` (Word coverage added in **0.261.422**)
+  - Exercises DOCX/DOCM/DOTX parsing, authorized original reads, exact retained comments/replies and citations, empty/unavailable/malformed/partial inventories, anchor limits, checker-label repair, unsupported findings, and content-free logging.
+- **UI Test**: `ui_tests/test_v2_stream_citation_delivery.py` (Word coverage added in **0.261.422**)
+  - Checks Word anchors/replies/resolution and inert reviewer text in classic and V2 citation views at mobile and desktop widths, alongside existing Excel evidence.

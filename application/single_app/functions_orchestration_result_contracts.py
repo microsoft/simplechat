@@ -54,8 +54,10 @@ _OPAQUE_REFERENCE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}\Z")
 class ResultContractError(ValueError):
     """Invalid data is never repaired into a different successful result."""
 
-    def __init__(self, code="result_contract_invalid"):
+    def __init__(self, code="result_contract_invalid", *, rule=None, diagnostics=None):
         self.code = code
+        self.rule = rule
+        self.diagnostics = diagnostics or {}
         super().__init__("The orchestration result or input binding is invalid.")
 
 
@@ -665,14 +667,23 @@ def validate_input_bindings(steps, *, existing_results=None, max_steps=MAX_BINDI
             else:
                 producer = by_id.get(binding.step_id)
                 if producer is None:
-                    raise ResultContractError("result_producer_missing")
+                    raise ResultContractError("result_producer_missing", rule="input_producer_missing", diagnostics={
+                        "step_id_hash": hashlib.sha256(step.step_id.encode()).hexdigest(),
+                    })
                 kind = next((output.kind for output in producer.outputs if output.name == binding.output_name), None)
                 if kind is None:
-                    raise ResultContractError("result_output_missing")
+                    raise ResultContractError("result_output_missing", rule="input_output_missing", diagnostics={
+                        "step_id_hash": hashlib.sha256(step.step_id.encode()).hexdigest(),
+                        "producer_step_id_hash": hashlib.sha256(producer.step_id.encode()).hexdigest(),
+                    })
                 if binding.step_id not in required:
                     required.append(binding.step_id)
             if kind not in spec.kinds:
-                raise ResultContractError("result_kind_incompatible")
+                raise ResultContractError("result_kind_incompatible", rule="input_kind_mismatch", diagnostics={
+                    "step_id_hash": hashlib.sha256(step.step_id.encode()).hexdigest(),
+                    "result_kind": kind.replace("-", "_"),
+                    **{f"accepts_{value.replace('-', '_')}": True for value in spec.kinds},
+                })
         for dependency in required:
             if dependency not in by_id:
                 raise ResultContractError("result_producer_missing")

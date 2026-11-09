@@ -1,9 +1,44 @@
 # functions_orchestration_excel.py
-"""Read authorized Excel annotation inventories, not worksheet-row previews."""
+"""Read exact native annotation inventories, preserving Excel paging and Word threads."""
 
 import json
 
 from functions_orchestration_results import MAX_VALUE_BYTES
+
+
+def collect_word_comments(document_id, user_id, *, read_page, cancel_check, source_count=1, **scope):
+    cancel_check()
+    report = read_page(document_id, user_id, sections="comments", **scope)
+    cancel_check()
+    inventory = report.get("word_inspection")
+    if type(inventory) is not dict or inventory.get("section") != "comments":
+        raise LookupError("The native Word comment inventory is unavailable.")
+    values, total = inventory.get("records"), inventory.get("total_records")
+    if (
+        inventory.get("inventory_complete") is not True or type(values) is not list
+        or type(total) is not int or total != len(values)
+        or type(inventory.get("source_sha256")) is not str
+        or any(type(record) is not dict for record in values)
+    ):
+        raise ValueError("The native Word comment inventory has invalid coverage.")
+    budget = MAX_VALUE_BYTES // (4 * max(1, source_count))
+    records, used = [], 0
+    for record in values:
+        cancel_check()
+        size = len(json.dumps(record, ensure_ascii=False).encode("utf-8"))
+        if used + size > budget:
+            break
+        records.append(record)
+        used += size
+    partial = len(records) != total
+    return records, {
+        "execution_mode": "native_inspection", "section": "comments", "format": report.get("format"),
+        "source_sha256": inventory["source_sha256"], "total_records": total,
+        "returned_records": len(records), "total_replies": inventory.get("total_replies"),
+        "inventory_complete": True, "partial": partial, "pages_read": 1,
+        "has_more": partial, "limit_reached": partial, "next_cursor": None,
+        "limitations": inventory.get("limitations") or [],
+    }
 
 
 def collect_excel_comments(document_id, user_id, *, read_page, cancel_check, source_count=1, **scope):

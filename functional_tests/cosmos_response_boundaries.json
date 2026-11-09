@@ -5742,7 +5742,7 @@
     },
     "functional_tests/test_support/orchestration_revisions.py::AtomicMemoryContainer": {
       "boundary": {
-        "sha256": "45972adfa5bac7f069ae2a00047424aa5a208a8d14b6cc61afd1ab560397f5ee",
+        "sha256": "075f89bd674ec476bf4ba79797b83ef2fffd644534b8874e8ef8774a31de4562",
         "methods": [
           "create_item",
           "delete_item",
@@ -5756,9 +5756,11 @@
         "imports_sha256": "a5271c5eba30cd26978bd66b16ae2c89bba4de3c753911b4d9298133304773cc"
       },
       "classification": "sdk-default",
-      "contract": "Migrated Cosmos container: actual pinned SDK point wrappers by default, explicit sdk_responses=False compatibility, plain query JSON; existing identity/ETag/failure behavior is preserved.",
+      "contract": "Migrated Cosmos container: actual pinned SDK point wrappers by default, explicit sdk_responses=False compatibility, plain query JSON; existing identity/ETag/failure behavior is preserved. Bounded connection/read timeouts and retry_total are accepted as transport-only options; unknown options fail explicitly. SDK point wrappers, partition routing, conditional ETags, failure injection and transaction behavior remain unchanged.",
       "tests": [
-        "functional_tests/test_cosmos_document_boundaries.py"
+        "functional_tests/test_cosmos_document_boundaries.py",
+        "functional_tests/test_orchestration_document_action_end_to_end.py::test_sdk_transport_options_preserve_partition_etag_and_failure_semantics",
+        "functional_tests/test_orchestration_document_action_end_to_end.py"
       ]
     },
     "functional_tests/test_support/public_file_source_harness.py::FileSyncContainer": {
@@ -20326,12 +20328,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ae2373ab845b8f0c1837ca03e591a9056fc7c256af3cdfac79c298518f1d56c5"
+        "module_sha256": "2c071839f337fc0a554e5fd4255ac3c6b4e073f9522f541095aa442c639349d5"
       },
       "classification": "normalized-strict",
-      "contract": "The SDK point mapping is normalized before domain checks or copying. The private attempt remains strict JSON; question identity, masks, deletion and conditional ETags are preserved.",
+      "contract": "The SDK point mapping is normalized before domain checks or copying. The private attempt remains strict JSON; question identity, masks, deletion and conditional ETags are preserved. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
-        "functional_tests/test_orchestration_planning_persistence.py"
+        "functional_tests/test_orchestration_planning_persistence.py",
+        "functional_tests/test_orchestration_planning_persistence.py::test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -20347,13 +20350,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ae2373ab845b8f0c1837ca03e591a9056fc7c256af3cdfac79c298518f1d56c5"
+        "module_sha256": "2c071839f337fc0a554e5fd4255ac3c6b4e073f9522f541095aa442c639349d5"
       },
       "classification": "normalized-strict",
-      "contract": "The caller supplies a normalized question with its ETag. Conditional replacement preserves unrelated metadata; its SDK write document is normalized before the owner reads the saved state.",
+      "contract": "The caller supplies a normalized question with its ETag. Conditional replacement preserves unrelated metadata; its SDK write document is normalized before the owner reads the saved state. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_a_racing_stop_cannot_be_overwritten_by_a_heartbeat",
-        "functional_tests/test_orchestration_planning_persistence.py::test_sdk_claim_fencing_stale_worker_and_public_history"
+        "functional_tests/test_orchestration_planning_persistence.py::test_sdk_claim_fencing_stale_worker_and_public_history",
+        "functional_tests/test_orchestration_planning_persistence.py::test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry"
       ],
       "evidence_scope": "owner-runtime"
     },
@@ -20369,10 +20373,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ae2373ab845b8f0c1837ca03e591a9056fc7c256af3cdfac79c298518f1d56c5"
+        "module_sha256": "2c071839f337fc0a554e5fd4255ac3c6b4e073f9522f541095aa442c639349d5"
       },
       "classification": "normalized-strict",
-      "contract": "A cancellation point response is normalized before exact scoped-field validation. Only a real 404 means absence; malformed or unavailable storage cannot grant planning ownership.",
+      "contract": "A cancellation point response is normalized before exact scoped-field validation. Only a real 404 means absence; malformed or unavailable storage cannot grant planning ownership. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_stop_before_acknowledgement_is_durable",
         "functional_tests/test_orchestration_planning_persistence.py::test_early_stop_is_not_erased_by_an_unrelated_conversation_write"
@@ -20391,10 +20395,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ae2373ab845b8f0c1837ca03e591a9056fc7c256af3cdfac79c298518f1d56c5"
+        "module_sha256": "2c071839f337fc0a554e5fd4255ac3c6b4e073f9522f541095aa442c639349d5"
       },
       "classification": "response-unused",
-      "contract": "The immutable, submission-scoped cancellation create response is discarded. A 409 rereads the exact owned marker through planning_was_cancelled instead of overwriting another record.",
+      "contract": "The immutable, submission-scoped cancellation create response is discarded. A 409 rereads the exact owned marker through planning_was_cancelled instead of overwriting another record. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_stop_before_acknowledgement_is_durable"
       ],
@@ -23443,10 +23447,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0afaa631fb35d52b9022fa8c7e777695aa84a450fc6fcbff2e7b6f1b04636a77"
+        "module_sha256": "8835a019046bdee0d13641133cc22180068071f27d8ec5f0258baec00c3e8859"
       },
       "classification": "sdk-compatible",
-      "contract": "_authorize_chat_upload_conversation: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_authorize_chat_upload_conversation consumes the pinned SDK dictionary subclass through isinstance/get and verifies the exact conversation owner; SDK representation does not bypass strict source authority. Review renewed for 0.261.422: this owner AST, point call and imported authority bindings are unchanged. Module-only Word original-comment parsing and the comment-only metadata guard do not change this chat-upload consumer. The representative real-owner SDK test verifies both allowed and denied users with network blocked.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"
@@ -23470,10 +23474,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "0afaa631fb35d52b9022fa8c7e777695aa84a450fc6fcbff2e7b6f1b04636a77"
+        "module_sha256": "8835a019046bdee0d13641133cc22180068071f27d8ec5f0258baec00c3e8859"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_chat_upload_context: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Public discovery now uses the bootstrap-free owner-configured boundary; this storage function and SDK response consumption are unchanged, with representative owner-runtime evidence retained. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_resolve_chat_upload_context reads pinned SDK point mappings and plain query rows via isinstance/get, applies conversation/source authority checks, and constructs the authorized upload projection from nested JSON fields. Review renewed for 0.261.422: this owner AST, point/query calls and authority imports are unchanged; module-only Word parsing and opt-in metadata behavior do not alter the chat-upload consumer. The existing real-owner SDK test verifies authorized text projection with network blocked.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"
@@ -31400,10 +31404,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError.",
+      "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
@@ -31422,10 +31426,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged.",
+      "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31443,10 +31447,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked.",
+      "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
@@ -31475,10 +31479,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type.",
+      "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31496,10 +31500,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored.",
+      "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31523,10 +31527,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction.",
+      "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31544,10 +31548,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Ledger source revalidation consumes plain projected query rows to check source visibility; failed reads omit the ledger rather than authorizing point documents or widening scope.",
+      "contract": "Ledger source revalidation consumes plain projected query rows to check source visibility; failed reads omit the ledger rather than authorizing point documents or widening scope. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31565,10 +31569,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot.",
+      "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31591,10 +31595,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Conversation SDK mappings feed existing mapping-compatible shared authorization. The saved question is normalized by public_planning_message before projection/mirroring; private claims are not shared, and required admission mirror failures are explicit.",
+      "contract": "Conversation SDK mappings feed existing mapping-compatible shared authorization. The saved question is normalized by public_planning_message before projection/mirroring; private claims are not shared, and required admission mirror failures are explicit. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_shared_conversations.py"
       ],
@@ -31612,10 +31616,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "The review-required question point mapping uses nested metadata mapping updates and the existing conditional metadata writer. Planning ownership is checked before run publication; no raw SDK question reaches an exact-dictionary JSON contract.",
+      "contract": "The review-required question point mapping uses nested metadata mapping updates and the existing conditional metadata writer. Planning ownership is checked before run publication; no raw SDK question reaches an exact-dictionary JSON contract. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_explicit_retry_uses_saved_inputs_and_one_question",
         "functional_tests/test_orchestration_message_regeneration.py"
@@ -31634,10 +31638,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response.",
+      "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31655,10 +31659,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "response-unused",
-      "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path.",
+      "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [],
       "evidence_scope": "owner-runtime"
     },
@@ -31679,10 +31683,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Question SDK point mappings are consumed by normalize_history_message and metadata mapping operations. The projected history dictionary, not the SDK wrapper, is fingerprinted. Create-only admission and conditional lifecycle writes preserve the original question.",
+      "contract": "Question SDK point mappings are consumed by normalize_history_message and metadata mapping operations. The projected history dictionary, not the SDK wrapper, is fingerprinted. Create-only admission and conditional lifecycle writes preserve the original question. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py"
       ],
@@ -31705,10 +31709,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "The question create response is discarded. A racing 409 rereads an SDK point and validates the existing question instead of upserting over it; mismatched content fails without a save acknowledgement.",
+      "contract": "The question create response is discarded. A racing 409 rereads an SDK point and validates the existing question instead of upserting over it; mismatched content fails without a save acknowledgement. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_concurrent_question_creation_never_upserts_over_the_winner"
       ],
@@ -31731,10 +31735,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input.",
+      "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31752,10 +31756,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them.",
+      "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31773,10 +31777,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers.",
+      "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers. Re-reviewed for module-only planning failure projection changes: this owner's AST and storage calls are unchanged; normalization, partitioning and ETag consumers remain intact.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_followup_citation_provenance.py"
@@ -31785,7 +31789,7 @@
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
-        "sha256": "d624632ffa277aa6b9996c012eea1db246319dac2d33087d1bddf0a32ad9423a",
+        "sha256": "29030245af72419dd617c1b504f90ad6fdc0a163ffb27c875e7445265c95569a",
         "points": [
           {
             "method": "read_item",
@@ -31795,12 +31799,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "12d7db58d0681d207f45c56bf3178f98eba71e20f6fc0331ac18fb3f15a36a55"
+        "module_sha256": "a41fab05d0e151ff73b17a3a4fb4e4c9b813cb14cac5d62d8cfe526bfc28d010"
       },
       "classification": "sdk-compatible",
-      "contract": "Clarification admission reads the SDK conversation through Mapping-compatible field access and current ownership checks. Authorized attachment DTOs are selected before planning; raw SDK responses never enter strict planner source contracts. Durable planning remains delegated to the existing normalized planning owner.",
+      "contract": "Clarification admission reads the SDK conversation through Mapping-compatible field access and current ownership checks. Authorized attachment DTOs are selected before planning; raw SDK responses never enter strict planner source contracts. Durable planning remains delegated to the existing normalized planning owner. Typed planner failure propagation changes only SSE/saved error classification; the existing point-read ownership and Mapping consumers are unchanged. SDK-default authenticated native Auto runs and failure/reload/retry exercise the complete path.",
       "tests": [
-        "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
+        "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text",
+        "functional_tests/test_orchestration_planning_persistence.py::test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry",
+        "functional_tests/test_orchestration_document_action_end_to_end.py"
       ],
       "evidence_scope": "owner-runtime"
     },

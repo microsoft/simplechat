@@ -9,13 +9,15 @@ from dataclasses import replace
 import json
 
 from content_screening.contracts import DocumentHeldError, ScreeningError
+from functions_action_manifest import is_document_search_action
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_analysis_access import analysis_source_snapshot
 from functions_evidence_status import evidence_status_from_sources
 from functions_orchestration_invocation_capture import (
     OrchestrationInvocationCancelledError, OrchestrationInvocationControlError, OrchestrationInvocationServiceError,
 )
 from functions_orchestration_registry import (
-    DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
+    CAPABILITY_ACTION_INVOKE, DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability, get_capability_result_outputs,
 )
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, MAX_DESCRIPTOR_BYTES, MAX_EXTERNAL_SOURCES, Completeness, Coverage, ExternalSourceRef,
@@ -160,7 +162,23 @@ def read_result_document_citations(context, reference, *, evidence_status_out=No
     """Project document provenance from the exact final result, never ambient work."""
     service = require_result_service(context)
     with service.read_operation():
-        return _read_result_document_citations(service, reference, evidence_status_out=evidence_status_out)
+        citations = _read_result_document_citations(service, reference, evidence_status_out=evidence_status_out)
+    if is_debug_enabled():
+        producer = reference.producer
+        consumer = workflow_log_context(run_id=getattr(context, 'run_id', None))
+        log_event('[ORCHESTRATION_EXECUTOR] Retained document citation projection verified.', extra={
+            **workflow_log_context(
+                conversation_id=producer.conversation_id, run_id=producer.run_id, step_id=producer.step_id,
+            ),
+            **({'consumer_run_id_hash': consumer['run_id_hash']} if consumer else {}),
+            'stage': 'retained_citation_projection', 'capability_id': producer.capability_id,
+            'citation_count': len(citations),
+            'located_citation_count': sum(
+                bool(citation.get('citation_id')) and citation.get('location_value', citation.get('page_number'))
+                not in (None, '') for citation in citations
+            ),
+        })
+    return citations
 
 
 def read_result_evidence_status(context, reference):
@@ -329,7 +347,9 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     or type(prepared) is not dict
                     or prepared.get('version') != 'orchestration-gathered-content-v1'
                     or prepared.get('capability_id') != 'document_search'
-                    or prepared.get('content_scope') not in ('returned_excerpts', 'native_excel_annotations')
+                    or prepared.get('content_scope') not in (
+                        'returned_excerpts', 'native_excel_annotations', 'native_document_annotations',
+                    )
                     or type(prepared.get('citations')) is not list
                 ):
                     raise ResultContractError('result_citations_invalid')
@@ -337,10 +357,24 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                     _search_evidence_citations(reader, prepared)
                     if current.output_name == 'evidence' else prepared['citations']
                 )
-                if prepared['content_scope'] == 'native_excel_annotations':
+                if prepared['content_scope'] in ('native_excel_annotations', 'native_document_annotations'):
                     native_reference = prepared_reader.reference.to_dict()
                 for source in lineage['sources']:
                     search_counts.setdefault(source_key(source), set())
+        elif producer.capability_id == CAPABILITY_ACTION_INVOKE and lineage['sources']:
+            prepared = read_complete_input(reader)
+            if (
+                current.output_name != 'prepared' or current.kind != 'structured-v1'
+                or type(prepared) is not dict
+                or prepared.get('version') != 'orchestration-gathered-content-v1'
+                or prepared.get('capability_id') != CAPABILITY_ACTION_INVOKE
+                or type(prepared.get('citations')) is not list
+            ):
+                raise ResultContractError('result_citations_invalid')
+            # The tool citation adapter reads config defaults; keep it out of bootstrap.
+            from functions_agent_document_citations import build_document_citations_from_agent_citations
+
+            retained_citations = build_document_citations_from_agent_citations(prepared['citations'])
         elif producer.capability_id in ('document_analyze', 'document_compare'):
             # Coverage is this producer's citation sidecar, not an implicit input from
             # another task. Reopen the exact committed digest, including after recovery.
@@ -422,7 +456,7 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     """Resolve an exact committed annotation, with current source access and version.
 
     Unlike ordinary retained-result inspection, a source citation also authorizes the
-    workbook it offers to preview. Never search a current inventory by cell or decode
+    document it offers to preview. Never search a current inventory by location or decode
     a document identity from the synthetic citation ID.
     """
     if (
@@ -433,7 +467,9 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     reader = service.open_result(reference, allow_partial=True, require_current_sources=True)
     prepared = read_complete_input(reader)
     if (
-        type(prepared) is not dict or prepared.get('content_scope') != 'native_excel_annotations'
+        type(prepared) is not dict or prepared.get('content_scope') not in (
+            'native_excel_annotations', 'native_document_annotations',
+        )
         or type(prepared.get('citations')) is not list or type(prepared.get('search_results')) is not list
     ):
         raise ResultContractError('native_citation_reference_invalid')
@@ -457,6 +493,7 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     if type(value) is not dict:
         raise ResultContractError('native_citation_evidence_invalid')
     annotation = value.get('excel_annotation')
+    word_annotation = value.get('word_annotation')
     coverage = value.get('native_coverage')
     if type(annotation) is dict:
         citation = citations[0]
@@ -465,6 +502,13 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
         )):
             raise ResultContractError('native_citation_evidence_invalid')
         response = {'native_annotation': deepcopy(annotation), 'cited_text': annotation.get('text') or ''}
+    elif type(word_annotation) is dict:
+        if (
+            citations[0].get('annotation_id') != word_annotation.get('id')
+            or citations[0].get('evidence_kind') != 'native_word_annotation'
+        ):
+            raise ResultContractError('native_citation_evidence_invalid')
+        response = {'native_annotation': deepcopy(word_annotation), 'cited_text': word_annotation.get('text') or ''}
     elif type(coverage) is dict:
         response = {'native_coverage': deepcopy(coverage), 'cited_text': ''}
     else:
@@ -474,7 +518,10 @@ def read_native_citation_evidence(service, reference, *, citation_id, document_i
     return {
         **response, 'citation_id': citation_id, 'document_id': document_id,
         'file_name': hits[0].get('file_name') or '', 'source_version': sources[0]['source_version'],
-        'evidence_kind': 'native_excel_annotation' if annotation is not None else 'native_annotation_coverage',
+        'evidence_kind': (
+            'native_word_annotation' if type(word_annotation) is dict
+            else 'native_excel_annotation' if type(annotation) is dict else 'native_annotation_coverage'
+        ),
     }
 
 
@@ -595,8 +642,8 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
     partial = bool(native_coverage and any(item.get('partial') for item in native_coverage))
     if native_coverage:
         limitations = (
-            'Native annotation evidence contains saved workbook records, not recalculated worksheet data.',
-            'Reviewer feedback is distinct from the saved cell value; missing metadata must not be inferred.',
+            'Native annotation evidence contains saved document records, not inferred or recalculated data.',
+            'Reviewer feedback is distinct from document text or a saved cell value; missing metadata must not be inferred.',
         )
         if partial:
             limitations += ('The native annotation inventory is partial; remaining records were not inspected.',)
@@ -634,7 +681,11 @@ def retain_document_search_result(step, context, results, *, source_manifest, ci
         },
     }
     if native_coverage:
-        prepared['content_scope'] = 'native_excel_annotations'
+        prepared['content_scope'] = (
+            'native_excel_annotations' if all(
+                item.get('format') in (None, 'xlsx', 'xlsm', 'xls') for item in native_coverage
+            ) else 'native_document_annotations'
+        )
         prepared['coverage']['native_inspection'] = deepcopy(native_coverage)
     return service.persist_task_result(
         producer=context.result_producer(step), role='gather', status='partial' if partial else 'complete',
@@ -675,6 +726,17 @@ def retain_gather_result(step, context, result, *, source_manifest):
     service = require_result_service(context)
     capability_id = step['capability_id']
     sources = analysis_source_snapshot(source_manifest)
+    producer = context.result_producer(step)
+    trace = workflow_log_context(
+        conversation_id=producer.conversation_id, turn_id=getattr(context, 'turn_id', None),
+        run_id=producer.run_id, step_id=producer.step_id,
+    )
+    if is_debug_enabled():
+        log_event('[ORCHESTRATION_EXECUTOR] Gather retention started.', extra={
+            **trace, 'stage': 'gather_retention', 'capability_id': capability_id,
+            'workspace_source_count': len(sources),
+            'document_binding_declared': 'document_ids' in (step.get('arguments') or {}),
+        })
     evidence = deepcopy(result.get('evidence') or [])
     citations = deepcopy(result.get('citations') or [])
     notes = deepcopy(result.get('notes') or [])
@@ -723,8 +785,21 @@ def retain_gather_result(step, context, result, *, source_manifest):
         ))
     else:
         admission = getattr(context, 'external_source_admission', None)
+        arguments = step.get('arguments') or {}
+        bound_action = (
+            capability_id == CAPABILITY_ACTION_INVOKE
+            and bool(arguments.get('document_ids'))
+            and arguments['document_ids'] == [source['document_id'] for source in sources]
+            and all(source.get('scope') in ('personal', 'group', 'public') for source in sources)
+            and any(
+                action.get('action_ref') == arguments.get('action_ref') and is_document_search_action(action)
+                for action in (getattr(context, 'action_catalog', None) or ()) if isinstance(action, dict)
+            )
+        )
         if (
-            sources or not callable(admission)
+            ((sources or (capability_id == CAPABILITY_ACTION_INVOKE and 'document_ids' in arguments))
+             and not bound_action)
+            or not callable(admission)
             or not callable(service.access.external_source_authorizer)
         ):
             raise ResultContractError('result_external_lineage_unsupported')
@@ -744,11 +819,18 @@ def retain_gather_result(step, context, result, *, source_manifest):
         service.access.external_source_catalog.update(admitted)
         external_sources = tuple(admitted)
     outputs.append(NamedOutput('prepared', 'structured-v1', prepared, _complete(1, limitations, partial=partial)))
-    return service.persist_task_result(
-        producer=context.result_producer(step), role='gather', status='partial' if partial else 'complete',
+    task = service.persist_task_result(
+        producer=producer, role='gather', status='partial' if partial else 'complete',
         outputs=outputs, sources=sources, origin='grounded' if sources or external_sources else 'generated',
         guard_token=context.result_guard_token_for_step(step['step_id']),
         input_fingerprint=context.result_input_fingerprint_for_step(step['step_id']),
         upstream=tuple(dict.fromkeys(reader.reference for reader in readers.values())),
         **({'external_sources': external_sources} if external_sources else {}),
     )
+    if is_debug_enabled():
+        log_event('[ORCHESTRATION_EXECUTOR] Gather result retained.', extra={
+            **trace, 'stage': 'gather_retained', 'capability_id': capability_id,
+            'workspace_source_count': len(sources), 'external_source_count': len(external_sources),
+            'output_count': len(outputs), 'upstream_input_count': len(readers), 'partial': partial,
+        })
+    return task

@@ -1,14 +1,16 @@
 # test_v2_stream_citation_delivery.py
 """
 UI regressions for live tool/web evidence and recorded tool outcomes.
-Version: 0.261.417
+Version: 0.261.423
 Implemented in: 0.261.365
+Word comment inspection fixed in: 0.261.422
 
 Drives the real send/SSE/store/message inspector locally with synthetic HTTP boundaries.
 The existing Azure Playwright-compatible fixture also supports local browsers. No live
 agents, actions, conversations, model requests, or connector requests are created.
 """
 
+import json
 from pathlib import Path
 import re
 
@@ -17,6 +19,7 @@ from playwright.sync_api import expect
 
 from ui_tests.fixtures.playwright_connection import connect_options  # noqa: F401
 from ui_tests.fixtures.orchestration import harness_build
+from ui_tests.test_inline_citation_filename_fallback import CitationPage
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -218,6 +221,120 @@ def test_native_annotation_first_preserves_streamed_and_saved_identity(citation_
     expect(dialog.get_by_text("The cited workbook or retained evidence is no longer available.", exact=True)).to_be_visible()
     expect(dialog.get_by_text("Author: Reviewer A", exact=True)).to_have_count(0)
     expect(dialog.get_by_role("button", name="Open workbook preview (separate from annotation evidence)", exact=True)).to_have_count(0)
+
+
+def _word_comment_evidence():
+    reference = {
+        "producer": {"user_id": "owner", "conversation_id": "evidence-chat", "run_id": "native-run",
+                     "step_id": "comments", "attempt_index": 1, "capability_id": "document_search"},
+        "output_name": "prepared", "kind": "structured-v1", "manifest_sha256": "a" * 64,
+    }
+    citation = {
+        "citation_id": "word:native-comments:0", "document_id": "word", "file_name": "review.docx",
+        "location_label": "Location", "location_value": "Word comment 0", "native_evidence": reference,
+        "source_version": 1, "annotation_id": "0",
+    }
+    payload = {
+        "file_name": "review.docx", "evidence_kind": "native_word_annotation",
+        "native_annotation": {
+            "id": "0", "author": "Reviewer A", "date": "2026-01-01T10:00:00Z",
+            "anchor_text": "Original policy paragraph", "anchor_complete": False,
+            "done": None, "resolution_available": False,
+            "replies": [{
+                "id": "1", "author": "Reviewer B", "date": "2026-01-02T10:00:00Z",
+                "text": 'Reply <img src=x onerror="window.injected=true">', "done": True,
+                "resolution_available": True,
+            }],
+        },
+        "cited_text": "Check the policy. <script>unsafe()</script>",
+    }
+    content = "Review (Source: review.docx, Location: Word comment 0) [#word:native-comments:0]"
+    return citation, payload, content
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_word_comment_inspector_retains_anchor_replies_and_saved_evidence(citation_page, width):
+    page = citation_page
+    page.set_viewport_size({"width": width, "height": 900})
+    citation, payload, content = _word_comment_evidence()
+    message = _send(page, {"full_content": content, "hybrid_citations": [citation], "augmented": True})
+    page.evaluate("""(payload) => {
+        window.wordRequests = [];
+        window.wordDenied = false;
+        const originalFetch = window.fetch;
+        window.fetch = async (url, init = {}) => {
+            if (new URL(String(url), location.origin).pathname !== '/api/get_citation') {
+                return originalFetch(url, init);
+            }
+            window.wordRequests.push(JSON.parse(init.body));
+            return new Response(JSON.stringify(window.wordDenied
+                ? {error: 'The cited document is no longer available.'} : payload),
+                {status: window.wordDenied ? 403 : 200, headers: {'Content-Type': 'application/json'}});
+        };
+    }""", payload)
+    chip = message.get_by_role("button", name="review.docx Word comment 0", exact=True)
+    chip.focus()
+    chip.press("Enter")
+    dialog = page.get_by_role("dialog", name="Citation", exact=True)
+    comment = dialog.get_by_role("region", name="Native Word comment")
+    expect(comment).to_contain_text("Anchored text: Original policy paragraph")
+    expect(comment).to_contain_text("Anchor coverage: Bounded or unavailable")
+    expect(comment).to_contain_text("Resolved: Unavailable")
+    replies = dialog.get_by_role("region", name="Word comment replies")
+    expect(replies).to_contain_text("Author: Reviewer B")
+    expect(replies).to_contain_text("Resolved: Yes")
+    expect(replies).to_contain_text('Reply <img src=x onerror="window.injected=true">')
+    expect(dialog).to_contain_text(payload["cited_text"])
+    expect(dialog.get_by_text(re.compile("Worksheet / cell:|Saved cell value:"))).to_have_count(0)
+    expect(dialog.get_by_role("button", name=re.compile("workbook preview"))).to_have_count(0)
+    assert dialog.locator("script, img").count() == 0
+    assert dialog.evaluate("element => element.scrollWidth <= element.clientWidth")
+    dialog.get_by_role("button", name="Close citation", exact=True).click()
+    page.evaluate("() => window.OrchHarness.stores.chat.useChatStore.getState().reloadMessages()")
+    chip.click()
+    expect(dialog).to_contain_text("Author: Reviewer B")
+    requests = page.evaluate("() => window.wordRequests")
+    assert len(requests) == 2 and all(request == requests[0] for request in requests)
+    assert requests[0]["native_evidence"] == citation["native_evidence"]
+    assert requests[0]["document_id"] == "word"
+    dialog.get_by_role("button", name="Close citation", exact=True).click()
+    page.evaluate("() => window.wordDenied = true")
+    chip.click()
+    expect(dialog).to_contain_text("The cited document is no longer available.")
+    expect(dialog.get_by_role("region", name="Native Word comment")).to_have_count(0)
+
+
+@pytest.mark.parametrize("width", [390, 1440])
+def test_classic_word_comment_inspector_renders_exact_native_evidence(page, width):
+    page.set_viewport_size({"width": width, "height": 900})
+    fixture = CitationPage(page, "classic")
+    citation, payload, content = _word_comment_evidence()
+    requests = []
+
+    def get_citation(route):
+        requests.append(route.request.post_data_json)
+        route.fulfill(content_type="application/json", body=json.dumps(payload))
+
+    page.route("**/api/get_citation", get_citation)
+    fixture.open()
+    fixture.load([{
+        "id": "word-reply", "conversation_id": "evidence-chat", "role": "assistant",
+        "content": content, "hybrid_citations": [citation], "augmented": True, "metadata": {},
+    }])
+    fixture.row("word-reply").locator(".message-text a.citation-link").click()
+    dialog = page.get_by_role("dialog")
+    expect(dialog).to_contain_text("Native Word evidence: review.docx")
+    expect(dialog).to_contain_text("Anchored text: Original policy paragraph")
+    expect(dialog).to_contain_text("Anchor coverage: Bounded or unavailable")
+    expect(dialog).to_contain_text("Resolved: Unavailable")
+    expect(dialog).to_contain_text("Author: Reviewer B")
+    expect(dialog).to_contain_text("Resolved: Yes")
+    expect(dialog).to_contain_text(payload["cited_text"])
+    expect(dialog).to_contain_text('Reply <img src=x onerror="window.injected=true">')
+    expect(dialog.get_by_role("button", name=re.compile("workbook preview"))).to_have_count(0)
+    assert dialog.locator("script, img").count() == 0
+    assert requests[0]["native_evidence"] == citation["native_evidence"]
+    assert fixture.errors == []
 
 
 @pytest.mark.parametrize("result", [{"error": "HTTP 502", "status_code": 502}, None])

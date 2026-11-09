@@ -58,7 +58,7 @@ import json
 import logging
 from copy import deepcopy
 
-from functions_appinsights import log_event
+from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_orchestration_context import build_elicitation_user_request, execution_conversation_messages
 from functions_orchestration_execution_policy import orchestration_file_policy
 from functions_orchestration_invocation_capture import (
@@ -666,7 +666,7 @@ def _read_conversation_image(message, query, context, *, settings, user_id, canc
 def run_document_search(step, context, *, settings, user_id, emit, cancel_requested):
     arguments = _arguments(step)
     if arguments.get('native_section') == 'comments':
-        return _run_excel_comments(
+        return _run_native_comments(
             step, context, settings=settings, user_id=user_id, emit=emit,
             cancel_requested=cancel_requested,
         )
@@ -834,17 +834,23 @@ def run_document_search(step, context, *, settings, user_id, emit, cancel_reques
 # document_analyze -> functions_document_analysis.run_document_analysis
 # --------------------------------------------------------------------------------------
 
-def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_requested):
+def _run_native_comments(step, context, *, settings, user_id, emit, cancel_requested):
     # Search/storage initialization belongs at execution, not registry discovery.
-    from functions_orchestration_excel import collect_excel_comments
+    from functions_orchestration_excel import collect_excel_comments, collect_word_comments
     from functions_search_service import get_document_accessibility_payload
 
+    correlation = workflow_log_context(
+        conversation_id=_ctx(context, 'conversation_id'), run_id=_ctx(context, 'run_id'),
+        turn_id=_ctx(context, 'turn_id'), step_id=step.get('step_id'),
+    )
+    failure_rule, source_format = 'native_source_binding', None
     try:
         identifiers = _resolve_step_document_ids(
             step, context, settings=settings, capability_id=CAPABILITY_DOCUMENT_SEARCH,
         )
         if not identifiers:
-            raise ValueError('Native annotation inspection requires selected workbooks.')
+            raise ValueError('Native annotation inspection requires selected documents.')
+        failure_rule = 'native_source_authorization'
         manifest = resolve_context_source_manifest(
             context, identifiers, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
         )
@@ -852,22 +858,42 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
             [source.get('document_id') for source in manifest] != identifiers
             or any(source.get('authorization_status') != 'authorized' for source in manifest)
         ):
-            raise PermissionError('The selected workbooks are unavailable.')
-        _emit(emit, _progress(step, CAPABILITY_DOCUMENT_SEARCH, 'Reviewing workbook comments'))
+            raise PermissionError('The selected documents are unavailable.')
+        _emit(emit, _progress(step, CAPABILITY_DOCUMENT_SEARCH, 'Reviewing native document comments'))
         results, coverage, citations = [], [], []
         for source in manifest:
-            if not _text(source.get('file_name')).lower().endswith(('.xlsx', '.xlsm', '.xls')):
-                raise ValueError('Native annotation inspection requires an Excel workbook.')
-            records, source_coverage = collect_excel_comments(
+            failure_rule = 'native_comments_format_unsupported'
+            extension = _text(source.get('file_name')).lower().rsplit('.', 1)[-1]
+            source_format = extension if extension in ('xlsx', 'xlsm', 'xls', 'docx', 'docm', 'dotx') else 'unsupported'
+            if source_format == 'unsupported':
+                raise ValueError('Native comments require a supported Word or Excel document.')
+            word = source_format in ('docx', 'docm', 'dotx')
+            collector = collect_word_comments if word else collect_excel_comments
+            log_event('[ORCHESTRATION_ADAPTERS] Native comment read checkpoint.', extra={
+                **correlation, 'stage': 'native_comment_read', 'outcome': 'started',
+                'source_format': source_format, 'selected_document_count': len(manifest),
+            })
+            failure_rule = 'native_comment_inventory_invalid'
+            records, source_coverage = collector(
                 source['document_id'], user_id, read_page=get_document_accessibility_payload,
-                cancel_check=lambda: raise_if_mixed_source_cancelled(cancel_requested, 'excel_comments'),
+                cancel_check=lambda: raise_if_mixed_source_cancelled(cancel_requested, 'native_comments'),
                 source_count=len(manifest),
                 conversation_id=_ctx(context, 'conversation_id'), doc_scope=source['scope'],
                 active_group_ids=[source['scope_id']] if source['scope'] == 'group' else None,
                 active_public_workspace_id=source['scope_id'] if source['scope'] == 'public' else None,
             )
+            source_coverage['format'] = source_format
+            log_event('[ORCHESTRATION_ADAPTERS] Native comment read checkpoint.', extra={
+                **correlation, 'stage': 'native_comment_read', 'outcome': 'completed',
+                'source_format': source_format, 'returned_record_count': len(records),
+                'total_record_count': source_coverage.get('total_records'),
+                **({
+                    'returned_reply_count': sum(len(record['replies']) for record in records),
+                } if word and all(type(record.get('replies')) is list for record in records) else {}),
+                'partial': bool(source_coverage.get('partial')),
+            })
             coverage.append({'document_id': source['document_id'], **source_coverage})
-            # Include an explicit coverage record even for an inspected, empty workbook.
+            # An inspected empty inventory is evidence; an unavailable read never reaches retention.
             results.append({
                 'document_id': source['document_id'], 'file_name': source.get('file_name'),
                 'id': f"{source['document_id']}:native-comments:coverage",
@@ -883,21 +909,24 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
                 results.append({
                     'document_id': source['document_id'], 'file_name': source.get('file_name'),
                     'id': f"{source['document_id']}:native-comments:{index}",
-                    'chunk_text': json.dumps({'excel_annotation': record}, ensure_ascii=False),
+                    'chunk_text': json.dumps({'word_annotation' if word else 'excel_annotation': record}, ensure_ascii=False),
                     'sheet': record.get('sheet'), 'cell': record.get('cell'),
                 })
                 citations.append({
                     'source_type': 'document', 'document_id': source['document_id'],
                     'file_name': source.get('file_name'), 'sheet': record.get('sheet'),
                     'cell': record.get('cell'), 'annotation_id': record.get('id'),
-                    'evidence_kind': 'native_excel_annotation',
+                    'evidence_kind': 'native_word_annotation' if word else 'native_excel_annotation',
                     'citation_id': results[-1]['id'], 'sheet_name': record.get('sheet'),
                     'location_label': 'Location',
                     'location_value': (
-                        f"{record['sheet']}!{record['cell']}"
-                        if record.get('sheet') and record.get('cell') else 'Workbook annotation'
+                        f"Word comment {record['id']}" if word else (
+                            f"{record['sheet']}!{record['cell']}"
+                            if record.get('sheet') and record.get('cell') else 'Workbook annotation'
+                        )
                     ),
                 })
+        failure_rule = 'native_source_changed'
         current_manifest = resolve_context_source_manifest(
             context, identifiers, settings=settings, user_id=user_id, cancel_requested=cancel_requested,
         )
@@ -905,20 +934,26 @@ def _run_excel_comments(step, context, *, settings, user_id, emit, cancel_reques
         if any(source.get('authorization_status') != 'authorized' for source in current_manifest) or [
             tuple(source.get(key) for key in identity_fields) for source in current_manifest
         ] != [tuple(source.get(key) for key in identity_fields) for source in manifest]:
-            raise PermissionError('The selected workbook changed during inspection.')
+            raise PermissionError('The selected document changed during inspection.')
+        failure_rule = 'native_result_retention'
         task = retain_document_search_result(
             step, context, results, source_manifest=manifest, citations=citations,
             search_scope={'native_inspection': coverage},
         )
         return build_step_result(
             status=STEP_STATUS_PARTIAL if task.status == 'partial' else STEP_STATUS_COMPLETED,
-            summary=f'Retained native annotation evidence from {len(manifest)} workbook(s).',
+            summary=f'Retained native annotation evidence from {len(manifest)} document(s).',
             task_result=task, citations=citations,
         )
     except MixedSourceCancellationError:
-        return _cancelled_result('Workbook inspection was cancelled.')
+        return _cancelled_result('Native comment inspection was cancelled.')
     except Exception as exc:
-        return _failed_result('The workbook annotation inventory could not be read.', exc)
+        log_event('[ORCHESTRATION_ADAPTERS] Native comment read checkpoint.', level=logging.WARNING, extra={
+            **correlation, 'stage': 'native_comment_read', 'outcome': 'failed',
+            'source_format': source_format, 'validation_rule': failure_rule,
+            'error_type': type(exc).__name__,
+        })
+        return _failed_result('The native document annotation inventory could not be read.', exc)
 
 
 def _resolve_step_document_ids(step, context, *, settings=None, capability_id=None):
@@ -2266,6 +2301,62 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         settings = deepcopy(settings)
         access('action', settings=settings, selector=action_ref)
         invocation_kwargs = {}
+        if 'document_ids' in arguments:
+            document_ids = arguments['document_ids']
+            binding_log_context = workflow_log_context(
+                conversation_id=_ctx(context, 'conversation_id'), turn_id=_ctx(context, 'turn_id'),
+                run_id=_ctx(context, 'run_id'), step_id=step['step_id'],
+            )
+            if is_debug_enabled():
+                log_event('[ORCHESTRATION_ADAPTERS] Document action binding started.', extra={
+                    **binding_log_context, 'stage': 'document_action_binding',
+                    'selected_source_count': len(document_ids),
+                })
+            sources = resolve_context_source_manifest(
+                context, document_ids, settings=settings, user_id=user_id,
+                cancel_requested=cancel_requested,
+            )
+            if (
+                not document_ids or [source.get('document_id') for source in sources] != document_ids
+                or any(source.get('authorization_status') != 'authorized' for source in sources)
+            ):
+                raise PermissionError('The selected document sources are unavailable.')
+            if is_debug_enabled():
+                log_event('[ORCHESTRATION_ADAPTERS] Document action binding verified.', extra={
+                    **binding_log_context, 'stage': 'document_action_binding',
+                    'selected_source_count': len(document_ids), 'source_count': len(sources),
+                    'source_authorized': True,
+                })
+
+            def recheck_document_sources():
+                fresh = resolve_context_source_manifest(
+                    context, document_ids, settings=settings, user_id=user_id,
+                    cancel_requested=cancel_requested,
+                )
+                same_count = len(fresh) == len(sources)
+                same_identity = same_count and all(
+                    all(current.get(key) == original.get(key) for key in ('document_id', 'scope', 'scope_id'))
+                    for current, original in zip(fresh, sources)
+                )
+                same_revision = same_count and all(
+                    all(current.get(key) == original.get(key) for key in ('source_version', 'source_revision'))
+                    for current, original in zip(fresh, sources)
+                )
+                authorized = all(source.get('authorization_status') == 'authorized' for source in fresh)
+                valid = same_identity and same_revision and authorized
+                if is_debug_enabled():
+                    log_event('[ORCHESTRATION_ADAPTERS] Document action binding rechecked.', extra={
+                        **binding_log_context, 'stage': 'document_action_recheck',
+                        'source_count': len(fresh), 'expected_source_count': len(sources),
+                        'source_identity_matches': same_identity, 'source_revision_matches': same_revision,
+                        'source_authorized': authorized, 'outcome': 'completed' if valid else 'failed',
+                    })
+                if not valid:
+                    raise PermissionError('The selected document sources changed or are unavailable.')
+
+            invocation_kwargs.update(
+                document_sources=sources, document_source_check=recheck_document_sources,
+            )
         if visual_request:
             invocation_kwargs['visual_request'] = visual_request
         invocation_kwargs['m365_request_key'], invocation_kwargs['m365_origin'] = _m365_step_identity(step, context)
@@ -2301,13 +2392,30 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
         raise
     except Exception as exc:
         # This is the boundary for arbitrary plugin/provider code; never expose its exceptions.
+        failed_result = _failed_result('The action could not complete.', exc)
+        failure_code = failed_result['failure']['code']
+        failure_stage = {
+            'action_initialization_failed': 'action_initialization',
+            'document_reader_identity_mismatch': 'action_initialization',
+            'document_action_read_failed': 'document_action_read',
+            'action_results_missing': 'action_results',
+        }.get(failure_code, 'action_invocation')
         log_event(
             f'{_LOG_PREFIX} Direct action execution failed.',
             level=logging.ERROR,
-            extra={'action_ref': action_ref, 'step_id': (step or {}).get('step_id'),
-                   'error_type': type(exc).__name__},
+            extra={
+                **workflow_log_context(
+                    conversation_id=_ctx(context, 'conversation_id'), turn_id=_ctx(context, 'turn_id'),
+                    run_id=_ctx(context, 'run_id'), step_id=step['step_id'],
+                ),
+                'capability_id': CAPABILITY_ACTION_INVOKE,
+                'stage': failure_stage, 'failure_code': failure_code,
+                'error_type': type(exc).__name__,
+                **({'function_calls_attempted': failure_stage == 'document_action_read'}
+                   if failure_stage in ('action_initialization', 'document_action_read') else {}),
+            },
         )
-        return _failed_result('The action could not complete.', exc)
+        return failed_result
     citations = _agent_citations(
         None, user_id, _ctx(context, 'conversation_id'), set(),
         root_id=result['root_id'], scoped_invocations=result['invocations'],

@@ -1,16 +1,21 @@
 # test_orchestration_attachment_native_evidence.py
 """Real planning, inventory paging, retained evidence and composition regressions.
 
-Version: 0.261.417
+Version: 0.261.423
 Implemented in: 0.261.416
+Word-native comment routing and evidence delivery: 0.261.422
 Only external storage/model I/O is replaced; no provider calls are made.
 """
 
 import importlib
 import json
 import base64
+import hashlib
+import logging
+import zipfile
 from io import BytesIO
 from copy import deepcopy
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -264,6 +269,299 @@ def configure_inventory(runtime, monkeypatch, inventory_store, workbook):
     return step, calls, document
 
 
+def word_comment_package(*, comments=True, extended=True, malformed=False, anchor="15000", closed_anchor=True):
+    namespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    range_end = '<w:commentRangeEnd w:id="0"/>' if closed_anchor else ''
+    document = (
+        f'<w:document xmlns:w="{namespace}"><w:body><w:p>'
+        '<w:r><w:t>Budget cap </w:t></w:r><w:commentRangeStart w:id="0"/>'
+        f'<w:r><w:t>{anchor}</w:t></w:r>{range_end}'
+        '<w:r><w:commentReference w:id="0"/></w:r></w:p></w:body></w:document>'
+    )
+    comment_xml = (
+        f'<w:comments xmlns:w="{namespace}" xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml">'
+        '<w:comment w:id="0" w:author="Reviewer" w:date="2026-01-01T10:00:00Z">'
+        '<w:p w14:paraId="00000001"><w:r><w:t>Raise cap to 19500.</w:t></w:r></w:p></w:comment>'
+        '<w:comment w:id="1" w:author="Author" w:date="2026-01-01T11:00:00Z">'
+        '<w:p w14:paraId="00000002"><w:r><w:t>Keep cap at 15000.</w:t></w:r></w:p></w:comment>'
+        '</w:comments>'
+    )
+    stream = BytesIO()
+    with zipfile.ZipFile(stream, "w") as archive:
+        archive.writestr("word/document.xml", document)
+        if comments:
+            archive.writestr("word/comments.xml", "<malformed" if malformed else comment_xml)
+            if extended:
+                archive.writestr("word/commentsExtended.xml", (
+                    '<w15:commentsEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml">'
+                    '<w15:commentEx w15:paraId="00000001" w15:done="0"/>'
+                    '<w15:commentEx w15:paraId="00000002" w15:paraIdParent="00000001" w15:done="1"/>'
+                    '</w15:commentsEx>'
+                ))
+    return stream.getvalue()
+
+
+def configure_word_inventory(runtime, monkeypatch, content, *, extension="docx"):
+    document = {
+        "id": "document-1", "user_id": "owner", "version": 1,
+        "file_name": f"review.{extension}", "accessibility_metadata": {"format": extension},
+    }
+    service = importlib.import_module("functions_search_service")
+    monkeypatch.setattr(service, "resolve_document_context", lambda **kwargs: {
+        "document": deepcopy(document), "scope": "personal",
+    })
+    monkeypatch.setattr(service, "assert_document_available", lambda value, **kwargs: value)
+    monkeypatch.setattr(service, "assert_evidence_available", lambda *args, **kwargs: None)
+    calls = []
+
+    def read_bytes(value, **kwargs):
+        calls.append(deepcopy(kwargs))
+        if isinstance(content, Exception):
+            raise content
+        return deepcopy(value), content
+
+    monkeypatch.setattr(service.screening_access, "read_available_document_bytes", read_bytes)
+    step = {
+        "step_id": "comments", "capability_id": "document_search",
+        "arguments": {"query": "Read every Word review comment and reply.",
+                      "document_ids": ["document-1"], "native_section": "comments"},
+    }
+    return step, calls, document
+
+
+def test_word_metadata_reader_uses_original_comments_not_stored_style_metadata(runtime, monkeypatch):
+    _, calls, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package())
+    service = importlib.import_module("functions_search_service")
+    report = service.get_document_accessibility_payload("document-1", "owner", sections="comments")
+    assert report["word_inspection"]["records"][0]["text"] == "Raise cap to 19500."
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("metadata", [None, {}])
+def test_word_comment_only_inspection_does_not_need_stored_metadata(runtime, monkeypatch, metadata):
+    _, calls, document = configure_word_inventory(runtime, monkeypatch, word_comment_package())
+    document["accessibility_metadata"] = metadata
+    service = importlib.import_module("functions_search_service")
+    report = service.get_document_accessibility_payload("document-1", "owner", sections="comments")
+    assert report["word_inspection"]["records"][0]["text"] == "Raise cap to 19500."
+    assert report["format"] == "docx" and len(calls) == 1
+    assert not set(report).intersection({"accessibility_metadata", "style_inventory", "issues"})
+
+
+@pytest.mark.parametrize("metadata", [None, {}])
+@pytest.mark.parametrize("section", ["accessibility", "style", "issues"])
+def test_word_comments_do_not_certify_missing_stored_sections(runtime, monkeypatch, metadata, section):
+    _, _, document = configure_word_inventory(runtime, monkeypatch, word_comment_package())
+    document["accessibility_metadata"] = metadata
+    service = importlib.import_module("functions_search_service")
+    with pytest.raises(LookupError, match="No accessibility metadata is stored"):
+        service.get_document_accessibility_payload("document-1", "owner", sections=f"comments,{section}")
+
+
+@pytest.mark.parametrize("metadata", [None, {}])
+def test_word_default_metadata_requests_do_not_read_the_original(runtime, monkeypatch, metadata):
+    _, calls, document = configure_word_inventory(runtime, monkeypatch, word_comment_package())
+    document["accessibility_metadata"] = metadata
+    service = importlib.import_module("functions_search_service")
+    with pytest.raises(LookupError, match="No accessibility metadata is stored"):
+        service.get_document_accessibility_payload("document-1", "owner")
+    assert calls == []
+
+
+@pytest.mark.parametrize("extension", ["docx", "docm", "dotx"])
+@pytest.mark.parametrize("repair_checker", [False, True])
+@pytest.mark.parametrize("prepared_text", [False, True])
+def test_word_comments_use_the_real_word_reader_and_reach_retained_answers(
+    runtime, monkeypatch, caplog, extension, repair_checker, prepared_text,
+):
+    content = word_comment_package()
+    step, calls, document = configure_word_inventory(runtime, monkeypatch, content, extension=extension)
+    candidate = "The reviewer requests 19500; the author replies to keep 15000."
+    completeness = importlib.import_module("functions_task_completeness")
+    assessment_item = {
+        "status": "satisfied", "reason": "", "evidence_refs": ["comments"], "answer_quote": candidate,
+    }
+    assessment = {"requirements": {
+        identifier: deepcopy(assessment_item) for identifier, _ in completeness.NARRATIVE_OBLIGATIONS
+    } if prepared_text else [
+        {"id": "review", "requirement": "Explain the reviewer comment and reply.", **assessment_item},
+    ]}
+    invalid_assessment = deepcopy(assessment)
+    for item in (
+        invalid_assessment["requirements"].values() if prepared_text else invalid_assessment["requirements"]
+    ):
+        item["evidence_refs"] = ["PRIVATE_INVALID_SOURCE_LABEL"]
+    replies = [candidate]
+    if repair_checker:
+        replies.extend([json.dumps(invalid_assessment), json.dumps(assessment)])
+    answer_step = compose("answer", inputs={"comments": source_input("comments", "prepared")})
+    if prepared_text:
+        answer_step["arguments"]["response_policy"] = "available_information"
+    case = runtime.make([
+        step, answer_step,
+    ], replies, final_response=binding("answer"),
+        settings={"enable_chat_orchestration_completeness_check": repair_checker})
+    case.fixture.sources["document-1"] = {**source(), "file_name": document["file_name"]}
+    spec = importlib.util.spec_from_file_location(
+        "native_comment_telemetry",
+        Path(__file__).resolve().parents[1] / "application" / "single_app" / "functions_appinsights.py",
+    )
+    telemetry = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(telemetry)
+    adapters = importlib.import_module("functions_orchestration_adapters")
+    logger = logging.getLogger("test.orchestration.native_comments")
+    monkeypatch.setattr(telemetry, "_load_logging_settings", lambda: {"enable_debug_logging": False})
+    monkeypatch.setattr(telemetry, "get_appinsights_logger", lambda: logger)
+    monkeypatch.setattr(adapters, "log_event", telemetry.log_event)
+    monkeypatch.setattr(adapters, "workflow_log_context", telemetry.workflow_log_context)
+    monkeypatch.setattr(runtime.composition, "log_event", telemetry.log_event)
+    monkeypatch.setattr(runtime.composition, "workflow_log_context", telemetry.workflow_log_context)
+    with caplog.at_level(logging.INFO, logger=logger.name):
+        result = execute(runtime, case)
+    assert result["status"] == "completed", {
+        row["step_id"]: row.get("failure") for row in result["steps"]
+    }
+    assert len(calls) == 1 and calls[0]["user_id"] == "owner" and calls[0]["purpose"] == "accessibility"
+    task = case.context.task_results["comments"]
+    prepared = case.fixture.restart().open_result(task.output("prepared")).read_value()
+    assert prepared["content_scope"] == "native_document_annotations"
+    record = json.loads(prepared["search_results"][1]["chunk_text"])["word_annotation"]
+    assert record["id"] == "0" and record["author"] == "Reviewer"
+    assert record["text"] == "Raise cap to 19500." and record["anchor_text"] == "15000"
+    assert record["date"] == "2026-01-01T10:00:00Z"
+    assert record["resolution_available"] and record["done"] is False
+    assert record["anchor_complete"] and record["position_known"]
+    assert record["replies"][0]["text"] == "Keep cap at 15000."
+    assert record["replies"][0]["author"] == "Author" and record["replies"][0]["done"] is True
+    coverage = prepared["coverage"]["native_inspection"][0]
+    assert coverage["total_records"] == coverage["returned_records"] == 1
+    assert coverage["total_replies"] == 1 and not coverage["partial"]
+    assert coverage["source_sha256"] == hashlib.sha256(content).hexdigest()
+    payload = json.loads(case.model.calls[0][0][-1]["content"])
+    assert "Raise cap to 19500." in json.dumps(payload) and "Keep cap at 15000." in json.dumps(payload)
+    reader = importlib.import_module("functions_orchestration_result_runtime")
+    citations = reader.read_result_document_citations(case.context, task.output("prepared"))
+    citation = next(item for item in citations if item.get("evidence_kind") == "native_word_annotation")
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    cited = reader.read_native_citation_evidence(
+        case.fixture.restart(), contracts.ResultRef.from_dict(citation["native_evidence"]),
+        citation_id=citation["citation_id"], document_id="document-1",
+    )
+    assert cited["native_annotation"] == record and cited["evidence_kind"] == "native_word_annotation"
+    checkpoints = [entry for entry in caplog.records if getattr(entry, "sc_stage", None) == "native_comment_read"]
+    assert [entry.sc_outcome for entry in checkpoints] == ["started", "completed"]
+    assert all(entry.sc_source_format == extension and entry.sc_run_id_hash and entry.sc_step_id_hash for entry in checkpoints)
+    serialized = json.dumps([{key: value for key, value in entry.__dict__.items() if key.startswith("sc_")} for entry in checkpoints])
+    assert "Raise cap" not in serialized and document["file_name"] not in serialized
+    assert len(case.model.calls) == (3 if repair_checker else 1)
+    if repair_checker:
+        feedback = json.loads(case.model.calls[2][0][-1]["content"])["assessment_problem"]
+        assert feedback["allowed_evidence_refs"] == ["comments", "user_provided_content"]
+        diagnostics = [entry for entry in caplog.records if getattr(entry, "sc_stage", None) == "task_completeness_assessment"]
+        assert len(diagnostics) == 1
+        assert diagnostics[0].sc_validation_code == "completeness_evidence_invalid"
+        assert diagnostics[0].sc_run_id_hash and diagnostics[0].sc_step_id_hash
+        assert diagnostics[0].sc_report_repair_count == 0 and diagnostics[0].sc_evidence_key_count == 2
+        assert diagnostics[0].sc_evidence_ref_count == 1 and diagnostics[0].sc_evidence_refs_list is True
+        safe_fields = {key: value for key, value in diagnostics[0].__dict__.items() if key.startswith("sc_")}
+        assert "PRIVATE_INVALID_SOURCE_LABEL" not in json.dumps(safe_fields)
+        answer = case.fixture.restart().open_result(case.context.task_results["answer"].output("answer")).read_text()
+        assert answer == candidate
+
+
+def test_word_evidence_does_not_bypass_repeated_unsupported_answer_findings(runtime, monkeypatch):
+    step, _, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package())
+    candidate = "The author accepted the higher cap of 19500."
+    assessment = json.dumps({"requirements": [{
+        "id": "grounding", "requirement": "Describe what the author actually replied.",
+        "status": "missing", "reason": "The source says to keep 15000, not accept 19500.",
+        "evidence_refs": ["comments"], "answer_quote": "",
+    }]})
+    case = runtime.make([
+        step, compose("answer", inputs={"comments": source_input("comments", "prepared")}),
+    ], [
+        candidate, assessment, "The higher cap of 19500 was approved.", assessment,
+        "The final approved policy cap is 19500.", assessment,
+    ], final_response=binding("answer"),
+        settings={"enable_chat_orchestration_completeness_check": True})
+    case.fixture.sources["document-1"] = {**source(), "file_name": "review.docx"}
+    result = execute(runtime, case)
+    assert result["status"] == "failed"
+    answer = next(row for row in result["steps"] if row["step_id"] == "answer")
+    assert answer["failure"]["code"] == "completeness_incomplete"
+    assert len(case.model.calls) == 6
+    assert "comments" in case.context.task_results and "answer" not in case.context.task_results
+
+
+@pytest.mark.parametrize("anchor,closed", [(" " + "x" * 400, True), ("15000", False)])
+def test_word_anchor_completeness_requires_an_unclipped_closed_range(runtime, monkeypatch, anchor, closed):
+    configure_word_inventory(runtime, monkeypatch, word_comment_package(anchor=anchor, closed_anchor=closed))
+    service = importlib.import_module("functions_search_service")
+    payload = service.get_document_accessibility_payload("document-1", "owner", sections="comments")
+    annotation = payload["word_inspection"]["records"][0]
+    assert annotation["anchor_text"] and not annotation["anchor_complete"]
+
+
+def test_comment_only_metadata_request_rejects_an_unsupported_format(runtime, monkeypatch):
+    _, calls, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package(), extension="pdf")
+    service = importlib.import_module("functions_search_service")
+    with pytest.raises(LookupError, match="native comment inventory is unavailable"):
+        service.get_document_accessibility_payload("document-1", "owner", sections="comments")
+    assert calls == []
+
+
+@pytest.mark.parametrize("problem", ["empty", "missing", "malformed", "revoked", "changed", "limit"])
+def test_word_native_unavailable_sources_never_become_empty_success(runtime, monkeypatch, problem):
+    content = (
+        LookupError("PRIVATE_ORIGINAL_UNAVAILABLE") if problem == "missing"
+        else word_comment_package(comments=problem != "empty", malformed=problem == "malformed")
+    )
+    step, _, _ = configure_word_inventory(runtime, monkeypatch, content)
+    case = runtime.make([step])
+    case.fixture.sources["document-1"] = {**source(), "file_name": "review.docx"}
+    service = importlib.import_module("functions_search_service")
+    original = service.screening_access.read_available_document_bytes
+
+    def read_then_change(*args, **kwargs):
+        value = original(*args, **kwargs)
+        if problem == "revoked":
+            case.fixture.denied.add("document-1")
+        elif problem == "changed":
+            case.fixture.sources["document-1"]["source_revision"] = "new-revision"
+        return value
+
+    monkeypatch.setattr(service.screening_access, "read_available_document_bytes", read_then_change)
+    if problem == "limit":
+        collector = importlib.import_module("functions_orchestration_excel")
+        monkeypatch.setattr(collector, "MAX_VALUE_BYTES", 4)
+    result = execute(runtime, case)
+    if problem in ("empty", "limit"):
+        assert "comments" in case.context.task_results, result["steps"]
+        task = case.context.task_results["comments"]
+        prepared = case.fixture.restart().open_result(task.output("prepared"), allow_partial=True).read_value()
+        coverage = prepared["coverage"]["native_inspection"][0]
+        assert coverage["returned_records"] == 0 and coverage["partial"] is (problem == "limit")
+        assert task.output("prepared").completeness.status == ("partial" if problem == "limit" else "complete")
+    else:
+        assert result["status"] != "completed" and "comments" not in case.context.task_results
+        assert "PRIVATE_ORIGINAL" not in json.dumps(result)
+
+
+def test_word_resolution_and_bounded_anchor_remain_explicitly_unavailable(runtime, monkeypatch):
+    step, _, _ = configure_word_inventory(
+        runtime, monkeypatch, word_comment_package(extended=False, anchor="a" * 400),
+    )
+    case = runtime.make([step])
+    case.fixture.sources["document-1"] = {**source(), "file_name": "review.docx"}
+    result = execute(runtime, case)
+    assert result["status"] == "completed", result["steps"]
+    prepared = case.fixture.restart().open_result(case.context.task_results["comments"].output("prepared")).read_value()
+    record = json.loads(prepared["search_results"][1]["chunk_text"])["word_annotation"]
+    assert record["done"] is None and record["resolution_available"] is False
+    assert len(record["anchor_text"]) == 300 and record["anchor_complete"] is False
+    assert prepared["coverage"]["native_inspection"][0]["total_records"] == 2
+
+
 def test_native_workbook_comments_reach_retained_evidence_and_composition(
     runtime, monkeypatch, inventory_store, review_workbook,
 ):
@@ -353,12 +651,16 @@ def test_native_citation_lookup_rejects_stale_or_untrusted_evidence(
         )
 
 
+@pytest.mark.parametrize("source_format", ["xlsx", "docx"])
 def test_native_citation_http_lookup_uses_retained_result_not_search(
-    runtime, real_http_harness, monkeypatch, inventory_store, review_workbook,
+    runtime, real_http_harness, monkeypatch, inventory_store, review_workbook, source_format,
 ):
-    step, _, _ = configure_inventory(runtime, monkeypatch, inventory_store, review_workbook)
+    if source_format == "docx":
+        step, _, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package())
+    else:
+        step, _, _ = configure_inventory(runtime, monkeypatch, inventory_store, review_workbook)
     case = runtime.make([step])
-    case.fixture.sources["document-1"] = {**source(), "file_name": "review.xlsx"}
+    case.fixture.sources["document-1"] = {**source(), "file_name": f"review.{source_format}"}
     result = execute(runtime, case)
     assert result["status"] == "completed"
     reader = importlib.import_module("functions_orchestration_result_runtime")
