@@ -32,6 +32,15 @@ export interface NavExtraLink {
     newTab: boolean;
 }
 
+export function normalizeNavigationUrl(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const candidate = value.trim();
+    if (!candidate || /[\u0000-\u0020\\]/.test(candidate)) return undefined;
+    if (/^https?:\/\//i.test(candidate)) return candidate;
+    if (candidate.startsWith('/') && !candidate.startsWith('//')) return candidate;
+    return undefined;
+}
+
 export function toCustomPageLinks(
     group: NavGroup<CustomPageNavItem> | undefined | null,
 ): NavExtraLink[] {

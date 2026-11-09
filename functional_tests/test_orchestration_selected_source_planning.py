@@ -1,7 +1,7 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.422
+Version: 0.261.423
 Implemented in: 0.261.355
 Shared two-correction allowance updated in: 0.261.422
 

@@ -1,7 +1,7 @@
 // test_v2_navigation_groups_logic.mjs
 //
 // Runtime test for the V2 rail's administrator-configured navigation groups.
-// Version: 0.261.055
+// Version: 0.261.419
 // Implemented in: 0.261.047
 //
 // Custom Pages and External Links are configured in Admin Settings and had no
@@ -20,6 +20,7 @@
 import assert from 'node:assert/strict';
 import {
     isGroupVisible,
+    normalizeNavigationUrl,
     toCustomPageLinks,
     toExternalLinks,
 } from '../application/v2_ui/src/lib/navigationGroups.ts';
@@ -125,6 +126,21 @@ check('custom page keys do not collide with external link keys', () => {
 check('an absent group maps to no links rather than throwing', () => {
     assert.deepEqual(toCustomPageLinks(undefined), []);
     assert.deepEqual(toExternalLinks(null), []);
+});
+
+check('navigation URLs retain local routes and HTTP links', () => {
+    for (const href of ['/custom/policy?view=full#terms', 'https://example.invalid/policy', 'http://example.invalid']) {
+        assert.equal(normalizeNavigationUrl(href), href);
+    }
+});
+
+check('navigation URLs reject executable and browser-reinterpreted destinations', () => {
+    for (const href of [
+        'javascript:alert(1)', 'data:text/html,test', '//evil.invalid', '/\\evil.invalid',
+        '/\n/evil.invalid', 'https://example.invalid/\npolicy', '', null, 17,
+    ]) {
+        assert.equal(normalizeNavigationUrl(href), undefined);
+    }
 });
 
 /* ----------------------------------- runner ---------------------------------- */

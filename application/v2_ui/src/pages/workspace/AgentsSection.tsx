@@ -133,6 +133,7 @@ export function AgentsSection({ actionsEnabled, adapter = PERSONAL_AGENT_WORKBEN
                                     <div className="flex min-w-0 flex-[1_1_12rem] items-start gap-3">
                                         <AgentIcon icon={agent.icon} />
                                         <div className="min-w-0 flex-1">
+                                            {/* xss-check: ignore reviewed: path combines a fixed workbench basePath, encodeURIComponent(agent.id), and a literal scope query. */}
                                             <h3 className="break-words text-sm font-semibold text-text-1"><Link to={path} className="inline-block py-0.5 hover:text-accent hover:underline">{label}</Link></h3>
                                             <p className="mt-1 break-words text-sm text-text-3">{agent.description}</p>
                                             <div className="mt-2 flex flex-wrap items-center gap-2">

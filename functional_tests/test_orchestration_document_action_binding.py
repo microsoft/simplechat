@@ -1,7 +1,7 @@
 # test_orchestration_document_action_binding.py
 """
 Functional regressions for enforced native document action source bindings.
-Version: 0.261.420
+Version: 0.261.423
 Implemented in: 0.261.419
 
 The real action runner, Semantic Kernel filters, Document Search plugin and

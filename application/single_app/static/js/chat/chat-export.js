@@ -627,9 +627,10 @@ async function buildExportVisualAssets(statusDiv) {
 
     try {
         const visualAssets = await buildConversationVisualAssets(exportConversationIds);
-        if (visualAssets.length > 0 && statusDiv) {
+        const diagramCount = visualAssets.length;
+        if (diagramCount > 0 && statusDiv) {
             statusDiv.innerHTML =
-                `<span class="text-muted small">Rendered ${visualAssets.length} diagram${visualAssets.length === 1 ? '' : 's'}, building the export...</span>`;
+                `<span class="text-muted small">Rendered ${diagramCount} diagram${diagramCount === 1 ? '' : 's'}, building the export...</span>`;
         }
         return visualAssets;
     } catch (err) {

@@ -1,7 +1,7 @@
 # test_v2_orchestration_actions.py
 """
 Browser coverage for action identity and tool citations in orchestration.
-Version: 0.261.420
+Version: 0.261.423
 Implemented in: 0.261.098
 Operation intent added in: 0.261.321
 Document action source binding coverage added in: 0.261.419
@@ -16,7 +16,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from playwright.sync_api import expect
@@ -61,6 +61,13 @@ def action_page(page):
             route.fulfill(path=str(hb.BUNDLE), content_type="application/javascript")
         elif f"{parsed.scheme}://{parsed.netloc}" == ORIGIN and parsed.path == "/favicon.ico":
             route.fulfill(status=204)
+        elif (
+            f"{parsed.scheme}://{parsed.netloc}" == ORIGIN
+            and route.request.method == "GET"
+            and parsed.path == "/api/v2/orchestration/questions"
+            and parse_qs(parsed.query).get("conversation_id") == [CONVERSATION]
+        ):
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-token"})
         elif f"{parsed.scheme}://{parsed.netloc}" == ORIGIN and is_pending_actions_list(
             route.request.method, parsed.path
         ):
@@ -73,7 +80,7 @@ def action_page(page):
     page.goto(ORIGIN, wait_until="domcontentloaded")
     page.wait_for_function("() => Boolean(window.OrchHarness)")
     yield page
-    assert not errors, errors
+    assert not errors, {"errors": errors, "unexpected_requests": unexpected_requests}
     assert not unexpected_requests, unexpected_requests
 
 

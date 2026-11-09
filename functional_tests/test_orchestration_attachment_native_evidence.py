@@ -1,7 +1,7 @@
 # test_orchestration_attachment_native_evidence.py
 """Real planning, inventory paging, retained evidence and composition regressions.
 
-Version: 0.261.422
+Version: 0.261.423
 Implemented in: 0.261.416
 Word-native comment routing and evidence delivery: 0.261.422
 Only external storage/model I/O is replaced; no provider calls are made.

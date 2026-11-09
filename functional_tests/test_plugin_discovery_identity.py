@@ -1,7 +1,7 @@
 # test_plugin_discovery_identity.py
 """
 Functional tests for canonical plugin discovery and instance isolation.
-Version: 0.261.421
+Version: 0.261.423
 Implemented in: 0.261.421
 
 Production discovery, logged registration, classic loading, and real bootstrap

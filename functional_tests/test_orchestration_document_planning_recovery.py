@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional regressions for picked-document planning and debug diagnostics.
-Version: 0.261.422
+Version: 0.261.423
 Implemented in: 0.261.413
 Server-owned Auto handoff integration: 0.261.415
 Shared draft-contract recovery integration: 0.261.419

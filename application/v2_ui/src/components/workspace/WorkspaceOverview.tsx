@@ -55,6 +55,7 @@ export function WorkspaceOverview({
                             );
                             const count = counts[section.id];
                             return (
+                                // xss-check: ignore reviewed: basePath comes from the fixed workspace router and section.id from its local section catalog.
                                 <Link key={section.id} to={`${basePath}/${section.id}`} className="block">
                                     <GlassPanel elevation="flat" className="flex h-full gap-3 p-3 transition-colors hover:bg-surface-2">
                                         <Icon size={17} className="mt-0.5 shrink-0 text-accent" />

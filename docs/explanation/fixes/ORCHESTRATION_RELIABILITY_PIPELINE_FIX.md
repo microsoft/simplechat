@@ -1,7 +1,15 @@
-# Orchestration pipeline reliability (v0.261.422)
+# Orchestration pipeline reliability (v0.261.423)
 
-Fixed/Implemented in version: **0.261.422**, tracked in
-`application/single_app/config.py`.
+Fixed/Implemented in version: **0.261.422**. Development integration:
+**0.261.423**, tracked in `application/single_app/config.py`.
+
+The original [PR #1907](https://github.com/microsoft/simplechat/pull/1907)
+merged into `paullizer-react-v2-ui`, not the intended `Development` branch.
+The corrected integration preserves `Development` changes and includes the
+plan-contract and canonical plugin-loader prerequisites missing there. It does
+not include the separate saved-findings Sources inspector changes or replace
+`Development` release notes. The original merge is not reverted, and published
+branch history is not rewritten.
 
 ## Issue and root cause
 
@@ -130,7 +138,34 @@ Key suites are `test_orchestration_attachment_native_evidence.py`,
 Browser coverage is in `ui_tests/test_v2_stream_citation_delivery.py` and the
 existing Excel/inline-citation suites.
 
-### Verified local results
+### Verified Development integration results (v0.261.423)
+
+The correction was integrated with `Development` commit
+`4dd6d80230fe60e3cbfe8544d1d52308a14a7387`. The existing saved-analysis UI,
+publication implementation, and release notes match that target unchanged.
+The required source-binding, plan-contract, and canonical-loader prerequisites
+remain included.
+
+| Check | Result |
+| --- | --- |
+| Combined planner, Word-native, checker, source-scope, persistence, action-loader, and retained-citation regressions | 515 passed. |
+| Full network-blocked Cosmos contract gate | 2,015 passed; 431 subtests passed; 1,094 owners and 425 doubles reviewed with 0 review gaps. |
+| Local Classic/V2 citation, Excel inspection, filename fallback, and action browser regressions | 49 passed. |
+| Blueprint policy, unauthenticated policy, and route-coverage regressions | 30 passed. |
+| V2 TypeScript/Vite build and Classic citation JavaScript syntax | Passed. |
+| Target-relative access-control and XSS guardrails | Passed for 22 Python files and 25 supported rendering files, respectively. |
+| Documentation inventory coverage and site quality | 7/7 and 6/6 passed, respectively. |
+
+The browser fixture now supplies the existing pending-question endpoint's empty
+response for its synthetic conversation, matching the other local fixtures and
+the real controller contract. All other unexpected requests still fail; no
+production behavior or browser-error assertion was disabled.
+
+The five unchanged execution-module Cosmos reviews were restored from
+`Development` only after checking exact source and owner/module fingerprints.
+Other changed storage owners retain their concrete runtime evidence.
+
+### Verified original v0.261.422 local results
 
 These runs overlap; their counts are not an aggregate end-to-end success rate.
 

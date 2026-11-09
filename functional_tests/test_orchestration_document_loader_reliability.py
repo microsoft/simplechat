@@ -1,7 +1,7 @@
 # test_orchestration_document_loader_reliability.py
 """
 Functional tests for shared document-action loading and safe failure outcomes.
-Version: 0.261.421
+Version: 0.261.423
 Implemented in: 0.261.421
 
 Real authenticated routes, discovery, source checks, SDK-shaped document stores,

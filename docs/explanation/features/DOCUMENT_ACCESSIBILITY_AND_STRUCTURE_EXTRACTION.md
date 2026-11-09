@@ -4,7 +4,7 @@
 **Excel implemented in version: 0.261.399**
 **Excel native content/table improvements implemented in version: 0.261.408**
 **Native Word comment inspection fixed/implemented in version: 0.261.422**
-**Related config.py version: `0.261.422`**
+**Related config.py version: `0.261.423`**
 
 ## 1. Overview and Purpose
 

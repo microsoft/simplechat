@@ -133,13 +133,6 @@ function rawDocumentSources(records: readonly HybridCitation[]): Map<string, Cit
     return sources;
 }
 
-/** Inspector links retain the answer parser's conflict checks across all recorded citations. */
-export function documentCitationGroups(records: readonly HybridCitation[]): Map<string, CitationGroup | null> {
-    return new Map([...rawDocumentSources(records)].map(([id, group]) => [
-        id, group ? { ...group, id } : null,
-    ]));
-}
-
 function splitCitationId(rawId: string): ParsedCitation {
     const citationId = rawId.startsWith('#') ? rawId.slice(1) : rawId;
     const separator = citationId.lastIndexOf('_');

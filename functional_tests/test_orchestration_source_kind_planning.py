@@ -1,7 +1,7 @@
 # test_orchestration_source_kind_planning.py
 """Plan mixed document types from authorized metadata, not user-facing labels.
 
-Version: 0.261.422
+Version: 0.261.423
 Implemented in: 0.261.140
 
 The real manifest classifier, context projection, planner, compiler and HTTP

@@ -1,7 +1,7 @@
 # test_orchestration_document_action_lineage.py
 """
 Functional regressions for native document action retention and composition.
-Version: 0.261.420
+Version: 0.261.423
 Implemented in: 0.261.419
 
 Real external admission, SDK-default result storage, retained readers, compiler,

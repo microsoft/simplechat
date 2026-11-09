@@ -2,21 +2,59 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.422)**
+
+#### Bug Fixes
+
+*   **Group Agent API Tests Execute Requests Outside Assertions**
+    *   Preserves all API response and state assertions while ensuring Python optimization cannot remove the requests they validate.
+    *   Adds fresh-process normal/optimized coverage for 12 scenarios and 49 request/status contracts using the existing isolated backend harness.
+    *   Corrects a proven PR-introduced CodeQL finding cluster without changing application authorization, checks, or the remaining integration blockers.
+    *   (Ref: `test_group_agent_apis.py`, `test_group_agent_assertion_execution.py`, `GROUP_AGENT_API_ASSERTION_EXECUTION_FIX.md`, [PR #1903](https://github.com/microsoft/simplechat/pull/1903))
+
 ### **(v0.261.421)**
 
 #### Bug Fixes
 
-*   **Selected-Document Orchestration Tool Loading**
-    *   Fixed document-backed runs failing before their first read because plugin discovery created a different copy of the document-reader class than the source-binding safety check expected.
-    *   Shared discovery now reuses registered plugin classes while preserving separate instances, current permissions, selected-file restrictions, and native-inspection limits.
-    *   Explicitly pins the existing Handlebars template-parser dependency so fresh container installations do not report a successful install and then fail to import Semantic Kernel.
-    *   Added production-loader, fresh-start, concurrent-user, and config-derived supported-format retrieval regressions instead of substituting a simplified loader in the end-to-end test.
-    *   (Ref: `semantic_kernel_plugins/plugin_loader.py`, `functions_orchestration_actions.py`, `docs/explanation/fixes/ORCHESTRATION_PLUGIN_DISCOVERY_IDENTITY_FIX.md`)
+*   **React V2 Dependency Pins And Visible Unicode Fixtures**
+    *   Pins frontend dependencies to their existing resolved versions without library upgrades or lockfile metadata churn.
+    *   Replaces three invisible screening-fixture joiners with visible source escapes while preserving the same Unicode selection coverage and runtime values.
+    *   Leaves the security checks and broader integration validation findings intact.
+    *   (Ref: `application/v2_ui/package.json`, `application/v2_ui/package-lock.json`, `test_v2_content_screening_logic.mjs`, `test_v2_static_security_fix.py`, [PR #1903](https://github.com/microsoft/simplechat/pull/1903))
 
-*   **Action Failure Reasons Retained Through Recovery Details**
-    *   Tool initialization, document-reader identity, failed document reads, and missing function results now retain distinct safe reasons in saved steps and the final failure explanation.
-    *   The first action error includes hashed run/step correlation with debug logging on or off, without exposing private exception text. Code faults are not automatically retried; existing permitted manual recovery remains available.
-    *   (Ref: `functions_orchestration_adapters.py`, `functions_orchestration_schema.py`, `docs/reference/logging-tags.md`)
+### **(v0.261.420)**
+
+#### Bug Fixes
+
+*   **Queued Admin Saves Preserve Late Conflict Protection**
+    *   Settings saves wait for all initial index checks and remain blocked if a later group or public check detects a concurrent edit.
+    *   Duplicate queued submissions still produce only one save, and unsaved form values remain available to copy before reloading.
+    *   (Ref: `admin_settings.js`, `test_admin_settings_save_consistency.py`, [#1903](https://github.com/microsoft/simplechat/pull/1903))
+
+*   **Action Recovery Editor Links Use Encoded Local Routes**
+    *   Recovery notices retain literal diagnostics, reporting, and recheck controls while rebuilding editor links from permitted local routes and encoded identifiers.
+    *   Malformed or nonlocal links show the existing owner/admin guidance instead of a clickable destination; image/embedding button dispatch and reasoning notices retain their existing behavior.
+    *   (Ref: `chat-action-recovery.js`, `admin_model_endpoints.js`, `chat-messages.js`, `test_chat_action_recovery_rendering.py`, [#1903](https://github.com/microsoft/simplechat/pull/1903))
+
+### **(v0.261.419)**
+
+#### New Features
+
+*   **React V2 Integration Into Development**
+    *   Brings the React V2 interface and its orchestration, workspace, and document capabilities into Development while retaining both branches' fixes and existing interface rollout controls.
+    *   Preserves distinct release entries from both histories and Development's recursive Python package validation.
+    *   (Ref: React V2 integration, `application/single_app/config.py`, `docs/explanation/fixes/REACT_V2_DEVELOPMENT_INTEGRATION_FIX.md`)
+
+#### Bug Fixes
+
+*   **Waiting Runs No Longer Take Over the Composer**
+    *   A restored orchestration run waiting for results remains tracked without replacing Send with Stop when no reply is streaming.
+    *   Saved-status and cancellation controls remain available through the plan; reloading does not start another execution.
+    *   (Ref: `Composer.tsx`, orchestration waiting-state recovery, `test_v2_orchestration_planning_persistence.py`)
+
+*   **Configured Navigation Rejects Unsafe Destinations**
+    *   Administrator-configured navigation keeps valid local and HTTP(S) links while refusing executable schemes, protocol-relative paths, backslashes, and control characters at the browser link boundary.
+    *   (Ref: `navigationGroups.ts`, `NavExtras.tsx`, navigation runtime and browser regression coverage)
 
 ### **(v0.261.410)**
 
@@ -27,7 +65,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Built-in model selections preconfigure canonical model identity while retaining automatic exact name matching, deployment names, explicit overrides, and publication choices.
     *   Preserved Custom/APIM base paths, authentication headers, and request aliases. MAI keeps its native Chat Completions contract even when the shared connection prefers Responses for compatible OpenAI-style models.
     *   Added the verified MAI profile, generation limits, token audience, and setup guidance without changing existing chat, planner, image, or embedding defaults.
-    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, `functions_model_capabilities.py`, `ModelConnectionsManager.tsx`, `model_capabilities.json`, [AI connection configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models), `docs/explanation/fixes/MICROSOFT_MAI_MODEL_CONNECTIONS_FIX.md`)
+    *   (Ref: `model_endpoint_clients.py`, `functions_model_endpoint_runtime.py`, `functions_model_capabilities.py`, `ModelConnectionsManager.tsx`, `model_capabilities.json`, [AI connection configuration]({{ '/guides/configure-ai-connections/' | relative_url }}#microsoft-mai-text-models), [Microsoft MAI Connection Compatibility Fix](https://github.com/microsoft/simplechat/blob/34df8404ab9e20e51ffaf9d98ea40d75a18570e8/docs/explanation/fixes/MICROSOFT_MAI_MODEL_CONNECTIONS_FIX.md))
 
 ### **(v0.261.408)**
 
@@ -249,6 +287,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   An orchestrated file whose content came from web search, linked pages, deep research, an agent or an action rendered, then failed with only "This file could not be created." and no retry. Publishing it rechecked its sources through a new service that didn't have the user's sign-in. Publication now uses the rendering service that ran the attempt, which has it.
     *   A file that still can't be checked without a sign-in, such as one prepared in the background, says so. A failed file now explains why it could not be created. When a failed file can't be retried on its own, the chat offers **Retry from failed step**.
     *   (Ref: `functions_orchestration_artifacts.py` `render_attempt_scope`, `functions_orchestration_rendering.py`, `functions_orchestration_output_store.py`, `OrchestrationRecoveryNotice.tsx`, [Orchestration Files From External Results Failing Without a Reason Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_FILE_SIGN_IN_PUBLICATION_FIX.md))
+
 ### **(v0.261.302)**
 
 #### Bug Fixes
@@ -4123,6 +4162,15 @@ part of the Chat group feature work.
     *   A bar chart laid on its side draws its values along the bottom, but "start at zero" was applied to the axis carrying the category names instead — so the setting did nothing on exactly the charts where a truncated scale is most misleading.
     *   (Ref: `inlineChartSpec.ts`, `chat-inline-charts.js`, `functions_chart_export.py`)
 
+*   **Workflow Instruction Drafting Uses the Selected Metadata Endpoint**
+    *   The Draft Workflow Instructions button now resolves its client and request model through the same metadata extraction model endpoint resolver used by document metadata extraction.
+    *   Workflows and agent instruction drafts no longer send the selected metadata extraction deployment to the legacy global GPT or APIM endpoint when the model is hosted on a configured AI Foundry or multi-endpoint connection.
+    *   (Ref: `resolve_metadata_extraction_client()`, `route_backend_agents.py`, `route_backend_workflows.py`, [Workflow Instruction Model Endpoint Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/WORKFLOW_INSTRUCTION_MODEL_ENDPOINT_FIX.md))
+
+*   **Tabular Analysis Required-Tool Choice Continuation Fix**
+    *   Tabular analysis rounds now switch tool-choice behavior from `required` to `auto` after the initial tool invocation while preserving function allowlists and invocation limits, allowing the model to either request follow-up tools or return its final answer.
+    *   (Ref: `allow_tabular_completion_after_initial_tools()`, `route_backend_chats.py`, `test_tabular_tool_error_retry_and_thoughts.py`)
+
 #### User Interface Enhancements
 
 *   **Orchestration Is On By Default Where It Is Enabled**
@@ -4177,6 +4225,11 @@ part of the Chat group feature work.
     *   **The saved default is shown for what it currently means.** If the connection or model it named has since gone, the interface says that rather than presenting an empty field as though nothing had ever been set. Opening the page does not rewrite the stored value, so the evidence of what went missing survives.
     *   The reference is validated by the same rule the classic form uses, so the two interfaces cannot disagree about whether a default is still valid.
     *   (Ref: `route_backend_v2.py`, `/api/v2/admin/default-model`, `ChatDefaultModel.tsx`, `modelConnections.ts`, `admin_settings_fields.py`, `resolve_default_model_selection`)
+
+*   **Opt-In Tabular Model HTTP-Attempt Diagnostics**
+    *   Added opt-in environment-variable diagnostics (`SIMPLECHAT_TABULAR_HTTP_DIAGNOSTICS`, `SIMPLECHAT_TABULAR_HTTP_BUDGET_SECONDS`, `SIMPLECHAT_TABULAR_HTTP_MAX_RETRIES`, and `SIMPLECHAT_TABULAR_HTTP_TIMEOUT_SECONDS`) for tabular Azure OpenAI calls.
+    *   Records structured `[TABULAR_MODEL_HTTP]` telemetry covering request attempts, retries, elapsed durations, correlation headers, and pre-header transport failures without logging prompts, completions, or credentials.
+    *   (Ref: `functions_tabular_model_diagnostics.py`, `functions_model_endpoint_runtime.py`, `route_backend_chats.py`, `docs/admin/operations.md`)
 
 ### **(v0.261.060)**
 
@@ -4258,6 +4311,11 @@ part of the Chat group feature work.
     *   Fact memory is a chat capability, but it also decides whether agents get a memory action, so it was missing from any list an administrator would consult when working out what an agent can do.
     *   It is now mirrored under Built-in Actions as a read-only entry that links to where it is set, while the control that actually sets it stays in Chat.
     *   (Ref: `enable_fact_memory_plugin`, `fields.tsx`)
+
+*   **Safety Violation Date and User Metadata**
+    *   Safety violation list and card views now show created dates and target user names, reducing the need to open each violation to identify when it occurred and who it affected.
+    *   CSV exports now include a user name column and populate created, last updated, and archived timestamps using existing safety log metadata when older records are missing explicit date fields.
+    *   (Ref: `route_backend_safety.py`, `admin-safety-violations.js`, [Safety Violation Metadata Display Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/SAFETY_VIOLATION_METADATA_DISPLAY_FIX.md))
 
 ### **(v0.261.059)**
 
@@ -4349,6 +4407,12 @@ part of the Chat group feature work.
     *   **Promoted agents are chosen from a list rather than edited as JSON.** Agents already promoted are not offered again, and each promotion's time window is set per row.
     *   Rarely-changed settings are grouped and collapsed rather than laid out flat, and a search opens any collapsed group so a match is never hidden behind it.
     *   (Ref: `admin_settings_fields.py`, `admin_settings_nav.py`, `adminAgents.ts`, `PromotedAgentsEditor.tsx`, `AdminSettingsPage.tsx`)
+
+*   **Configurable Content Safety Prompt Category Thresholds**
+    *   Administrators can now set Azure AI Content Safety prompt thresholds separately for Violence, Hate, Sexual, and Self-harm.
+    *   Each category supports Low (`2`), Medium (`4`), and High (`6`), with Medium as the default to preserve previous behavior.
+    *   Higher threshold levels do not override model deployment guardrails.
+    *   (Ref: Content Safety admin settings, `content_safety_category_thresholds`, [Content Safety Block Threshold](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/features/CONTENT_SAFETY_BLOCK_THRESHOLD.md))
 
 #### Bug Fixes
 
@@ -4457,6 +4521,11 @@ part of the Chat group feature work.
 *   **Agents & Actions Documentation Describes Behaviour Instead Of Restating Labels**
     *   The Agents entries in the Agents & Actions administration page mostly read "Defines behavior for the related admin workflow", which told an administrator nothing. They now describe what each setting does, what it depends on, and why you would change it — including that the Agents catalog page is unavailable while agents are off, and why promoting an agent exists at all.
     *   (Ref: `docs/admin/agents-actions.md`)
+
+*   **Admin Settings Slider Contrast**
+    *   Admin Settings range sliders now use the same gray tone as an off toggle switch in dark mode, making slider tracks visible against the admin page background.
+    *   This includes the Content Safety prompt category threshold sliders, Main Page Logo Size, and document action capability sliders.
+    *   (Ref: `content-safety.html`, `branding.html`, `actions.html`, `styles.css`, Admin Settings)
 
 #### Documentation
 
@@ -4621,6 +4690,12 @@ part of the Chat group feature work.
     *   This is per browser tab. An image approved in one tab is not tracked in another, though the image itself is stored and appears there as soon as the conversation is read.
     *   (Ref: `imageProposalStore.ts`, `imageProposalTracking.ts`, `imageProposalResume.ts`, `GET /api/chat/image-proposals/status/<conversation_id>`, [V2 Inline Image Proposal Resume](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_INLINE_IMAGE_PROPOSAL_RESUME_FIX.md))
 
+*   **Default System Prompt Remains Active When Files or Images Are Uploaded in Chat**
+    *   Uploading an image, XML file, or other file directly in the chat UI no longer suppresses the configured `default_system_prompt` in standard or streaming chat turns.
+    *   Previously, chat-uploaded image and file context messages (`role: 'image'` and `role: 'file'` converted into `role: 'system'` entries in `conversation_history_for_api`) were mistaken for an existing general system prompt, causing `default_system_prompt` to be skipped.
+    *   `has_general_system_prompt` now checks whether `default_system_prompt` itself is already present in `conversation_history_for_api`.
+    *   (Ref: `route_backend_chats.py`, [Default System Prompt Preservation With Chat Uploads Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DEFAULT_SYSTEM_PROMPT_CHAT_UPLOADS_FIX.md), #1855)
+
 ### **(v0.261.053)**
 
 #### New Features
@@ -4671,6 +4746,11 @@ part of the Chat group feature work.
     *   The three prompt APIs each carried their own copy of the same field checks. Adding a field to one and not the others produces a value that saves on a personal prompt and is silently dropped on a group one, which reads as a save that did not work. All three now share a single validator, and creates and updates return the same fields.
     *   (Ref: `build_prompt_updates`, `serialize_prompt_summary`, `functions_prompts.py`)
 
+*   **Search Results Refresh After a Background Metadata Sync**
+    *   When the background search sync finishes merging a tag or metadata change, it now clears cached search results for the document's workspace and for every user or group with an approved share.
+    *   Previously, a chat or search that ran while the sync was still in progress could cache the old values and keep returning them for up to the search cache lifetime (5 minutes by default) after the sync completed.
+    *   (Ref: `run_document_search_metadata_sync()`, `utils_cache.py`, [Document Search Metadata Sync Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+
 ### **(v0.261.052)**
 
 #### User Interface Enhancements
@@ -4689,6 +4769,20 @@ part of the Chat group feature work.
     *   Deployments with a custom logo are unaffected.
     *   (Ref: V2 navigation rail, Appearance > Branding, [V2 Brand Mark Home Link Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_BRAND_MARK_HOME_LINK_FIX.md))
 
+*   **Metadata and Tag Saves on Large Documents Finish Immediately**
+    *   Saving tags, titles, authors, or classification on a document no longer waits for every search chunk to update. The save returns immediately, and a background sync merges the change into the search index. Group and public workspace saves no longer time out with "invalid JSON" errors, and the personal workspace dialog sends a single request again.
+    *   Bulk tagging, tag rename, and tag delete no longer update every chunk twice inside one request, so they finish quickly in large workspaces.
+    *   The search index update sends only the changed fields instead of re-downloading and re-uploading every chunk with its embedding. A 10,000-chunk document now takes about 40 Azure AI Search calls instead of about 20,000, with far fewer Cosmos write-fence operations, which sharply reduces Search and Cosmos load.
+    *   Failed or interrupted updates retry automatically with backoff until every chunk matches the document, so chat tag filters and citation titles and classifications converge instead of staying partially stale. A brief notice tells users when the search index is still updating.
+    *   (Ref: `functions_documents.py`, `background_tasks.py`, document metadata routes, [Document Search Metadata Sync Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DOCUMENT_SEARCH_METADATA_SYNC_FIX.md), #1657)
+
+*   **Group Document Sharing Changes Reach Search**
+    *   Approving, removing, or revoking a group share now updates the search index before the change is saved. Previously these changes never reached the search chunks, so approved shares might not be searchable, and a revoked group could keep search access to chunks rebuilt after an earlier approval.
+    *   Personal share approvals now also update the search index before they are saved, so a failed update can simply be retried instead of reporting "Already approved".
+    *   When the search index cannot apply a sharing change, the change is not saved and users get a clear, retryable error.
+    *   Group shares approved before this update become searchable the next time that document's sharing changes.
+    *   (Ref: `update_document()`, `project_document_acl_to_chunks()`, group and personal sharing routes, #1657)
+
 ### **(v0.261.051)**
 
 #### Bug Fixes
@@ -4699,6 +4793,12 @@ part of the Chat group feature work.
     *   Your click now wins. The message is still sent and its answer still generated and saved — the new chat appears in the list with its title and unread marker — but the interface stays where you put it.
     *   Nothing was ever lost or filed against the wrong conversation; the effect was limited to what was on screen.
     *   (Ref: `chatStore.ts` `sendMessage`, `runChatStream`, [V2 New Conversation Send Race](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_NEW_CONVERSATION_SEND_RACE_FIX.md))
+
+*   **Large Document Metadata Saves Continue Across Batches**
+    *   Saving tags or other metadata for large uploaded documents now synchronizes search chunk metadata in bounded batches instead of holding one long request until every chunk is updated.
+    *   The workspace metadata dialog continues the save through short JSON PATCH requests until the chunk sync is complete, avoiding timeout HTML responses that previously appeared in the browser as invalid JSON errors.
+    *   Tag saves no longer run duplicate full-document search chunk propagation, while blob metadata tag updates are still preserved.
+    *   (Ref: document metadata updates, tag propagation, `functions_documents.py`, `route_backend_documents.py`, `workspace-documents.js`, [Document Metadata Chunk Sync Batching Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/DOCUMENT_METADATA_CHUNK_SYNC_BATCHING_FIX.md))
 
 ### **(v0.261.050)**
 
@@ -4711,6 +4811,12 @@ part of the Chat group feature work.
     *   Leaving a conversation now detaches. The answer finishes and is saved, reopening the thread picks the reply back up mid-flow or shows it complete, and several conversations can be generating at once — matching how the classic interface has always behaved.
     *   Stop is unchanged and still cancels. Leaving a shared conversation also no longer cancels a reply other participants are waiting for.
     *   (Ref: `chatStore.ts` `detachActiveStream`, `selectConversation`, `startNewConversation`, `stopStreaming`, `/api/chat/stream/cancel`, [V2 Stream Cancelled On Conversation Leave](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/V2_STREAM_CANCELLED_ON_CONVERSATION_LEAVE_FIX.md))
+
+*   **Maps From Agents Load Their Tiles Again**
+    *   Tool results are redacted before they are stored with a reply, and the redaction treated the Azure Maps tile proxy token as a secret. Every stored map lost its token, so maps drew their markers and paths on blank tiles.
+    *   The token in SimpleChat's own tile template is now kept. It is encrypted with the app's secret key, expires, and only works on SimpleChat's signed-in tile proxy. Every other `token=` value and every other secret in a tool result is still redacted.
+    *   Maps stored before this fix keep the redacted token and still show no tiles. Run the request again to get a map with tiles.
+    *   (Ref: `plugin_invocation_logger.py`, [Azure Maps Tile Token Redaction Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/AZURE_MAPS_TILE_TOKEN_REDACTION_FIX.md))
 
 ### **(v0.261.049)**
 
@@ -4726,6 +4832,13 @@ part of the Chat group feature work.
     *   Works in shared conversations as well as personal ones. Any participant can edit a diagram, matching who can already recolour one, and each change is attributed. An edit is written through to the underlying message, so the AI, exports and the conversation's owner all see the version you edited; the other participants see it change as it happens.
     *   The classic interface shows whichever version is current, so a conversation read in either place shows the same diagram, and exports carry the current version too.
     *   (Ref: `functions_message_block_revisions.py`, `functions_block_revision_assist.py`, `DiagramEditor.tsx`, `/api/message/<id>/block-revision`, `/api/collaboration/conversations/<id>/messages/<id>/block-revision`, [V2 Inline Diagram Editing](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/V2_INLINE_DIAGRAM_EDITING.md))
+
+#### Bug Fixes
+
+*   **Inline Map Attribution Shown as Text and Tiles Kept on the Tile Proxy**
+    *   Inline maps in the chat now show a tool result's tile attribution as plain text. OpenLayers renders attribution strings as HTML, so the text is escaped first.
+    *   A tool result is drawn as a map only when its tile template points at SimpleChat's Azure Maps tile proxy (`/api/azure-maps/tile`). Maps from the Azure Maps action are unchanged.
+    *   (Ref: `chat-inline-maps.js`, [Inline Map Attribution Text Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/INLINE_MAP_ATTRIBUTION_TEXT_FIX.md))
 
 ### **(v0.261.048)**
 
@@ -4777,6 +4890,11 @@ part of the Chat group feature work.
 *   **The "Shared With Me" Filter Never Did Anything**
     *   The classic workspace sends a `shared_only` filter that the document listing has never read, so ticking it changed nothing. The listing now supports filtering by document state — recent, shared with you, processing, needs attention, or untagged — and the new interface's rail uses it.
     *   (Ref: `GET /api/documents`, `place` parameter)
+
+*   **Agent Model Picker Respects Governance Policies**
+    *   Fixed the persona workspace agent setup modal so its model dropdown now follows the same endpoint governance policies as the chat window model selector.
+    *   Users no longer see restricted global, personal, or group model endpoints when creating or editing agents, and governed multi-endpoint responses no longer fall back to legacy global model lists.
+    *   (Ref: agent model picker, endpoint governance, `route_backend_agents.py`, `agents_common.js`, [Agent Model Governance Filtering Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/AGENT_MODEL_GOVERNANCE_FILTERING_FIX.md))
 
 #### User Interface Enhancements
 
@@ -4830,6 +4948,25 @@ part of the Chat group feature work.
     *   They are now described properly and appear where they belong: the health check endpoints under **Operations > Logging & Health > Health Check**, the documentation guide links under **Help > User-Facing Latest Features**, personal workspaces under **Workspaces > Workspace Types**, and the text action under **Agents & Actions > Actions**. Each also gained the explanatory text the classic page has always shown.
     *   (Ref: V2 Admin Settings, `admin_settings_fields.py`, capability placement)
 
+*   **Images Without OCR Text Are Now Indexed From Their Vision Description**
+    *   Fixed text-free images, such as a photo of an empty room, ending with no search chunk, no title, and nothing chat could use, even though the AI vision model had described them. When OCR finds no text, the vision description is now indexed as the image's chunk, so the image is searchable and final metadata extraction runs as usual.
+    *   Document Intelligence Layout output that is only page-number or page-break annotations, such as a stray `<!-- PageNumber="J" -->` read from floor tape, no longer counts as image text. Header and footer text still does. Failed or empty vision analyses are never indexed.
+    *   Image chunks are now embedded from the same text that is stored, including the vision description, instead of from the OCR text alone. Images with real OCR text keep their existing chunk.
+    *   With Enhanced extraction, a standalone image that the Content Understanding document analyzer returns nothing for is now described by the Content Understanding image analyzer before falling back to Document Intelligence Layout. This applies to workspace uploads and to images uploaded straight into a chat. The image analyzer's `Summary` field is now read, which also replaces the `![image](pages/1)` placeholder that images embedded in DOCX and PPTX files were indexed with.
+    *   The multi-modal vision model is now called through the AI connection that hosts it when multi-endpoint models are enabled, instead of always using the legacy GPT connection, which returned 404 for models deployed on another connection. The Test Vision Analysis button now uses the same connection as ingestion.
+    *   (Ref: #1583, `functions_documents.py`, `functions_content.py`, `functions_content_understanding.py`, `functions_model_endpoint_types.py`, `route_backend_settings.py`, `route_frontend_chats.py`, [Image Description Indexing Without OCR Text Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/IMAGE_DESCRIPTION_INDEXING_WITHOUT_OCR_TEXT_FIX.md))
+
+*   **Image Generation Uses The gpt-image API Version By Default**
+    *   The default Azure OpenAI image generation API version is now `2025-04-01-preview`, the newest dated Azure OpenAI API version and the one documented for gpt-image-1, gpt-image-1.5, and gpt-image-2. The previous `2024-12-01-preview` default predates gpt-image support.
+    *   Existing deployments still storing the previous default, or a blank value, are upgraded automatically when settings load. Any other saved version is kept, and the APIM image generation API version is never changed because the gateway defines it.
+    *   (Ref: `functions_settings.py`, `azure_openai_image_gen_api_version`, [Image Generation API Version Default Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/IMAGE_GENERATION_API_VERSION_DEFAULT_FIX.md))
+
+*   **Deployers Grant The App Identity Key Vault Secrets Officer**
+    *   Fixed credential saves failing with `ForbiddenByRbac` when Key Vault secret storage is enabled on deployments created by the Bicep, Terraform, or Azure CLI deployers. The deployers gave the application identities **Key Vault Secrets User**, which can read secrets but cannot create, update, or delete the ones SimpleChat writes. **Test Key Vault connection** only lists secrets, so it passed and hid the problem.
+    *   The Bicep (container and native Python), Terraform, and Azure CLI deployers now grant **Key Vault Secrets Officer** at vault scope. On vaults that use access policies, the Azure CLI deployer adds get, list, set, and delete secret permissions instead. Existing Secrets User assignments are left in place, and Terraform stops tracking its old assignment without deleting it.
+    *   Existing environments pick up the new role on their next `azd provision`, Terraform apply, or Azure CLI deployer run; `azd deploy` does not change role assignments. Included in deployer version **1.0.32** as a backport of the deployer portion of [PR #1511](https://github.com/microsoft/simplechat/pull/1511).
+    *   (Ref: [PR #1587](https://github.com/microsoft/simplechat/pull/1587), `setPermissions.bicep`, `setNativeWebAppPermissions.bicep`, `deployers/terraform/main.tf`, `deploy-simplechat.ps1`, `test_deployer_key_vault_secret_permissions.py`)
+
 ### **(v0.261.046)**
 
 #### Bug Fixes
@@ -4840,6 +4977,12 @@ part of the Chat group feature work.
     *   Saving in **Admin Settings** now refreshes what the interface knows about itself, so the banner appears — or disappears — straight away, along with a changed title or a newly enabled capability. Uploading a logo or favicon updates the sidebar immediately too, rather than waiting for the next reload.
     *   Your unsaved edits are unaffected: the refresh happens quietly in the background and never interrupts the page you are working on.
     *   (Ref: V2 interface, Admin Settings, classification banner, branding, `/api/v2/bootstrap`)
+
+*   **Chat Upload File Access Errors Avoid Browser-Realm Checks**
+    *   Hardened chat upload recovery messaging so rejected browser upload requests no longer depend on a realm-specific `TypeError` check.
+    *   Fetch preparation and transport failures now consistently identify the selected file and show the same recovery guidance for locked files, cloud-placeholder files, and interrupted local upload requests.
+    *   Also removed unsafe HTML-string construction from the retry modal's model-option cloning and reasoning-level controls.
+    *   (Ref: chat upload file access handling, retry modal rendering, `chat-input-actions.js`, `chat-retry.js`, `test_chat_clipboard_paste_upload_support.py`)
 
 ### **(v0.261.045)**
 
@@ -4856,6 +4999,16 @@ part of the Chat group feature work.
     *   A generated card now shows the title, the image, and which model produced it. Cards still waiting for a decision are unchanged.
     *   (Ref: V2 chat, inline image proposals, generated image card)
 
+*   **Public Workspace Selector Dark Theme Styling**
+    *   Fixed the public workspace selector dropdown so its dark-theme background, border, search area, hover state, and active item styling match the group workspace selector.
+    *   Added the shared workspace selector row class to the public selector row and extended the existing group dropdown dark-theme rules to the public dropdown.
+    *   (Ref: public workspace selector, dark theme dropdown styling, `public_workspaces.html`, `styles.css`)
+
+*   **Revert Premature OneNote Rollout From Development**
+    *   Removed native `.one` and `.onepkg` workspace uploads from Development pending Reactv2 testing, correcting the accidental merge of PR #1525.
+    *   Restored the previous upload formats and container packaging. Existing document formats and the separately adapted Reactv2 OneNote implementation remain unchanged.
+    *   (Ref: `config.py`, `functions_documents.py`, `Dockerfile`, [OneNote Development Rollout Revert](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/ONENOTE_DEVELOPMENT_ROLLOUT_REVERT_FIX.md))
+
 ### **(v0.261.044)**
 
 #### Bug Fixes
@@ -4867,6 +5020,35 @@ part of the Chat group feature work.
     *   No button in the new interface showed a hand cursor — not **New chat**, not the chat header icons, the conversation list, the composer or the admin controls. Everything rendered with the arrow cursor browsers use for text you cannot click. The whole interface now indicates what is clickable.
     *   Starting a new chat no longer leaves the conversation drawer stranded open and empty after its **Contents** and **Documents** buttons have disappeared, and the conversation details panel no longer outlives the conversation it was describing.
     *   (Ref: V2 navigation rail, New chat, conversation drawer, button cursor)
+
+*   **New Chat Defaults No Longer Leak Across Conversations**
+    *   Fixed new-chat admin model defaults being overwritten by a user's saved model when a freshly created blank conversation was opened through `/chats?conversationId=...`, including the left-navigation **New Chat** flow.
+    *   Existing conversations now restore their own last-used model from saved message metadata, while blank conversations with no model history apply the admin default model and reasoning effort.
+    *   Programmatic model selector refreshes no longer save the admin default as the user's preferred model or prematurely disable the admin default reasoning state.
+    *   (Ref: `chat-conversations.js`, `chat-model-selector.js`, `chat-messages.js`, `chat-reasoning.js`)
+
+*   **Shared Conversation Prompts Persist After Invite Approval**
+    *   Accepting an invitation now loads the conversation with the authoritative collaborative metadata returned by the approval request, preventing the initial creator prompt from disappearing while the response remains visible.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`)
+
+*   **Shared Conversation Delivery Remains Reliable Across Workers**
+    *   Shared event sessions now use a cross-worker Cosmos fallback when Redis is unavailable, preserve Redis event logs during worker attachment, and retry concurrent Cosmos event writes.
+    *   History supplies an EventSource cursor, so retained events do not replay after history loads and invitees retain the owner's existing prompts.
+    *   Accepting an invite while already viewing the conversation now updates membership and composer state in place instead of clearing the rendered history.
+    *   (Ref: `app_settings_cache.py`, `route_backend_collaboration.py`, `chat-collaboration.js`)
+
+*   **Microsoft 365 Enhancements Do Not Interrupt Shared Chat**
+    *   Optional Microsoft 365 action-card projection failures no longer terminate collaboration events.
+    *   Background action recovery remains silent for ordinary shared conversations, while saved actions retain explicit recovery controls.
+    *   (Ref: `route_backend_collaboration.py`, `chat-streaming.js`, `m365-pending-actions.js`)
+
+#### New Features
+
+*   **Admin Defaults For New Chat Model And Reasoning Effort**
+    *   Added Admin Settings controls that let administrators opt in to a default model and default reasoning effort for new non-agent chats.
+    *   The setting is off by default, preserving each user's existing last-selected model and per-model reasoning preferences until an admin enables the override.
+    *   New-chat defaults use the existing multi-endpoint model selector and continue to leave agent model bindings and existing conversation model history intact.
+    *   (Ref: `enable_default_model_for_new_conversations`, `default_reasoning_effort`, Model Endpoints admin settings, chat model selector)
 
 ### **(v0.261.043)**
 
@@ -4882,6 +5064,10 @@ part of the Chat group feature work.
     *   Following a link to a shared conversation worked, but always left a 404 in the browser console. The interface was working out whether the link pointed at a personal or a shared conversation by asking about it as a personal one first and reading the failure as its answer.
     *   It now asks once and gets a straight answer, so opening a shared conversation from a link is a single successful request and the console stays clean.
     *   (Ref: V2 chat, shared conversations, conversation deep links)
+
+*   **Add Participants Remains Available Before Sharing**
+    *   Ordinary personal conversations no longer lose the Add participants action when a metadata response omits collaboration-only permission fields.
+    *   (Ref: `chat-conversations.js`, `chat-sidebar-conversations.js`)
 
 ### **(v0.261.042)**
 
@@ -4914,6 +5100,10 @@ part of the Chat group feature work.
     *   Saving agents checked whether governance policy allowed it; deleting them did not, so a user who had been denied access to personal agents could still delete them. The check is now applied before the agent is removed.
     *   (Ref: personal agents, governance policy)
 
+*   **Add Participants Appears After the First Shared Exchange**
+    *   Collaboration metadata updates now refresh the conversation menus after prompt/response completion, so the Add participants action appears without a page refresh.
+    *   (Ref: `chat-collaboration.js`, `chat-conversations.js`, `chat-sidebar-conversations.js`)
+
 ### **(v0.261.041)**
 
 #### New Features
@@ -4934,6 +5124,13 @@ part of the Chat group feature work.
     *   The "open in the classic interface" links inside the Groups and Public tabs are unchanged — those capabilities have not been rebuilt yet, and the links remain the way to reach them.
     *   (Ref: V2 sidebar, account menu, settings navigation)
 
+#### Bug Fixes
+
+*   **Shared Conversation State No Longer Leaks Into New Conversations**
+    *   Starting a new conversation now disconnects the previous shared conversation's event stream and clears its typing state, preventing participant activity and messages from appearing in the new conversation.
+    *   Conversation metadata updates now refresh the Add participants action immediately, without requiring a page refresh after sharing a conversation.
+    *   (Ref: `chat-conversations.js`, `chat-collaboration.js`, `chat-sidebar-conversations.js`, [Collaboration Shared AI Workflow Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
+
 ### **(v0.261.040)**
 
 #### New Features
@@ -4953,6 +5150,11 @@ part of the Chat group feature work.
     *   A diagram saved as a PNG, or embedded in an exported file, came out compressed into a narrow strip roughly 100 pixels wide regardless of its real size — a 1094×541 flowchart was rasterized at 100×541.
     *   The cause was the diagram's width being read as the number `100` from the value `100%`. The real dimensions were sitting in the diagram alongside it and are now used instead.
     *   (Ref: diagram PNG download, conversation export, SVG rasterizing)
+
+*   **Collaborative Prompts Now Receive Model Responses**
+    *   Fixed ordinary prompts in conversations shared through **Invite Participants** being saved as human-only messages without invoking the model.
+    *   All non-empty collaborative prompts now use the shared AI streaming workflow, while preserving explicit agent, model, workspace, and tool targeting.
+    *   (Ref: `chat-messages.js`, `chat-collaboration.js`, [Collaboration Shared AI Workflow Fix](https://github.com/microsoft/simplechat/blob/f4e186401b58e284ee9b626aa84c903f69ea100b/docs/explanation/fixes/COLLABORATION_SHARED_AI_WORKFLOW_FIX.md))
 
 ### **(v0.261.039)**
 

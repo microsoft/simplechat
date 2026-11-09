@@ -328,6 +328,7 @@ function DiagramLightbox({
                             // Sanitized in `renderMermaidSvg` by DOMPurify, after mermaid
                             // generated it under securityLevel 'strict'. SVG cannot be
                             // expressed as React children here.
+                            // xss-check: ignore reviewed: svg comes only from renderMermaidSvg's strict, DOMPurify-sanitized result or cache.
                             dangerouslySetInnerHTML={{ __html: svg }}
                             className="[&_svg]:h-full [&_svg]:w-full [&_svg]:max-w-none"
                         />
@@ -432,6 +433,7 @@ function DiagramPreview({
         <div
             // Sanitized in `renderMermaidSvg` by DOMPurify, after mermaid generated it under
             // securityLevel 'strict'. SVG cannot be expressed as React children here.
+            // xss-check: ignore reviewed: ready state contains only renderMermaidSvg's strict, DOMPurify-sanitized output.
             dangerouslySetInnerHTML={{ __html: state.svg }}
             className="mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
         />
@@ -587,6 +589,7 @@ export function MermaidDiagram({
                         // Sanitized in `renderMermaidSvg` by DOMPurify, after mermaid generated
                         // it under securityLevel 'strict'. SVG cannot be expressed as React
                         // children here.
+                        // xss-check: ignore reviewed: ready state contains only renderMermaidSvg's strict, DOMPurify-sanitized output.
                         dangerouslySetInnerHTML={{ __html: state.svg }}
                         className="h-full w-full"
                     />

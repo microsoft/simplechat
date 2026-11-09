@@ -1,7 +1,7 @@
 # test_orchestration_conversation_sources.py
 """
 Functional regressions for exact conversation-source transformations.
-Version: 0.261.422
+Version: 0.261.423
 Implemented in: 0.261.341
 Shared two-correction allowance updated in: 0.261.422
 

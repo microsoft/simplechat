@@ -1,7 +1,8 @@
 // test_v2_content_screening_logic.mjs
-// Version: 0.261.114
+// Version: 0.261.421
 // Implemented in: 0.261.106
 // Empty-policy activation implemented in: 0.261.114
+// Visible Unicode source escapes implemented in: 0.261.421
 // Exercises real V2 screening availability and Unicode edit boundaries without a browser.
 
 import assert from 'node:assert/strict';
@@ -87,13 +88,13 @@ check('every state has a distinct accessible explanation', () => {
 });
 
 check('UTF16 selections become exact Unicode codepoint spans', () => {
-    const text = 'A😀cafe\u0301 中文 👩🏽‍💻 end';
+    const text = 'A😀cafe\u0301 中文 👩🏽\u200d💻 end';
     const start = text.indexOf('中文');
-    const end = start + '中文 👩🏽‍💻'.length;
+    const end = start + '中文 👩🏽\u200d💻'.length;
     const span = codePointSelection(text, start, end);
     assert.equal(span.start, Array.from(text.slice(0, start)).length);
     assert.equal(span.end, Array.from(text.slice(0, end)).length);
-    assert.equal(span.selected_text, '中文 👩🏽‍💻');
+    assert.equal(span.selected_text, '中文 👩🏽\u200d💻');
     assert.equal(removeCodePointSpan(text, span.start, span.end), 'A😀cafe\u0301  end');
     assert.equal(utf16ToCodePointOffset(text, text.length), Array.from(text).length);
 });

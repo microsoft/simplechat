@@ -641,6 +641,11 @@ prepared retry** are not offered for a waiting attempt. **Stop execution**
 continues to request cancellation from the server; closing the browser does not
 mean the computation stopped.
 
+Since **0.261.419**, a restored waiting execution does not take over the
+composer's Send/Stop control when no reply is streaming. Use the plan's saved
+status and cancellation controls for that execution; waiting is not permission
+to start a competing plan.
+
 Since **0.261.303**, if the attempt fails or is stopped as a whole while a task
 still waits, the plan shows that task as **Not finished** and what it produces as
 **Not delivered**. Nothing will finish that wait any more, so **Retry from failed

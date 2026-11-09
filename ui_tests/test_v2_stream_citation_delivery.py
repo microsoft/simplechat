@@ -1,7 +1,7 @@
 # test_v2_stream_citation_delivery.py
 """
 UI regressions for live tool/web evidence and recorded tool outcomes.
-Version: 0.261.422
+Version: 0.261.423
 Implemented in: 0.261.365
 Word comment inspection fixed in: 0.261.422
 

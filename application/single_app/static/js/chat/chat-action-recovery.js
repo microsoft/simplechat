@@ -51,9 +51,27 @@ export function getActionRecoveryRevision() {
 }
 
 function safeEditUrl(value) {
-    return typeof value === 'string'
-        && /^\/v2\/(?:workspace\/actions\/|groups\/[^/\\]+\/actions\/|admin\/actions\/)[^/\\?#]+$/.test(value)
-        ? value : null;
+    if (typeof value !== 'string' || /[\u0000-\u001F\u007F]/.test(value)) return null;
+    const match = /^\/v2\/(?:(workspace|admin)\/actions\/|groups\/([^/\\?#]+)\/actions\/)([^/\\?#]+)$/.exec(value);
+    if (!match) return null;
+    try {
+        // Decode server-encoded IDs once, then rebuild the local route rather than forwarding the URL.
+        const encodeSegment = segment => {
+            const identifier = decodeURIComponent(segment);
+            if (identifier === '.' || identifier === '..') return null;
+            return encodeURIComponent(identifier).replace(/[!'()*]/g,
+                character => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+        };
+        const actionId = encodeSegment(match[3]);
+        if (!actionId) return null;
+        if (match[1] === 'workspace') return `/v2/workspace/actions/${actionId}`;
+        if (match[1] === 'admin') return `/v2/admin/actions/${actionId}`;
+        const groupId = encodeSegment(match[2]);
+        return groupId ? `/v2/groups/${groupId}/actions/${actionId}` : null;
+    } catch (error) {
+        if (error instanceof URIError) return null;
+        throw error;
+    }
 }
 
 function content(recovery, body) {

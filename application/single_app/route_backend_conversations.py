@@ -2844,6 +2844,7 @@ def register_route_backend_conversations(bp):
         not_found_response = ({'error': 'Conversation not found'}, 404)
 
         try:
+            # bac-check: ignore reviewed: this probe exposes no record fields; owns_personal below checks ownership before any personal-kind response.
             conversation_item = cosmos_conversations_container.read_item(
                 item=conversation_id,
                 partition_key=conversation_id,

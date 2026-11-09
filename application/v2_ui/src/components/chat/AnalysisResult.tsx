@@ -1,8 +1,7 @@
 // AnalysisResult.tsx
-// On-demand saved findings and passages within the message's Sources inspector.
+// Lazy, complete-record pages supporting the readable answer above them.
 
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, MessageSquare } from 'lucide-react';
 import { fetchAnalysisEvidence, fetchAnalysisRecords } from '../../lib/endpoints';
 import {
     analysisNotices,
@@ -67,13 +66,13 @@ function Evidence({
     return (
         <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="mt-2">
             <summary className="cursor-pointer text-xs font-medium text-text-2">
-                Supporting passages
+                Evidence for finding {record.record_id}
             </summary>
             {open && (
                 <div className="mt-2 text-xs text-text-2">
                     <p role="status" aria-live="polite">
                         {error || (evidence === null ? 'Loading saved evidence…' :
-                            evidence.length ? `${evidence.length} supporting ${evidence.length === 1 ? 'passage' : 'passages'}.` : 'No supporting passages are available.')}
+                            evidence.length ? `${evidence.length} saved passage(s).` : 'No supporting passages are available.')}
                     </p>
                     {error && <GlassButton size="sm" onClick={() => setRetry((value) => value + 1)}>Retry evidence</GlassButton>}
                     {evidence?.map((item) => (
@@ -100,12 +99,11 @@ function Evidence({
 export function AnalysisResult({
     descriptor,
     onUnavailable,
-    reviewNumber,
 }: {
     descriptor: SavedAnalysisDescriptor;
     onUnavailable: (descriptor: SavedAnalysisDescriptor) => void;
-    reviewNumber?: number;
 }) {
+    const [open, setOpen] = useState(false);
     const [offset, setOffset] = useState(0);
     const [previousOffsets, setPreviousOffsets] = useState<number[]>([]);
     const [page, setPage] = useState<SavedAnalysisPage | null>(null);
@@ -128,7 +126,7 @@ export function AnalysisResult({
     }, [descriptor, onUnavailable]);
 
     useEffect(() => {
-        if (blocked) {
+        if (!open || blocked) {
             return;
         }
         const controller = new AbortController();
@@ -151,7 +149,7 @@ export function AnalysisResult({
                 }
             });
         return () => controller.abort();
-    }, [descriptor, offset, blocked, retry, reportUnavailable]);
+    }, [descriptor, offset, open, blocked, retry, reportUnavailable]);
 
     const displayed = page?.records.length ?? 0;
     const displayedSources = new Set(page?.records.map((record) => record.document_id).filter(Boolean)).size;
@@ -159,108 +157,92 @@ export function AnalysisResult({
     const notices = page ? [...analysisNotices(page.validation.limitations), ...analysisNotices(page.validation.issues)] : [];
 
     return (
-        <section aria-label={reviewNumber ? `Saved review ${reviewNumber}` : 'Saved findings'}
-            className="min-w-0">
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                <h4 className="text-sm font-semibold text-text-1">
-                    {reviewNumber ? `Saved review ${reviewNumber}` : 'Saved findings'}
-                </h4>
-                <span className="text-xs text-text-2">
-                    {descriptor.record_count} {descriptor.record_count === 1 ? 'finding' : 'findings'} · {descriptor.source_count} {descriptor.source_count === 1 ? 'source' : 'sources'}
-                </span>
-            </div>
-            {descriptor.semantics?.mode === 'source_observations' && (
-                <p className="mt-1 text-xs text-text-2">Source observations, not reconciled values.</p>
-            )}
+        <section aria-label={descriptor.label ? `Saved analysis: ${descriptor.label}` : 'Saved analysis'}
+            className="mt-3 min-w-0 rounded-xl border border-edge p-3">
+            <p className="break-words text-sm font-medium text-text-1">{descriptor.label || 'Saved analysis'}</p>
             {blocked ? (
                 <p role="status" aria-live="polite" className="mt-1 text-sm text-text-2">
                     {unavailable || analysisUnavailableMessage()}
                 </p>
             ) : (
                 <>
-                    <p role="status" aria-live="polite" className="mt-1 text-xs text-text-2">
-                        {!page && !error ? 'Loading saved findings… ' : ''}
-                        {error || (page
-                            ? `Showing ${displayed ? page.offset + 1 : 0}–${page.offset + displayed} of ${page.total_records} records · ${displayedSources} of ${page.source_count} ${page.source_count === 1 ? 'source' : 'sources'} on this page.`
-                            : '')}
+                    <p role="status" aria-live="polite" className="mt-1 text-xs text-text-3">
+                        {open && !page && !error ? 'Loading saved findings… ' : ''}
+                        {error || (open && page
+                            ? `Showing ${displayed ? page.offset + 1 : 0}–${page.offset + displayed} of ${page.total_records} records · ${displayedSources} of ${page.source_count} sources on this page.`
+                            : `${descriptor.record_count} saved findings · ${descriptor.source_count} sources.`)}
                     </p>
-                    {status !== 'valid' && (
-                        <p role="status" className="mt-2 text-xs text-warn">{analysisValidationNotice(status)}</p>
-                    )}
-                    <GlassButton size="sm" variant="subtle" className="my-3" onClick={() => {
+                    <p className="mt-1 text-xs text-text-2">{analysisValidationNotice(status, descriptor.semantics)}</p>
+                    <GlassButton size="sm" className="mt-2" onClick={() => {
                         selectAnalysisResult(descriptor);
                         document.getElementById('composer-input')?.focus();
                     }}>
-                        <MessageSquare size={13} aria-hidden="true" /> Ask about this saved review
+                        Ask about this analysis
                     </GlassButton>
-                    <p className="mb-3 text-xs text-text-2">Uses the saved findings, not a new review of the sources.</p>
-                    <div className="min-w-0">
-                        {error && <GlassButton size="sm" onClick={() => setRetry((value) => value + 1)}>Retry findings</GlassButton>}
-                        {page?.records.map((record, index) => (
-                            <details key={record.record_id} className="min-w-0 border-t border-edge py-3">
-                                <summary className="cursor-pointer text-sm font-medium text-text-1">
-                                    <span>Finding {page.offset + index + 1}</span>{' '}
-                                    <span className="ml-2 inline-flex max-w-full items-center gap-1 align-middle text-xs font-normal text-text-2">
-                                        <FileText size={12} className="shrink-0" aria-hidden="true" />
-                                        <span className="break-all">{record.source.file_name || record.document_id}</span>
-                                    </span>
-                                </summary>
-                                <dl className="mt-2 space-y-2 text-sm">
-                                    {Object.entries(record.values).map(([field, value]) => (
-                                        <div key={field}>
-                                            <dt className="text-xs font-medium text-text-2 break-words capitalize">{field.replace(/_/g, ' ')}</dt>
-                                            <dd className="whitespace-pre-wrap break-words text-text-2">{analysisValue(value)}</dd>
-                                        </div>
-                                    ))}
-                                </dl>
-                                <Evidence descriptor={descriptor} record={record} onUnavailable={reportUnavailable} />
-                            </details>
-                        ))}
-                        {page && page.total_records === 0 && <p className="text-sm text-text-2">No accepted findings were saved.</p>}
-                        <details className="my-2 text-xs text-text-2">
-                            <summary className="cursor-pointer py-2 font-medium">Analysis limits</summary>
-                            <p>{analysisValidationNotice(status, descriptor.semantics)}</p>
-                            {notices.length > 0 && (
-                                <ul className="mt-2 list-disc space-y-1 pl-4">
-                                    {notices.map((notice, index) => <li key={index} className="break-words">{notice}</li>)}
-                                </ul>
-                            )}
-                        </details>
-                        <nav aria-label="Findings pages" className="mt-2 flex flex-wrap gap-2">
-                            <GlassButton size="sm" disabled={!page || previousOffsets.length === 0} onClick={() => {
-                                setOffset(previousOffsets[previousOffsets.length - 1]);
-                                setPreviousOffsets((values) => values.slice(0, -1));
-                            }}>Previous findings</GlassButton>
-                            <GlassButton size="sm" disabled={!page || page.next_offset === null} onClick={() => {
-                                if (page?.next_offset != null) {
-                                    setPreviousOffsets((values) => [...values, offset]);
-                                    setOffset(page.next_offset);
-                                }
-                            }}>Next findings</GlassButton>
-                        </nav>
-                    </div>
+                    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="mt-2">
+                        <summary className="cursor-pointer text-sm font-medium text-text-2">
+                            Findings and limitations
+                        </summary>
+                        {open && (
+                            <div className="mt-2 min-w-0">
+                                {error && <GlassButton size="sm" onClick={() => setRetry((value) => value + 1)}>Retry findings</GlassButton>}
+                                {notices.length > 0 && (
+                                    <div className="mb-3 rounded-lg bg-surface-2 p-2 text-xs text-text-2">
+                                        <h3 className="font-medium">Limitations and validation issues</h3>
+                                        <ul className="mt-1 list-disc space-y-1 pl-4">
+                                            {notices.map((notice, index) => <li key={index} className="break-words">{notice}</li>)}
+                                        </ul>
+                                    </div>
+                                )}
+                                {page?.records.map((record, index) => (
+                                    <article key={record.record_id} className="min-w-0 border-t border-edge py-3">
+                                        <h3 className="text-sm font-medium text-text-1">Finding {page.offset + index + 1}</h3>
+                                        <p className="mt-1 text-xs text-text-3 break-words">
+                                            {record.source.file_name || record.document_id} · {record.record_id}
+                                        </p>
+                                        <dl className="mt-2 space-y-2 text-sm">
+                                            {Object.entries(record.values).map(([field, value]) => (
+                                                <div key={field}>
+                                                    <dt className="text-xs font-medium text-text-3 break-words">{field.replace(/_/g, ' ')}</dt>
+                                                    <dd className="whitespace-pre-wrap break-words text-text-2">{analysisValue(value)}</dd>
+                                                </div>
+                                            ))}
+                                        </dl>
+                                        <Evidence descriptor={descriptor} record={record} onUnavailable={reportUnavailable} />
+                                    </article>
+                                ))}
+                                {page && page.total_records === 0 && <p className="text-sm text-text-2">No accepted findings were saved.</p>}
+                                <details className="my-2 text-xs text-text-3">
+                                    <summary className="cursor-pointer py-2">Advanced analysis details</summary>
+                                    <a className="underline underline-offset-2"
+                                        href={`/api/analysis_results?${new URLSearchParams({
+                                            conversation_id: descriptor.conversation_id,
+                                            message_id: descriptor.message_id,
+                                            result_sha256: descriptor.result_sha256,
+                                            representation: 'diagnostics',
+                                        })}`}
+                                        target="_blank" rel="noopener noreferrer"
+                                        aria-label="View diagnostics as JSON (opens a new tab)">
+                                        View diagnostics (JSON)
+                                    </a>
+                                </details>
+                                <nav aria-label="Findings pages" className="mt-2 flex flex-wrap gap-2">
+                                    <GlassButton size="sm" disabled={!page || previousOffsets.length === 0} onClick={() => {
+                                        setOffset(previousOffsets[previousOffsets.length - 1]);
+                                        setPreviousOffsets((values) => values.slice(0, -1));
+                                    }}>Previous findings</GlassButton>
+                                    <GlassButton size="sm" disabled={!page || page.next_offset === null} onClick={() => {
+                                        if (page?.next_offset != null) {
+                                            setPreviousOffsets((values) => [...values, offset]);
+                                            setOffset(page.next_offset);
+                                        }
+                                    }}>Next findings</GlassButton>
+                                </nav>
+                            </div>
+                        )}
+                    </details>
                 </>
             )}
-        </section>
-    );
-}
-
-export function AnalysisDiagnostics({ descriptor }: { descriptor: SavedAnalysisDescriptor }) {
-    return (
-        <section className="mt-4 min-w-0 border-t border-edge pt-3" aria-label="Saved review diagnostics">
-            <h4 className="text-xs font-medium text-text-2">Saved review diagnostics</h4>
-            <p className="my-2 break-words text-xs text-text-2">{descriptor.label || 'Saved analysis'}</p>
-            <a className="text-xs text-accent underline underline-offset-2"
-                href={`/api/analysis_results?${new URLSearchParams({
-                    conversation_id: descriptor.conversation_id,
-                    message_id: descriptor.message_id,
-                    result_sha256: descriptor.result_sha256,
-                    representation: 'diagnostics',
-                })}`}
-                target="_blank" rel="noopener noreferrer"
-                aria-label="View diagnostics as JSON (opens a new tab)">
-                View diagnostics (JSON)
-            </a>
         </section>
     );
 }

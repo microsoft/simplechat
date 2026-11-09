@@ -4,17 +4,15 @@ title: "Read and discuss saved Analyze results"
 description: "Read the answer first, browse saved findings and evidence, and ask follow-up questions without requesting another source pass."
 section: "Guides"
 audience: user
-version: "0.261.419"
+version: "0.261.398"
 ---
 
 ## What this does
 
 Analyze reviews selected documents according to your question and saves the
 accepted findings for later review. Both classic chat and React V2 keep the
-readable answer in the conversation. In V2, use the answer's existing **Sources**
-action to inspect saved findings alongside citations. Classic chat retains its
-inline **Saved analysis** section. A supporting file becoming ready does not
-replace the answer.
+readable answer in the conversation, with a compact **Saved analysis** section
+under it. A supporting file becoming ready does not replace that answer.
 
 {% include media.html id="slide-analyze-and-compare" %}
 
@@ -25,7 +23,6 @@ capability, see [Document Compare]({{ '/features/document-compare/' | relative_u
 
 Implemented in version: **0.261.109**. Application version alignment is tracked in
 `application/single_app/config.py`.
-The unified V2 Sources experience was implemented in version: **0.261.419**.
 
 ## Start with the question, not a report schema
 
@@ -75,34 +72,26 @@ The assistant's answer is the readable overview. It can explain the main themes
 without displaying every saved finding. Do not treat that overview, or a file
 preview, as the complete set of records.
 
-1. Read the answer. Incomplete reviews retain a brief notice beneath it.
-2. In V2, open **Sources** beneath that answer. Its existing inspector now holds
-   answer citations and saved findings, side by side on wide screens and stacked
-   on narrow screens. A page loads only when you open Sources. Expand a numbered
-   **Finding** to read its complete values. In classic chat, expand **Findings and
-   limitations** under **Saved analysis**.
+1. Read the answer and the validation notice under **Saved analysis**.
+2. Expand **Findings and limitations** to load a page of accepted findings.
 3. Use **Next findings** and **Previous findings** to move through the saved set.
    Pages contain up to **25 complete records**; the last page may be shorter.
 4. Compare the displayed count with the total. For example,
    `Showing 1–25 of 60 records` means that 35 records are on other pages.
 
-A closed classic findings section reports zero records displayed, not zero records
-saved. V2 does not load findings while its Sources inspector is closed.
-Citation counts are not finding counts. Source counts are separate too: the
-sources represented on one page can be fewer than
+A closed findings section reports zero records displayed, not zero records saved.
+Source counts are separate: the sources represented on one page can be fewer than
 the sources in the saved analysis. One source can contribute several findings.
 Neither count proves that every possible issue was discovered.
 
 Since **0.261.398**, a new orchestration reply can show several retained analyses
-when a later step could not finish. V2 identifies these as numbered saved reviews;
-classic headings identify the producing steps. Each has its own count, findings,
-evidence, and diagnostic link. Read
+when a later step could not finish. Their headings identify the producing
+steps; each has its own count, findings, evidence, and diagnostic link. Read
 their validation notices separately. A usable source review does not mean the
 overall answer was delivered.
 
 These results are not selected automatically for the next turn. Use **Ask about
-this saved review** in V2, or **Ask about this analysis** in classic, on the
-particular result you want to discuss. Inspecting saved
+this analysis** on the particular result you want to discuss. Inspecting saved
 work does not complete the failed step or make a partial result suitable for a
 step that requires complete input. Historical failed replies are not rewritten
 to add these sections.
@@ -124,9 +113,8 @@ backdrop to return to the report. Wide tables scroll inside their own container.
 
 ## Inspect evidence and limitations
 
-In V2, expand a finding and then **Supporting passages**. In classic chat, expand
-**Evidence for finding …** beside a finding; that label includes its identifier.
-Saved passages can include a filename, page or page range,
+Expand **Evidence for finding …** beside a finding; the label includes that
+finding's identifier. Saved passages can include a filename, page or page range,
 and chunk location when those details were saved. A finding without supporting
 passages says **No supporting passage saved for this finding.**
 
@@ -135,17 +123,9 @@ include that table's markup. In the readable report, **Caveat:** lines under a
 finding qualify it without making the result partial, and **Analysis notes**
 record observations about a page or chunk range of a source.
 
-In V2, **Analysis limits** holds the review's interpretation and validation
-notice plus any saved limitations and issues. Classic chat uses **Limitations
-and validation issues** for the saved notices. Individual finding values retain
-their caveats. Read the limits alongside the findings, particularly when the
+The **Limitations and validation issues** section appears when the saved result
+includes those notices. Read it alongside the findings, particularly when the
 analysis is incomplete.
-
-Answer citations are not automatically supporting evidence for every finding.
-Only a finding's own saved evidence references supply its supporting passages.
-Several findings can come from one document; none of these counts establishes
-how many native Word or Excel comments were returned. Missing metadata stays
-unknown rather than becoming a successful comment extraction.
 
 | Notice | How to interpret it |
 | --- | --- |
@@ -159,17 +139,14 @@ Findings remain model judgments. Inspecting a saved quotation helps you understa
 its support; it does not reread the original source or independently verify the
 conclusion.
 
-For an audit, use **Details** in the V2 message inspector, then **View diagnostics
-(JSON)**. Classic chat keeps that link in the saved analysis. It opens the separately saved processing
+For an audit, **View diagnostics (JSON)** opens the separately saved processing
 data in a new tab. It is not the final findings or a readable report. The response
 is bounded; `next_offset` identifies another byte page when the audit is larger
 than one response. Ordinary reading and follow-up questions do not use this data.
 
 ## Ask about the saved analysis
 
-1. Select **Ask about this saved review** in V2, or **Ask about this analysis** in
-   classic, on the result you want to discuss. This selects the whole saved
-   review, not only the finding currently expanded.
+1. Select **Ask about this analysis** on the result you want to discuss.
 2. Check the composer notice:
 
    > Saved analysis selected. Explaining the saved analysis — not running a new pass over the original sources.
@@ -217,7 +194,7 @@ An unavailable or stale notice is not an empty successful analysis:
 
 - **Saved analysis unavailable** can indicate that the conversation or its saved
   result was removed, that you lost access to the conversation, or that the saved
-  data failed an integrity check. Result reading, the saved-review follow-up, and
+  data failed an integrity check. Result reading, **Ask about this analysis**, and
   original result export controls are unavailable. A sign-in notice asks you to
   sign in again before checking access.
 - **Saved analysis is stale or has changed** asks you to reopen the conversation

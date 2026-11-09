@@ -1,7 +1,7 @@
 # test_v2_sidebar_conversation_scroll.py
 """
 Browser regressions for the V2 chat rail scrolling as one panel.
-Version: 0.261.406
+Version: 0.261.419
 Implemented in: 0.261.236
 Conversation menu cleanup implemented in: 0.261.406
 
@@ -200,6 +200,8 @@ class RailApi:
             route.fulfill(json={"active": False, "pending": False, "reattachable": False})
         elif method == "GET" and path == "/api/v2/orchestration/runs":
             route.fulfill(json={"runs": []})
+        elif method == "GET" and path == "/api/v2/orchestration/questions":
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-token"})
         elif method == "GET" and path == "/api/collaboration/file-approvals":
             route.fulfill(json={"approvals": []})
         elif method == "GET" and path == "/api/user/collaboration-suggestions":

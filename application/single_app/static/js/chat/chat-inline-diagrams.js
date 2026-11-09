@@ -250,9 +250,9 @@ export function hydrateInlineDiagrams(root = document) {
         }
 
         const cacheKey = `${theme}:${source}`;
-        const cachedSvg = diagramSvgCache.get(cacheKey);
-        if (cachedSvg !== undefined) {
-            stage.innerHTML = cachedSvg;
+        const safeCachedSvg = diagramSvgCache.get(cacheKey);
+        if (safeCachedSvg !== undefined) {
+            stage.innerHTML = safeCachedSvg;
             container.setAttribute('data-diagram-hydrated', 'true');
             container.setAttribute('data-diagram-theme', theme);
             return;

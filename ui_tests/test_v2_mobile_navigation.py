@@ -1,7 +1,7 @@
 # test_v2_mobile_navigation.py
 """
 Real-component regression tests for the space-saving V2 mobile navigation.
-Version: 0.261.327
+Version: 0.261.419
 Implemented in: 0.261.323
 
 Reuses production components/CSS and the closed HTTP rail harness. Local Chromium
@@ -77,6 +77,35 @@ def test_home_uses_one_fallback_header_and_mobile_drawer_scrolls(open_page):
     assert region.evaluate("element => getComputedStyle(element).overflowY") == "auto"
     page.keyboard.press("Escape")
     expect(page.get_by_role("button", name="Open navigation", exact=True)).to_be_focused()
+
+
+def test_configured_navigation_rejects_executable_urls(open_page):
+    page, api = open_page()
+    mount(page, api, rows=0)
+    page.evaluate("""() => {
+        const stores = window.OrchHarness.stores;
+        stores.bootstrap.useBootstrapStore.setState((state) => ({
+            data: {...state.data, navigation: {
+                external_links: {enabled: true, menu_name: 'Policies', items: [
+                    {label: 'Safe policy', url: 'https://example.invalid/policy'},
+                    {label: 'Unsafe policy', url: 'javascript:window.__navPayloadExecuted=true'},
+                ]},
+            }},
+        }));
+        stores.userSettings.useUserSettingsStore.setState((state) => ({
+            settings: {...state.settings, sidebarMenuState: {externalLinks: true}},
+        }));
+    }""")
+    expect(page.get_by_role("link", name="Safe policy")).to_have_attribute("href", "https://example.invalid/policy")
+    unsafe = page.locator('a[title="Unsafe policy"]')
+    expect(unsafe).to_be_visible()
+    href = unsafe.get_attribute("href")
+    assert href is None
+    before = page.url
+    unsafe.click()
+    executed = page.evaluate("window.__navPayloadExecuted === true")
+    assert executed is False
+    assert page.url == before
 
 
 @pytest.mark.parametrize("branding", [
