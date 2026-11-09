@@ -4,7 +4,7 @@
 // One panel with three sections rather than three separate panels: a user comparing what a
 // response cited against how it was generated should not have to close one to open another.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { clsx } from 'clsx';
 import {
     Braces,
@@ -31,7 +31,9 @@ import {
 import { normalizeOrchestrationAttempt } from '../../lib/orchestration';
 import { openOrchestrationRecovery } from '../../lib/orchestrationController';
 import { m365ChipLabel, m365SecondaryLine } from '../../lib/m365Citations';
-import type { ChatMessage, Json, PersistedThought } from '../../lib/types';
+import type { ChatMessage, Json, PersistedThought, SavedAnalysisDescriptor } from '../../lib/types';
+import { analysisUnavailableMessage, readSavedAnalyses } from '../../lib/savedAnalysis';
+import { AnalysisResult } from './AnalysisResult';
 import { buildToolResultView, type RowMode } from '../../lib/agentCitationRows';
 import { GlassButton } from '../ui/primitives';
 import { M365KindIcon, M365OpenLink } from './M365CitationChip';
@@ -170,15 +172,32 @@ function DetailsSection({ message }: { message: ChatMessage }) {
     );
 }
 
-function SourcesSection({ sources, evidence }: { sources: MessageSources; evidence: EvidenceStatus | null }) {
-    if (sources.total === 0 && !evidence) {
+function SourcesSection({ sources, evidence, analyses, onAnalysisUnavailable, unavailableAnalyses }: {
+    sources: MessageSources;
+    evidence: EvidenceStatus | null;
+    analyses: (SavedAnalysisDescriptor | null)[];
+    onAnalysisUnavailable?: (descriptor: SavedAnalysisDescriptor, message: string) => void;
+    unavailableAnalyses?: ReadonlyMap<string, string>;
+}) {
+    if (sources.total === 0 && !evidence && !analyses.length) {
         return <Empty>This response did not cite any sources.</Empty>;
     }
 
     return (
         <div className="space-y-4">
             <EvidenceStatusDetails status={evidence} />
-            {sources.total === 0 && <Empty>This response did not cite any sources.</Empty>}
+            {analyses.map((descriptor, index) => descriptor ? (
+                <AnalysisResult key={`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`}
+                    descriptor={descriptor} onUnavailable={onAnalysisUnavailable}
+                    knownUnavailable={unavailableAnalyses?.get(
+                        `${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`,
+                    )} />
+            ) : (
+                <p key={`unavailable-analysis-${index}`} role="status" className="text-sm text-text-2">
+                    {analysisUnavailableMessage()}
+                </p>
+            ))}
+            {sources.total === 0 && !analyses.length && <Empty>This response did not cite any sources.</Empty>}
             {sources.conversations.length > 0 && (
                 <div>
                     <h4 className="mb-1.5 flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-text-3 uppercase">
@@ -454,15 +473,21 @@ export function MessageInspector({
     section,
     onSection,
     onClose,
+    onAnalysisUnavailable,
+    unavailableAnalyses,
 }: {
     message: ChatMessage;
     section: InspectorSection;
     onSection: (next: InspectorSection) => void;
     onClose: () => void;
+    onAnalysisUnavailable?: (descriptor: SavedAnalysisDescriptor, message: string) => void;
+    unavailableAnalyses?: ReadonlyMap<string, string>;
 }) {
     const sources = readSources(message as unknown as Json);
     const masks = readMaskState(message);
     const evidence = masks.hasAnyMask ? null : readEvidenceStatus(message.metadata?.evidence_status);
+    const analyses = useMemo(() => masks.hasAnyMask ? [] : readSavedAnalyses(message.metadata),
+        [message.metadata, masks.hasAnyMask]);
     // An uploaded file cites nothing and has no reasoning. Its sources are what ingestion
     // extracted from it, which is the material any later citation of the file comes from.
     const upload = message.role === 'file';
@@ -527,7 +552,9 @@ export function MessageInspector({
                         <Empty>This upload has no stored extraction to show.</Empty>
                     )
                 )}
-                {active === 'sources' && !upload && <SourcesSection sources={sources} evidence={evidence} />}
+                {active === 'sources' && !upload && <SourcesSection sources={sources} evidence={evidence}
+                    analyses={analyses} onAnalysisUnavailable={onAnalysisUnavailable}
+                    unavailableAnalyses={unavailableAnalyses} />}
                 {active === 'reasoning' && <ReasoningSection message={message} />}
             </div>
         </div>

@@ -1,9 +1,10 @@
 # test_chat_saved_analysis.py
 """
 Saved Analyze findings, evidence, and explanation context in both chat interfaces.
-Version: 0.261.398
+Version: 0.261.424
 Implemented in: 0.261.109
 Retained analyses on failed orchestration replies covered in: 0.261.398
+Answer-first presentation and on-demand Sources covered in: 0.261.424
 
 Runs the real classic message/stream modules and React MessageList/Composer/store.
 Record/evidence requests cross the production Flask reader and serialized result
@@ -230,6 +231,12 @@ class AnalysisApi:
         if path == "/api/v2/orchestration/runs":
             route.fulfill(json={"runs": []})
             return
+        if path == "/api/v2/orchestration/questions" and request.method == "GET":
+            route.fulfill(json={"questions": [], "csrf_token": "fixture-csrf"})
+            return
+        if path == "/api/v2/user-input/pending" and request.method == "GET":
+            route.fulfill(json={"requests": [], "csrf_token": "fixture-csrf"})
+            return
         if path == "/api/action-credentials/pending" and request.method == "GET":
             route.fulfill(json={"requests": [], "csrf_token": "fixture-csrf"})
             return
@@ -386,6 +393,17 @@ def result(ui):
     return ui.page.get_by_role("region", name="Saved analysis").first
 
 
+def sources_button(ui):
+    return ui.page.get_by_role("button", name=re.compile(r"^(Show sources(?: \(\d+\))?|Hide sources)$")).first
+
+
+def open_sources(ui):
+    button = sources_button(ui)
+    expect(button).to_be_visible()
+    if button.get_attribute("aria-expanded") != "true":
+        button.click()
+
+
 def context(ui):
     return ui.page.evaluate("() => window.analysisUI.context()")
 
@@ -404,6 +422,119 @@ def choose_new_source(ui):
         ui.page.get_by_label("Document action").select_option("analyze")
     else:
         ui.page.get_by_title("Documents", exact=True).click()
+
+
+@pytest.mark.parametrize("width,theme", [(390, "light"), (390, "dark"), (1440, "light"), (1440, "dark")])
+def test_saved_findings_are_disclosed_through_sources_not_the_answer(analysis_ui, width, theme):
+    ui = analysis_ui
+    ui.page.set_viewport_size({"width": width, "height": 1000})
+    ui.mount()
+    ui.page.evaluate("""theme => {
+        document.documentElement.classList.toggle('dark', theme === 'dark');
+        document.documentElement.setAttribute('data-bs-theme', theme);
+    }""", theme)
+    expect(ui.page.get_by_text(ANSWER, exact=True).first).to_be_visible()
+    expect(result(ui)).to_have_count(0)
+    expect(ui.page.get_by_text("Structural checks passed.", exact=False)).not_to_be_visible()
+    expect(ui.page.get_by_role("button", name="Ask about this analysis")).to_have_count(0)
+    assert not [item for item in ui.api.requests if item["path"] == "/api/analysis_results"]
+    capture = (width, theme) in ((1440, "light"), (390, "dark"))
+    if capture:
+        ui.page.screenshot(path=str(BUILD / f"analysis-{ui.renderer}-{width}-{theme}-answer.png"), full_page=True)
+    button = sources_button(ui)
+    button.focus()
+    button.press("Enter")
+    expect(button).to_have_attribute("aria-expanded", "true")
+    expect(result(ui)).to_contain_text("60 saved findings")
+    assert not [item for item in ui.api.requests if item["path"] == "/api/analysis_results"]
+    result(ui).locator("summary").filter(has_text="Findings and limitations").click()
+    expect(result(ui)).to_contain_text("Showing 1–25 of 60 records")
+    if capture:
+        ui.page.screenshot(path=str(BUILD / f"analysis-{ui.renderer}-{width}-{theme}-sources.png"), full_page=True)
+    sources_button(ui).click()
+    expect(result(ui)).to_have_count(0)
+    expect(ui.page.get_by_text(ANSWER, exact=True).first).to_be_visible()
+    open_sources(ui)
+    expect(result(ui)).to_contain_text("60 saved findings")
+    expect(result(ui).get_by_text("Control 0", exact=True)).to_have_count(0)
+
+
+def test_zero_saved_findings_remain_accessible_without_an_error_or_citations(analysis_ui):
+    ui = analysis_ui
+    fixture = ui.api.fixture
+    manifest, _, _ = saved.load_saved_analysis(
+        "reader", saved.saved_analysis_context(fixture["descriptor"]), **read_options(fixture),
+    )
+    descriptor = saved.save_chat_analysis(
+        {"reply": "The completed review saved no findings.",
+         "analysis_result": {
+             "analysis_result_version": "analyze-final-v1",
+             "source_manifest": manifest["analysis_access"]["sources"],
+             "authoritative_result": {"kind": "records", "value": []},
+             "analysis_evidence": [],
+             "analysis_validation": {"status": "valid"},
+         }},
+        user_id="owner", conversation_id=CONVERSATION, message_id="assistant-1",
+        authorize_conversation=lambda user, conversation: fixture["message_loader"](
+            user, conversation, "assistant-1",
+        ),
+        save_result=fixture["store"].save,
+    )
+    fixture["descriptor"] = descriptor
+    fixture["message"]["metadata"] = {"saved_analysis": descriptor}
+    ui.api.message.update({
+        "content": "The completed review saved no findings.",
+        "metadata": {"saved_analysis": descriptor}, "hybrid_citations": [],
+    })
+    ui.mount()
+    expect(result(ui)).to_have_count(0)
+    expect(ui.page.get_by_text("No supporting document evidence returned", exact=False)).to_have_count(0)
+    expect(ui.page.get_by_role("button", name=re.compile("^Partial analysis"))).to_have_count(0)
+    open_sources(ui)
+    expect(result(ui)).to_contain_text("0 saved findings")
+    result(ui).locator("summary").filter(has_text="Findings and limitations").click()
+    expect(result(ui)).to_contain_text("No accepted findings were saved.")
+    expect(result(ui).get_by_role("button", name="Next findings", exact=True)).to_be_disabled()
+    expect(result(ui).get_by_role("button", name="Previous findings", exact=True)).to_be_disabled()
+    selected = context(ui)
+    assert selected == expected_context(ui)
+
+
+def test_closing_sources_cancels_pending_findings_and_reopens_cleanly(analysis_ui):
+    ui = analysis_ui
+    ui.api.hold_page = True
+    ui.mount()
+    open_sources(ui)
+    with ui.page.expect_request("**/api/analysis_results?*"):
+        result(ui).locator("summary").filter(has_text="Findings and limitations").click()
+    sources_button(ui).click()
+    for pending in ui.api.pending_pages:
+        ui.api.records(pending)
+    expect(result(ui)).to_have_count(0)
+    expect(ui.page.get_by_text("Control 0", exact=True)).to_have_count(0)
+    ui.api.hold_page = False
+    open_sources(ui)
+    expect(result(ui)).to_contain_text("60 saved findings")
+    result(ui).locator("summary").filter(has_text="Findings and limitations").click()
+    expect(result(ui)).to_contain_text("Showing 1–25 of 60 records")
+
+
+@pytest.mark.parametrize("analysis_ui", ["classic"], indirect=True)
+def test_answer_html_cannot_be_mistaken_for_owned_sources_or_warning_controls(analysis_ui):
+    ui = analysis_ui
+    ui.api.message["content"] = (
+        'Keep this answer.\n\n<div class="message-sources">KEEP-SOURCE-ANSWER</div>\n\n'
+        '<div class="saved-analysis-warning">KEEP-WARNING-ANSWER</div>'
+    )
+    ui.mount()
+    expect(ui.page.get_by_text("KEEP-SOURCE-ANSWER", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("KEEP-WARNING-ANSWER", exact=True)).to_be_visible()
+    expect(result(ui)).to_have_count(0)
+    open_sources(ui)
+    result(ui).locator("summary").filter(has_text="Findings and limitations").click()
+    expect(result(ui)).to_contain_text("Control 0")
+    expect(ui.page.get_by_text("KEEP-SOURCE-ANSWER", exact=True)).to_be_visible()
+    expect(ui.page.get_by_text("KEEP-WARNING-ANSWER", exact=True)).to_be_visible()
 
 
 def retain_failed_analyses(ui):
@@ -452,6 +583,7 @@ def test_failed_run_keeps_each_saved_analysis_and_requires_explicit_selection(an
     ui = analysis_ui
     descriptors = retain_failed_analyses(ui)
     ui.mount()
+    open_sources(ui)
     deck = ui.page.get_by_role("region", name="Saved analysis: Deck claims", exact=True)
     reviewer = ui.page.get_by_role("region", name="Saved analysis: Reviewer comments <not HTML>", exact=True)
     expect(deck).to_be_visible()
@@ -475,6 +607,9 @@ def test_failed_run_keeps_each_saved_analysis_and_requires_explicit_selection(an
     ui.page.evaluate("() => window.analysisUI.reload()")
     after_reload = context(ui)
     assert after_reload == expected
+    open_sources(ui)
+    if ui.renderer == "v2":
+        reviewer.locator("summary").filter(has_text="Advanced analysis details").click()
     diagnostic_url = reviewer.get_by_role("link", name="View diagnostics as JSON (opens a new tab)").get_attribute("href")
     assert parse_qs(urlsplit(diagnostic_url).query)["result_sha256"] == [descriptors[1]["result_sha256"]]
     ui.page.set_viewport_size({"width": 390, "height": 844})
@@ -490,6 +625,7 @@ def test_failed_live_completion_keeps_plural_analyses_without_auto_selecting(ana
     ui.api.messages = []
     ui.mount(history=False)
     ui.page.evaluate("() => window.analysisUI.send()")
+    open_sources(ui)
     expect(ui.page.get_by_role("region", name="Saved analysis: Deck claims", exact=True)).to_be_visible()
     expect(ui.page.get_by_role(
         "region", name="Saved analysis: Reviewer comments <not HTML>", exact=True,
@@ -503,7 +639,8 @@ def test_malformed_plural_entry_is_visible_without_hiding_valid_findings(analysi
     retain_failed_analyses(ui)
     ui.api.message["metadata"]["saved_analyses"][1]["semantics"]["mode"] = "unknown-contract"
     ui.mount()
-    expect(ui.page.get_by_text("Saved analysis unavailable.", exact=False).first).to_be_visible()
+    expect(ui.page.get_by_role("button", name=re.compile("^Saved analysis unavailable"))).to_be_visible()
+    open_sources(ui)
     deck = ui.page.get_by_role("region", name="Saved analysis: Deck claims", exact=True)
     deck.locator("summary").filter(has_text="Findings and limitations").click()
     expect(deck).to_contain_text("Control 0")
@@ -515,6 +652,7 @@ def test_masking_a_plural_reply_hides_every_result_and_clears_explicit_selection
     ui = analysis_ui
     retain_failed_analyses(ui)
     ui.mount()
+    open_sources(ui)
     reviewer = ui.page.get_by_role(
         "region", name="Saved analysis: Reviewer comments <not HTML>", exact=True,
     )
@@ -535,9 +673,17 @@ def test_saved_analysis_page_two_evidence_download_and_safe_text(analysis_ui):
     ui.api.unsafe_values = True
     ui.mount()
     expect(ui.page.get_by_text(ANSWER, exact=True).first).to_be_visible()
-    expect(result(ui)).to_contain_text("0 of 60 records displayed")
+    expect(result(ui)).to_have_count(0)
+    open_sources(ui)
+    expect(result(ui)).to_contain_text("60 saved findings")
     assert context(ui) == expected_context(ui)
     assert not [item for item in ui.api.requests if item["path"] == "/api/analysis_results"]
+    disclosure = result(ui).locator("summary").filter(has_text="Findings and limitations")
+    disclosure.focus()
+    disclosure.press("Enter")
+    expect(result(ui)).to_contain_text("Showing 1–25 of 60 records")
+    if ui.renderer == "v2":
+        result(ui).locator("summary").filter(has_text="Advanced analysis details").click()
     diagnostics = result(ui).get_by_role("link", name="View diagnostics as JSON (opens a new tab)")
     expect(diagnostics).to_be_visible()
     diagnostic_url = urlsplit(diagnostics.get_attribute("href"))
@@ -547,10 +693,6 @@ def test_saved_analysis_page_two_evidence_download_and_safe_text(analysis_ui):
         "representation": ["diagnostics"],
     }
     expect(diagnostics).to_have_attribute("rel", "noopener noreferrer")
-    disclosure = result(ui).locator("summary").filter(has_text="Findings and limitations")
-    disclosure.focus()
-    disclosure.press("Enter")
-    expect(result(ui)).to_contain_text("Showing 1–25 of 60 records")
     expect(result(ui)).to_contain_text("1 of 1 sources on this page")
     expect(result(ui)).to_contain_text("<img src=x onerror=window.analysisXss=true>")
     assert result(ui).locator("img, script").count() == 0
@@ -585,12 +727,16 @@ def test_completion_and_reconnect_keep_answer_and_select_followup(analysis_ui):
     ui.mount(history=False)
     ui.page.evaluate("() => window.analysisUI.send()")
     expect(ui.page.get_by_text(ANSWER, exact=True).first).to_be_visible()
+    expect(result(ui)).to_have_count(0)
+    open_sources(ui)
     expect(result(ui)).to_be_visible()
     assert context(ui) == expected_context(ui)
     ui.api.messages = []
     ui.api.reconnect = True
     ui.mount()
     expect(ui.page.get_by_text(ANSWER, exact=True).first).to_be_visible()
+    expect(result(ui)).to_have_count(0)
+    open_sources(ui)
     expect(result(ui)).to_be_visible()
     assert context(ui) == expected_context(ui)
     assert len([item for item in ui.api.requests if item["path"].startswith("/api/chat/stream/reattach/")]) == 1
@@ -646,6 +792,7 @@ def test_analysis_with_expanded_navigation_has_only_local_table_scrolling(analys
     dimensions = ui.page.evaluate("({viewport: innerWidth, document: document.documentElement.scrollWidth})")
     assert dimensions["document"] <= width + 1, dimensions
     close.click()
+    open_sources(ui)
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui)).to_contain_text("Showing 1–25 of 60 records")
     result(ui).locator("summary").filter(has_text="Evidence for finding record-0").click()
@@ -675,6 +822,7 @@ def test_download_prefers_the_server_utf8_filename(analysis_ui):
 def test_saved_explanation_request_bypasses_sources_and_orchestration(analysis_ui):
     ui = analysis_ui
     ui.mount(orchestration=True)
+    open_sources(ui)
     result(ui).get_by_role("button", name="Ask about this analysis", exact=True).click()
     expect(ui.page.get_by_text("Explaining the saved analysis", exact=False)).to_be_visible()
     draft = ui.page.get_by_role("textbox", name="Message", exact=True)
@@ -689,7 +837,8 @@ def test_saved_explanation_request_bypasses_sources_and_orchestration(analysis_u
         assert body[key] is False
     assert not body["selected_document_ids"]
     assert "document_action" not in body and "analyze" not in body
-    assert not [item for item in ui.api.requests if item["path"].startswith("/api/v2/orchestration/")]
+    assert not [item for item in ui.api.requests
+                if item["method"] == "POST" and item["path"].startswith("/api/v2/orchestration/")]
     assert context(ui) == expected_context(ui), "Explanation messages keep the original result pointer."
     ui.page.get_by_role("button", name="Remove saved analysis context").click()
     assert context(ui) is None
@@ -697,6 +846,7 @@ def test_saved_explanation_request_bypasses_sources_and_orchestration(analysis_u
     assert context(ui) is None, "History hydration must not undo the user's removal."
     ui.page.evaluate("() => window.analysisUI.open()")
     assert context(ui) is None, "Reselecting the same conversation must preserve explicit context removal."
+    open_sources(ui)
     result(ui).get_by_role("button", name="Ask about this analysis", exact=True).click()
     choose_new_source(ui)
     assert context(ui) is None
@@ -716,12 +866,20 @@ def test_denied_missing_and_stale_results_are_visible_not_empty_success(analysis
     else:
         ui.api.message["metadata"]["saved_analysis"]["result_sha256"] = "0" * 64
     ui.mount()
+    open_sources(ui)
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui)).to_contain_text("stale" if status == 409 else "unavailable")
     expect(result(ui).get_by_role("button", name="Ask about this analysis")).to_have_count(0)
     expect(download_button(ui)).not_to_be_visible()
     expect(result(ui)).not_to_contain_text("No accepted findings")
+    expect(sources_button(ui)).to_be_visible()
     assert context(ui) is None
+    reads = len([item for item in ui.api.requests if item["path"] == "/api/analysis_results"])
+    sources_button(ui).click()
+    open_sources(ui)
+    expect(result(ui)).to_contain_text("stale" if status == 409 else "unavailable")
+    expect(result(ui).get_by_role("button", name="Ask about this analysis")).to_have_count(0)
+    assert len([item for item in ui.api.requests if item["path"] == "/api/analysis_results"]) == reads
 
 
 @pytest.mark.parametrize("status,notice", [
@@ -735,6 +893,15 @@ def test_validation_state_is_not_execution_completion(analysis_ui, status, notic
     ui.api.validation_status = status
     ui.api.message["metadata"]["saved_analysis"]["validation_status"] = status
     ui.mount()
+    expect(result(ui)).to_have_count(0)
+    compact = {
+        "pending": "Analysis validation pending",
+        "partial": "Partial analysis",
+        "invalid": "Analysis validation failed",
+        "not_validated": "Analysis not validated",
+    }[status]
+    expect(ui.page.get_by_role("button", name=re.compile(f"^{compact}"))).to_be_visible()
+    open_sources(ui)
     expect(result(ui)).to_contain_text(notice)
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui)).to_contain_text("Showing 1–25")
@@ -747,6 +914,7 @@ def test_unavailable_or_masked_history_exposes_no_saved_result_controls(analysis
     ui.api.message["content"] = "This saved analysis is unavailable."
     ui.api.message["metadata"]["saved_analysis"]["available"] = False
     ui.mount()
+    open_sources(ui)
     expect(result(ui)).to_contain_text("unavailable")
     expect(ui.page.get_by_role("button", name="Ask about this analysis")).to_have_count(0)
     assert context(ui) is None
@@ -770,6 +938,7 @@ def test_explicit_source_choice_wins_over_late_completion(analysis_ui):
     assert context(ui) is None
     assert len(ui.api.pending_streams) == 1
     ui.api.stream(ui.api.pending_streams.pop())
+    open_sources(ui)
     expect(result(ui)).to_be_visible()
     assert context(ui) is None
     ui.page.evaluate("() => window.analysisUI.reload()")
@@ -780,6 +949,7 @@ def test_late_findings_response_cannot_follow_conversation_navigation(analysis_u
     ui = analysis_ui
     ui.api.hold_page = True
     ui.mount()
+    open_sources(ui)
     with ui.page.expect_request("**/api/analysis_results?*"):
         result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     ui.page.evaluate("() => window.analysisUI.change('another-conversation')")
@@ -795,6 +965,7 @@ def test_supporting_export_completion_never_replaces_the_answer(analysis_ui):
     artifact = ui.api.message["metadata"]["generated_analysis_artifacts"][0]
     artifact.update({"background_export": True, "export_run_id": "supporting-export", "status": "running"})
     ui.mount()
+    open_sources(ui)
     expect(ui.page.get_by_text(ANSWER, exact=True).first).to_be_visible()
     ui.page.locator("summary").filter(has_text="Downloads").click()
     expect(download_button(ui)).to_be_visible(timeout=10000)
@@ -806,6 +977,7 @@ def test_supporting_export_completion_never_replaces_the_answer(analysis_ui):
 def test_evidence_rechecks_access_and_removes_the_previously_loaded_page(analysis_ui):
     ui = analysis_ui
     ui.mount()
+    open_sources(ui)
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui)).to_contain_text("Control 0")
     ui.api.fixture["state"]["conversation_allowed"] = False
@@ -819,6 +991,7 @@ def test_evidence_rechecks_access_and_removes_the_previously_loaded_page(analysi
 def test_source_revocation_does_not_withdraw_conversation_owned_findings(analysis_ui):
     ui = analysis_ui
     ui.mount()
+    open_sources(ui)
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui)).to_contain_text("Control 0")
     ui.api.fixture["state"]["source_allowed"] = False
@@ -833,13 +1006,14 @@ def test_transient_page_failure_can_retry_without_exposing_diagnostics(analysis_
     ui = analysis_ui
     ui.api.page_failures = 1
     ui.mount()
+    open_sources(ui)
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     expect(result(ui).get_by_role("button", name="Retry findings")).to_be_visible()
     expect(result(ui)).not_to_contain_text("PRIVATE_DIAGNOSTIC")
     result(ui).get_by_role("button", name="Retry findings").click()
     expect(result(ui)).to_contain_text("Showing 1–25")
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
-    expect(result(ui)).to_contain_text("0 of 60 records displayed")
+    expect(result(ui)).to_contain_text("60 saved findings")
 
 
 def test_late_stream_completion_cannot_reselect_another_conversations_analysis(analysis_ui):
@@ -875,6 +1049,8 @@ def test_orchestrated_completion_adopts_only_its_saved_public_pointer(analysis_u
         ui.api.message,
     )
     expect(ui.page.get_by_text(ANSWER, exact=True)).to_be_visible()
+    expect(result(ui)).to_have_count(0)
+    open_sources(ui)
     expect(result(ui)).to_be_visible()
     assert context(ui) == expected_context(ui)
 
@@ -893,6 +1069,7 @@ def test_saved_records_are_not_misinterpreted_as_answer_mask_offsets(analysis_ui
     }"""
     ui.page.get_by_text(ANSWER, exact=True).evaluate(select_text)
     expect(ui.page.get_by_role("button", name="Mask selection", exact=True)).to_be_visible()
+    open_sources(ui)
     result(ui).locator("summary").filter(has_text="Findings and limitations").click()
     result(ui).get_by_text("Control 0", exact=True).evaluate(select_text)
     expect(ui.page.get_by_role("button", name="Mask selection", exact=True)).not_to_be_visible()
