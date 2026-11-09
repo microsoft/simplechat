@@ -1,9 +1,10 @@
 # test_orchestration_attachment_native_evidence.py
 """Real planning, inventory paging, retained evidence and composition regressions.
 
-Version: 0.261.423
+Version: 0.261.424
 Implemented in: 0.261.416
 Word-native comment routing and evidence delivery: 0.261.422
+Complete empty native inventory evidence status: 0.261.424
 Only external storage/model I/O is replaced; no provider calls are made.
 """
 
@@ -440,6 +441,9 @@ def test_word_comments_use_the_real_word_reader_and_reach_retained_answers(
     payload = json.loads(case.model.calls[0][0][-1]["content"])
     assert "Raise cap to 19500." in json.dumps(payload) and "Keep cap at 15000." in json.dumps(payload)
     reader = importlib.import_module("functions_orchestration_result_runtime")
+    evidence_status = reader.read_result_evidence_status(case.context, task.output("prepared"))
+    assert evidence_status["state"] == "complete"
+    assert evidence_status["sources"][0]["evidence_count"] == 1
     citations = reader.read_result_document_citations(case.context, task.output("prepared"))
     citation = next(item for item in citations if item.get("evidence_kind") == "native_word_annotation")
     contracts = importlib.import_module("functions_orchestration_result_contracts")
@@ -467,6 +471,43 @@ def test_word_comments_use_the_real_word_reader_and_reach_retained_answers(
         assert "PRIVATE_INVALID_SOURCE_LABEL" not in json.dumps(safe_fields)
         answer = case.fixture.restart().open_result(case.context.task_results["answer"].output("answer")).read_text()
         assert answer == candidate
+
+
+@pytest.mark.parametrize("source_format", ["docx", "xlsx"])
+@pytest.mark.parametrize("output", ["prepared", "evidence"])
+def test_complete_empty_native_inventory_remains_supporting_evidence(
+    runtime, monkeypatch, inventory_store, tmp_path, source_format, output,
+):
+    if source_format == "docx":
+        step, calls, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package(comments=False))
+    else:
+        workbook = Workbook()
+        workbook.active["A1"] = "No review comments"
+        path = tmp_path / "empty-comments.xlsx"
+        workbook.save(path)
+        workbook.close()
+        step, calls, _ = configure_inventory(runtime, monkeypatch, inventory_store, path)
+    case = runtime.make([
+        step, compose("answer", inputs={"comments": source_input("comments", output)}),
+    ], ["The complete native inventory contains no comments."], final_response=binding("answer"))
+    case.fixture.sources["document-1"] = {**source(), "file_name": f"review.{source_format}"}
+    result = execute(runtime, case)
+    assert result["status"] == "completed", result["steps"]
+    reader = importlib.import_module("functions_orchestration_result_runtime")
+    reopened = SimpleNamespace(result_service=case.fixture.restart())
+    for reference in (
+        case.context.task_results["comments"].output(output),
+        case.context.task_results["answer"].output("answer"),
+    ):
+        status = reader.read_result_evidence_status(reopened, reference)
+        citations = reader.read_result_document_citations(reopened, reference)
+        assert status["state"] == "complete"
+        assert status["sources"][0]["state"] == "complete"
+        assert status["sources"][0]["evidence_count"] == 0
+        assert len(citations) == 1
+        assert citations[0]["evidence_kind"] == "native_annotation_coverage"
+        assert citations[0]["native_evidence"]
+    assert len(calls) == 1, "Reading saved coverage must not inspect the original file again."
 
 
 def test_word_evidence_does_not_bypass_repeated_unsupported_answer_findings(runtime, monkeypatch):
@@ -601,6 +642,9 @@ def test_native_workbook_comments_reach_retained_evidence_and_composition(
     assert all(citation["location_label"] == "Location" for citation in annotated)
     assert all(citation["document_id"] == "document-1" and citation["native_evidence"] for citation in annotated)
     reader = importlib.import_module("functions_orchestration_result_runtime")
+    evidence_status = reader.read_result_evidence_status(case.context, task.output("prepared"))
+    assert evidence_status["state"] == "complete"
+    assert evidence_status["sources"][0]["evidence_count"] == 5
     contracts = importlib.import_module("functions_orchestration_result_contracts")
     for citation in citations:
         evidence = reader.read_native_citation_evidence(
@@ -765,6 +809,9 @@ def test_native_inventory_failures_are_not_empty_success_and_limits_remain_parti
         assert coverage["partial"] and coverage["has_more"]
         assert coverage["returned_records"] < coverage["total_records"]
         assert task.output("prepared").completeness.status == "partial"
+        reader = importlib.import_module("functions_orchestration_result_runtime")
+        status = reader.read_result_evidence_status(case.context, task.output("prepared"))
+        assert status["state"] == "partial"
     else:
         assert result["status"] == "failed"
         assert "comments" not in case.context.task_results

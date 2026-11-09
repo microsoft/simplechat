@@ -108,6 +108,30 @@ export function readSavedAnalyses(metadata: unknown): (SavedAnalysisDescriptor |
     return results;
 }
 
+export function savedAnalysisLimitation(
+    analyses: readonly (SavedAnalysisDescriptor | null)[],
+    unavailable = false,
+): string | null {
+    if (!analyses.length) {
+        return null;
+    }
+    if (unavailable || analyses.some((descriptor) => !descriptor || descriptor.available === false)) {
+        return 'Saved analysis unavailable';
+    }
+    const labels = {
+        invalid: 'Analysis validation failed',
+        partial: 'Partial analysis',
+        pending: 'Analysis validation pending',
+        not_validated: 'Analysis not validated',
+    } as const;
+    for (const status of ['invalid', 'partial', 'pending', 'not_validated'] as const) {
+        if (analyses.some((descriptor) => descriptor?.validation_status === status)) {
+            return labels[status];
+        }
+    }
+    return null;
+}
+
 export function analysisResultContext(value: AnalysisResultContext): AnalysisResultContext {
     return {
         conversation_id: value.conversation_id,

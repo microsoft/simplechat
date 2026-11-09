@@ -1,8 +1,9 @@
 # test_v2_evidence_status.py
 """Rendered V2 evidence status, source scoping, and raw citation regressions.
 
-Version: 0.261.389
+Version: 0.261.424
 Implemented in: 0.261.388
+Complete empty native inventory presentation covered in: 0.261.424
 
 Uses the shared local/Azure Playwright connection and real bundled components.
 HTTP responses are synthetic; no production conversations or models are used.
@@ -32,21 +33,26 @@ __all__ = ["connect_options"]
 
 
 def reply(state, identifier="evidence-answer"):
-    sources = [{"name": "Guide.md", "document_id": DOCUMENT,
+    name = "Review.docx" if state == "complete" else "Guide.md"
+    sources = [{"name": name, "document_id": DOCUMENT,
                 "state": "complete" if state == "partial" else state,
                 **({"evidence_count": 1 if state == "partial" else 0} if state != "unavailable" else {})}]
     if state == "partial":
         sources.append({"name": "Additional notes.md", "document_id": "other-document", "state": "missing", "evidence_count": 0})
     return {
         "id": identifier, "conversation_id": CONVERSATION, "role": "assistant",
-        "content": f"The supported retention period is 30 days. \u3010{CITATION}\u3011" if state == "partial"
-        else "The selected sources did not provide enough information to answer.",
+        "content": f"The supported retention period is 30 days. \u3010{CITATION}\u3011" if state == "partial" else
+        f"The complete native inventory contains no comments. \u3010{CITATION}\u3011" if state == "complete" else
+        "The selected sources did not provide enough information to answer.",
         "augmented": True,
         "hybrid_citations": [{"citation_id": CITATION, "document_id": DOCUMENT,
-                              "file_name": "Guide.md", "page_number": 1}] if state == "partial" else [],
+                              "file_name": name, "page_number": 1,
+                              **({"evidence_kind": "native_annotation_coverage",
+                                  "location_label": "Location", "location_value": "Native annotation inventory"}
+                                 if state == "complete" else {})}] if state in ("partial", "complete") else [],
         "metadata": {"evidence_status": {
             "version": 1, "scope": "returned_evidence", "state": state, "sources": sources,
-            "suggestions": ["Add a relevant document or select another authorized source."],
+            "suggestions": [] if state == "complete" else ["Add a relevant document or select another authorized source."],
         }},
     }
 
@@ -54,7 +60,7 @@ def reply(state, identifier="evidence-answer"):
 @pytest.mark.ui
 @pytest.mark.parametrize("width", [390, 1440])
 @pytest.mark.parametrize("theme", ["light", "dark"])
-@pytest.mark.parametrize("state", ["partial", "missing", "unavailable"])
+@pytest.mark.parametrize("state", ["complete", "partial", "missing", "unavailable"])
 def test_evidence_notice_opens_scoped_source_details_and_document_pane(page, width, theme, state):
     harness_build.ensure_bundle()
     errors = []
@@ -85,18 +91,27 @@ def test_evidence_notice_opens_scoped_source_details_and_document_pane(page, wid
             });
             H.mount('mount-a', 'MessageList');
         }""", {"message": reply(state), "conversation": CONVERSATION})
-        button = page.get_by_role("button", name=f"{LABELS[state]}. View source coverage", exact=True)
+        if state == "complete":
+            expect(page.get_by_text("No supporting document evidence returned", exact=False)).to_have_count(0)
+            button = page.get_by_role("button", name="Show sources (1)", exact=True)
+        else:
+            button = page.get_by_role("button", name=f"{LABELS[state]}. View source coverage", exact=True)
         expect(button).to_be_visible()
         page.evaluate("(dark) => document.documentElement.classList.toggle('dark', dark)", theme == "dark")
-        expect(button).to_have_attribute("data-evidence-state", state)
+        if state != "complete":
+            expect(button).to_have_attribute("data-evidence-state", state)
         expect(button).to_have_attribute("aria-controls", "message-inspector-evidence-answer")
         button.focus()
         page.keyboard.press("Enter")
         expect(button).to_have_attribute("aria-expanded", "true")
         details = page.locator("#mount-a").get_by_role("region", name="Evidence for this answer")
         expect(details).to_be_visible()
-        expect(details).to_contain_text("Guide.md")
-        expect(details).to_contain_text("Add a relevant document")
+        expect(details).to_contain_text("Review.docx" if state == "complete" else "Guide.md")
+        if state == "complete":
+            expect(details).to_contain_text("Inspection completed with no matching records")
+            expect(details).not_to_contain_text("0 evidence items returned")
+        else:
+            expect(details).to_contain_text("Add a relevant document")
         if (state, width, theme) == ("missing", 390, "dark"):
             artifacts = ROOT / "ui_tests" / "artifacts"
             artifacts.mkdir(exist_ok=True)
@@ -116,7 +131,7 @@ def test_evidence_notice_opens_scoped_source_details_and_document_pane(page, wid
         }""")
         drawer = page.get_by_role("complementary", name="Conversation details")
         expect(drawer.get_by_role("region", name="Evidence for this answer")).to_be_visible()
-        expect(drawer).to_contain_text("Guide.md")
+        expect(drawer).to_contain_text("Review.docx" if state == "complete" else "Guide.md")
         if state == "partial":
             expect(page.locator("#message-evidence-answer")).not_to_contain_text(CITATION)
             expect(drawer).to_contain_text("Additional notes.md")
@@ -140,7 +155,8 @@ def test_evidence_notice_opens_scoped_source_details_and_document_pane(page, wid
             }""", mask)
             expect(page.locator("#mount-a").get_by_role("region", name="Evidence for this answer")).to_have_count(0)
             expect(drawer.get_by_role("region", name="Evidence for this answer")).to_have_count(0)
-            expect(button).to_have_count(0)
+            if state != "complete":
+                expect(button).to_have_count(0)
         page.evaluate("""() => {
             const H = window.OrchHarness;
             H.stores.chat.useChatStore.setState({

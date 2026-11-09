@@ -43,7 +43,6 @@ import {
 import { InlineMapCards } from './InlineMapCard';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
-import { AnalysisResult } from './AnalysisResult';
 import type { SavedAnalysisDescriptor } from '../../lib/types';
 import { IconButton, MessageActions } from './MessageActions';
 import { isCheckingFailureNotice, OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
@@ -116,7 +115,7 @@ import { orchestrationStartedWorkflow } from '../../lib/orchestrationWorkflowRun
 import { orchestrationHandedOffWorkflow } from '../../lib/workflowHandoffs';
 import { readWorkflowDelivery } from '../../lib/workflowDelivery';
 import { workflowRunTrackerShouldRun } from '../../lib/workflowRunTracker';
-import { analysisUnavailableMessage, readSavedAnalyses, sameAnalysis } from '../../lib/savedAnalysis';
+import { readSavedAnalyses, sameAnalysis, savedAnalysisLimitation } from '../../lib/savedAnalysis';
 import { readMessagePrompt } from '../../lib/messagePrompt';
 import { PromptCard } from './PromptCard';
 import {
@@ -916,14 +915,14 @@ function MessageBubbleInner({
     const managedOutputs = orchestration.outputs !== undefined || liveOutputs !== undefined;
     const savedAnalyses = useMemo(() => readSavedAnalyses(message.metadata), [message.metadata]);
     const hasSavedAnalysis = savedAnalyses.length > 0;
-    const [unavailableAnalysisKeys, setUnavailableAnalysisKeys] = useState<Set<string>>(() => new Set());
-    const markAnalysisUnavailable = useCallback((descriptor: SavedAnalysisDescriptor) => {
+    const [unavailableAnalyses, setUnavailableAnalyses] = useState<Map<string, string>>(() => new Map());
+    const markAnalysisUnavailable = useCallback((descriptor: SavedAnalysisDescriptor, message: string) => {
         const key = `${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`;
-        setUnavailableAnalysisKeys((keys) => new Set(keys).add(key));
+        setUnavailableAnalyses((entries) => new Map(entries).set(key, message));
     }, []);
     const analysisUnavailable = hasSavedAnalysis && savedAnalyses.some((descriptor) =>
         !descriptor || descriptor.available === false || descriptor.conversation_id !== activeConversationId ||
-        unavailableAnalysisKeys.has(`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`));
+        unavailableAnalyses.has(`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`));
     const canRepeatPlan = message.role === 'assistant' && !analysisUnavailable
         && planReplayAvailable && Boolean(orchestration.run_id) && orchestration.outcome === 'completed'
         && !masks.fullyMasked && masks.ranges.length === 0 && personalConversation
@@ -950,10 +949,10 @@ function MessageBubbleInner({
         const selected = savedAnalyses.find((descriptor) => sameAnalysis(store.analysisResultContext, descriptor));
         if (selected && (masks.fullyMasked || masks.ranges.length > 0 || selected.available === false ||
             selected.conversation_id !== activeConversationId ||
-            unavailableAnalysisKeys.has(`${selected.conversation_id}:${selected.message_id}:${selected.result_sha256}`))) {
+            unavailableAnalyses.has(`${selected.conversation_id}:${selected.message_id}:${selected.result_sha256}`))) {
             store.clearAnalysisResultContext();
         }
-    }, [unavailableAnalysisKeys, activeConversationId, masks.fullyMasked, masks.ranges.length,
+    }, [unavailableAnalyses, activeConversationId, masks.fullyMasked, masks.ranges.length,
         savedAnalyses, message.id, message.role, message.conversation_id]);
     const artifactCards = artifacts.filter((artifact) =>
         !managedOutputs || !isOrchestrationOutputArtifact(artifact)).map((artifact, index) => (
@@ -1262,16 +1261,6 @@ function MessageBubbleInner({
                         ) : null}
                         {/* Inside the bubble, because a generated file belongs to the reply
                             that produced it rather than sitting loose in the thread. */}
-                        {hasSavedAnalysis && (masks.ranges.length > 0 ? (
-                            <p className="mt-2 text-xs text-text-3">Saved findings are hidden while this message is masked.</p>
-                        ) : savedAnalyses.map((descriptor, index) => descriptor ? (
-                            <AnalysisResult key={`${descriptor.conversation_id}:${descriptor.message_id}:${descriptor.result_sha256}`}
-                                descriptor={descriptor} onUnavailable={markAnalysisUnavailable} />
-                        ) : (
-                            <p key={`unavailable-analysis-${index}`} role="status" className="mt-2 text-sm text-text-2">
-                                {analysisUnavailableMessage()}
-                            </p>
-                        )))}
                         {!analysisUnavailable && (!hasSavedAnalysis || masks.ranges.length === 0) && (
                             hasSavedAnalysis ? artifactCards.length > 0 && (
                                 <details className="mt-2">
@@ -1292,6 +1281,7 @@ function MessageBubbleInner({
                         ) : null}
                         {masks.ranges.length === 0 && <EvidenceStatusFooter
                             status={readEvidenceStatus(message.metadata?.evidence_status)}
+                            analysisNotice={savedAnalysisLimitation(savedAnalyses, analysisUnavailable)}
                             expanded={inspector === 'sources'}
                             controlsId={`message-inspector-${message.id}`}
                             onOpen={() => inspectMessage('sources')}
@@ -1319,7 +1309,13 @@ function MessageBubbleInner({
                     inspector || replayExpanded ? 'opacity-100' : 'opacity-0',
                 )}
             >
-                {!analysisUnavailable && <MessageActions
+                {analysisUnavailable ? (
+                    <IconButton label="Show sources" active={inspector === 'sources'}
+                        expanded={inspector === 'sources'} controls={`message-inspector-${message.id}`}
+                        onClick={() => inspectMessage(inspector === 'sources' ? null : 'sources')}>
+                        <BookOpen size={15} />
+                    </IconButton>
+                ) : <MessageActions
                     message={message}
                     onEdit={isUser ? () => setEditing(true) : undefined}
                     inspector={inspector}
@@ -1354,6 +1350,8 @@ function MessageBubbleInner({
                     section={inspector}
                     onSection={inspectMessage}
                     onClose={() => setInspector(null)}
+                    onAnalysisUnavailable={markAnalysisUnavailable}
+                    unavailableAnalyses={unavailableAnalyses}
                 />
             )}
         </div>

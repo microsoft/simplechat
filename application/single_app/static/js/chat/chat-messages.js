@@ -6144,13 +6144,11 @@ export function appendMessage(
       `Condition check (Boolean(citationsButtonsHtml) && hasAnyCitations): ${shouldShowCitations}`
     );
 
-    if (shouldShowCitations) {
+    const hasSavedAnalysis = readSavedAnalyses(fullMessageObject?.metadata).length > 0;
+    if (shouldShowCitations || hasSavedAnalysis) {
       console.log(">>> Will generate and include citation elements.");
-      const citationsContainerId = `citations-${messageId || Date.now()}`;
-      citationToggleHtml = `<button class="btn btn-sm btn-link text-muted citation-toggle-btn" title="Show sources" aria-expanded="false" aria-controls="${citationsContainerId}"><i class="bi bi-journal-text"></i></button>`;
-      // citationsButtonsHtml already contains a <div class="citations-container"> wrapper
-      // Just add ID and display style by wrapping minimally
-      citationContentContainerHtml = `<div id="${citationsContainerId}" style="display: none;">${citationsButtonsHtml}</div>`;
+      citationToggleHtml = '<button class="btn btn-sm btn-link text-muted citation-toggle-btn" title="Show sources" aria-label="Show sources" aria-expanded="false"><i class="bi bi-journal-text"></i></button>';
+      citationContentContainerHtml = '<div class="message-sources d-none"></div>';
     } else {
       console.log(">>> Will NOT generate citation elements.");
     }
@@ -6184,6 +6182,16 @@ export function appendMessage(
                     ${footerContentHtml}
                 </div>
             </div>`;
+
+    const sourcesContainer = messageDiv.querySelector(':scope > .message-content > .message-bubble > .message-sources');
+    const sourcesToggle = messageDiv.querySelector(
+        ':scope > .message-content > .message-bubble > .message-footer .citation-toggle-btn',
+    );
+    if (sourcesContainer) {
+        sourcesContainer.id = `citations-${messageId || Date.now()}`;
+        sourcesContainer.innerHTML = sanitizeHtmlSafely(citationsButtonsHtml);
+        sourcesToggle.setAttribute('aria-controls', sourcesContainer.id);
+    }
 
               messageDiv.dataset.replySenderName = stripHtmlTags(senderLabel).replace(/\s+/g, " ").trim() || "AI";
               messageDiv.dataset.replyPreviewText = buildPlainTextPreview(renderedAiContent.previewMarkdown);
@@ -6381,24 +6389,25 @@ export function appendMessage(
           showToast("Failed to copy text.", "warning");
         });
     });
-    const toggleBtn = messageDiv.querySelector(".citation-toggle-btn");
+    const toggleBtn = sourcesToggle;
     if (toggleBtn) {
       toggleBtn.addEventListener("click", () => {
         /* ... toggle logic ... */
-        const targetId = toggleBtn.getAttribute("aria-controls");
-        const citationsContainer = messageDiv.querySelector(`#${targetId}`);
+        const citationsContainer = sourcesContainer;
         if (!citationsContainer) return;
 
         // Store current scroll position to maintain user's view
         const currentScrollTop = document.getElementById('chat-messages-container')?.scrollTop || window.pageYOffset;
 
-        const isExpanded = citationsContainer.style.display !== "none";
-        citationsContainer.style.display = isExpanded ? "none" : "block";
+        const isExpanded = !citationsContainer.classList.contains('d-none');
+        citationsContainer.classList.toggle('d-none', isExpanded);
         toggleBtn.setAttribute("aria-expanded", !isExpanded);
         toggleBtn.title = isExpanded ? "Show sources" : "Hide sources";
+        toggleBtn.setAttribute("aria-label", toggleBtn.title);
         toggleBtn.innerHTML = isExpanded
           ? '<i class="bi bi-journal-text"></i>'
           : '<i class="bi bi-chevron-up"></i>';
+        messageDiv.dispatchEvent(new CustomEvent('chat:sources-toggled', { detail: { open: !isExpanded } }));
         // Note: Removed scrollChatToBottom() to prevent jumping when expanding citations
 
         // Restore scroll position after DOM changes
