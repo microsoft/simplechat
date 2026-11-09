@@ -16,8 +16,10 @@ from azure.core.exceptions import AzureError, ResourceNotFoundError
 
 from content_screening.contracts import ScreeningError, Subject, subject_from_document
 from functions_appinsights import log_event
-from functions_excel_accessibility import extract_excel_accessibility_metadata
-from excel_workbook_reader import EXCEL_WORKBOOK_SCHEMA_VERSION
+from functions_excel_accessibility import (
+    EXCEL_NATIVE_INSPECTION_SCHEMA_VERSION as EXCEL_WORKBOOK_SCHEMA_VERSION,
+    extract_excel_accessibility_metadata,
+)
 
 
 EXCEL_INVENTORY_FIELD = "excel_native_inventory"
@@ -287,6 +289,7 @@ class ExcelInventoryReader:
     def _cursor(self, section, offset, fragment=0):
         return base64.urlsafe_b64encode(_encoded({
             "subject": self.subject.key, "source": self.manifest["source_sha256"],
+            "schema_version": EXCEL_WORKBOOK_SCHEMA_VERSION,
             "section": section, "offset": offset, "fragment": fragment,
         })).decode("ascii").rstrip("=")
 
@@ -298,8 +301,9 @@ class ExcelInventoryReader:
         except (ValueError, UnicodeError) as error:
             raise ValueError("The Excel inspection cursor is invalid.") from error
         if (
-            not isinstance(value, dict) or set(value) != {"subject", "source", "section", "offset", "fragment"}
+            not isinstance(value, dict) or set(value) != {"subject", "source", "schema_version", "section", "offset", "fragment"}
             or value["subject"] != self.subject.key or value["source"] != self.manifest["source_sha256"]
+            or value["schema_version"] != EXCEL_WORKBOOK_SCHEMA_VERSION
             or value["section"] != section
             or any(type(value[key]) is not int or value[key] < 0 for key in ("offset", "fragment"))
         ):

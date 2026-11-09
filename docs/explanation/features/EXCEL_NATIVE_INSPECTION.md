@@ -2,6 +2,7 @@
 
 Implemented in version: **0.261.408**.
 Related application version: `application/single_app/config.py`.
+Native field/control fidelity fixed/implemented in version: **0.261.424**.
 
 ## Overview
 
@@ -32,6 +33,35 @@ Images use the existing Office embedded-image analysis setting, configured
 engine, size limits, and per-document cap during ingestion/reprocessing.
 Generated image descriptions are separate from saved native alternative text.
 Missing analysis does not prove that the workbook contains no pictures.
+
+## Attribute presence and native checkboxes
+
+Fixed/Implemented in version: **0.261.424**
+(`application/single_app/config.py`).
+
+Object `native_fields` preserve whether description/title/decorative attributes
+are absent, present-empty, present-value, or inaccessible. An older normalized
+`alt_text=""` alone does not establish a stored native blank. Literal values such
+as `Picture` are returned as stored, not replaced with generated descriptions.
+
+Supported modern in-cell checkboxes are resolved through cell style extensions
+and the FeaturePropertyBag mapper/control chain. Their typed records appear in
+the `objects` inventory with `control_representation="in_cell"`, worksheet/cell,
+native control evidence, `checked`, and `checked_state`. Ordinary Boolean cells
+are not controls. Unknown or invalid mappings remain inaccessible, not
+Boolean-only or absent-control findings. Floating-picture Alt fields do not
+apply to an in-cell control.
+
+This inspection is bounded by the existing saved-cell/style limits; an
+uninspected late cell is not evidence that no checkbox exists. ActiveX/OLE and
+other control representations remain unsupported. Checked means the saved
+Boolean, not an interactive control state evaluated by Excel.
+
+The native inventory schema is now **3.0**, independently of the cell/table reader
+schema. Old native pages are rebuilt from retained authorized bytes when needed;
+this is not a request to re-upload or re-embed every workbook. Bounded saved-style
+groups retain inspected cell locations so formatting is not reduced to
+document-wide color/font totals.
 
 ## Tables and scale
 

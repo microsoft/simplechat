@@ -48,6 +48,8 @@ from functions_excel_inventory import (
 from functions_group import get_user_groups
 from functions_model_endpoint_identity_header import build_model_endpoint_identity_headers
 from functions_office_media import extract_docx_comments
+from functions_native_document_inspection import has_retained_native_source, inspect_native_document
+from functions_native_audit import build_native_audit
 from model_endpoint_clients import build_openai_client_timeout_options
 from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
@@ -1268,6 +1270,22 @@ def get_document_accessibility_payload(
     file_name = str(current_document.get("file_name") or "")
     extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
     requested_sections = _normalize_accessibility_sections(sections)
+    native_inspection = None
+    if extension in (".pdf", ".pptx") and has_retained_native_source(current_document):
+        if "comments" in requested_sections:
+            raise LookupError("The native comment inventory is unavailable for this document format.")
+        if cell_range or sheet_name:
+            raise ValueError("PDF and PowerPoint inspection does not accept worksheet filters.")
+        current_document, source_bytes = screening_access.read_available_document_bytes(
+            current_document, user_id=user_id, group_id=document_context.get("group_id"),
+            public_workspace_id=document_context.get("public_workspace_id"), purpose="accessibility",
+        )
+        document_context["document"] = current_document
+        native_inspection = inspect_native_document(
+            current_document, source_bytes, extension, section=native_section,
+            cursor=native_cursor, page_size=native_page_size, max_bytes=_native_max_bytes,
+        )
+        stored_metadata = native_inspection["metadata"]
     word_inspection = None
     if "comments" in requested_sections and extension in NATIVE_WORD_COMMENT_EXTENSIONS:
         if native_cursor or cell_range or sheet_name or native_section != "comments":
@@ -1302,14 +1320,24 @@ def get_document_accessibility_payload(
             max_bytes=_native_max_bytes,
         )
         stored_metadata = excel_inspection["metadata"]
-    elif native_cursor or cell_range:
+    elif (native_cursor or cell_range) and native_inspection is None:
         raise LookupError("The original workbook or full native inventory is unavailable for this inspection.")
+
+    active_hash = ((current_document.get("content_screening") or {}).get("active_blob") or {}).get("content_hash")
+    native_hash = stored_metadata.get("source_sha256") or (stored_metadata.get("inventory_storage") or {}).get("source_sha256")
+    if active_hash and stored_metadata.get("format") in ("pdf", "pptx", "xlsx", "xlsm", "xls") and native_hash != active_hash:
+        if word_inspection is not None and requested_sections == ["comments"]:
+            stored_metadata = {"format": extension.lstrip(".")}
+        else:
+            raise LookupError("Native metadata is unavailable for the authorized active representation. Inspect or reprocess that representation.")
 
     if "comments" in requested_sections and word_inspection is None and excel_inspection is None:
         raise LookupError("The native comment inventory is unavailable for this document format.")
     report = {}
     if word_inspection is not None:
         report["word_inspection"] = word_inspection
+    if native_inspection is not None:
+        report["native_inspection"] = {"page": native_inspection["page"]}
     if "accessibility" in requested_sections:
         report["accessibility_metadata"] = {
             key: value
@@ -1372,6 +1400,10 @@ def get_document_accessibility_payload(
             payload["accessibility_metadata"]["comment_page"] = {
                 key: value for key, value in page.items() if key != "records"
             }
+    if payload.get("accessibility_metadata"):
+        audit = build_native_audit(payload)
+        if audit is not None:
+            payload["native_audit"] = audit
     return payload
 
 

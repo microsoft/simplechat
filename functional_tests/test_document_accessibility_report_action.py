@@ -2,7 +2,7 @@
 # test_document_accessibility_report_action.py
 """
 Functional test for the get_document_accessibility_report Semantic Kernel function.
-Version: 0.261.392
+Version: 0.261.424
 Implemented in: 0.261.392
 
 This test ensures that:
@@ -24,6 +24,8 @@ APP_ROOT = REPO_ROOT / "application" / "single_app"
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from functions_native_document_inspection import has_retained_native_source, inspect_native_document  # noqa: E402
+from functions_native_audit import build_native_audit  # noqa: E402
 
 
 def _load_payload_namespace(document, scope="personal", chunks=None):
@@ -57,6 +59,9 @@ def _load_payload_namespace(document, scope="personal", chunks=None):
         "get_ordered_document_chunks": get_ordered_document_chunks,
         "_coerce_positive_int": lambda value, default_value=1: max(int(value), 1) if str(value).isdigit() else default_value,
         "_serialize_document": lambda doc, scope_name: {"id": doc.get("id"), "scope": scope_name},
+        "has_retained_native_source": has_retained_native_source,
+        "inspect_native_document": inspect_native_document,
+        "build_native_audit": build_native_audit,
     }
     for node in tree.body:
         if isinstance(node, ast.FunctionDef) and node.name in wanted_functions:

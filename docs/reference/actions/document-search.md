@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.422"
+version: "0.261.424"
 ---
 
 <!-- action-slug: document-search -->
@@ -47,16 +47,45 @@ The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** o
 
 ## Reading accessibility and formatting metadata
 
-The action includes a `get_document_accessibility_report` function for agents that review documents for accessibility or house style. For one document it returns the stored accessibility metadata (PDF tags, Office structure, comments), the style inventory (fonts, sizes, colours, outlier text, page setup), and the detected issues.
+The action includes a `get_document_accessibility_report` function for agents that review documents for accessibility or house style. It returns supported native accessibility/structure data, the style inventory, and detected issues. Retained authorized active PDF/PPTX sources can be inspected locally on request; stored legacy reports do not certify unavailable native fields.
 
 From **0.261.399**, workspace Excel files also expose native workbook properties, cell notes/threaded comments, object alternative text/decorative flags, formatting/layout and header/footer expressions. Modern `.xlsx`/`.xlsm` inspection has explicit saved-state coverage limits; legacy `.xls` is best effort. Use the report for the bounded workbook-wide inventory and document search for sheet/cell-addressed `Excel native inspection` evidence. Enhanced-citation workbooks still index a schema preview plus native evidence, not the complete worksheet data.
 
 - Choose which stored parts to return with `sections` (`accessibility`, `style`, `issues`); all three are returned by default. Opt-in Word `comments` inspection is separate.
 - Pass `page_number` to also get that page, slide or Excel indexed evidence segment's stored text. Excel segment numbers are not physical print-page numbers.
-- The stored workspace report does not grant access to chat uploads. For an existing workspace Excel file, retained active source bytes can be inspected on demand without re-uploading; unavailable originals need the normal re-upload/reprocessing workflow.
+- The workspace report does not grant access to chat uploads. Retained authorized active Excel, PDF and PPTX sources can be inspected without re-uploading. Missing source bytes may require explicit re-upload/reprocessing; access holds and sanitized active representations are never bypassed.
 - The issues list is heuristic. It is not a formal WCAG, Section 508, or PDF/UA conformance check. To apply your own rules, write them into the agent's instructions and have it compare them with the returned values.
 
 See [Document accessibility, structure, and comment extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for what is extracted for each file type.
+
+### Source-backed PDF/PPTX inspection
+
+Fixed/Implemented in version: **0.261.424**
+(`application/single_app/config.py`).
+
+Use `native_section` with `all`, `properties`, `structure`, `objects`, `artifacts`,
+`content`, or `issues`. Its default `comments` value maps to `all` for PDF/PPTX;
+it does not add a PDF/PPTX native-comment API. Follow
+`native_inspection.page.next_cursor` in `native_cursor` while `has_more` is true.
+Page size is 1-200 records with a separate response-byte limit; long records have
+explicit fragments. Cursors are tied to the source bytes, document revision and
+section. A complete returned page is not necessarily a whole-file inventory.
+
+`native_properties` and object `native_fields` distinguish `absent`,
+`present_empty`, `present_value` and `inaccessible`. PDF logical elements retain
+supported content references and bound text; raster resources are not all
+graphics. PPTX objects retain available object-linked styles and slide-local
+placeholder origins. Unresolved data must not be inferred from appearance,
+nearby text, or an empty compatibility field.
+
+Source-only Orchestrate native-audit answers validate `native_audit` fact
+references and render factual tables from the retained values. Incorrect drafts
+can be corrected; repeated unsupported claims fail rather than becoming a saved
+source assertion. This scoped check does not replace mixed research or computed
+answers, nor establish standards compliance.
+
+This read runs no new OCR/vision job and starts no bulk re-ingestion. Older
+Search chunks remain unchanged until explicit processing refreshes them.
 
 ### Native Word review comments
 

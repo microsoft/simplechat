@@ -1,7 +1,7 @@
 # test_orchestration_document_action_end_to_end.py
 """
 Authenticated native-document orchestration from HTTP submission to saved answer.
-Version: 0.261.423
+Version: 0.261.424
 Implemented in: 0.261.419
 Production plugin discovery coverage added in: 0.261.421
 
@@ -28,6 +28,7 @@ from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import AuthorRole, ChatMessageContent, FunctionCallContent
 
 from functions_task_completeness import NARRATIVE_OBLIGATIONS
+from functions_native_audit import render_native_audit
 from test_orchestration_harness_routes import modules, real_http_harness
 from test_orchestration_planner_contract_recovery import ACTION, action_proposal
 from test_orchestration_source_kind_planning import LEFT, source_runtime
@@ -202,6 +203,10 @@ def test_native_auto_turn_reaches_a_saved_cited_answer(native_http, caplog, exte
             "comments": [{"id": "comment-1", "text": "Review this date."}],
         }),
     }
+    if extension == "pdf":
+        # This control deliberately represents an old stored-only snapshot, not PDF bytes.
+        for field in ("blob_path", "archived_blob_path", "source_file_available", "enhanced_citations"):
+            document.pop(field, None)
     documents.upsert_item(document)
     citations = importlib.import_module("functions_agent_document_citations")
     marker = citations.annotate_document_search_payload({
@@ -216,17 +221,30 @@ def test_native_auto_turn_reaches_a_saved_cited_answer(native_http, caplog, exte
         "Report the native facts, source citations, and explicit inspection limits."
     )
 
+    rendered_answer = [answer]
+
+    def compose_reply():
+        payload = json.loads(harness.model_calls[-1]["messages"][-1]["content"])
+        contract = payload.get("native_audit_contract")
+        if contract is None:
+            return answer
+        rendered_answer[0] = render_native_audit(contract)
+        return json.dumps({"native_claims": [fact["id"] for fact in contract["facts"]]})
+
+    def completeness_reply():
+        return json.dumps({"requirements": [{
+            "id": identifier, "requirement": requirement, "status": "satisfied",
+            "reason": "", "evidence_refs": [], "answer_quote": rendered_answer[0],
+        } for identifier, requirement in NARRATIVE_OBLIGATIONS]})
+
     harness.replies = [
         json.dumps({
             "relationship": "new_topic", "resolved_message": MESSAGE, "message_ids": [],
             "requires_retrieval": True, "clarification": "",
         }),
         json.dumps(proposal),
-        answer,
-        json.dumps({"requirements": [{
-            "id": identifier, "requirement": requirement, "status": "satisfied",
-            "reason": "", "evidence_refs": [], "answer_quote": answer,
-        } for identifier, requirement in NARRATIVE_OBLIGATIONS]}),
+        compose_reply,
+        completeness_reply,
     ]
     with caplog.at_level(logging.INFO, logger=state.logger.name):
         response = runtime.client.post("/api/v2/orchestration/plan", json={
@@ -275,8 +293,11 @@ def test_native_auto_turn_reaches_a_saved_cited_answer(native_http, caplog, exte
     assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
     answers = harness.assistant_messages()
     assert len(answers) == 1 and marker in answers[0]["content"]
-    assert finding in answers[0]["content"]
-    assert "Formal conformance is not determined." in answers[0]["content"]
+    if extension == "pdf":
+        assert "inaccessible" in answers[0]["content"] and "Stored legacy snapshot" in answers[0]["content"]
+    else:
+        assert finding in answers[0]["content"]
+        assert "Formal conformance is not determined." in answers[0]["content"]
     assert len(state.native_calls) == 2 and state.report_reads == [(LEFT, "owner")]
     assert len(harness.model_calls) == 4 and harness.replies == []
     compose_call = next(

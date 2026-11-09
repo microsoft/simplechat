@@ -68,6 +68,9 @@ from functions_orchestration_workflow_context import resolve_turn_time_zone, wor
 from functions_task_completeness import (
     check_and_correct, completeness_policy, public_completeness_report,
 )
+from functions_native_audit import (
+    native_audit_contract, native_audit_policy, render_native_audit, validate_native_audit_claims,
+)
 
 
 COMPOSE_POLICY = (
@@ -684,6 +687,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             transform_context = transform_preparation_context(step, readers, inputs, images)
             transform_policy = f'{TRANSFORM_POLICY} Required mode: {transform_context["mode"]}.'
         plain_text = len(outputs) == 1 and outputs[0]['kind'] in ('text-v1', 'markdown-v1')
+        audit_contract = native_audit_contract(inputs) if plain_text and not images else None
         unavailable = _missing_optional_inputs(step, context)
         missing_images = [item for item in unavailable if item['capability_id'] == CAPABILITY_GENERATE_IMAGE]
         missing = [item for item in unavailable if item not in missing_images]
@@ -699,6 +703,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             AVAILABLE_INFORMATION_INSTRUCTIONS if uses_available_information(step) else '',
             MISSING_IMAGE_POLICY if missing_images else '',
             CITATION_POLICY if _carries_citation_values(inputs) else '',
+            native_audit_policy(audit_contract) if audit_contract else
             'Return only the prepared text.' if plain_text else ' '.join((
                 JSON_OUTPUT_POLICY, *(_output_shape(output) for output in outputs),
             )),
@@ -738,6 +743,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 'request': context.user_request,
                 'instruction': step['arguments']['instruction'],
                 'inputs': _model_inputs(inputs, charts), 'outputs': outputs,
+                **({'native_audit_contract': audit_contract} if audit_contract else {}),
                 **({'profiles': profiles} if profiles else {}),
                 **({'unavailable_inputs': [
                     {'name': item['name'], 'reason': item['reason']} for item in missing
@@ -767,7 +773,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             'complete_named_inputs': all(reader.completeness.status == 'complete' for reader in readers.values()),
             'input_result_digests': {name: reader.reference.content_sha256 for name, reader in readers.items()},
         }
-        if not plain_text:
+        if not plain_text or audit_contract:
             # Ask the endpoint for a JSON object; invoke drops the option if it is refused.
             metadata['json_output'] = True
         titles = {image['asset_id']: image['title'] for image in images}
@@ -775,7 +781,12 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         def prepared_values(response):
             if type(response) is not str or not response.strip():
                 raise ResultContractError('result_value_invalid')
-            if plain_text:
+            if audit_contract:
+                rendered = render_native_audit(audit_contract)
+                values = {outputs[0]['name']: (
+                    rendered if response == rendered else validate_native_audit_claims(response, audit_contract)
+                )}
+            elif plain_text:
                 values = {outputs[0]['name']: response}
             else:
                 values = json.loads(response, object_pairs_hook=_unique_object)
@@ -858,7 +869,10 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 try:
                     prepared = prepared_values(candidate)
                 except ValueError as error:
-                    return [_compose_correction(error, outputs) or 'The declared output format is invalid.']
+                    return [
+                        native_audit_policy(audit_contract) if audit_contract else
+                        _compose_correction(error, outputs) or 'The declared output format is invalid.'
+                    ]
                 visual_rules = _compose_visual_rules(step, prepared)
                 return [visual_rules] if visual_rules else []
 
@@ -872,7 +886,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 if check_audit['decision'] != 'full_input':
                     raise WorkflowContextBudgetError(check_audit)
                 reply = invoke(check_messages, stage=stage, metadata={
-                    **metadata, 'json_output': stage == 'completeness_check' or not plain_text,
+                    **metadata, 'json_output': stage == 'completeness_check' or not plain_text or bool(audit_contract),
                     **({'response_format': response_format} if response_format is not None else {}),
                 })
                 recheck()
@@ -979,7 +993,10 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         try:
             values = prepared_values(response)
         except ValueError as error:
-            correction = None if plain_text else _compose_correction(error, outputs)
+            correction = (
+                native_audit_policy(audit_contract) if audit_contract
+                else None if plain_text else _compose_correction(error, outputs)
+            )
             if correction is None:
                 raise
             reply_error = error
@@ -1050,6 +1067,8 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             value = values[specification['name']]
             count = len(value) if specification['kind'] == 'records-v1' else 1
             checks = ('prepared_output_schema', 'authoritative_input_reads')
+            if audit_contract:
+                checks += ('native_audit_claims_verified',)
             if uses_available_information(step):
                 checks += (NARRATIVE_READY_CHECK,)
                 if specification.get('profile'):
