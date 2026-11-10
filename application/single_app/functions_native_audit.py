@@ -10,9 +10,62 @@ from native_document_evidence import NATIVE_FIELD_STATES, inaccessible_field
 
 
 NATIVE_AUDIT_VERSION = "native-audit-v1"
-NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v2"
+NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v3"
 MAX_AUDIT_FACTS = 1000
 MAX_AUDIT_BYTES = 100000
+NATIVE_AUDIT_ANSWER_ERRORS = {
+    "native_answer_json_invalid": (
+        "Native audit output is not valid JSON.",
+        "Return the complete JSON object, without Markdown fences or surrounding commentary.",
+    ),
+    "native_answer_duplicate_key": (
+        "Native audit output contains a duplicate key.",
+        "Include each JSON key exactly once.",
+    ),
+    "native_answer_shape_invalid": (
+        "Native audit output must contain native_claims and its answer.",
+        "Return exactly native_claims and answer; do not return a checking report or additional keys.",
+    ),
+    "native_answer_missing": (
+        "Native audit output omitted the requested customer answer.",
+        "Include a nonempty answer explaining the supported findings and precise limitations.",
+    ),
+    "native_answer_claims_mismatch": (
+        "Native audit claims do not match the retained source facts.",
+        "Copy native_audit_contract.fact_set_sha256 exactly; it is not the source-file hash.",
+    ),
+    "native_answer_text_invalid": (
+        "Native audit answer must be nonempty Markdown.",
+        "The answer value must be a nonempty Markdown string, not an object, array, or null.",
+    ),
+    "native_answer_citation_unknown": (
+        "Native audit answer contains an unknown citation.",
+        "Use only native_audit_contract.answer_citations; remove invented or altered citation markers.",
+    ),
+}
+NATIVE_AUDIT_REVIEW_POLICY = (
+    "For this native audit, independently compare the explanation with evidence.native_audit_contract. "
+    "A valid digest or an accurate appended table does not verify the prose. Check every object's "
+    "property-state claims: absent means the property is not stored; present_empty means it is stored "
+    "as an empty string; inaccessible means the inspection cannot establish it. A normalized alt_text "
+    "or title default is not an exact native value. Reject a claim of a native empty string when the "
+    "corresponding description/title fact is absent or inaccessible, even if other prose or the table "
+    "states the correct absence. Preserve whitespace, false and zero as present values. "
+    "Action-model paraphrases cannot override canonical facts. Native logical order, paint-operation "
+    "counts, and complete returned inventory pages do not prove a rendered visible-content review. "
+    "An explicit, accurate limitation satisfies an unsupported check alongside useful findings. "
+    "The candidate is customer Markdown, not the preparation JSON. Return the requested assessment "
+    "schema, not a native-answer envelope."
+)
+
+
+class NativeAuditAnswerError(ValueError):
+    """A content-free preparation diagnostic, separate from source/access failures."""
+
+    def __init__(self, code):
+        self.code = code
+        self.correction = NATIVE_AUDIT_ANSWER_ERRORS[code][1]
+        super().__init__(NATIVE_AUDIT_ANSWER_ERRORS[code][0])
 
 
 def _encoded(value):
@@ -281,6 +334,7 @@ def native_audit_contract(inputs):
     """Only recognize actual native-reader invocation results, never document prose."""
     facts, citations, files, limitations = [], [], [], []
     seen, source_hashes, inventory_pages, inventory_files, unfinished = {}, {}, {}, {}, set()
+    source_versions = {}
     for entry in inputs.values():
         value = entry.get("value")
         if not isinstance(value, dict):
@@ -309,6 +363,10 @@ def native_audit_contract(inputs):
             if document_id in source_hashes and source_hashes[document_id] != source_hash:
                 raise ValueError("The native source changed between retained inspections.")
             source_hashes[document_id] = source_hash
+            source_version = (result.get("document") or {}).get("version")
+            if document_id in source_versions and source_versions[document_id] != source_version:
+                raise ValueError("The native source version changed between retained inspections.")
+            source_versions[document_id] = source_version
             if audit.get("facts_omitted"):
                 limitations.append("The native fact handoff reached its limit; the returned facts are not exhaustive.")
             page = (result.get("native_inspection") or result.get("excel_inspection") or {}).get("page")
@@ -348,8 +406,28 @@ def native_audit_contract(inputs):
     complete_chains = {key: _native_page_chain_complete(pages) for key, pages in inventory_pages.items()}
     if any(not complete_chains.get(key, False) for key in unfinished):
         limitations.append("A native inventory page has a continuation; only returned records are represented.")
+    answer_citations = list(citations)
+    for entry in inputs.values():
+        # These are projected by the authorized retained-result owner, never from source prose.
+        for citation in entry.get("document_citations") or []:
+            if not isinstance(citation, dict) or citation.get("document_id") not in source_hashes:
+                continue
+            version = citation.get("version")
+            native_version = source_versions[citation["document_id"]]
+            if version is not None and native_version is not None and version != native_version:
+                raise ValueError("A supporting citation refers to a different native source version.")
+            marker = citation.get("citation")
+            if isinstance(marker, str) and marker:
+                answer_citations.append(marker)
     return {
         "facts": facts, "citations": list(dict.fromkeys(citations)), "files": list(dict.fromkeys(files)),
+        "answer_citations": list(dict.fromkeys(answer_citations)),
+        "evidence_modes": {
+            "native_source_records": any(bool(source_hash) for source_hash in source_hashes.values()),
+            "all_sources_freshly_inspected": all(bool(source_hash) for source_hash in source_hashes.values()),
+            "rendered_page_comparison": False,
+            "accessibility_certification": False,
+        },
         "limitations": list(dict.fromkeys(limitations)),
         "fact_set_sha256": hashlib.sha256(_encoded(facts).encode()).hexdigest(),
         "inventory_coverage": [{
@@ -358,6 +436,90 @@ def native_audit_contract(inputs):
             "inventory_complete": all(page.get("inventory_complete") is True for page in pages),
             "total_records": pages[0].get("total_records"),
         } for key, pages in inventory_pages.items()],
+    }
+
+
+def native_audit_model_inputs(inputs, contract):
+    """Project native evidence for reasoning without changing retained source/compatibility records."""
+    facts = {fact["id"]: fact for fact in contract["facts"]}
+
+    def project(value):
+        if isinstance(value, list):
+            return [project(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        result = {key: project(item) for key, item in value.items()}
+        result.pop("alt_text", None)
+        native_fields = value.get("native_fields")
+        if isinstance(native_fields, dict):
+            for field in native_fields:
+                result.pop(field, None)
+            if "decorative" in native_fields:
+                result.pop("is_decorative", None)
+            result.pop("native_fields", None)
+        properties = value.get("native_properties")
+        if isinstance(properties, dict):
+            for field in properties:
+                result.pop(field, None)
+            result.pop("native_properties", None)
+        return result
+
+    projected = deepcopy(inputs)
+    for entry in projected.values():
+        value = entry.get("value")
+        if not isinstance(value, dict):
+            continue
+        if "notes" in value:
+            value["notes"] = [
+                "Interpret the canonical native_audit_contract and the returned source records. "
+                "The action's paraphrase is not native evidence."
+            ]
+        for citation in value.get("citations", []):
+            if citation.get("function_name") != "get_document_accessibility_report":
+                continue
+            report = citation.get("function_result")
+            if not isinstance(report, dict):
+                continue
+            audit = report.get("native_audit")
+            if not isinstance(audit, dict) or audit.get("version") != NATIVE_AUDIT_VERSION:
+                continue
+            report = project(report)
+            if audit.get("source_sha256") is None:
+                # Legacy display snapshots cannot establish native attribute presence.
+                for key in ("accessibility_metadata", "style_inventory", "native_inspection", "excel_inspection"):
+                    report.pop(key, None)
+            report["native_audit"]["facts"] = [
+                deepcopy(facts[fact["id"]]) for fact in audit["facts"]
+            ]
+            citation["function_result"] = report
+    return projected
+
+
+def native_audit_response_format(contract):
+    """The preparation/correction schema; semantic review has its own assessment schema."""
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "native_audit_answer",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "properties": {
+                    "native_claims": {
+                        "type": "object",
+                        "properties": {
+                            "scope": {"type": "string", "enum": ["all_returned"]},
+                            "fact_set_sha256": {"type": "string", "enum": [contract["fact_set_sha256"]]},
+                        },
+                        "required": ["scope", "fact_set_sha256"],
+                        "additionalProperties": False,
+                    },
+                    "answer": {"type": "string"},
+                },
+                "required": ["native_claims", "answer"],
+                "additionalProperties": False,
+            },
+        },
     }
 
 
@@ -373,8 +535,15 @@ def native_audit_policy(contract):
         "Lead with direct answers and organize findings by the requested checks, not just a raw inventory. "
         "The native_audit_contract facts are authoritative for native values, field states, object "
         "identity, text bindings and logical order; action-model notes cannot override them. "
-        "Do not replace absent or inaccessible fields with stored blanks, infer rendered compliance, "
-        "or invent source assertions or citations. Copy supplied citations verbatim where used. "
+        "For each property use its canonical state/value/reason, not normalized display aliases. "
+        "Absent is not present_empty: do not call an absent description/title an exact native empty "
+        "alt_text string. Inaccessible is not absent. Preserve whitespace, false and zero. "
+        "evidence_modes declares the inspection boundary: no rendered page comparison was performed. "
+        "Do not claim a visual review or identify a vector group as a chart from paint counts alone. "
+        "Disclose that boundary alongside useful native findings, not as an execution error. "
+        "Do not infer rendered compliance or invent source assertions or citations. "
+        "Copy native_audit_contract.answer_citations verbatim where used; supporting chunk citations "
+        "do not override native property facts. "
         "The server appends its immutable factual evidence table; do not copy that table into answer. "
         "The checker evaluates the rendered customer answer, not this JSON transport format."
     )
@@ -384,31 +553,37 @@ def _unique_native_object(pairs):
     value = {}
     for key, item in pairs:
         if key in value:
-            raise ValueError("Native audit output contains a duplicate key.")
+            raise NativeAuditAnswerError("native_answer_duplicate_key")
         value[key] = item
     return value
 
 
 def decode_native_audit_answer(response, contract, *, require_answer=False):
     """Validate immutable fact references separately from the checked explanation."""
-    value = json.loads(response, object_pairs_hook=_unique_native_object)
+    try:
+        value = json.loads(response, object_pairs_hook=_unique_native_object)
+    except (json.JSONDecodeError, TypeError, RecursionError) as error:
+        raise NativeAuditAnswerError("native_answer_json_invalid") from error
     if type(value) is not dict or set(value) not in (
         {"native_claims"}, {"native_claims", "answer"},
     ):
-        raise ValueError("Native audit output must contain native_claims and its answer.")
+        raise NativeAuditAnswerError("native_answer_shape_invalid")
     if require_answer and "answer" not in value:
-        raise ValueError("Native audit output omitted the requested customer answer.")
+        raise NativeAuditAnswerError("native_answer_missing")
     compact = {"scope": "all_returned", "fact_set_sha256": contract["fact_set_sha256"]}
     if value["native_claims"] not in (compact, [fact["id"] for fact in contract["facts"]]):
-        raise ValueError("Native audit claims do not match the retained source facts.")
+        raise NativeAuditAnswerError("native_answer_claims_mismatch")
     rendered = render_native_audit(contract)
     if "answer" in value:
         answer = value["answer"]
         if type(answer) is not str or not answer.strip():
-            raise ValueError("Native audit answer must be nonempty Markdown.")
-        allowed = set(re.findall(r"\[#[^\]\r\n]+\]", "\n".join(contract["citations"])))
+            raise NativeAuditAnswerError("native_answer_text_invalid")
+        allowed = {
+            match.group(0).rstrip() for citation in contract.get("answer_citations", contract["citations"])
+            if (match := re.search(r"\[#[^\]\r\n]+\]\s*$", citation)) is not None
+        }
         if set(re.findall(r"\[#[^\]\r\n]+\]", answer)) - allowed:
-            raise ValueError("Native audit answer contains an unknown citation.")
+            raise NativeAuditAnswerError("native_answer_citation_unknown")
         rendered = f"{answer.rstrip()}\n\n{rendered}"
     return value, rendered
 
@@ -426,7 +601,9 @@ def render_native_audit(contract):
     lines = [
         "## Native file evidence",
         "These are the inspected source records. Absent, present-empty and inaccessible are different states. "
-        "Graphics counts describe the returned native coverage, not a conformance certificate.",
+        "Absent means not stored; present-empty means stored as an empty string; inaccessible means "
+        "the inspection cannot establish the value. Graphics counts describe the returned native "
+        "coverage, not a rendered-page review or a conformance certificate.",
         "| Location | Field | Source state | Exact value / supported record |",
         "| --- | --- | --- | --- |",
     ]

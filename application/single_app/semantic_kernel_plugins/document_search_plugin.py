@@ -152,7 +152,11 @@ class DocumentSearchPlugin(BasePlugin):
                 },
                 {
                     'name': 'get_document_accessibility_report',
-                    'description': 'Return the full stored accessibility, structure, and formatting (font, size, colour) metadata for one workspace document.',
+                    'description': (
+                        'Return supported native accessibility, structure, and saved formatting metadata '
+                        'for one workspace document, with canonical property states and coverage limits. '
+                        'This does not render page images or compare all visible content against tags.'
+                    ),
                     'parameters': [
                         {'name': 'document_id', 'type': 'str', 'description': 'Document id to read metadata for.', 'required': True},
                         {'name': 'doc_scope', 'type': 'str', 'description': 'all, personal, group, or public.', 'required': False},
@@ -464,6 +468,10 @@ class DocumentSearchPlugin(BasePlugin):
             'Native field states distinguish absent, present_empty, present_value and inaccessible; '
             'an empty normalized alt_text alone does not establish a stored blank. Native logical '
             'bindings are not visual order. native_audit contains the exact source-grounded audit facts. '
+            'Use those state/value/reason records for every property claim, not compatibility display '
+            'aliases. This action does not return rendered page images or perform a visible-content '
+            'comparison; raster placements and vector-paint counts alone do not identify a chart. '
+            'Report native findings and disclose the unavailable rendered comparison normally. '
             'A missing property or unsupported check is information to disclose alongside supported '
             'findings, not evidence that the whole inspection failed. '
             'The payload carries a "citation" value; copy it verbatim into your answer when you use it.'

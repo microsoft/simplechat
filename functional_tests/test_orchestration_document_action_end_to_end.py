@@ -1,7 +1,7 @@
 # test_orchestration_document_action_end_to_end.py
 """
 Authenticated native-document orchestration from HTTP submission to saved answer.
-Version: 0.261.425
+Version: 0.261.426
 Implemented in: 0.261.419
 Production plugin discovery coverage added in: 0.261.421
 
@@ -303,10 +303,21 @@ def test_native_auto_turn_reaches_a_saved_cited_answer(native_http, caplog, exte
     compose_call = next(
         call for call in harness.model_calls if call["messages"][0]["content"].startswith("Prepare only")
     )
-    prepared = json.loads(compose_call["messages"][-1]["content"])["inputs"]["native_findings"]
-    native = json.loads(prepared["value"]["notes"][0].partition("\n")[2])
-    assert native["native_metadata"] == document["accessibility_metadata"]
-    assert native["citation"] == prepared["document_citations"][0]["citation"] == marker
+    compose_payload = json.loads(compose_call["messages"][-1]["content"])
+    prepared = compose_payload["inputs"]["native_findings"]
+    retained_report = next(
+        citation["function_result"] for citation in answers[0]["agent_citations"]
+        if citation["function_name"] == "get_document_accessibility_report"
+    )
+    assert retained_report["accessibility_metadata"] == document["accessibility_metadata"]
+    assert retained_report["citation"] == prepared["document_citations"][0]["citation"] == marker
+    if extension == "pdf":
+        assert compose_payload["native_audit_contract"]["evidence_modes"]["all_sources_freshly_inspected"] is False
+        assert PRIVATE not in json.dumps(prepared)
+        assert "action's paraphrase is not native evidence" in prepared["value"]["notes"][0]
+    else:
+        native = json.loads(prepared["value"]["notes"][0].partition("\n")[2])
+        assert native["native_metadata"] == document["accessibility_metadata"]
     if debug:
         stages = {record.sc_stage for record in records}
         assert {

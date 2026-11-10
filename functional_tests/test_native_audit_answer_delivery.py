@@ -1,7 +1,7 @@
 # test_native_audit_answer_delivery.py
 """Selected-file native audits through Auto routing, checked correction and delivery.
 
-Version: 0.261.425
+Version: 0.261.426
 Implemented in: 0.261.425
 Only external storage/configuration and provider replies are isolated. Real
 ownership, native readers, routing, retention, checking and publication execute.
@@ -13,7 +13,9 @@ import json
 from copy import deepcopy
 from types import SimpleNamespace
 
+import httpx
 import pytest
+from openai import BadRequestError
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import AuthorRole, ChatMessageContent, FunctionCallContent
 
@@ -121,6 +123,7 @@ def delivery(native_http, native_source, inventory_store, monkeypatch, name):
         state=state, runtime=runtime, harness=harness, path=path, name=name,
         request=PROMPTS[path.suffix], downloads=downloads, contract=None, executions=[],
         candidate_payloads=[], original_fact_digests=[], execution_frames=[], raw_facts={}, retained_facts={},
+        read_chunks=False,
     )
     prepare = harness.execution.prepare_harness_execution
 
@@ -142,6 +145,17 @@ def delivery(native_http, native_source, inventory_store, monkeypatch, name):
     original_reply = AzureChatCompletion._inner_get_chat_message_contents
 
     async def native_reply(self, history, settings):
+        if result.read_chunks:
+            returned = [
+                item.result for message in history.messages for item in message.items if hasattr(item, "result")
+            ]
+            last = returned[-1] if returned else None
+            last = json.loads(last) if isinstance(last, str) else last
+            if isinstance(last, dict) and "chunks" in last:
+                state.native_calls.append(deepcopy([message.to_dict() for message in history.messages]))
+                return [ChatMessageContent(
+                    role=AuthorRole.ASSISTANT, content="The available native records and supporting page were gathered.",
+                )]
         replies = await original_reply(self, history, settings)
         if len(state.native_calls) == 1:
             for reply in replies:
@@ -156,8 +170,8 @@ def delivery(native_http, native_source, inventory_store, monkeypatch, name):
         values = [
             item.result for message in history.messages for item in message.items if hasattr(item, "result")
         ]
-        value = values[-1]
-        value = json.loads(value) if isinstance(value, str) else value
+        values = [json.loads(value) if isinstance(value, str) else value for value in values]
+        value = next(value for value in reversed(values) if isinstance(value, dict) and "native_audit" in value)
         audit = value["native_audit"]
         result.raw_facts.update({fact["id"]: deepcopy(fact) for fact in audit["facts"]})
         result.original_fact_digests.extend((fact["id"], fact["value_sha256"]) for fact in audit["facts"])
@@ -170,6 +184,15 @@ def delivery(native_http, native_source, inventory_store, monkeypatch, name):
                     "document_id": LEFT, "doc_scope": "personal", "native_section": "all",
                     "sections": "accessibility,style,issues", "native_page_size": 200,
                     "native_cursor": page["next_cursor"],
+                }),
+            )])]
+        if result.read_chunks and not any(isinstance(value, dict) and "chunks" in value for value in values):
+            return [ChatMessageContent(role=AuthorRole.ASSISTANT, items=[FunctionCallContent(
+                id="native-supporting-chunk",
+                name="document_search-retrieve_document_chunks",
+                arguments=json.dumps({
+                    "document_id": LEFT, "doc_scope": "personal",
+                    "window_number": 1, "window_size": 1, "window_unit": "pages",
                 }),
             )])]
         return replies
@@ -259,6 +282,12 @@ def prepared_reply(delivery, *, brief=False, forged=False, invalid_hash=False, r
     payload = current_payload(delivery)
     contract = payload.get("native_audit_contract") or payload["evidence"]["native_audit_contract"]
     delivery.contract = contract
+    response_format = delivery.harness.model_calls[-1]["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "native_audit_answer"
+    assert response_format["json_schema"]["schema"]["properties"]["native_claims"]["properties"]["fact_set_sha256"]["enum"] == [
+        contract["fact_set_sha256"]
+    ]
     for entry in payload.get("inputs", {}).values():
         value = entry.get("value") or {}
         for citation in value.get("citations", []):
@@ -296,6 +325,9 @@ def assessment_reply(delivery, *, status="satisfied"):
     assert payload["evidence"]["native_audit_contract"]["fact_set_sha256"] == delivery.contract["fact_set_sha256"]
     assert payload["candidate"].startswith("## Audit findings")
     assert payload["candidate"].count("## Native file evidence") == 1
+    check_call = delivery.harness.model_calls[-1]
+    assert check_call["response_format"]["json_schema"]["schema"]["required"] == ["requirements"]
+    assert "A valid digest or an accurate appended table does not verify the prose" in check_call["messages"][0]["content"]
     requirements = {
         item["id"]: {
             "status": status if index == 0 else "satisfied",
@@ -411,25 +443,217 @@ def test_native_audit_correction_can_change_explanation_without_changing_facts(d
     assert delivery.harness.replies == []
 
 
+@pytest.mark.parametrize("name", ["SC-C05.pdf"])
+def test_native_audit_with_real_supporting_chunk_citation_reaches_saved_answer(delivery, name, monkeypatch):
+    delivery.read_chunks = True
+    supporting = []
+    search_calls = []
+    document_owner = importlib.import_module("functions_documents")
+    monkeypatch.setattr(
+        document_owner, "cosmos_user_documents_container",
+        delivery.harness.config.cosmos_user_documents_container,
+    )
+    chunk = {
+        "id": f"{LEFT}_1", "chunk_id": f"{LEFT}_1", "document_id": LEFT,
+        "file_name": name, "user_id": "owner", "version": 1, "page_number": 1,
+        "chunk_sequence": 1, "chunk_text": "Cedar delivery review. Fictional pilot: two sites, one release.",
+    }
+
+    def search(**kwargs):
+        search_calls.append(deepcopy(kwargs))
+        return iter([deepcopy(chunk)])
+
+    monkeypatch.setattr(document_owner, "CLIENTS", {
+        **document_owner.CLIENTS, "search_client_user": SimpleNamespace(search=search),
+    })
+
+    def answer_with_chunk():
+        response = json.loads(prepared_reply(delivery))
+        payload = current_payload(delivery)
+        citation = next(
+            citation for entry in payload["inputs"].values()
+            for citation in entry["document_citations"] if citation.get("chunk_id")
+        )
+        supporting.append(citation)
+        response["answer"] += f'\nSupporting page text. {citation["citation"]}'
+        return json.dumps(response)
+
+    saved, _ = submit(delivery, [answer_with_chunk, lambda: assessment_reply(delivery)])
+    answers = delivery.harness.assistant_messages()
+    assert saved["status"] == "completed", (saved.get("failure"), delivery.state.failures)
+    assert len(supporting) == 1 and supporting[0]["document_id"] == LEFT
+    assert supporting[0]["citation"] in answers[0]["content"]
+    assert supporting[0]["citation"] in delivery.contract["answer_citations"]
+    assert search_calls and all(call["filter"] == f"document_id eq '{LEFT}'" for call in search_calls)
+    functions = {citation["function_name"] for citation in answers[0]["agent_citations"]}
+    assert {"get_document_accessibility_report", "retrieve_document_chunks"} <= functions
+    assert delivery.harness.replies == []
+
+
+@pytest.mark.parametrize("name", ["SC-C05.pdf"])
+@pytest.mark.parametrize(("problem", "code"), [
+    ("invalid_json", "native_answer_json_invalid"),
+    ("invalid_hash", "native_answer_claims_mismatch"),
+    ("reference_only", "native_answer_missing"),
+    ("invalid_citation", "native_answer_citation_unknown"),
+])
+def test_native_validation_correction_receives_specific_rule_without_logging_candidate(
+    delivery, name, problem, code, caplog,
+):
+    canary = "PRIVATE_NATIVE_ANSWER_CANARY"
+
+    def invalid_reply():
+        wire = prepared_reply(
+            delivery, invalid_hash=problem == "invalid_hash", reference_only=problem == "reference_only",
+        )
+        if problem == "invalid_json":
+            return f"{canary} is not valid JSON"
+        if problem == "invalid_citation":
+            value = json.loads(wire)
+            value["answer"] += f"\n[{canary}] [#not-an-authorized-citation]"
+            return json.dumps(value)
+        return wire
+
+    def corrected_reply():
+        payload = current_payload(delivery)
+        assert code in json.dumps(payload["deficiencies"])
+        return prepared_reply(delivery)
+
+    with caplog.at_level("INFO", logger=delivery.state.logger.name):
+        saved, _ = submit(delivery, [
+            invalid_reply, corrected_reply, lambda: assessment_reply(delivery),
+        ])
+    assert saved["status"] == "completed", (saved.get("failure"), delivery.state.failures)
+    diagnostics = [
+        record for record in caplog.records
+        if getattr(record, "sc_message", None) == "[ORCHESTRATION_EXECUTOR] Native audit answer validation failed."
+    ]
+    assert diagnostics and {record.sc_validation_code for record in diagnostics} == {code}
+    safe = json.dumps([
+        {key: value for key, value in record.__dict__.items() if key.startswith("sc_")}
+        for record in diagnostics
+    ])
+    assert canary not in safe and LEFT not in safe and delivery.name not in safe
+    assert all(len(record.sc_run_id_hash) == 64 for record in diagnostics)
+    steps = delivery.harness.run_store.list_run_steps(saved["id"], "owner", "conversation-1")
+    assert steps[1]["task_completeness"]["checks"] == 2
+    assert steps[1]["task_completeness"]["corrections"] == 1
+    assert delivery.harness.replies == []
+
+
+@pytest.mark.parametrize("name", ["SC-C05.pdf"])
+@pytest.mark.parametrize("rejections", [1, 2])
+def test_native_preparation_uses_bounded_provider_format_compatibility_without_skipping_validation(
+    delivery, name, rejections,
+):
+    def compatible_reply():
+        payload = current_payload(delivery)
+        contract = payload["native_audit_contract"]
+        delivery.contract = contract
+        expected = {"type": "json_object"} if rejections == 1 else None
+        assert delivery.harness.model_calls[-1].get("response_format") == expected
+        return json.dumps({
+            "native_claims": {"scope": "all_returned", "fact_set_sha256": contract["fact_set_sha256"]},
+            "answer": customer_answer(contract, name),
+        })
+
+    refusals = [
+        BadRequestError("Unsupported response format.", response=httpx.Response(
+            400, request=httpx.Request("POST", "https://offline.invalid"),
+        ), body={"error": {"param": "response_format", "code": "unsupported_parameter"}})
+        for _ in range(rejections)
+    ]
+    saved, _ = submit(delivery, [*refusals, compatible_reply, lambda: assessment_reply(delivery)])
+    preparation_calls = delivery.harness.model_calls[2:-1]
+    assert saved["status"] == "completed", (saved.get("failure"), delivery.state.failures)
+    assert len(preparation_calls) == rejections + 1
+    assert preparation_calls[0]["response_format"]["json_schema"]["name"] == "native_audit_answer"
+    assert all(call["messages"] == preparation_calls[0]["messages"] for call in preparation_calls)
+    steps = delivery.harness.run_store.list_run_steps(saved["id"], "owner", "conversation-1")
+    assert steps[1]["task_completeness"]["checks"] == 1
+    assert steps[1]["task_completeness"]["corrections"] == 0
+    assert delivery.harness.replies == []
+
+
+@pytest.mark.parametrize(("name", "claim", "reason"), [
+    (
+        "SC-C11.xlsx",
+        'At Budget!G2 and G9, native alt_text is the exact empty string "".',
+        "Both source description facts are absent, not present_empty.",
+    ),
+    (
+        "SC-C04.pdf",
+        "I completed a rendered page-by-page visual comparison against all native tags.",
+        "No rendered page comparison was performed; native inventory coverage is not visual coverage.",
+    ),
+])
+def test_native_review_corrects_state_and_rendered_coverage_contradictions(delivery, name, claim, reason):
+    def contradicting_reply():
+        value = json.loads(prepared_reply(delivery))
+        value["answer"] += f"\n{claim}"
+        return json.dumps(value)
+
+    def independent_review():
+        payload = current_payload(delivery)
+        contract = payload["evidence"]["native_audit_contract"]
+        assert contract["evidence_modes"]["rendered_page_comparison"] is False
+        assert claim in payload["candidate"]
+        if name.endswith(".xlsx"):
+            descriptions = [
+                fact for fact in contract["facts"]
+                if fact["field"] == "description" and fact["location"].endswith(("Budget!G2", "Budget!G9"))
+            ]
+            assert len(descriptions) == 2 and all(fact["state"] == "absent" for fact in descriptions)
+            for entry in payload["evidence"].values():
+                if not isinstance(entry, dict) or not isinstance(entry.get("value"), dict):
+                    continue
+                for citation in entry["value"].get("citations", []):
+                    result = citation.get("function_result") or {}
+                    for record in (result.get("excel_inspection", {}).get("page", {}).get("records") or []):
+                        if record.get("inventory_section") == "objects":
+                            assert "alt_text" not in record and "native_fields" not in record
+        assessment = json.loads(assessment_reply(delivery))
+        assessment["requirements"]["supported_claims"].update(status="unsupported", reason=reason)
+        return json.dumps(assessment)
+
+    saved, _ = submit(delivery, [
+        contradicting_reply, independent_review,
+        lambda: prepared_reply(delivery), lambda: assessment_reply(delivery),
+    ])
+    text = delivery.harness.assistant_messages()[0]["content"]
+    assert saved["status"] == "completed", (saved.get("failure"), delivery.state.failures)
+    assert claim not in text and "### What cannot be established" in text
+    assert text.count("## Native file evidence") == 1
+    assert delivery.harness.replies == []
+
+
 @pytest.mark.parametrize("name", ["SC-C04.pdf"])
-@pytest.mark.parametrize("legacy_checkpoint", [False, True])
+@pytest.mark.parametrize("legacy_checkpoint", [False, True, "native-audit-answer-v2", "invalid_preparation"])
 def test_explicit_native_check_retry_reuses_gathered_source_without_repeating_reads(delivery, monkeypatch, name, legacy_checkpoint):
+    invalid_preparation = legacy_checkpoint == "invalid_preparation"
     original, _ = submit(delivery, [
+        "Invalid native envelope 1", "Invalid native envelope 2", "Invalid native envelope 3",
+    ] if invalid_preparation else [
         lambda: prepared_reply(delivery), '{"requirements":[]}', '{"requirements":[]}',
     ])
     assert original["status"] == "failed"
-    assert original["failure"]["code"] == "completeness_unavailable"
+    assert original["failure"]["code"] == (
+        "completeness_incomplete" if invalid_preparation else "completeness_unavailable"
+    )
     assert delivery.executions
     harness = delivery.harness
     execution = delivery.executions[0]
-    if legacy_checkpoint:
+    if legacy_checkpoint and not invalid_preparation:
         store_type = type(execution.context.completeness_store)
         original_load = store_type.load_completeness
 
         def load_legacy(store, step_id, *, binding):
             state = original_load(store, step_id, binding=binding)
             if state is not None and store.identity["run_id"] == original["id"]:
-                state.pop("native_audit_preparation", None)
+                if legacy_checkpoint is True:
+                    state.pop("native_audit_preparation", None)
+                else:
+                    state["native_audit_preparation"]["version"] = legacy_checkpoint
             return state
 
         monkeypatch.setattr(store_type, "load_completeness", load_legacy)
@@ -459,6 +683,47 @@ def test_explicit_native_check_retry_reuses_gathered_source_without_repeating_re
     assert len(delivery.downloads) == before_reads
     assert len(harness.model_calls) == before_calls + (2 if legacy_checkpoint else 1)
     assert harness.replies == []
+
+
+@pytest.mark.parametrize("name", ["SC-C05.pdf"])
+def test_exhausted_native_format_check_retains_specific_private_reason_without_publishing_candidate(
+    delivery, name, monkeypatch,
+):
+    canary = "PRIVATE_INVALID_NATIVE_CANDIDATE"
+    sequence = []
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    original_save = checkpoints.CheckpointStore.save_completeness
+    observed = []
+
+    def observe_save(store, step_id, state, *, binding):
+        persisted = original_save(store, step_id, state, binding=binding)
+        if state["status"] == "incomplete":
+            observed.append(store.load_completeness(step_id, binding=binding))
+        return persisted
+
+    monkeypatch.setattr(checkpoints.CheckpointStore, "save_completeness", observe_save)
+
+    def invalid_reply():
+        value = json.loads(prepared_reply(delivery))
+        sequence.append(len(sequence) + 1)
+        value["answer"] += f"\n{canary} [#forged-{sequence[-1]}]"
+        return json.dumps(value)
+
+    saved, _ = submit(delivery, [invalid_reply, invalid_reply, invalid_reply])
+    context = delivery.executions[0].context
+    step = next(step for step in saved["plan"]["steps"] if step["capability_id"] == "compose")
+    retained = observed[-1]
+    text = delivery.harness.assistant_messages()[0]["content"]
+    assert saved["status"] == "failed" and saved["failure"]["code"] == "completeness_incomplete"
+    assert retained["native_audit_preparation"]["validation_code"] == "native_answer_citation_unknown"
+    assert retained["deterministic_status"] == "failed" and retained["check_kind"] == "deterministic"
+    assert retained["checks"] == 3 and retained["corrections"] == 2
+    assert retained["semantic_status"] == "pending"
+    assert canary not in text
+    with pytest.raises(checkpoints.CheckpointError) as stopped:
+        context.completeness_store.load_completeness(step["step_id"], binding=context.completeness_binding)
+    assert stopped.value.code == "ownership_lost"
+    assert delivery.harness.replies == []
 
 
 @pytest.mark.parametrize("name", ["SC-C08.xlsx", "SC-C11.xlsx"])

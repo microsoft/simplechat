@@ -1,6 +1,8 @@
 # Native audit answer delivery fix
 
 Fixed/Implemented in version: **0.261.425**.
+Reliability follow-up fixed/implemented in version: **0.261.426**;
+see [Native audit reliability](NATIVE_AUDIT_RELIABILITY_FIX.md).
 Application version: `application/single_app/config.py`.
 Related implementation: `NATIVE_DOCUMENT_FIDELITY_FIX.md`.
 Dependencies: the existing native parsers, private retained-result/checkpoint
@@ -46,7 +48,10 @@ conformance.
 ### Source-bound answers and checked correction
 
 `functions_native_audit.py` separates the source-fact protocol from the answer
-preparation protocol, `native-audit-answer-v2`. New native composition replies
+preparation protocol, originally `native-audit-answer-v2` in 0.261.425.
+From 0.261.426, `native-audit-answer-v3` keeps the same answer shape while
+versioning the canonical model evidence, citation allowset, and checking contract.
+New native composition replies
 contain:
 
 ```json
@@ -177,7 +182,7 @@ Primary suites:
 - Existing native-fidelity, Excel inventory, action binding/lineage, completeness,
   plugin identity/privacy and real SDK owner suites.
 
-### Recorded local results
+### Recorded local results for 0.261.425
 
 | Selection | Result |
 |---|---|

@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.425"
+version: "0.261.426"
 ---
 
 <!-- action-slug: document-search -->
@@ -87,6 +87,21 @@ alongside useful findings, rather than treated as execution failure. Unsupported
 claims still require correction; exact source values are not rewritten by the
 model. This does not replace mixed research/computed answers or establish
 standards compliance.
+
+Fixed/Implemented in version: **0.261.426**
+(`application/single_app/config.py`).
+
+Native-audit composition uses canonical source field states, not normalized
+display defaults or an action's paraphrase. An absent description/title must not
+be called an exact native empty string. Supporting page-chunk citations from
+the authorized inspected document/version can accompany native findings;
+invented, unselected, or stale-source references remain invalid.
+
+This tool does not return rendered page images or compare every visible item
+with its tags. A complete native inventory is not a completed visual review.
+The answer should deliver the supported findings and clearly disclose that
+boundary. The Image control generates illustrations; it does not add PDF
+visual inspection.
 
 This read runs no new OCR/vision job and starts no bulk re-ingestion. Older
 Search chunks remain unchanged until explicit processing refreshes them.

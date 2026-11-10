@@ -4,7 +4,7 @@ title: "Inspect Excel data, comments, and structure"
 description: "Read workbook feedback and metadata without confusing them with saved values or table calculations."
 section: "Guides"
 audience: user
-version: "0.261.425"
+version: "0.261.426"
 ---
 
 Implemented in version: **0.261.408**, tracked in
@@ -106,6 +106,15 @@ A missing native description is not the same as a stored empty description.
 An unsupported control or rendered check does not erase the supported findings
 or prove a source-wide absence. Genuine read/access failures still need resolution;
 they must not be described as a successful inspection that found nothing.
+
+Fixed/Implemented in version: **0.261.426**, tracked in
+`application/single_app/config.py`.
+
+The native-audit answer now reasons from the source's field states instead of
+competing normalized display values. In particular, an internal `alt_text=""`
+default does not mean that Excel stores an empty description: the source may
+have no description attribute at all. The original workbook and stored
+compatibility fields are not rewritten to make the answer consistent.
 
 ## Existing files and limitations
 

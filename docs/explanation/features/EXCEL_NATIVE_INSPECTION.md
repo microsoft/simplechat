@@ -3,6 +3,7 @@
 Implemented in version: **0.261.408**.
 Related application version: `application/single_app/config.py`.
 Native field/control fidelity fixed/implemented in version: **0.261.424**.
+Native-audit interpretation fixed/implemented in version: **0.261.426**.
 
 ## Overview
 
@@ -43,6 +44,13 @@ Object `native_fields` preserve whether description/title/decorative attributes
 are absent, present-empty, present-value, or inaccessible. An older normalized
 `alt_text=""` alone does not establish a stored native blank. Literal values such
 as `Picture` are returned as stored, not replaced with generated descriptions.
+
+From **0.261.426**, native-audit composition/checking receives canonical
+state/value/reason facts rather than competing display aliases and action-model
+paraphrases. Absent description/title attributes must not be presented as exact
+native empty strings. This changes the model-facing view, not the workbook,
+stored inventory schema, compatibility export fields, or reprocessing policy.
+See [Native audit reliability](../fixes/NATIVE_AUDIT_RELIABILITY_FIX.md).
 
 Supported modern in-cell checkboxes are resolved through cell style extensions
 and the FeaturePropertyBag mapper/control chain. Their typed records appear in
