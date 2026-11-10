@@ -76,6 +76,10 @@ from functions_yamcs_operations import (
     normalize_yamcs_server_url,
     yamcs_basic_auth_conflicts_with_auth_method,
 )
+from functions_microsoft_decision_operations import (
+    MICROSOFT_DECISION_PLUGIN_TYPE,
+    validate_microsoft_decision_manifest,
+)
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
     MCP_MAX_RETRY_BACKOFF_SECONDS,
@@ -398,6 +402,9 @@ class PluginHealthChecker:
                     continue
                 if parsed_value < minimum or parsed_value > maximum:
                     errors.append(f"Yamcs additionalFields.{field_name} must be between {minimum} and {maximum}")
+
+        elif plugin_type == MICROSOFT_DECISION_PLUGIN_TYPE:
+            errors.extend(validate_microsoft_decision_manifest(manifest))
 
         elif plugin_type in ['sql_query', 'sql_schema']:
             additional_fields = manifest.get('additionalFields', {})

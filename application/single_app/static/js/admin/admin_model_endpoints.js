@@ -1705,11 +1705,6 @@ function buildEndpointPayload() {
             type: "api_key",
             api_key: apiKeyInput?.value.trim() || ""
         };
-        for (const field of ["api_key_header", "api_key_prefix"]) {
-            if (Object.hasOwn(modalEndpoint.auth || {}, field)) {
-                auth[field] = modalEndpoint.auth[field];
-            }
-        }
     }
 
     const hasStoredApiKey = authType === "api_key" && Boolean(existingEndpoint?.has_api_key);
@@ -1762,12 +1757,16 @@ function buildEndpointPayload() {
         }
     }
 
+    const profileSettings = collectCustomProfile(auth, customProvider);
+    if (profileSettings === null) {
+        return null;
+    }
     collectEndpointCaTrust(connection, modalEndpoint.connection, customProvider);
     return {
         id: endpointId,
         ...(explicitRouting ? { routing_schema_version: 2 } : {}),
         provider,
-        ...collectCustomProfile(auth, customProvider),
+        ...profileSettings,
         ...(customProvider && !explicitRouting ? { api_type: apiType } : {}),
         name,
         connection,

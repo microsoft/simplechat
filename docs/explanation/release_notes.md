@@ -2,6 +2,63 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.062)**
+
+#### New Features
+
+*   **Microsoft Decision-1 Governed Action**
+    *   Added Microsoft Decision-1 as a Semantic Kernel action for bounded binary, choice, and score decisions. It is available through the existing global, group, and personal action governance surfaces rather than as a selectable chat model.
+    *   Supports Foundry resource URLs and exact APIM endpoints, including revision selectors, plus API-key header overrides for gateway policies. Managed identity is restricted to trusted Azure Foundry and API Management hostnames.
+    *   Decision results contain typed answers and probabilities, and low-confidence results are marked for human review; the provider is never represented as supplying written rationale.
+    *   (Ref: [Microsoft Decision-1 Action](features/MICROSOFT_DECISION_ACTION.md), [action reference](../reference/actions/microsoft-decision.md), `microsoft_decision_plugin.py`, `test_microsoft_decision_action_plugin.py`)
+
+### **(v0.261.061)**
+
+#### Bug Fixes
+
+*   **Custom Endpoint Agents Preserve Streaming Responses**
+    *   Fixed Semantic Kernel agents failing after APIM and the model backend had already returned a successful streaming response.
+    *   Custom endpoint error sanitization now preserves the OpenAI SDK stream contract, allowing agents to consume response chunks without exposing raw provider errors to browser clients.
+    *   Live staging validation passed for Luna, Terra, and Claude agents through APIM revision two using the configured OpenAI-compatible and Anthropic operation paths.
+    *   (Ref: `model_endpoint_clients.py`, `semantic_kernel_loader.py`, [Agent routing regressions](../../functional_tests/test_schema_v2_agent_model_routing.py), [Async stream compatibility fix](fixes/v0.261.061/CUSTOM_AGENT_ASYNC_STREAM_COMPATIBILITY_FIX.md))
+
+### **(v0.261.056)**
+
+#### New Features
+
+*   **Target a Specific APIM API Revision**
+    *   Model endpoint **API Path** values can use APIM's documented `<api-id>;rev=<positive integer>` selector to test a non-current API revision without promoting it.
+    *   The same selector is accepted in an endpoint URL path and remains literal in the resolved provider URL. For example, `shared-foundry;rev=2` with Chat Completions (Azure/Foundry) resolves to `/shared-foundry;rev=2/openai/v1/chat/completions`.
+    *   Arbitrary semicolon parameters, encoded substitutes, malformed or multiple selectors, and revision zero remain invalid.
+    *   (Ref: [AI Models settings](../admin/ai-models.md), `functions_model_endpoint_urls.py`, [Routing regressions](../../functional_tests/test_model_endpoint_protocol_inference.py), [microsoft/simplechat#1518](https://github.com/microsoft/simplechat/issues/1518))
+
+### **(v0.261.054)**
+
+#### New Features
+
+*   **Endpoint-Wide API-Key Header Controls**
+    *   Generic Custom endpoints now expose **Custom authentication header** and optional **API key prefix** in the shared admin, personal, and group editor.
+    *   A gateway hosting both Chat Completions and Messages can use one endpoint-level `Ocp-Apim-Subscription-Key` header with a blank prefix. The settings are not repeated on model rows.
+    *   Clearing both overrides restores each model API's defaults. Blank API-key inputs preserve stored secrets, and GenAI.mil retains its fixed Authorization/Bearer contract.
+    *   OAuth2 and static bearer-token editor support remain deferred.
+    *   (Ref: [Custom Model Endpoint Authentication](features/CUSTOM_MODEL_ENDPOINT_AUTH.md), [Endpoint editor UI regressions](../../ui_tests/test_model_endpoint_capacity_editor.py), [microsoft/simplechat#1518](https://github.com/microsoft/simplechat/issues/1518))
+
+#### Bug Fixes
+
+*   **Custom API-Key Header Overrides Reach Both Model Protocols**
+    *   Explicit Authorization API-key values now preserve their configured prefix and avoid duplicate headers when entered with different casing.
+    *   Direct Custom Messages endpoints honor `x-api-key` prefix overrides instead of silently retaining the unprefixed default. Non-Custom and bearer authentication behavior is unchanged.
+    *   Invalid header names, reserved transport/cookie headers, and invalid prefixes keep the editor open with focused, accessible validation before saving.
+    *   (Ref: `functions_model_endpoint_auth.py`, `model_endpoint_clients.py`, [Authentication regressions](../../functional_tests/test_custom_model_endpoint_auth.py))
+
+#### User Interface Enhancements
+
+*   **API Types Show Their Request Paths**
+    *   API Type options show protocol-default request templates, including `/openai/deployments/{deploymentid}/chat/completions?api-version={api-version}`, Chat Completions v1 paths, and Messages.
+    *   Persisted API type identifiers and route composition remain unchanged. **Preview Route** continues to show the exact URL after API Path, configured API base, and URL Handling are applied.
+    *   Responses API support remains a separate runtime integration and is not exposed as a Chat Completions alias.
+    *   (Ref: [AI Models settings](../admin/ai-models.md), `functions_model_endpoint_providers.py`, `model_routing_editor.js`)
+
 ### **(v0.261.053)**
 
 #### Bug Fixes

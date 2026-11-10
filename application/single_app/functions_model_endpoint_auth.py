@@ -248,19 +248,24 @@ def resolve_custom_endpoint_credentials(
         api_key = str(auth.get("api_key") or "").strip()
         if not api_key:
             raise ValueError("Selected model endpoint is missing an API key.")
-        header_name, _ = resolve_api_key_header(
+        header_name, prefix = resolve_api_key_header(
             auth,
             default_api_key_header,
             default_api_key_prefix,
         )
-        # An explicit non-Authorization header is sent alongside the SDK's own
-        # credential argument, because the SDK cannot express it.
-        if header_name and header_name.lower() != "authorization":
-            return api_key, build_api_key_headers(
+        # Explicit Authorization values must also override the SDK's Bearer default.
+        explicit_header = bool(str(auth.get("api_key_header") or "").strip())
+        if header_name and (
+            header_name.lower() != "authorization" or explicit_header or prefix != "Bearer"
+        ):
+            headers = build_api_key_headers(
                 auth,
                 default_api_key_header,
                 default_api_key_prefix,
             )
+            if header_name.lower() == "authorization":
+                headers = {"Authorization": headers[header_name]}
+            return api_key, headers
         return api_key, {}
 
     raise ValueError("Custom model endpoints do not support the selected authentication type.")

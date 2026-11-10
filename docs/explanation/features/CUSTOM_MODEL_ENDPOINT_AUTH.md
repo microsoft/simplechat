@@ -18,6 +18,34 @@ are public trust material, not an mTLS authentication scheme. Certificate/key
 paths remain separate; private keys are never uploaded to the CA manager.
 See [shared CA bundles](./CUSTOM_ENDPOINT_CA_BUNDLES.md).
 
+### API-key editor support
+
+Fixed/Implemented in version: **0.261.054**, tracked in
+`application/single_app/config.py`. Related work: issue #1518.
+
+The shared admin, personal, and group endpoint editor exposes **Custom
+authentication header** and optional **API key prefix** for Generic Custom
+endpoints. These are endpoint settings, so one APIM subscription key can
+authenticate both Chat Completions and Messages model routes. Configure
+`Ocp-Apim-Subscription-Key` and leave the prefix blank to send the raw key.
+
+Leave both overrides blank to restore each model API's defaults. A custom header
+with a blank prefix means no prefix; an explicit `Authorization` header also
+honors its configured API-key prefix rather than letting an SDK replace it.
+The existing API-key input and Key Vault flow continue to own the secret.
+Blank-on-edit preserves the stored key, while cleared header/prefix metadata
+removes the previous overrides on save.
+
+The fields survive save/reopen, are not model-row settings, and reset when a
+new endpoint is opened. Invalid HTTP header tokens, transport/cookie header
+names, oversized values, and non-printable prefixes are rejected visibly before
+saving. GenAI.mil retains its fixed `Authorization`/`Bearer` contract.
+
+OAuth2 and static bearer-token support described below is backend support only;
+their frontend configuration remains deferred. This change does not add a
+Responses API protocol or change endpoint URLs, model IDs, permissions, or
+credential storage.
+
 ## Schemes
 
 | Scheme | `auth.type` | Use it for |
@@ -134,6 +162,13 @@ continuing without one.
 - unsupported and incomplete auth configurations being rejected;
 - mTLS certificates resolving by path only, with the module asserted to offer no
   way to supply key material inline.
+
+The endpoint-wide override/default-reset and explicit Authorization-prefix
+regressions were added in **0.261.054**.
+`ui_tests/test_model_endpoint_capacity_editor.py` covers all three editor scopes,
+mixed-model save/reopen/clear, invalid-input recovery, stored-key preservation,
+profile visibility, and request-path labels using real local browser assets and
+mocked same-origin APIs. These tests do not certify a live gateway or GenAI.mil.
 
 ## Known limitations
 

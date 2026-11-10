@@ -15,7 +15,7 @@
 .EXAMPLE
     ./publish-simplechat.ps1 -SubscriptionId <id> -AcrName <acr> -WebAppName <app> -WhatIf
 .NOTES
-    Deployer version: 1.0.35. Application version at introduction: 0.261.042.
+    Deployer version: 1.0.37. Application version at introduction: 0.261.042.
     Sign in with az login in the desired Azure cloud before running this script.
     No provisioning, registry credential changes, or automatic rollback occurs.
 #>
@@ -272,8 +272,8 @@ if ($UseWebhook) {
 }
 
 Write-Host "`nRollback image: $previousImage" -ForegroundColor Yellow
-Write-Host 'To restore it, use az webapp config set with the same subscription/name/resource-group/slot and --linux-fx-version "DOCKER|<previous-image>".'
-Invoke-PublishAz -NoOutput -Arguments (@('webapp', 'config', 'set') + $appArguments + @('--linux-fx-version', "DOCKER|$pinnedImage"))
+Write-Host 'To restore it, use az webapp config container set with the same subscription/name/resource-group/slot and --container-image-name <previous-image>.'
+Invoke-PublishAz -NoOutput -Arguments (@('webapp', 'config', 'container', 'set') + $appArguments + @('--container-image-name', $pinnedImage))
 $updated = Invoke-PublishAz -Arguments (@('webapp', 'config', 'show') + $appArguments + @('--query', '{linuxFxVersion:linuxFxVersion}'))
 if ($updated.linuxFxVersion -ne "DOCKER|$pinnedImage") {
     throw "App image verification failed. Check the app configuration before retrying. Previous image: $previousImage"

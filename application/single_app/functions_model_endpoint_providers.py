@@ -163,7 +163,7 @@ class ModelEndpointProvider:
 MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1,
-        display_name="Chat Completions (Azure/Foundry)",
+        display_name="Chat Completions (/openai/v1/chat/completions)",
         protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_AZURE_OPENAI_V1,
@@ -172,7 +172,7 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_OPENAI,
-        display_name="OpenAI API (Chat Completions)",
+        display_name="Chat Completions (/v1/chat/completions)",
         protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_APPEND_V1_IF_MISSING,
@@ -186,7 +186,7 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
-        display_name="Azure OpenAI (Deployments)",
+        display_name="Chat Completions (/openai/deployments/{deploymentid}/chat/completions?api-version={api-version})",
         protocol=MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
         model_identifier=MODEL_IDENTIFIER_DEPLOYMENT_NAME,
         url_policy=URL_POLICY_AZURE_DEPLOYMENT,
@@ -196,7 +196,7 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
-        display_name="Messages (Anthropic-compatible)",
+        display_name="Messages (/v1/messages)",
         protocol=MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         url_policy=URL_POLICY_ANTHROPIC_MESSAGES,
@@ -209,7 +209,7 @@ MODEL_ENDPOINT_PROVIDERS: Tuple[ModelEndpointProvider, ...] = (
     ),
     ModelEndpointProvider(
         api_type=MODEL_ENDPOINT_API_TYPE_GEMINI,
-        display_name="Google Gemini (OpenAI-compatible)",
+        display_name="Chat Completions (/v1beta/openai/chat/completions)",
         protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
         model_identifier=MODEL_IDENTIFIER_MODEL_NAME,
         # Gemini's compatible surface already ends in /v1beta/openai/, so appending

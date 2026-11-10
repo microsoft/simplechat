@@ -2,15 +2,17 @@
 #!/usr/bin/env python3
 """
 Functional test for streaming multi-endpoint model resolution.
-Version: 0.261.046
+Version: 0.261.060
 Implemented in: 0.239.200; updated in 0.250.109; schema-v2 streaming dispatch in 0.261.044
 Real wrapper TLS-policy and agent-default regression coverage added in: 0.261.045
 Non-agent default resolution coverage added in: 0.261.046
+Schema-v2 agent binding validation added in: 0.261.058; runtime validation in: 0.261.060
 
 This test ensures streaming requests resolve selected models by endpoint and
 model identifiers, hydrate saved endpoint auth, and build provider-aware
 clients for Azure OpenAI and Foundry selections. It also verifies the selected
-model's response length is resolved and applied to chat completion params.
+model's response length is resolved and applied to chat completion params, and
+that agent requests can use only the endpoint/model pair in the stored agent.
 """
 
 import ast
@@ -89,7 +91,7 @@ def test_streaming_multi_endpoint_resolution_wiring():
     print('✅ Streaming multi-endpoint model resolution wiring verified.')
 
 
-def test_schema_v2_streaming_uses_model_route_and_excludes_agents():
+def test_schema_v2_streaming_uses_model_route_and_validates_agent_binding():
     source = ast.parse((APP_ROOT / "route_backend_chats.py").read_text(encoding="utf-8"))
     resolver = next(
         node for node in source.body
@@ -150,6 +152,11 @@ def test_schema_v2_streaming_uses_model_route_and_excludes_agents():
         "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": "azure_openai",
         "debug_print": lambda *_args, **_kwargs: None,
         "validate_custom_model_endpoint": lambda *_args, **_kwargs: None,
+        "_resolve_canonical_chat_agent": lambda *_args, **_kwargs: {
+            "id": "agent-1",
+            "model_endpoint_id": "endpoint-1",
+            "model_id": "model-1",
+        },
     }
     exec(compile(ast.Module(body=[wrapper, resolver], type_ignores=[]), "<stream-route-resolution>", "exec"), namespace)
     request = {
@@ -166,18 +173,32 @@ def test_schema_v2_streaming_uses_model_route_and_excludes_agents():
     assert resolved_routes == [expected_route]
     assert expected_route["protocol"] == "openai_style"
 
+    agent_result = namespace["resolve_streaming_multi_endpoint_gpt_config"](
+        settings,
+        {**request, "agent_info": {"id": "agent-1"}},
+        "actor",
+        active_group_ids=[],
+    )
+    assert agent_result[1] == expected_route["request_model"]
+    assert resolved_routes == [expected_route, expected_route]
+
+    namespace["_resolve_canonical_chat_agent"] = lambda *_args, **_kwargs: {
+        "id": "agent-1",
+        "model_endpoint_id": "endpoint-1",
+        "model_id": "different-model",
+    }
     try:
         namespace["resolve_streaming_multi_endpoint_gpt_config"](
             settings,
-            {**request, "agent_info": {"agent_id": "legacy-agent"}},
+            {**request, "agent_info": {"id": "agent-1"}},
             "actor",
             active_group_ids=[],
         )
-    except ValueError:
-        pass
+    except ValueError as exc:
+        assert "does not match" in str(exc)
     else:
-        raise AssertionError("Schema-v2 routing must not be enabled for agent requests.")
-    assert resolved_routes == [expected_route]
+        raise AssertionError("Schema-v2 agent requests must match the stored model binding.")
+    assert resolved_routes == [expected_route, expected_route]
 
     settings["default_model_selection"] = {"endpoint_id": "endpoint-1", "model_id": "model-1"}
     legacy_fallback = namespace["resolve_streaming_multi_endpoint_gpt_config"](
@@ -188,14 +209,14 @@ def test_schema_v2_streaming_uses_model_route_and_excludes_agents():
         allow_default_selection=True,
     )
     assert legacy_fallback is None
-    assert resolved_routes == [expected_route]
+    assert resolved_routes == [expected_route, expected_route]
 
     default_result = namespace["resolve_streaming_multi_endpoint_gpt_config"](
         settings, {}, "actor", active_group_ids=[], allow_default_selection=True,
     )
     assert default_result is not None
     assert default_result[1] == expected_route["request_model"]
-    assert resolved_routes == [expected_route, expected_route]
+    assert resolved_routes == [expected_route, expected_route, expected_route]
 
 
 def test_group_endpoint_candidates_recheck_membership_before_read():
@@ -256,7 +277,7 @@ def test_group_endpoint_candidates_recheck_membership_before_read():
 def run_tests():
     tests = [
         test_streaming_multi_endpoint_resolution_wiring,
-        test_schema_v2_streaming_uses_model_route_and_excludes_agents,
+        test_schema_v2_streaming_uses_model_route_and_validates_agent_binding,
         test_group_endpoint_candidates_recheck_membership_before_read,
     ]
     results = []

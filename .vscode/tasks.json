@@ -75,6 +75,35 @@
             "problemMatcher": []
         },
         {
+            "label": "SimpleChat: Publish staging container (confirm)",
+            "type": "process",
+            "command": "pwsh",
+            "args": [
+                "-NoProfile",
+                "-File",
+                "${workspaceFolder}/deployers/azurecli/publish-simplechat.ps1",
+                "-ImageName",
+                "${input:containerImage}",
+                "-SubscriptionId",
+                "65eeb30f-e539-47a6-a160-f6629cae3d4b",
+                "-ResourceGroupName",
+                "simplechat-2026stage-rg",
+                "-AcrName",
+                "simplechat2026stageacr",
+                "-WebAppName",
+                "simplechat-2026stage-app"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "presentation": {
+                "reveal": "always",
+                "focus": true,
+                "panel": "dedicated"
+            },
+            "problemMatcher": []
+        },
+        {
             "label": "SimpleChat: Publish dev container (confirm)",
             "type": "process",
             "command": "pwsh",

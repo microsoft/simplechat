@@ -26,6 +26,7 @@ from model_endpoint_profiles import GENAI_MIL_CAPABILITIES, GENAI_MIL_PROFILE, g
 
 VERSION_SEGMENT = re.compile(r"v\d+(?:[a-z][a-z0-9]*)?", re.IGNORECASE)
 PATH_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+")
+APIM_REVISION_SEGMENT = re.compile(r"[A-Za-z0-9._~-]+;rev=[1-9][0-9]*")
 DECODED_SEGMENT = re.compile(r"[A-Za-z0-9._~ -]+")
 VERSION_VALUE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 DEFERRED_FIELDS = frozenset({
@@ -199,6 +200,9 @@ def normalize_model_api_path(value) -> str:
     for segment in path.split("/"):
         if re.search(r"%(?![0-9A-Fa-f]{2})", segment):
             raise ValueError("Invalid model API path escape.")
+        if APIM_REVISION_SEGMENT.fullmatch(segment):
+            normalized.append(segment)
+            continue
         decoded = unquote(segment, errors="strict")
         if decoded in (".", "..") or not DECODED_SEGMENT.fullmatch(decoded):
             raise ValueError("Model API path contains an unsupported segment.")
@@ -321,6 +325,8 @@ against outbound policy. This function is not permission to execute a request.
         endpoint_segments = ["anthropic", "v1"]
     api_path = normalize_model_api_path(model.get("api_path", ""))
     segments = (api_path.split("/") if api_path else []) + endpoint_segments
+    if sum(bool(APIM_REVISION_SEGMENT.fullmatch(segment)) for segment in segments) > 1:
+        raise ValueError("Schema-v2 URLs may contain only one APIM revision selector.")
     if any(_ends_with(segments, operation) for operation in OPERATIONS):
         raise ValueError("Schema-v2 URLs must name an API base, not an operation.")
     request_model = _identifier(model, descriptor)

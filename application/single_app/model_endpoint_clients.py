@@ -17,10 +17,12 @@ import httpcore
 import httpx
 import requests
 from openai import (
+    AsyncStream,
     DEFAULT_CONNECTION_LIMITS,
     DefaultAsyncHttpxClient,
     DefaultHttpxClient,
     OpenAI,
+    Stream,
 )
 from pydantic import Field
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
@@ -585,7 +587,7 @@ class OpenAIStyleChatCompletionClient:
         return response
 
 
-class _SanitizedSyncIterator:
+class _SanitizedSyncIterator(Stream):
     """Proxy a streaming response without exposing provider exception details."""
 
     def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
@@ -636,7 +638,7 @@ class _SanitizedSyncIterator:
         return getattr(self._iterator, name)
 
 
-class _SanitizedAsyncIterator:
+class _SanitizedAsyncIterator(AsyncStream):
     """Proxy an async streaming response without exposing provider exception details."""
 
     def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
@@ -967,7 +969,9 @@ class AnthropicChatCompletionClient:
             raise ValueError("Anthropic model endpoints require an API key or bearer token.")
         existing_header_names = {header_name.lower() for header_name in headers}
         for header_name, header_value in self.extra_headers.items():
-            if header_name.lower() not in existing_header_names:
+            if self.direct_custom and not self.bearer_token and header_name.lower() == "x-api-key":
+                headers["x-api-key"] = header_value
+            elif header_name.lower() not in existing_header_names:
                 headers[header_name] = header_value
         return headers
 

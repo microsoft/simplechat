@@ -5,7 +5,7 @@ description: "AI Models configures chat, embedding, image generation, APIM, mult
 section: "Administration"
 audience: admin
 admin_tab: ai-models
-version: "0.261.053"
+version: "0.261.056"
 ---
 
 
@@ -63,19 +63,38 @@ chat access while retaining other enabled endpoints.
 | Control | Purpose |
 | --- | --- |
 | Model Library | Associates the row with a published catalogue ID. A new Custom row can take a visible protocol suggestion; an existing explicit choice is preserved. This does not grant gateway capabilities. |
-| API Type | On Custom rows, selects Azure deployments, Azure/Foundry Chat Completions, generic Chat Completions, Messages, or Gemini compatibility independently of the model vendor. |
+| API Type | Selects the model's API using a request-path template, such as `/openai/deployments/{deploymentid}/chat/completions?api-version={api-version}`. The template describes the protocol default; Preview Route shows the composed URL. Stored API type identifiers do not change. |
 | URL Handling | Auto applies that API's route convention. Exact API base preserves the composed base and appends only the operation, not an arbitrary full request URL. |
-| API Path | Inserts a relative path immediately after the origin and before the endpoint's existing path. Available on non-Custom rows too. |
+| API Path | Inserts a relative path immediately after the origin and before the endpoint's existing path. Available on non-Custom rows too. It accepts the documented APIM `<api-id>;rev=<positive integer>` selector for an explicit API revision. |
 | API Version / Anthropic Version | Supplies the selected Custom API's applicable protocol version, separately from the published model version. |
 | Preview Route | Displays the server-computed POST URL without resolving credentials or contacting the provider. |
 | Certificate trust | Keeps existing application trust, selects public roots, or uses an admin-managed shared CA bundle without disabling hostname verification. |
 | Custom profile | Selects Generic Custom or the documented text-only GenAI.mil contract; a profile is separate from its wire API type. |
+| Custom authentication header | Overrides the API-key header for every model on a Generic Custom endpoint. For APIM, use `Ocp-Apim-Subscription-Key`, not a model-specific setting. Blank uses each model API's default. |
+| API key prefix | Adds a required value prefix before the key, such as `Token`. With a custom header, blank sends the raw key. Leave both overrides blank to restore model API defaults. |
 
 For example, an endpoint `https://gateway.example/shared/v1`, an API Path of
 `team-a`, and Messages in Auto mode preview as
 `https://gateway.example/team-a/shared/v1/messages`. Paths must not contain an
 origin, query, fragment, or traversal segments. Preview is structural validation,
 not proof of authentication, availability, or network policy approval.
+
+### APIM revision path selectors
+
+Fixed/Implemented in version: **0.261.056**, tracked in
+`application/single_app/config.py`.
+
+Use APIM's documented revision selector in **API Path** when testing a
+non-current API revision without promoting it. For example,
+`shared-foundry;rev=2` with Chat Completions (Azure/Foundry) in Auto mode
+resolves to
+`/shared-foundry;rev=2/openai/v1/chat/completions`.
+
+The selector must be one path segment in the form
+`<api-id>;rev=<positive integer>`. SimpleChat preserves the literal `;rev=`
+syntax required by APIM. Arbitrary semicolon parameters, encoded substitutes,
+revision zero, malformed selectors, and multiple revision selectors remain
+invalid.
 
 Persist multi-endpoint and applicable personal/group enablement before previewing
 or testing.
@@ -87,6 +106,25 @@ editors use their existing scoped save APIs and role restrictions. The server
 rejects live tests if the submitted route differs from the saved route. Use a
 nonproduction endpoint for testing; schema-v1 records keep
 their compatibility behavior. See the [identity and scope requirements]({{ '/guides/model-endpoint-identity-setup/' | relative_url }}).
+
+### Endpoint API-key header overrides
+
+Fixed/Implemented in version: **0.261.054**, tracked in
+`application/single_app/config.py` and issue #1518.
+
+Use the endpoint's **Custom authentication header** when an API gateway reads
+its subscription key from a different header than the model provider. A gateway
+hosting both Messages and Chat Completions can use
+`Ocp-Apim-Subscription-Key` with a blank **API key prefix** for both models.
+Enter the secret only in **API Key**; leaving that secret blank while editing
+preserves the stored key.
+
+These controls are shared by admin, personal, and group endpoint editors.
+Clearing both overrides restores the selected model API's defaults. Invalid
+header names, reserved transport/cookie headers, and invalid prefixes keep the
+editor open and focus the invalid field. GenAI.mil keeps its fixed
+`Authorization` header and `Bearer` prefix, so its override controls are hidden.
+OAuth2 and static bearer-token editor support remain deferred.
 
 ### Verified model capacity
 

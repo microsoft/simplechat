@@ -6,6 +6,8 @@ Implemented in: deployer 1.0.32
 Automatic-variable regression fixed in: deployer 1.0.33
 Task image selection and log-free build completion implemented in: deployer 1.0.34
 Webhook-based App Service refresh implemented in: deployer 1.0.35
+Staging direct-publish task implemented in: deployer 1.0.36
+Windows-safe App Service digest update implemented in: deployer 1.0.37
 No application bootstrap, credentials, network, or Azure processes are used.
 #>
 [CmdletBinding()]
@@ -103,9 +105,9 @@ function Invoke-Scenario {
                 @{ linuxFxVersion = $linuxFxVersion } | ConvertTo-Json -Compress
                 break
             }
-            '^webapp config set' {
+            '^webapp config container set' {
                 if (-not $IgnoreUpdate) {
-                    $state.Image = $arguments[$arguments.IndexOf('--linux-fx-version') + 1].Substring(7)
+                    $state.Image = $arguments[$arguments.IndexOf('--container-image-name') + 1]
                 }
                 break
             }
@@ -152,6 +154,9 @@ Assert-True (($builds[0] -contains '--file') -and ($builds[0] -contains (Resolve
 Assert-True ($builds[0] -contains '--no-logs') 'Build must suppress Unicode log streaming with --no-logs.'
 Assert-True (-not ($builds[0] -contains '--no-wait')) 'Build must wait for the CLI status poller to finish.'
 Assert-True ($builds[0][$builds[0].IndexOf('--output') + 1] -eq 'json') 'Build must return structured completion metadata.'
+$imageUpdates = @($result.Calls | Where-Object { $_[0] -eq 'webapp' -and ($_[0..3] -join ' ') -eq 'webapp config container set' })
+Assert-True ($imageUpdates.Count -eq 1) 'Expected one App Service container image update.'
+Assert-True (($imageUpdates[0] -contains '--container-image-name') -and -not (($imageUpdates[0] -join ' ') -match 'DOCKER\|')) 'Container update must avoid a shell-sensitive DOCKER pipe argument.'
 $joinedCalls = ($result.Calls | ForEach-Object { $_ -join ' ' }) -join "`n"
 Assert-True ($joinedCalls -notmatch 'credential|account set|cloud set|acr update|appsettings|role assignment') 'Publisher must not change authentication, settings, roles, or default context.'
 Write-Host 'PASS: explicit publish, remote build, digest pinning, subscription scoping'
@@ -284,7 +289,7 @@ Assert-True ($result.Error -like '*different registry*') 'Publisher must not rep
 Assert-True (-not (@($result.Calls | Where-Object { $_ -contains 'build' }).Count)) 'Registry mismatch must fail before build.'
 Write-Host 'PASS: registry authentication boundary'
 
-foreach ($failure in @('account list', 'acr list', 'webapp config set')) {
+foreach ($failure in @('account list', 'acr list', 'webapp config container set')) {
     $result = Invoke-Scenario -Options $explicit -Failure $failure
     Assert-True ($result.Error -like '*Azure CLI failed*') "Failure not propagated: $failure"
     Assert-True ($result.Image -eq 'registry.example/simplechat:previous') "Unexpected image update after failure: $failure"
@@ -341,7 +346,7 @@ Assert-True ($result.Error -like '*ImageRepository*') 'Repository input must not
 Write-Host 'PASS: image reference validation'
 
 $taskConfig = Get-Content (Join-Path $PSScriptRoot '../.vscode/tasks.json') -Raw | ConvertFrom-Json
-Assert-True ($taskConfig.tasks.Count -eq 4) 'Expected interactive, preview, beta, and dev tasks.'
+Assert-True ($taskConfig.tasks.Count -eq 5) 'Expected interactive, preview, beta, staging, and dev tasks.'
 Assert-True ($taskConfig.inputs.Count -eq 1) 'Tasks must share one image input.'
 $imageInput = $taskConfig.inputs[0]
 Assert-True ($imageInput.type -eq 'promptString' -and $imageInput.default -eq 'simplechat:latest') 'Tasks must prompt for an image reference defaulting to simplechat:latest.'
@@ -354,22 +359,23 @@ foreach ($task in $taskConfig.tasks) {
 }
 Assert-True ($taskConfig.tasks[1].args -contains '-WhatIf') 'Preview task must be read-only.'
 foreach ($target in @(
-    @{ Environment = 'beta'; Subscription = '8a60416d-813d-4904-b115-2cebaaf63fea' },
-    @{ Environment = 'dev'; Subscription = '8c7e0020-34d5-4be4-ac62-5c744df2700b' }
+    @{ Environment = 'beta'; ResourceSuffix = 'beta'; Subscription = '8a60416d-813d-4904-b115-2cebaaf63fea'; UseWebhook = $true },
+    @{ Environment = 'staging'; ResourceSuffix = 'stage'; Subscription = '65eeb30f-e539-47a6-a160-f6629cae3d4b'; UseWebhook = $false },
+    @{ Environment = 'dev'; ResourceSuffix = 'dev'; Subscription = '8c7e0020-34d5-4be4-ac62-5c744df2700b'; UseWebhook = $true }
 )) {
     $targetTask = @($taskConfig.tasks | Where-Object { $_.label -eq "SimpleChat: Publish $($target.Environment) container (confirm)" })
     Assert-True ($targetTask.Count -eq 1) 'Each environment must have one explicit task.'
     $targetArguments = $targetTask[0].args
     $expected = @{
         '-SubscriptionId' = $target.Subscription
-        '-ResourceGroupName' = "simplechat-2026$($target.Environment)-rg"
-        '-AcrName' = "simplechat2026$($target.Environment)acr"
-        '-WebAppName' = "simplechat-2026$($target.Environment)-app"
+        '-ResourceGroupName' = "simplechat-2026$($target.ResourceSuffix)-rg"
+        '-AcrName' = "simplechat2026$($target.ResourceSuffix)acr"
+        '-WebAppName' = "simplechat-2026$($target.ResourceSuffix)-app"
     }
     foreach ($parameter in $expected.Keys) {
         Assert-True (($targetArguments -contains $parameter) -and $targetArguments[$targetArguments.IndexOf($parameter) + 1] -eq $expected[$parameter]) "Wrong $parameter in $($target.Environment) task."
     }
-    Assert-True ($targetArguments -contains '-UseWebhook') "The $($target.Environment) task must use the matching registry webhook."
+    Assert-True (($targetArguments -contains '-UseWebhook') -eq $target.UseWebhook) "Wrong webhook mode in the $($target.Environment) task."
 }
 $tokens = $null
 $parseErrors = $null

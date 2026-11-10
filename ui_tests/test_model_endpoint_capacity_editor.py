@@ -2,13 +2,16 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.052
+Version: 0.261.057
 Implemented in: 0.261.035
 
 Per-model routing round trips added in: 0.261.042
 Live schema-v2 model test coverage added in: 0.261.044
 Explicit activation/deactivation coverage added in: 0.261.046
 Editor usability and effective model-limit coverage added in: 0.261.052
+Endpoint API-key controls and request-path labels added in: 0.261.054
+Informative APIM header guidance updated in: 0.261.055
+Shared custom-authentication controls restored in: 0.261.057
 
 Exercises the real shared modal, local Bootstrap/assets, and admin/personal/group
 editors with same-origin API fixtures. Uses the existing AZURE_PLAYWRIGHT_*
@@ -375,6 +378,155 @@ def test_explicit_model_routing_round_trip(capacity_ui):
     assert rows.locator("img[src=x]").count() == 0
 
 
+def test_custom_api_key_header_and_prefix_round_trip(capacity_ui):
+    page, api = capacity_ui
+    endpoint = api.endpoints[0]
+    endpoint["routing_schema_version"] = 2
+    endpoint["models"][0].update({
+        "api_type": "openai", "url_mode": "auto", "api_path": "chat",
+    })
+    second = copy.deepcopy(endpoint["models"][0])
+    second.update({
+        "id": "model-two", "modelName": "messages-alias", "api_type": "anthropic",
+        "api_path": "messages-team", "anthropic_version": "2023-06-01",
+    })
+    endpoint["models"].append(second)
+    _open_editor(page, api)
+    header = page.get_by_label("Custom authentication header", exact=True)
+    prefix = page.get_by_label("API key prefix", exact=True)
+    expect(header).to_be_visible()
+    expect(page.locator("#model-endpoint-api-key-header-help")).to_contain_text(
+        "APIM uses Ocp-Apim-Subscription-Key by default."
+    )
+    expect(header).to_have_value("")
+    expect(prefix).to_have_value("")
+    expect(page.locator("#model-endpoint-api-key")).to_have_value("")
+    expect(page.locator("#model-endpoint-api-key")).to_have_attribute("placeholder", "Stored")
+    assert page.locator("[data-model-row-id]").get_by_label(
+        "Custom authentication header", exact=True,
+    ).count() == 0
+    header.fill("Ocp-Apim-Subscription-Key")
+    header.press("Tab")
+    expect(prefix).to_be_focused()
+    saved = _save(page, api)
+    assert saved["auth"]["api_key_header"] == "Ocp-Apim-Subscription-Key"
+    assert saved["auth"]["api_key_prefix"] == ""
+    assert saved["has_api_key"] is True
+    assert not saved["auth"].get("api_key")
+    for model in saved["models"]:
+        route = resolve_model_endpoint_route(saved, model)
+        assert route["credential_policy"]["header"] == "Ocp-Apim-Subscription-Key"
+        assert "auth" not in model
+        assert "api_key_header" not in model
+    _edit_saved_endpoint(page)
+    expect(header).to_have_value("Ocp-Apim-Subscription-Key")
+    expect(prefix).to_have_value("")
+    header.fill("X-Corp-Key")
+    prefix.fill(" Token ")
+    saved = _save(page, api)
+    assert saved["auth"]["api_key_header"] == "X-Corp-Key"
+    assert saved["auth"]["api_key_prefix"] == "Token"
+    _edit_saved_endpoint(page)
+    expect(header).to_have_value("X-Corp-Key")
+    expect(prefix).to_have_value("Token")
+    header.fill("")
+    prefix.fill("")
+    cleared = _save(page, api)
+    assert cleared["auth"]["api_key_header"] == ""
+    assert cleared["auth"]["api_key_prefix"] == ""
+    assert cleared["has_api_key"] is True
+    _edit_saved_endpoint(page)
+    expect(header).to_have_value("")
+    expect(prefix).to_have_value("")
+
+
+@pytest.mark.parametrize("label,value", (
+    ("Custom authentication header", "Bad Header"),
+    ("Custom authentication header", "Host"),
+    ("Custom authentication header", "X" * 129),
+    ("API key prefix", "Token\u0001"),
+))
+def test_custom_api_key_inputs_validate_before_save(capacity_ui, label, value):
+    page, api = capacity_ui
+    _open_editor(page, api)
+    field = page.get_by_label(label, exact=True)
+    field.evaluate("(element, value) => { element.value = value; }", value)
+    field.dispatch_event("input")
+    page.locator("#model-endpoint-save-btn").click()
+    expect(page.locator("#modelEndpointModal")).to_be_visible()
+    expect(field).to_be_focused()
+    expect(field).to_have_attribute("aria-invalid", "true")
+    message = field.evaluate("element => element.validationMessage")
+    assert message
+    assert not api.saved_payloads
+    assert not api.preview_payloads
+    page.get_by_label("Custom authentication header", exact=True).fill("Ocp-Apim-Subscription-Key")
+    page.get_by_label("API key prefix", exact=True).fill("")
+    saved = _save(page, api)
+    assert saved["auth"]["api_key_header"] == "Ocp-Apim-Subscription-Key"
+
+
+def test_custom_api_key_controls_follow_provider_profile_and_reset(capacity_ui):
+    page, api = capacity_ui
+    api.endpoints[0]["auth"].update({
+        "api_key_header": "X-Corp-Key", "api_key_prefix": "Token",
+    })
+    _open_editor(page, api)
+    header = page.get_by_label("Custom authentication header", exact=True)
+    prefix = page.get_by_label("API key prefix", exact=True)
+    expect(header).to_have_value("X-Corp-Key")
+    expect(prefix).to_have_value("Token")
+    page.get_by_label("Provider", exact=True).select_option("aoai")
+    expect(header).to_be_hidden()
+    page.get_by_label("Provider", exact=True).select_option("custom")
+    expect(header).to_be_visible()
+    page.get_by_label("Custom profile", exact=True).select_option("genai_mil")
+    expect(header).to_be_hidden()
+    expect(header).to_be_disabled()
+    expect(prefix).to_be_disabled()
+    page.get_by_label("Custom profile", exact=True).select_option("")
+    expect(header).to_be_visible()
+    expect(header).to_have_value("X-Corp-Key")
+    expect(prefix).to_have_value("Token")
+    expect(page.get_by_label("Authentication Type", exact=True)).to_be_disabled()
+    assert page.locator("#model-endpoint-auth-type option[value='bearer']").count() == 0
+    assert page.locator("#model-endpoint-auth-type option[value='oauth2_client_credentials']").count() == 0
+    page.locator("#modelEndpointModal").get_by_role("button", name="Cancel", exact=True).click()
+    page.get_by_role("button", name="Add Endpoint", exact=True).click()
+    page.get_by_label("Provider", exact=True).select_option("custom")
+    expect(header).to_have_value("")
+    expect(prefix).to_have_value("")
+
+
+@pytest.mark.parametrize("schema", (1, 2))
+def test_api_type_options_show_request_path_templates(capacity_ui, schema):
+    page, api = capacity_ui
+    if schema == 2:
+        api.endpoints[0]["routing_schema_version"] = 2
+        api.endpoints[0]["models"][0].update({"api_type": "openai", "url_mode": "auto"})
+    _open_editor(page, api)
+    selector = (
+        page.locator("[data-model-row-id]").first.get_by_label("API Type", exact=True)
+        if schema == 2 else page.locator("#model-endpoint-api-type")
+    )
+    labels = {
+        "openai": "Chat Completions (/v1/chat/completions)",
+        "azure_openai": "Chat Completions (/openai/deployments/{deploymentid}/chat/completions?api-version={api-version})",
+        "anthropic": "Messages (/v1/messages)",
+        "gemini": "Chat Completions (/v1beta/openai/chat/completions)",
+    }
+    if schema == 2:
+        labels["azure_openai_v1"] = "Chat Completions (/openai/v1/chat/completions)"
+    expect(selector.locator("option")).to_have_count(len(labels))
+    for value, label in labels.items():
+        expect(selector.locator(f'option[value="{value}"]')).to_have_text(label)
+    expect(selector).to_have_value("openai")
+    assert selector.locator('option[value="responses"]').count() == 0
+    saved = _save(page, api)
+    selected_type = saved["models"][0]["api_type"] if schema == 2 else saved["api_type"]
+    assert selected_type == "openai"
+
+
 @pytest.mark.parametrize("width", (1440, 390))
 def test_routing_preview_validation_and_mobile_layout(capacity_ui, width):
     page, api = capacity_ui
@@ -525,6 +677,8 @@ def test_genai_profile_discovery_and_case_sensitive_model_ids(capacity_ui):
     ]
     _open_editor(page, api)
     expect(page.get_by_label("Custom profile", exact=True)).to_have_value("genai_mil")
+    expect(page.get_by_label("Custom authentication header", exact=True)).to_be_hidden()
+    expect(page.get_by_label("API key prefix", exact=True)).to_be_disabled()
     expect(page.locator("#model-endpoint-fetch-btn")).to_be_visible()
     page.locator("#model-endpoint-fetch-btn").click()
     rows = page.locator("[data-model-row-id]")
@@ -533,8 +687,11 @@ def test_genai_profile_discovery_and_case_sensitive_model_ids(capacity_ui):
     expect(rows.nth(2).get_by_label("Model Name", exact=True)).to_have_value("authorized-id")
     assert api.fetch_payloads[-1]["profile"] == "genai_mil"
     assert api.fetch_payloads[-1]["auth"]["api_key_header"] == "Authorization"
+    assert api.fetch_payloads[-1]["auth"]["api_key_prefix"] == "Bearer"
     saved = _save(page, api)
     assert saved["profile"] == "genai_mil"
+    assert saved["auth"]["api_key_header"] == "Authorization"
+    assert saved["auth"]["api_key_prefix"] == "Bearer"
     assert {model["modelName"] for model in saved["models"]} >= {"Authorized-ID", "authorized-id"}
     _edit_saved_endpoint(page)
     expect(page.get_by_label("Custom profile", exact=True)).to_have_value("genai_mil")

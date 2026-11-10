@@ -2,9 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.261.046
+Version: 0.261.057
 Implemented in: 0.241.179; schema-v2 resolver in 0.261.041; live route adapters in 0.261.044
 Capability, async transport, and cancellation coverage added in: 0.261.046
+APIM revision path coverage added in: 0.261.056
+Shared editor control integration verified in: 0.261.057
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
@@ -289,6 +291,8 @@ def test_schema_v2_url_matrix():
         ("azure_openai_v1", "team", "exact", "", "/team/chat/completions"),
         ("azure_openai_v1", "team", "auto", "/openai/v1", "/team/openai/v1/chat/completions"),
         ("azure_openai_v1", "team", "auto", "/openai", "/team/openai/v1/chat/completions"),
+        ("azure_openai_v1", "shared-foundry;rev=2", "auto", "", "/shared-foundry;rev=2/openai/v1/chat/completions"),
+        ("azure_openai_v1", "", "auto", "/shared-foundry;rev=2", "/shared-foundry;rev=2/openai/v1/chat/completions"),
         ("anthropic", "aoai-global-team", "auto", "", "/aoai-global-team/v1/messages"),
         ("anthropic", "aoai-global-team/v2", "auto", "", "/aoai-global-team/v2/messages"),
         ("anthropic", "aoai-global-team/anthropic/v1", "auto", "", "/aoai-global-team/anthropic/v1/messages"),
@@ -329,7 +333,11 @@ def test_schema_v2_rejects_unsafe_and_deferred_routes():
         "team\\next", "team//next", "../team", "team/./next", "team/../next",
         "team/%2e%2e", "team/%2fnext", "team/%5cnext", "team/%252e%252e",
         "team/%252f", "team/%", "team/%zz", "team/%00", "team\x00", "team\n",
-        "team\t", "user@host", "team;parameter", "team///", "///team",
+        "team\t", "user@host", "team;parameter", "shared-foundry;rev=",
+        "shared-foundry;rev=0", "shared-foundry;rev=-1", "shared-foundry;rev=02",
+        "shared-foundry;REV=2", "shared-foundry;rev=2;other=3",
+        "shared-foundry%3Brev%3D2", "first;rev=1/second;rev=2",
+        "team///", "///team",
     ]
     for suffix in bad_paths:
         endpoint = _routing_fixture(path=suffix)
@@ -337,6 +345,12 @@ def test_schema_v2_rejects_unsafe_and_deferred_routes():
     for base in ("https://user:secret@gateway.example", "https://gateway.example/?secret=1", "https://gateway.example/#part", "https://gateway.example/a//b", "https://gateway.example/%252f", "https://gateway.example/../x", "https://gateway.example\\evil", "ftp://gateway.example"):
         endpoint = _routing_fixture(base=base)
         _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
+    endpoint = _routing_fixture(
+        "azure_openai_v1",
+        "outer;rev=2",
+        base="https://gateway.example/inner;rev=1",
+    )
+    _expect_routing_error(routing.resolve_model_endpoint_route, endpoint, endpoint["models"][0])
     for field, value in (("api_type", "responses"), ("api_type", "custom_call"), ("api_type", ""), ("url_mode", "inherit"), ("url_mode", ""), ("modelName", "")):
         endpoint = _routing_fixture()
         endpoint["models"][0][field] = value
@@ -518,6 +532,7 @@ def test_schema_v2_adapters_send_exact_resolved_operation_urls():
         "normalize_custom_endpoint_auth_type": normalize_custom_endpoint_auth_type,
         "resolve_client_certificate": resolve_client_certificate,
         "resolve_custom_endpoint_credentials": resolve_custom_endpoint_credentials,
+        "resolve_model_endpoint_ca_trust": lambda _endpoint, _settings, legacy_path: legacy_path,
         "get_model_endpoint_provider": get_model_endpoint_provider,
         "validate_custom_model_endpoint_url": lambda endpoint, **_kwargs: endpoint,
         "infer_model_endpoint_protocol": infer_model_endpoint_protocol,
@@ -986,6 +1001,7 @@ def test_schema_v2_background_resolution_rechecks_group_membership():
         "routing_schema_version": importlib.import_module("functions_model_endpoint_urls").routing_schema_version,
         "model_endpoint_route_cache_key": importlib.import_module("functions_model_endpoint_urls").model_endpoint_route_cache_key,
         "resolve_model_endpoint_route": resolve_model_endpoint_route,
+        "normalize_ca_bundle_reference": lambda _connection: ("inherit", ""),
         "validate_model_endpoint_routing": lambda endpoint, _settings, *, require_resolvable=False: [
             resolve_model_endpoint_route(endpoint, model) for model in endpoint["models"]
         ],

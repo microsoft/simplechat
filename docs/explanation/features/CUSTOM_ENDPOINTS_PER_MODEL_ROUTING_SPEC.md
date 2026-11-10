@@ -2,16 +2,82 @@
 
 ## Status and Version
 
-- Status: Phases 0-3 implementation is committed through `262ccbce`. The approved editor refinements, shared CA bundle manager, and Phase 4 GenAI.mil profile are implemented in the working tree in **0.261.052**. Local regression validation is recorded below; live provider acceptance, release promotion, and deployment remain separate.
+- Status: Phases 0-3 implementation is committed through `262ccbce`. The approved editor refinements, shared CA bundle manager, Phase 4 GenAI.mil profile, endpoint-level API-key header controls, APIM revision path selectors, and shared custom-authentication modal integration are implemented in the working tree through **0.261.057**. Local regression validation is recorded below; live provider acceptance, release promotion, and deployment remain separate.
 - Date: 2026-09-21.
-- Decisions last reviewed: 2026-10-05. Shared CA certificates use a dedicated private container in the existing Blob account and metadata in the existing Cosmos DB, independent of Enhanced Citations. Agents remain excluded from new per-model routing. Live GenAI.mil access remains unavailable to the current tester.
+- Decisions last reviewed: 2026-10-29. Shared CA certificates use a dedicated private container in the existing Blob account and metadata in the existing Cosmos DB, independent of Enhanced Citations. Agents remain excluded from new per-model routing. Live GenAI.mil access remains unavailable to the current tester.
 - Baseline application version: **0.261.039**, from `application/single_app/config.py`.
 - Phase 0 closeout version: **0.261.040**, for test-fixture repairs and required version metadata only; that version did not implement new routing.
-- Implemented in version: **0.261.041** for Phase 1, **0.261.042** for Phase 2, **0.261.044-0.261.046** for Phase 3 runtime hardening/activation, and **0.261.052** for editor usability, shared CA storage/trust selection, and the named GenAI.mil profile. `application/single_app/config.py` is **0.261.052**.
+- Implemented in version: **0.261.041** for Phase 1, **0.261.042** for Phase 2, **0.261.044-0.261.046** for Phase 3 runtime hardening/activation, **0.261.052** for editor usability, shared CA storage/trust selection, and the named GenAI.mil profile, **0.261.054** for endpoint-level API-key header controls, **0.261.056** for APIM revision path selectors, and **0.261.057** to restore those custom-authentication controls in the shared endpoint modal used by admin, personal, and group editors. `application/single_app/config.py` is **0.261.057**.
 - Working branch: `feature/customendpoints`, created from refreshed `origin/Development`.
 - Baseline commit: `f1be106ec2088cf9105293a7b1dac16e668e2685`.
 - Source reviewed: [Paullizer's React v2 branch in the main repository](https://github.com/microsoft/simplechat/tree/3f896d7b6c45800c593599f3100b9aa7c7251159), `origin/paullizer-react-v2-ui`, commit `3f896d7b6c45800c593599f3100b9aa7c7251159`, version **0.261.126** at inspection. The user identified the deployed UI as **0.261.123**; pin the source commit rather than assuming the deployed UI is the latest branch tip.
 - Tracking: [issue #1518](https://github.com/microsoft/simplechat/issues/1518) and [PR #1514](https://github.com/microsoft/simplechat/pull/1514). The prior local/uncommitted Phase 3 statements below describe historical checkpoints; Phase 3 is now committed. New **0.261.052** changes are not committed or deployed by this implementation task. Live GitHub status was not reverified because SSO authorization was unavailable. Existing issue #1222 is not the tracker for this scope.
+
+## Endpoint API-key editor acceptance contract (0.261.054)
+
+Implemented in version: **0.261.054**, tracked in
+`application/single_app/config.py`. This follow-up addresses issue #1518.
+Deployment and live provider acceptance remain separate from local validation.
+
+- Generic Custom endpoints expose **Custom authentication header** and optional
+  **API key prefix** beside the endpoint's API-key settings, never on a model
+  row. The same saved header policy applies to every model on that endpoint,
+  including mixed Chat Completions and Messages routes.
+- Blank header and prefix restore each model API's defaults. A custom header
+  with a blank prefix sends the raw API key; APIM can use
+  `Ocp-Apim-Subscription-Key` with no prefix. Existing header/prefix values survive
+  save/reopen, and a blank secret input continues to preserve the stored key.
+- Header names must be valid HTTP tokens and must not override transport,
+  framing, or cookie headers. Invalid names/prefixes keep the modal open, focus
+  the invalid field, and display accessible validation without provider dispatch.
+  Values remain inert input text; credentials stay in the existing secret flow.
+- Admin, personal, and group editors share the same controls and behavior.
+  Provider/profile changes hide inapplicable controls, and a new endpoint starts
+  with empty overrides rather than another endpoint's values. GenAI.mil retains
+  its fixed `Authorization` header and `Bearer` prefix.
+- API Type options show default request-path templates, including deployment
+  and API-version variables. Persisted API type values and routing behavior do
+  not change. API Path, configured API base, and URL Handling still determine the
+  exact URL shown by **Preview Route**.
+- Regression acceptance covers mixed models, save/reopen/clear, stored-key
+  preservation, invalid input, profile/provider changes, desktop/mobile layout,
+  unchanged API type identifiers, and the real credential-header resolver.
+
+OAuth2 and static bearer-token editor support remain deferred. Responses is a
+separate runtime integration, not a selectable alias for Chat Completions.
+
+## APIM revision path selector support (0.261.056)
+
+Implemented in version: **0.261.056**, tracked in
+`application/single_app/config.py`.
+
+Schema-v2 API Path and endpoint-path normalization accept APIM's documented
+`<api-id>;rev=<positive integer>` segment so operators can test a non-current
+revision without promoting it. For example, `shared-foundry;rev=2` with
+Chat Completions (Azure/Foundry) in Auto mode resolves to
+`/shared-foundry;rev=2/openai/v1/chat/completions`.
+
+The parser preserves the literal APIM delimiter instead of percent-encoding it.
+The exception is deliberately narrow: arbitrary semicolon parameters, encoded
+delimiter substitutes, revision zero, malformed or case-altered selectors, and
+multiple selectors remain invalid. Existing traversal, origin, query, fragment,
+control-character, and operation-path protections are unchanged.
+
+### Responses follow-up assessment
+
+The [Microsoft Foundry Responses guide](https://learn.microsoft.com/azure/foundry/openai/how-to/responses)
+documents `/openai/v1/responses`, `input`, output items/text, streaming, and
+response state. The local OpenAI **1.109.1** SDK already exposes
+`client.responses.create` and accepts a callable API-key provider; a missing SDK
+resource is not the current blocker. SimpleChat's model adapters still dispatch
+Chat Completions or Messages and project their response/stream shapes.
+
+A separate Responses implementation must cover explicit protocol selection,
+request and output mapping, streaming events/cancellation, usage/budgets,
+history and provider-state retention, capabilities/tools, and existing
+scope/secret/outbound protections. Model and cloud availability must be verified
+for the target deployment. No Responses option is exposed by this API-key UI
+change, and existing agents are not implicitly switched to it.
 
 ## Problem and Evidence
 
@@ -213,8 +279,9 @@ The Azure `team/v1` example preserves a literal gateway prefix; it does not opt 
 ### Path Validation
 
 - Allow multiple ordinary path segments, hyphens, underscores, and a blank suffix. Normalize surrounding whitespace and one ordinary leading/trailing slash consistently.
+- Allow one literal APIM revision selector in the form `<api-id>;rev=<positive integer>` in API Path or the endpoint path, preserving its semicolon and equals sign in the resolved URL.
 - Reject scheme/hostname overrides, scheme-relative `//host`, backslashes, queries, fragments, embedded credentials, control characters, interior empty segments, and dot/dot-dot traversal segments.
-- Reject encoded separators, encoded traversal, double-encoded bypasses, malformed percent escapes, and any input whose decoding changes origin or segment boundaries. Use a documented segment allowlist rather than arbitrary percent-decoding loops.
+- Reject arbitrary or multiple semicolon parameters, encoded APIM delimiter substitutes, encoded separators, encoded traversal, double-encoded bypasses, malformed percent escapes, and any input whose decoding changes origin or segment boundaries. Use a documented segment allowlist rather than arbitrary percent-decoding loops.
 - Deployment identifiers are separate from the path, validated and encoded as one segment. They cannot inject an operation, query, or another host.
 - Validate the final composed URL at save and execution. Preserve HTTPS/TLS policy, DNS pinning, blocked-address checks, redirect refusal, private-host controls, approved CA/mTLS configuration, and existing cloud/authority configuration.
 

@@ -14535,7 +14535,14 @@ def resolve_streaming_multi_endpoint_gpt_config(settings, data, user_id, active_
     if explicit_routing and selection_source == 'default' and data.get('agent_info'):
         return None
     if explicit_routing and data.get('agent_info'):
-        raise ValueError('Explicit model endpoint routing is not available for agent requests.')
+        selected_agent = _resolve_canonical_chat_agent(user_id, settings, data.get('agent_info'))
+        agent_endpoint_id = str((selected_agent or {}).get('model_endpoint_id') or '').strip()
+        agent_model_id = str((selected_agent or {}).get('model_id') or '').strip()
+        if not selected_agent or (
+            agent_endpoint_id != requested_endpoint_id
+            or agent_model_id != requested_model_id
+        ):
+            raise ValueError('Selected model endpoint does not match the agent model binding.')
     if explicit_routing and not requested_model_id:
         raise ValueError('Explicit model endpoint requests require a saved model ID.')
 

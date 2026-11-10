@@ -128,8 +128,11 @@ Implemented in deployer **1.0.32**, alongside application **0.261.042** in
 `application/single_app/config.py`. This deployment-tooling change increments
 `deployers/version.txt` independently of the application version. Refs #1518.
 Updated in deployer **1.0.35** with webhook-based publishing for the beta/dev
-targets. The shared image prompt and dev target were added in **1.0.34**.
-Application version remains **0.261.042**.
+targets. Updated in **1.0.36** with direct App Service publishing for the staging
+target, which has no matching ACR push webhook. Version **1.0.37** uses the
+container-image CLI argument for direct updates so digest references remain safe
+through the Windows `az.cmd` wrapper. The shared image prompt and dev target were
+added in **1.0.34**. Application version remains **0.261.042**.
 
 Use [publish-simplechat.ps1](publish-simplechat.ps1) for routine updates to an
 existing Linux single-container App Service. It uploads local source and builds
@@ -181,12 +184,18 @@ already been set up for that tag.
 | Prefilled target | Subscription | Resource group | ACR | App Service |
 | --- | --- | --- | --- | --- |
 | Beta | `8a60416d-813d-4904-b115-2cebaaf63fea` | `simplechat-2026beta-rg` | `simplechat2026betaacr` | `simplechat-2026beta-app` |
+| Staging | `65eeb30f-e539-47a6-a160-f6629cae3d4b` | `simplechat-2026stage-rg` | `simplechat2026stageacr` | `simplechat-2026stage-app` |
 | Dev | `8c7e0020-34d5-4be4-ac62-5c744df2700b` | `simplechat-2026dev-rg` | `simplechat2026devacr` | `simplechat-2026dev-app` |
 
-The dev subscription is named `ME-MngEnvMCAP522061-paullizer-3`. Tasks use explicit
-IDs rather than changing the CLI's active subscription. All tasks invoke the same
+The staging subscription is named `ME-MngEnvMCAP522061-paullizer-2`; the dev
+subscription is named `ME-MngEnvMCAP522061-paullizer-3`. Tasks use explicit IDs
+rather than changing the CLI's active subscription. All tasks invoke the same
 script. Shared tasks live in `.vscode/tasks.json`; other local VS Code settings
 remain ignored.
+
+The staging task updates the App Service image directly because that registry does
+not have an enabled ACR push webhook scoped to `simplechat:latest`. The beta and
+dev tasks retain `-UseWebhook`.
 
 ### Explicit parameters
 
@@ -205,6 +214,21 @@ pwsh -NoProfile -File ./deployers/azurecli/publish-simplechat.ps1 `
 For a preflight instead, replace `-Yes -AllowDirty` with `-WhatIf`.
 `-WhatIf` performs discovery and local checks but no upload, build, image update,
 or confirmation prompt. It does not prove build permission or runtime health.
+
+To publish `simplechat:latest` to staging with explicit parameters:
+
+```powershell
+pwsh -NoProfile -File ./deployers/azurecli/publish-simplechat.ps1 `
+	-SubscriptionId 65eeb30f-e539-47a6-a160-f6629cae3d4b `
+	-ResourceGroupName simplechat-2026stage-rg `
+	-AcrName simplechat2026stageacr `
+	-WebAppName simplechat-2026stage-app `
+	-ImageName simplechat:latest `
+	-NonInteractive -Yes -AllowDirty
+```
+
+The staging command intentionally omits `-UseWebhook`; the publisher pins the App
+Service to the digest produced by the ACR build.
 
 To publish `simplechat:latest` to dev with explicit parameters:
 
@@ -299,11 +323,11 @@ Run `pwsh -NoProfile -File ./functional_tests/test_azurecli_publish_script.ps1`
 for offline behavioral tests. They replace Azure CLI, Git, and prompts with scoped
 fakes and never bootstrap the application or contact Azure. The beta target also
 passed a real read-only CLI preflight on 2026-09-23; no build/deployment was run.
-The deployer 1.0.35 offline checks cover task defaults and beta/dev webhook wiring,
-webhook tag/scope preflight, skipped config updates, log suppression, failed or
-incomplete runs, invalid image metadata, and ordinary-mode digest pinning when
-`latest` changes concurrently. No live build or dev deployment was performed for
-this update.
+The deployer 1.0.37 offline checks cover task defaults, beta/dev webhook wiring,
+the staging direct-publish target, Windows-safe digest updates, webhook tag/scope
+preflight, skipped config updates, log suppression, failed or incomplete runs,
+invalid image metadata, and ordinary-mode digest pinning when `latest` changes
+concurrently.
 
 ## Legacy code-only upgrade flow
 
