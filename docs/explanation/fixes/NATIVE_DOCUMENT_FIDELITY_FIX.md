@@ -40,11 +40,28 @@ different sanitized active file. Word comment-only inspection remains separate.
 No new public route, cloud service, browser dependency or setting is introduced.
 
 `functions_native_audit.py` builds typed native facts and validates output fact
-references. For source-only native-audit composition, the server supplies the
-factual values and states; a model cannot substitute a different paragraph
-binding or turn absence into a stored blank. Mixed research/computed inputs are
-not replaced by this native report. Redacted/bounded transport remains
-inaccessible rather than an exact native value.
+references. The server supplies factual values and states rather than accepting
+replacement values from a model. Mixed research/computed inputs are not replaced
+by this native report. Redacted/bounded transport remains inaccessible rather
+than an exact native value.
+
+### Answer-delivery follow-up
+
+Fixed/Implemented in version: **0.261.425**
+(`application/single_app/config.py`).
+
+The original reference-only composition protocol did not establish delivery of
+the requested checked audit: it could render the same inventory after every
+correction, or reject a correction that added the missing explanation. Some
+source-backed HTTP tests also disabled completeness. Their passing extraction
+and factual-table assertions were not a live answer-delivery pass.
+
+The follow-up `NATIVE_AUDIT_ANSWER_DELIVERY_FIX.md` documents the repaired
+preparation/check/correction contract, bounded Excel `all` support, typed native
+transport and continuation diagnostics. The customer answer can explain
+supported findings and unavailable information while the server retains exact
+native facts. Missing information alone is not a failed run. Source access,
+integrity and genuine technical failures remain separate errors.
 
 Value digests detect transport changes without guessing from placeholder text.
 `value_sha256` and the compact `fact_set_sha256` answer reference identify native

@@ -50,6 +50,7 @@ from functions_model_endpoint_identity_header import build_model_endpoint_identi
 from functions_office_media import extract_docx_comments
 from functions_native_document_inspection import has_retained_native_source, inspect_native_document
 from functions_native_audit import build_native_audit
+from native_document_evidence import NativeInspectionRequestError
 from model_endpoint_clients import build_openai_client_timeout_options
 from public_source_access import get_public_source_workspace_ids
 from public_source_policy import uses_all_public_sources
@@ -1152,7 +1153,7 @@ def _read_word_comment_inspection(document_context, user_id):
 def _read_excel_inspection(
     document_context, user_id, *, native_section="comments", native_cursor=None,
     native_page_size=100, sheet_name=None, cell_range=None,
-    max_bytes=14000,
+    max_bytes=14000, _audit_records=None,
 ):
     document = document_context["document"]
     source_evidence = {PROVENANCE_FIELD: document_provenance(document)}
@@ -1160,10 +1161,10 @@ def _read_excel_inspection(
     def authorize():
         assert_evidence_available(source_evidence, user_id, cached=True)
 
-    if native_section not in EXCEL_INVENTORY_SECTIONS:
-        raise ValueError("The Excel inspection section is invalid.")
+    if native_section != "all" and native_section not in EXCEL_INVENTORY_SECTIONS:
+        raise NativeInspectionRequestError("native_section_invalid", field="native_section")
     if type(native_page_size) is not int or not 1 <= native_page_size <= 200:
-        raise ValueError("The Excel inspection page size must be between 1 and 200.")
+        raise NativeInspectionRequestError("native_page_size_invalid", field="native_page_size")
     storage = ScreeningStorage(
         client=CLIENTS.get("storage_account_office_docs_client"),
         container_name=storage_account_content_screening_container_name,
@@ -1193,7 +1194,10 @@ def _read_excel_inspection(
                 ),
             )
     metadata = inventory.metadata
-    page = inventory.page(native_section, cursor=native_cursor, page_size=native_page_size, max_bytes=max_bytes)
+    page = inventory.page(
+        native_section, cursor=native_cursor, page_size=native_page_size, max_bytes=max_bytes,
+        **({"_audit_records": _audit_records} if _audit_records is not None else {}),
+    )
     result = {"metadata": metadata, "page": page}
     if cell_range:
         low_column, low_row, high_column, high_row = bounded_range(cell_range)
@@ -1271,6 +1275,7 @@ def get_document_accessibility_payload(
     extension = "." + file_name.rsplit(".", 1)[-1].lower() if "." in file_name else ""
     requested_sections = _normalize_accessibility_sections(sections)
     native_inspection = None
+    native_source_records = None
     if extension in (".pdf", ".pptx") and has_retained_native_source(current_document):
         if "comments" in requested_sections:
             raise LookupError("The native comment inventory is unavailable for this document format.")
@@ -1281,9 +1286,11 @@ def get_document_accessibility_payload(
             public_workspace_id=document_context.get("public_workspace_id"), purpose="accessibility",
         )
         document_context["document"] = current_document
+        native_source_records = []
         native_inspection = inspect_native_document(
             current_document, source_bytes, extension, section=native_section,
             cursor=native_cursor, page_size=native_page_size, max_bytes=_native_max_bytes,
+            _audit_records=native_source_records,
         )
         stored_metadata = native_inspection["metadata"]
     word_inspection = None
@@ -1313,11 +1320,12 @@ def get_document_accessibility_payload(
         or current_document.get("blob_path") or current_document.get("archived_blob_path")
         or current_document.get("excel_native_inventory")
     ):
+        native_source_records = []
         excel_inspection = _read_excel_inspection(
             document_context, user_id, native_section=native_section,
             native_cursor=native_cursor, native_page_size=native_page_size,
             sheet_name=sheet_name, cell_range=cell_range,
-            max_bytes=_native_max_bytes,
+            max_bytes=_native_max_bytes, _audit_records=native_source_records,
         )
         stored_metadata = excel_inspection["metadata"]
     elif (native_cursor or cell_range) and native_inspection is None:
@@ -1401,7 +1409,9 @@ def get_document_accessibility_payload(
                 key: value for key, value in page.items() if key != "records"
             }
     if payload.get("accessibility_metadata"):
-        audit = build_native_audit(payload)
+        audit = build_native_audit(
+            payload, **({"_source_records": native_source_records} if native_source_records is not None else {}),
+        )
         if audit is not None:
             payload["native_audit"] = audit
     return payload

@@ -23447,10 +23447,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "bbb2c8d935ea911852cf025cb74a968018b301d45ce2967f7a7089c64a76c4e0"
+        "module_sha256": "85094e7e04ad6d91e388c55bb30044b3a6439595eae52ef79db5ad3932dbffb2"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged conversation owner consumes SDK CosmosDict through mapping access and validates conversation/user identity. Native-fidelity imports and source-backed report reads do not change this owner or its strict-source checks; the real-owner SDK-default runtime verifies authorized and denied point responses.",
+      "contract": "The conversation owner still consumes SDK CosmosDict through mapping access and validates conversation/user identity. Native request and private source-record handoff helpers changed the module fingerprint, not this owner's read or strict-source checks. Renewed real-owner SDK-default evidence verifies authorized and denied point responses without casts or metadata loss.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"
@@ -23474,10 +23474,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "bbb2c8d935ea911852cf025cb74a968018b301d45ce2967f7a7089c64a76c4e0"
+        "module_sha256": "85094e7e04ad6d91e388c55bb30044b3a6439595eae52ef79db5ad3932dbffb2"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged upload owner consumes SDK-default point documents through mapping access and plain query rows for metadata-only resolution. Native PDF/PPTX inspection is independent of this chat-upload owner; the real-owner SDK runtime verifies conversation authorization and uploaded content projection without transport casts or lost SDK metadata.",
+      "contract": "The upload owner still consumes SDK-default point documents with mapping getters and plain metadata-query rows, then builds a plain resolved-document descriptor. Native all-section and owned-record handoff changes are independent of this owner. Renewed real-owner SDK evidence verifies conversation authorization and upload projection with preserved source identity.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"

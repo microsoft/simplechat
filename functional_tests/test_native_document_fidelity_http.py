@@ -1,7 +1,7 @@
 # test_native_document_fidelity_http.py
 """Native source bytes through real HTTP/action/retention/composition/publication.
 
-Version: 0.261.424
+Version: 0.261.425
 Implemented in: 0.261.424
 Only external blob/model I/O is replaced. SDK-default document storage, source
 authorization, real parsers, native claim validation and saved delivery execute.
@@ -91,7 +91,10 @@ def test_native_source_facts_reach_saved_http_answer(
             assert "Step 1 BEFORE Step 2" in json.dumps(payload["inputs"])
         return json.dumps({"native_claims": {
             "scope": "all_returned", "fact_set_sha256": contract["fact_set_sha256"],
-        }})
+        }, "answer": (
+            "The supported native facts and source locations are below. Missing fields are not "
+            "stored blanks, and unavailable structures do not establish conformance."
+        )})
 
     harness.replies = [
         json.dumps({

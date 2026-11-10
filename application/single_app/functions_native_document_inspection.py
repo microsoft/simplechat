@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from functions_accessibility import extract_office_accessibility_metadata, extract_pdf_accessibility_metadata
+from native_document_evidence import NativeInspectionRequestError
 
 
 NATIVE_DOCUMENT_INSPECTION_VERSION = "1.0"
@@ -58,7 +59,7 @@ def _native_records(metadata, details):
 
 
 def inspect_native_document(document, source_bytes, extension, *, section="all", cursor=None,
-                            page_size=100, max_bytes=14000):
+                            page_size=100, max_bytes=14000, _audit_records=None):
     """The owner must authorize the active bytes before and after this pure local read."""
     if extension not in (".pdf", ".pptx") or not isinstance(source_bytes, bytes):
         raise ValueError("A supported native document and its source bytes are required.")
@@ -66,11 +67,11 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
         raise ValueError("The native document exceeds its inspection byte limit or is empty.")
     section = "all" if section == "comments" else section
     if section not in NATIVE_DOCUMENT_SECTIONS:
-        raise ValueError("The native inspection section is invalid.")
+        raise NativeInspectionRequestError("native_section_invalid", field="native_section")
     if type(page_size) is not int or not 1 <= page_size <= 200:
-        raise ValueError("The native inspection page size must be between 1 and 200.")
+        raise NativeInspectionRequestError("native_page_size_invalid", field="native_page_size")
     if type(max_bytes) is not int or not 2048 <= max_bytes <= 65536:
-        raise ValueError("The native inspection response budget is invalid.")
+        raise NativeInspectionRequestError("native_response_budget_invalid", field="max_bytes")
     digest = hashlib.sha256(source_bytes).hexdigest()
     identity = {
         "document_id": document["id"], "version": document.get("version"),
@@ -85,13 +86,17 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
             value = json.loads(base64.b64decode(cursor + "=" * (-len(cursor) % 4), altchars=b"-_", validate=True))
             if type(value) is not dict or set(value) != {*identity, "offset", "fragment"}:
                 raise ValueError("Invalid native cursor")
-            if any(value[key] != expected for key, expected in identity.items()):
-                raise ValueError("Stale native cursor")
             offset, fragment = value["offset"], value["fragment"]
             if any(type(number) is not int or number < 0 for number in (offset, fragment)):
                 raise ValueError("Invalid native cursor offset")
         except (ValueError, TypeError, UnicodeError) as error:
-            raise ValueError("The native inspection cursor is invalid or belongs to a different source.") from error
+            raise NativeInspectionRequestError("native_cursor_invalid", field="native_cursor") from error
+        for key, expected in identity.items():
+            if value[key] != expected:
+                raise NativeInspectionRequestError(
+                    "native_cursor_source_changed", field="native_cursor",
+                    rule=f"native_cursor_{key}_changed",
+                )
     with tempfile.TemporaryDirectory(prefix="simplechat_native_inspection_") as folder:
         path = Path(folder) / ("source" + extension)
         path.write_bytes(source_bytes)
@@ -112,7 +117,7 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
     total = len(records)
     start_record, start_fragment = offset, fragment
     if offset > total or offset == total and fragment:
-        raise ValueError("The native inspection cursor is outside the inventory.")
+        raise NativeInspectionRequestError("native_cursor_out_of_range", field="native_cursor")
     returned, used = [], 0
     budget = max_bytes - 1536
     while offset < total and len(returned) < page_size:
@@ -123,7 +128,7 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
         if fragment or len(encoded) > budget:
             serialized = encoded.decode("utf-8")
             if fragment >= len(serialized):
-                raise ValueError("The native record continuation is invalid.")
+                raise NativeInspectionRequestError("native_cursor_fragment_invalid", field="native_cursor")
             low, high, selected = 1, len(serialized) - fragment, None
             while low <= high:
                 middle = (low + high) // 2
@@ -139,11 +144,15 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
             if selected is None:
                 raise ValueError("The native record cannot fit the requested response budget.")
             returned.append(selected)
+            if _audit_records is not None:
+                _audit_records.append(record)
             fragment += len(selected["record_json_fragment"])
             if fragment == len(serialized):
                 offset, fragment = offset + 1, 0
             break
         returned.append(record)
+        if _audit_records is not None:
+            _audit_records.append(record)
         used += len(encoded)
         offset += 1
     more = offset < total or bool(fragment)

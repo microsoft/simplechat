@@ -3,12 +3,14 @@
 
 import hashlib
 import json
+import re
 from copy import deepcopy
 
 from native_document_evidence import NATIVE_FIELD_STATES, inaccessible_field
 
 
 NATIVE_AUDIT_VERSION = "native-audit-v1"
+NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v2"
 MAX_AUDIT_FACTS = 1000
 MAX_AUDIT_BYTES = 100000
 
@@ -17,7 +19,43 @@ def _encoded(value):
     return json.dumps(value, ensure_ascii=True, allow_nan=False, sort_keys=True, separators=(",", ":"))
 
 
-def build_native_audit(payload):
+def sanitize_native_audit_transport(value, sanitize):
+    """Keep bounded typed facts independent of citation-wrapper depth, never of redaction."""
+    required = {"version", "file_name", "source_sha256", "facts", "facts_omitted", "has_more"}
+    if (
+        type(value) is not dict or not required <= set(value)
+        or set(value) - required - {"next_cursor", "limitations"}
+        or value["version"] != NATIVE_AUDIT_VERSION
+        or type(value["facts"]) is not list or len(value["facts"]) > MAX_AUDIT_FACTS
+        or type(value["facts_omitted"]) is not bool or type(value["has_more"]) is not bool
+    ):
+        return None
+    for fact in value["facts"]:
+        if (
+            type(fact) is not dict
+            or set(fact) != {"id", "location", "field", "state", "value", "value_sha256", "reason"}
+            or type(fact["id"]) is not str or re.fullmatch(r"[0-9a-f]{24}", fact["id"]) is None
+            or type(fact["value_sha256"]) is not str
+            or re.fullmatch(r"[0-9a-f]{64}", fact["value_sha256"]) is None
+            or type(fact["location"]) is not str or type(fact["field"]) is not str
+            or type(fact["state"]) is not str or fact["state"] not in NATIVE_FIELD_STATES
+            or fact["reason"] is not None and type(fact["reason"]) is not str
+        ):
+            return None
+    try:
+        if len(_encoded(value).encode("utf-8")) > MAX_AUDIT_BYTES + 8192:
+            return None
+    except (ValueError, TypeError, RecursionError):
+        return None
+    result = {key: sanitize(item) for key, item in value.items() if key != "facts"}
+    result["facts"] = [
+        {key: sanitize(item) for key, item in fact.items()}
+        for fact in value["facts"]
+    ]
+    return result
+
+
+def build_native_audit(payload, *, _source_records=None):
     metadata = payload.get("accessibility_metadata") or {}
     if metadata.get("format") not in ("pdf", "pptx", "xlsx", "xlsm", "xls"):
         return None
@@ -108,7 +146,13 @@ def build_native_audit(payload):
                 record["text"], record["text_state"])
     objects = (metadata.get("objects_summary") or {}).get("items", metadata.get("objects") or [])
     page = (payload.get("native_inspection") or payload.get("excel_inspection") or {}).get("page") or {}
-    if page.get("section") == "objects" and metadata.get("format") != "pdf":
+    if _source_records is not None and metadata.get("format") != "pdf":
+        objects = [
+            record for record in _source_records
+            if page.get("section") == "objects" or record.get("inventory_section") == "objects"
+            or metadata.get("format") == "pptx" and record.get("section") == "objects"
+        ]
+    elif page.get("section") == "objects" and metadata.get("format") != "pdf":
         objects = [record for record in page.get("records", []) if not record.get("record_fragment")]
     for index, obj in enumerate(objects):
         identity = str(obj.get("id") or f"object:{index}")
@@ -146,6 +190,19 @@ def build_native_audit(payload):
     for cell in (payload.get("excel_inspection") or {}).get("cells", []):
         location = f"{cell['sheet']}!{cell['cell']}"
         add(f"saved-cell:{location}", location, "saved_cell_record", cell)
+    if payload.get("excel_inspection") and page.get("section") == "all":
+        records = _source_records if _source_records is not None else page.get("records", [])
+        for index, record in enumerate(records, page.get("start_record", 0)):
+            section = record.get("inventory_section")
+            if record.get("record_fragment") or section == "objects":
+                continue
+            location = "; ".join(str(part) for part in (
+                record.get("sheet"), record.get("cell"), record.get("name"), section,
+            ) if part)
+            add(f"excel-inventory:{index}", location or "Workbook native inventory",
+                f"saved_{section}_record", record)
+        add("excel-inventory-counts", "Supported workbook inventory", "inventory_section_counts",
+            page.get("section_counts") or {})
     style = payload.get("style_inventory") or metadata.get("style_inventory")
     if style:
         add("style_summary", "Native formatting inspection", "observed_style_summary", {
@@ -171,10 +228,59 @@ def build_native_audit(payload):
     }
 
 
+def _native_page_chain_complete(pages):
+    """Prove contiguous returned records, including fragments; a last page alone is insufficient."""
+    if not pages:
+        return False
+    expected_offset = expected_fragment = 0
+    total = pages[0].get("total_records")
+    if type(total) is not int or total < 0:
+        return False
+    if any(
+        type(page.get("start_record")) is not int or page["start_record"] < 0
+        or type(page.get("fragment_offset", 0)) is not int or page.get("fragment_offset", 0) < 0
+        for page in pages
+    ):
+        return False
+    unique = {_encoded(page): page for page in pages}
+    ordered = sorted(unique.values(), key=lambda page: (
+        page.get("start_record", -1), page.get("fragment_offset", 0),
+    ))
+    for page in ordered:
+        if (
+            page.get("total_records") != total
+            or page.get("start_record") != expected_offset
+            or page.get("fragment_offset", 0) != expected_fragment
+            or type(page.get("records")) is not list
+        ):
+            return False
+        for record in page["records"]:
+            if not isinstance(record, dict):
+                return False
+            if record.get("record_fragment"):
+                piece, length = record.get("record_json_fragment"), record.get("record_characters")
+                if (
+                    not isinstance(piece, str) or not piece or type(length) is not int
+                    or record.get("fragment_offset") != expected_fragment
+                    or expected_fragment + len(piece) > length
+                ):
+                    return False
+                expected_fragment += len(piece)
+                if expected_fragment == length:
+                    expected_offset, expected_fragment = expected_offset + 1, 0
+            else:
+                if expected_fragment:
+                    return False
+                expected_offset += 1
+        if page.get("has_more") is not (expected_offset < total or bool(expected_fragment)):
+            return False
+    return expected_offset == total and expected_fragment == 0
+
+
 def native_audit_contract(inputs):
     """Only recognize actual native-reader invocation results, never document prose."""
     facts, citations, files, limitations = [], [], [], []
-    seen, source_hashes = {}, {}
+    seen, source_hashes, inventory_pages, inventory_files, unfinished = {}, {}, {}, {}, set()
     for entry in inputs.values():
         value = entry.get("value")
         if not isinstance(value, dict):
@@ -205,8 +311,14 @@ def native_audit_contract(inputs):
             source_hashes[document_id] = source_hash
             if audit.get("facts_omitted"):
                 limitations.append("The native fact handoff reached its limit; the returned facts are not exhaustive.")
+            page = (result.get("native_inspection") or result.get("excel_inspection") or {}).get("page")
+            section = page.get("section") if isinstance(page, dict) else None
+            inventory_key = (document_id, source_hash, section)
+            if isinstance(page, dict):
+                inventory_pages.setdefault(inventory_key, []).append(page)
+                inventory_files[inventory_key] = str(audit.get("file_name") or "Selected document")
             if audit.get("has_more"):
-                limitations.append("A native inventory page has a continuation; only returned records are represented.")
+                unfinished.add(inventory_key)
             limitations.extend(audit.get("limitations") or [])
             files.append(str(audit.get("file_name") or "Selected document"))
             marker = result.get("citation")
@@ -233,32 +345,76 @@ def native_audit_contract(inputs):
                     facts.append(fact)
     if not facts:
         return None
+    complete_chains = {key: _native_page_chain_complete(pages) for key, pages in inventory_pages.items()}
+    if any(not complete_chains.get(key, False) for key in unfinished):
+        limitations.append("A native inventory page has a continuation; only returned records are represented.")
     return {
         "facts": facts, "citations": list(dict.fromkeys(citations)), "files": list(dict.fromkeys(files)),
         "limitations": list(dict.fromkeys(limitations)),
         "fact_set_sha256": hashlib.sha256(_encoded(facts).encode()).hexdigest(),
+        "inventory_coverage": [{
+            "file_name": inventory_files[key], "section": key[2],
+            "returned_chain_complete": complete_chains[key],
+            "inventory_complete": all(page.get("inventory_complete") is True for page in pages),
+            "total_records": pages[0].get("total_records"),
+        } for key, pages in inventory_pages.items()],
     }
 
 
 def native_audit_policy(contract):
     return (
-        "This is a source-specific native audit. Return only one JSON object with the key "
-        "\"native_claims\". Its value must be an object with exactly "
+        "This is a source-specific native audit. Return one JSON object with exactly the keys "
+        "\"native_claims\" and \"answer\". native_claims must be an object with exactly "
         "\"scope\":\"all_returned\" and \"fact_set_sha256\" copied from native_audit_contract.fact_set_sha256. "
-        "This references the returned fact set, not the source-file hash. The server supplies each value and state. Do not infer "
-        "text-to-tag bindings, replace missing fields with empty strings, reorder logical elements, "
-        "or append free-text claims. The server validates these claims and renders the factual report."
+        "This references the returned fact set, not the source-file hash. answer must be a nonempty "
+        "Markdown string answering every requested question with supported findings or a precise "
+        "explanation of what is not in the supplied data or cannot be inspected. Missing facts and "
+        "unsupported checks are normal answer content, not execution errors. Keep useful findings. "
+        "Lead with direct answers and organize findings by the requested checks, not just a raw inventory. "
+        "The native_audit_contract facts are authoritative for native values, field states, object "
+        "identity, text bindings and logical order; action-model notes cannot override them. "
+        "Do not replace absent or inaccessible fields with stored blanks, infer rendered compliance, "
+        "or invent source assertions or citations. Copy supplied citations verbatim where used. "
+        "The server appends its immutable factual evidence table; do not copy that table into answer. "
+        "The checker evaluates the rendered customer answer, not this JSON transport format."
     )
 
 
-def validate_native_audit_claims(response, contract):
-    value = json.loads(response)
-    if type(value) is not dict or set(value) != {"native_claims"}:
-        raise ValueError("Native audit output must contain only native_claims.")
+def _unique_native_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("Native audit output contains a duplicate key.")
+        value[key] = item
+    return value
+
+
+def decode_native_audit_answer(response, contract, *, require_answer=False):
+    """Validate immutable fact references separately from the checked explanation."""
+    value = json.loads(response, object_pairs_hook=_unique_native_object)
+    if type(value) is not dict or set(value) not in (
+        {"native_claims"}, {"native_claims", "answer"},
+    ):
+        raise ValueError("Native audit output must contain native_claims and its answer.")
+    if require_answer and "answer" not in value:
+        raise ValueError("Native audit output omitted the requested customer answer.")
     compact = {"scope": "all_returned", "fact_set_sha256": contract["fact_set_sha256"]}
     if value["native_claims"] not in (compact, [fact["id"] for fact in contract["facts"]]):
         raise ValueError("Native audit claims do not match the retained source facts.")
-    return render_native_audit(contract)
+    rendered = render_native_audit(contract)
+    if "answer" in value:
+        answer = value["answer"]
+        if type(answer) is not str or not answer.strip():
+            raise ValueError("Native audit answer must be nonempty Markdown.")
+        allowed = set(re.findall(r"\[#[^\]\r\n]+\]", "\n".join(contract["citations"])))
+        if set(re.findall(r"\[#[^\]\r\n]+\]", answer)) - allowed:
+            raise ValueError("Native audit answer contains an unknown citation.")
+        rendered = f"{answer.rstrip()}\n\n{rendered}"
+    return value, rendered
+
+
+def validate_native_audit_claims(response, contract):
+    return decode_native_audit_answer(response, contract)[1]
 
 
 def render_native_audit(contract):
@@ -279,6 +435,10 @@ def render_native_audit(contract):
             cell(fact["location"]), cell(fact["field"]),
             cell(fact["state"] + (f" ({fact['reason']})" if fact.get("reason") else "")),
             cell(_encoded(fact["value"])),
+        ]) + " |")
+    for coverage in contract.get("inventory_coverage", []):
+        lines.append("| " + " | ".join([
+            cell(coverage["file_name"]), "inventory_coverage", "present_value", cell(_encoded(coverage)),
         ]) + " |")
     lines.extend(contract["citations"])
     lines.extend(contract.get("limitations", []))

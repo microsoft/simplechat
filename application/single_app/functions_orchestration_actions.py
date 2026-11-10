@@ -61,6 +61,7 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_visuals import gathering_visual_addendum, instruction_memory_messages
 from functions_workflow_document_selection import selected_document_sources
+from native_document_evidence import NATIVE_INSPECTION_ERROR_MESSAGES
 
 
 RETRIEVED_CHARTS_PLUGIN_NAME = 'retrieved_data_charts'
@@ -684,6 +685,11 @@ async def invoke_action(
             operation = getattr(invocation.function, 'name', '')
             value = payload if isinstance(payload, dict) else {}
             document_id = invocation.arguments.get('document_id')
+            arguments = invocation.arguments
+            supplied_cursor = arguments.get('native_cursor')
+            inspection = value.get('native_inspection') or value.get('excel_inspection') or {}
+            page = inspection.get('page') if isinstance(inspection, dict) else None
+            next_cursor = page.get('next_cursor') if isinstance(page, dict) else None
             log_event(
                 '[ORCHESTRATION_ADAPTERS] Document action read checkpoint.',
                 extra={
@@ -699,6 +705,19 @@ async def invoke_action(
                     'native_metadata_present': isinstance(value.get('accessibility_metadata'), dict),
                     'citation_present': isinstance(value.get('citation'), str) and bool(value['citation']),
                     'error_type': type(error).__name__ if error is not None else None,
+                    **({
+                        'validation_code': value['error_code'],
+                        'validation_rule': value.get('validation_rule'),
+                    } if isinstance(value.get('error_code'), str)
+                    and value['error_code'] in NATIVE_INSPECTION_ERROR_MESSAGES else {}),
+                    **({
+                        'native_cursor_hash': hashlib.sha256(supplied_cursor.encode('utf-8', errors='replace')).hexdigest(),
+                        'native_cursor_length': len(supplied_cursor),
+                    } if isinstance(supplied_cursor, str) and supplied_cursor else {}),
+                    **({
+                        'next_native_cursor_hash': hashlib.sha256(next_cursor.encode('utf-8', errors='replace')).hexdigest(),
+                        'next_native_cursor_length': len(next_cursor),
+                    } if isinstance(next_cursor, str) and next_cursor else {}),
                     **({'document_id_hash': hashlib.sha256(document_id.encode('utf-8', errors='replace')).hexdigest()}
                        if isinstance(document_id, str) and document_id in bound_ids else {}),
                 },

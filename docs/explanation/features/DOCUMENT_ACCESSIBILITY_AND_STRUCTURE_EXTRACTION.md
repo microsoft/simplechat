@@ -5,7 +5,8 @@
 **Excel native content/table improvements implemented in version: 0.261.408**
 **Native Word comment inspection fixed/implemented in version: 0.261.422**
 **Native fidelity fixed/implemented in version: 0.261.424**
-**Related config.py version: `0.261.424`**
+**Native audit answer delivery fixed/implemented in version: 0.261.425**
+**Related config.py version: `0.261.425`**
 
 ## 1. Overview and Purpose
 
@@ -57,11 +58,34 @@ capture discards. Reads use the authorized active representation, never a
 reviewer-only original after a sanitized representation is released.
 
 Source-only Orchestrate native-audit answers validate references to returned
-facts and render their factual tables from server-held values. Invented
-paragraph bindings or absent-as-empty drafts cannot supply replacement values.
-This does not turn mixed research, ordinary conversation, or generated
-deliverables into certified native audits. Word's opt-in strict comment reader,
-threading, resolution and zero-comment behavior are unchanged.
+facts and render their factual tables from server-held values. A model's
+interpretation cannot supply replacement values for those facts. This does not
+turn mixed research, ordinary conversation, or generated deliverables into
+certified native audits. Word's opt-in strict comment reader, threading,
+resolution and zero-comment behavior are unchanged.
+
+### Checked audit answers
+
+Fixed/Implemented in version: **0.261.425**
+(`application/single_app/config.py`).
+
+A native audit now pairs the requested Markdown explanation with the immutable
+source facts. Preparation, checking and correction share the same native contract;
+the checker assesses the rendered answer rather than mistakenly requiring its
+JSON transport format on screen. An explicit checking retry can reuse still-
+authorized retained facts without repeating native reads.
+
+An absent property or unsupported rendered check should produce a useful answer
+with precise limitations, not a generic failed-run notice. An unread source is
+not evidence that a property is absent. Denied/held sources, invalid continuations,
+parsing failures and other genuine technical errors remain explicit.
+
+Excel supports bounded, paged `native_section="all"` across its supported native
+inventory sections, while explicit sections remain available for focused
+questions. This does not read every worksheet cell or calculate formulas.
+Source/schema/section-bound cursors and direct saved-cell range limits are
+unchanged. Aggregate returned-page coverage is distinct from full source or
+rendered accessibility coverage.
 
 ---
 

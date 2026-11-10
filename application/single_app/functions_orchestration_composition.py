@@ -69,7 +69,8 @@ from functions_task_completeness import (
     check_and_correct, completeness_policy, public_completeness_report,
 )
 from functions_native_audit import (
-    native_audit_contract, native_audit_policy, render_native_audit, validate_native_audit_claims,
+    NATIVE_AUDIT_ANSWER_VERSION, decode_native_audit_answer,
+    native_audit_contract, native_audit_policy,
 )
 
 
@@ -777,15 +778,20 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             # Ask the endpoint for a JSON object; invoke drops the option if it is refused.
             metadata['json_output'] = True
         titles = {image['asset_id']: image['title'] for image in images}
+        native_preparations = {}
 
         def prepared_values(response):
             if type(response) is not str or not response.strip():
                 raise ResultContractError('result_value_invalid')
             if audit_contract:
-                rendered = render_native_audit(audit_contract)
-                values = {outputs[0]['name']: (
-                    rendered if response == rendered else validate_native_audit_claims(response, audit_contract)
-                )}
+                if response in native_preparations:
+                    rendered = response
+                else:
+                    preparation, rendered = decode_native_audit_answer(
+                        response, audit_contract, require_answer=True,
+                    )
+                    native_preparations[rendered] = preparation
+                values = {outputs[0]['name']: rendered}
             elif plain_text:
                 values = {outputs[0]['name']: response}
             else:
@@ -841,14 +847,46 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             retained_check = (getattr(context, 'completeness_retry_states', None) or {}).get(step['step_id'])
             if retained_check is not None:
                 saved_completeness = deepcopy(retained_check)
+                if (
+                    audit_contract
+                    and (saved_completeness.get('native_audit_preparation') or {}).get('version')
+                    != NATIVE_AUDIT_ANSWER_VERSION
+                    and saved_completeness.get('status') in ('verification_unavailable', 'incomplete')
+                ):
+                    # An explicit new attempt may prepare with the new grammar, not replay an old check.
+                    saved_completeness = None
+                    log_event(
+                        '[ORCHESTRATION_EXECUTOR] Native audit preparation contract upgraded for retry.',
+                        extra={
+                            **workflow_log_context(
+                                run_id=context.run_id, conversation_id=context.conversation_id,
+                                step_id=step['step_id'],
+                            ),
+                            'stage': 'native_audit_retry', 'validation_code': 'native_audit_answer_contract_changed',
+                        },
+                    )
                 # This is an explicit new checking attempt, never a replay of an ambiguous correction.
-                if saved_completeness.get('status') in ('verification_unavailable', 'incomplete'):
+                if saved_completeness and saved_completeness.get('status') in ('verification_unavailable', 'incomplete'):
                     if saved_completeness['status'] == 'verification_unavailable':
                         saved_completeness['retry_semantic_error'] = saved_completeness.get('reason_code')
                     saved_completeness.update(
                         status='checking', reason_code='', report_repairs=0,
                         deterministic_status='pending', semantic_status='pending',
                     )
+        if audit_contract and saved_completeness:
+            preparation_state = saved_completeness.get('native_audit_preparation') or {}
+            if preparation_state.get('version') == NATIVE_AUDIT_ANSWER_VERSION:
+                if preparation_state.get('fact_set_sha256') != audit_contract['fact_set_sha256']:
+                    raise ResultContractError('result_value_invalid')
+                for name in ('original', 'candidate'):
+                    preparation = preparation_state.get(name)
+                    if preparation is not None:
+                        _, rendered = decode_native_audit_answer(
+                            json.dumps(preparation, ensure_ascii=False), audit_contract, require_answer=True,
+                        )
+                        if rendered != saved_completeness[name]:
+                            raise ResultContractError('result_value_invalid')
+                        native_preparations[rendered] = preparation
         recheck()
         response = (
             saved_completeness['original'] if saved_completeness
@@ -895,11 +933,33 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             def save_completeness(state):
                 state['model_binding'] = step.get('model_binding') or {'model_id': str(context.gpt_model or '')}
                 state['owner_step_id'] = step['step_id']
+                if audit_contract:
+                    state['native_audit_preparation'] = {
+                        'version': NATIVE_AUDIT_ANSWER_VERSION,
+                        'fact_set_sha256': audit_contract['fact_set_sha256'],
+                        'original': deepcopy(native_preparations.get(state['original'])),
+                        'candidate': deepcopy(native_preparations.get(state['candidate'])),
+                    }
                 if state['status'] == 'complete' and state.get('semantic_skip_reason'):
                     context.revalidate_conversation_context()
                 if completeness_store is not None:
                     completeness_store.save_completeness(
                         step['step_id'], state, binding=completeness_binding,
+                    )
+                if audit_contract and state['status'] in (
+                    'complete', 'incomplete', 'verification_unavailable', 'correcting',
+                ):
+                    log_event(
+                        '[ORCHESTRATION_EXECUTOR] Native audit answer check checkpoint.',
+                        extra={
+                            **workflow_log_context(
+                                run_id=context.run_id, conversation_id=context.conversation_id,
+                                step_id=step['step_id'],
+                            ),
+                            'stage': 'native_audit_check', 'outcome': state['status'],
+                            'validation_code': state.get('reason_code'),
+                            'corrections': state['corrections'], 'checks': state['checks'],
+                        },
                     )
                 if state['status'] == 'complete' and state.get('semantic_skip_reason'):
                     log_event(
@@ -940,6 +1000,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 **({'unavailable_inputs': missing} if missing else {}),
                 **({'saved_memory': memory['context_messages']} if memory.get('context_messages') else {}),
                 **({'conversation_history': history} if history else {}),
+                **({'native_audit_contract': audit_contract} if audit_contract else {}),
             }
             legacy_evidence = dict(completeness_evidence)
             completeness_evidence['user_provided_content'] = context.user_request
@@ -959,6 +1020,16 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                         'response_policy': AVAILABLE_INFORMATION_POLICY, 'delivery_verified_separately': True,
                     } if uses_available_information(step) else {}),
                     'generation_policy': completeness_generation_policy,
+                    **({
+                        'native_answer_version': NATIVE_AUDIT_ANSWER_VERSION,
+                        'candidate_representation': (
+                            'The candidate is the rendered customer Markdown answer, with a server-owned '
+                            'native evidence table appended. JSON is only the preparation/correction '
+                            'transport; do not require JSON in the rendered candidate. Native facts in '
+                            'evidence.native_audit_contract take precedence over action-model notes. '
+                            'Assess the requested explanation and honest limitations against those facts.'
+                        ),
+                    } if audit_contract else {}),
                     'visual_requirements': _compose_visual_rules(step, {}),
                 },
                 evidence=completeness_evidence,

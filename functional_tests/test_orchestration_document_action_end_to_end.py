@@ -1,7 +1,7 @@
 # test_orchestration_document_action_end_to_end.py
 """
 Authenticated native-document orchestration from HTTP submission to saved answer.
-Version: 0.261.424
+Version: 0.261.425
 Implemented in: 0.261.419
 Production plugin discovery coverage added in: 0.261.421
 
@@ -228,8 +228,8 @@ def test_native_auto_turn_reaches_a_saved_cited_answer(native_http, caplog, exte
         contract = payload.get("native_audit_contract")
         if contract is None:
             return answer
-        rendered_answer[0] = render_native_audit(contract)
-        return json.dumps({"native_claims": [fact["id"] for fact in contract["facts"]]})
+        rendered_answer[0] = f"{answer}\n\n{render_native_audit(contract)}"
+        return json.dumps({"native_claims": [fact["id"] for fact in contract["facts"]], "answer": answer})
 
     def completeness_reply():
         return json.dumps({"requirements": [{

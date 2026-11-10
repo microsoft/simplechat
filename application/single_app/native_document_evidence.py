@@ -8,6 +8,26 @@ from collections.abc import Mapping
 
 NATIVE_EVIDENCE_SCHEMA_VERSION = "1.0"
 NATIVE_FIELD_STATES = frozenset({"absent", "present_empty", "present_value", "inaccessible"})
+NATIVE_INSPECTION_ERROR_MESSAGES = {
+    "native_section_invalid": "The requested native inspection section is not supported for this file.",
+    "native_page_size_invalid": "The native inspection page size must be between 1 and 200.",
+    "native_response_budget_invalid": "The native inspection response budget is invalid.",
+    "native_cursor_invalid": "The native inspection cursor is invalid or belongs to a different source or section.",
+    "native_cursor_source_changed": "The native inspection cursor belongs to a different source or section.",
+    "native_cursor_out_of_range": "The native inspection cursor is outside the inventory.",
+    "native_cursor_fragment_invalid": "The native record continuation is invalid.",
+}
+
+
+class NativeInspectionRequestError(ValueError):
+    """A stable request diagnostic, separate from source absence or parsing failure."""
+
+    def __init__(self, code, *, field, rule=None):
+        self.code = code
+        self.argument_field = field
+        self.validation_rule = rule
+        self.public_message = NATIVE_INSPECTION_ERROR_MESSAGES[code]
+        super().__init__(self.public_message)
 
 
 def inaccessible_field(reason):

@@ -4,7 +4,7 @@ title: "Inspect Excel data, comments, and structure"
 description: "Read workbook feedback and metadata without confusing them with saved values or table calculations."
 section: "Guides"
 audience: user
-version: "0.261.417"
+version: "0.261.425"
 ---
 
 Implemented in version: **0.261.408**, tracked in
@@ -83,6 +83,29 @@ inspection accepts a worksheet and bounded A1 range.
 Returned pages, shortened parent previews, and explicit long-record fragments
 are not exhaustive results. Check coverage and continuations before claiming
 every comment or metadata record has been read.
+
+## Audit native properties and objects
+
+Fixed/Implemented in version: **0.261.425**, tracked in
+`application/single_app/config.py`.
+
+For a broad review, select the workbook and ask:
+
+> Inspect native document properties, picture/chart alternatives, actual checkbox
+> controls, saved formatting, and each sheet's print headers and footers. Cite
+> source locations and explain what the supported inspection cannot establish.
+
+Document Search can request `native_section="all"` to page through its supported
+inventory, or a specific section for a focused question. Each all-section record
+identifies its section. This is not a scan of every worksheet cell: name
+`Budget!B4` or another bounded saved-cell range when its actual value or formula
+cache matters, and use tabular analysis for whole-table calculations.
+
+The audit should tell you what was found and what is not in the supplied data.
+A missing native description is not the same as a stored empty description.
+An unsupported control or rendered check does not erase the supported findings
+or prove a source-wide absence. Genuine read/access failures still need resolution;
+they must not be described as a successful inspection that found nothing.
 
 ## Existing files and limitations
 

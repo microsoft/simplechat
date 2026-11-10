@@ -10,6 +10,7 @@ from functions_authentication import get_current_user_id
 from functions_appinsights import log_event
 from public_chat_scope_state import current_public_chat_scope
 from functions_agent_document_citations import annotate_document_search_payload
+from native_document_evidence import NativeInspectionRequestError
 from functions_search import (
     SEARCH_DEFAULT_TOP_N,
     SEARCH_MAX_TOP_N,
@@ -157,9 +158,9 @@ class DocumentSearchPlugin(BasePlugin):
                         {'name': 'doc_scope', 'type': 'str', 'description': 'all, personal, group, or public.', 'required': False},
                         {'name': 'sections', 'type': 'str', 'description': 'Optional comma-separated sections: accessibility, style, issues.', 'required': False},
                         {'name': 'page_number', 'type': 'int', 'description': 'Optional page or slide number whose chunk text is also returned.', 'required': False},
-                        {'name': 'native_section', 'type': 'str', 'description': 'Excel: comments, tables, objects, image_analyses, property_records, custom_properties, extended_properties, defined_names, hyperlinks, validations. PDF/PPTX: all, properties, structure, objects, artifacts, content, issues.', 'required': False},
-                        {'name': 'native_cursor', 'type': 'str', 'description': 'Excel next_cursor returned by the previous inventory page.', 'required': False},
-                        {'name': 'native_page_size', 'type': 'int', 'description': 'Excel records per response, between 1 and 200.', 'required': False},
+                        {'name': 'native_section', 'type': 'str', 'description': 'Excel: all, comments, tables, objects, image_analyses, property_records, custom_properties, extended_properties, defined_names, hyperlinks, validations. PDF/PPTX: all, properties, structure, objects, artifacts, content, issues. Choose all for broad audits or an explicit section for focused questions.', 'required': False},
+                        {'name': 'native_cursor', 'type': 'str', 'description': 'Opaque next_cursor from excel_inspection.page or native_inspection.page. Pass unchanged with the same document and native_section; never construct or edit it.', 'required': False},
+                        {'name': 'native_page_size', 'type': 'int', 'description': 'Native inventory records per response, between 1 and 200, with a separate byte limit.', 'required': False},
                         {'name': 'sheet_name', 'type': 'str', 'description': 'Worksheet for an optional saved-cell range read.', 'required': False},
                         {'name': 'cell_range', 'type': 'str', 'description': 'Optional Excel A1 range, at most 2000 cells, without executing formulas.', 'required': False},
                     ],
@@ -453,6 +454,9 @@ class DocumentSearchPlugin(BasePlugin):
             'original. Missing originals or malformed comment parts are errors, not empty inventories. '
             'For Excel, inspect native_section and follow excel_inspection.page.next_cursor until has_more '
             'is false when the question requires every record. Compatibility notes are not extra comments. '
+            'Use native_section=all for a broad supported workbook inventory, or request a named section '
+            'for a focused question. All-section records carry inventory_section; all does not enumerate '
+            'every saved cell or execute formulas/macros. '
             'Use sheet_name and cell_range for actual saved values and formula caches; do not infer them '
             'from a schema preview. Existing stored originals are inspected without requiring re-upload. '
             'PDF/PPTX retained authorized active sources are inspected locally on request. Follow '
@@ -460,6 +464,8 @@ class DocumentSearchPlugin(BasePlugin):
             'Native field states distinguish absent, present_empty, present_value and inaccessible; '
             'an empty normalized alt_text alone does not establish a stored blank. Native logical '
             'bindings are not visual order. native_audit contains the exact source-grounded audit facts. '
+            'A missing property or unsupported check is information to disclose alongside supported '
+            'findings, not evidence that the whole inspection failed. '
             'The payload carries a "citation" value; copy it verbatim into your answer when you use it.'
         ),
     )
@@ -471,9 +477,9 @@ class DocumentSearchPlugin(BasePlugin):
         page_number: Annotated[int, 'Optional 1-based stored page/slide or Excel evidence segment number, not an Excel printed page.'] = 0,
         active_group_ids: Annotated[str, 'Optional comma-separated group ids when resolving group content.'] = '',
         active_public_workspace_id: Annotated[str, 'Optional public workspace id when resolving public content.'] = '',
-        native_section: Annotated[str, 'Excel section or PDF/PPTX all, properties, structure, objects, artifacts, content, issues. Default comments maps to all for PDF/PPTX.'] = 'comments',
-        native_cursor: Annotated[str, 'Excel inventory next_cursor from the previous page, including continued long records.'] = '',
-        native_page_size: Annotated[int, 'Excel inventory page size from 1 through 200; responses also have a byte budget.'] = 100,
+        native_section: Annotated[str, 'Excel: all, comments, objects, tables, property_records, custom_properties, extended_properties, defined_names, hyperlinks, validations, image_analyses. PDF/PPTX: all, properties, structure, objects, artifacts, content, issues. Use all for broad audits or a named section for focused questions. Default comments maps to all only for PDF/PPTX.'] = 'comments',
+        native_cursor: Annotated[str, 'Opaque next_cursor from excel_inspection.page or native_inspection.page. Copy unchanged with the same document and native_section; do not construct or modify it.'] = '',
+        native_page_size: Annotated[int, 'Native inventory page size from 1 through 200; responses also have a byte budget.'] = 100,
         sheet_name: Annotated[str, 'Worksheet name for optional direct saved-cell inspection.'] = '',
         cell_range: Annotated[str, 'Optional A1 range with at most 2000 cells; reads saved values/formulas, never recalculates.'] = '',
     ) -> Annotated[dict, 'Stored accessibility, style inventory, and issue metadata for one document.']:
@@ -494,6 +500,18 @@ class DocumentSearchPlugin(BasePlugin):
                 ),
                 'get_document_accessibility_report',
             )
+        except NativeInspectionRequestError as error:
+            log_event(
+                "[DOCUMENT_METADATA] Native inspection request rejected.",
+                level=logging.WARNING, extra={
+                    "error_type": type(error).__name__, "validation_code": error.code,
+                    "argument_field": error.argument_field, "validation_rule": error.validation_rule,
+                },
+            )
+            return {
+                "error": error.public_message, "error_code": error.code,
+                "validation_rule": error.validation_rule,
+            }
         except ScreeningError as error:
             return {"error": error.public_message, "error_code": error.code, "status_code": error.status_code}
         except DocumentSearchScopeError as error:

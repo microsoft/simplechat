@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.424"
+version: "0.261.425"
 ---
 
 <!-- action-slug: document-search -->
@@ -79,10 +79,14 @@ placeholder origins. Unresolved data must not be inferred from appearance,
 nearby text, or an empty compatibility field.
 
 Source-only Orchestrate native-audit answers validate `native_audit` fact
-references and render factual tables from the retained values. Incorrect drafts
-can be corrected; repeated unsupported claims fail rather than becoming a saved
-source assertion. This scoped check does not replace mixed research or computed
-answers, nor establish standards compliance.
+references and render factual tables from the retained values. From **0.261.425**,
+new composition also requires the requested customer explanation, not just a
+fact-set reference. Checking and correction share the native contract and assess
+the rendered answer. A missing property or unsupported check is disclosed
+alongside useful findings, rather than treated as execution failure. Unsupported
+claims still require correction; exact source values are not rewritten by the
+model. This does not replace mixed research/computed answers or establish
+standards compliance.
 
 This read runs no new OCR/vision job and starts no bulk re-ingestion. Older
 Search chunks remain unchanged until explicit processing refreshes them.
@@ -160,6 +164,24 @@ Use `native_section` to request `comments`, `tables`, `objects`,
 byte bound. Follow `excel_inspection.page.next_cursor` using `native_cursor`
 while `has_more` is true. Explicit long JSON record fragments require their
 continuation before the record is complete.
+
+Fixed/Implemented in version: **0.261.425**
+(`application/single_app/config.py`).
+
+For a broad workbook audit, `native_section="all"` pages across every supported
+inventory section in deterministic order. Each record identifies its
+`inventory_section`; section counts include supported sections with zero records.
+For a narrow question, keep using a focused section instead of reading the
+entire supported inventory. `all` preserves the same page/byte limits and does
+not enumerate every worksheet cell, run macros, calculate formulas or start
+new image analysis.
+
+Copy the opaque `next_cursor` unchanged, with the same document and native
+section. A valid completed page chain removes stale continuation warnings; a
+last page alone does not establish that earlier records were inspected. Native
+field absence and unsupported checks remain answer content. Invalid request
+parameters, changed/denied sources and parsing failures remain genuine errors,
+not empty inventories.
 
 `sheet_name` and `cell_range` read an A1 range of at most 2,000 saved cells,
 including formula text/cache availability, without executing formulas.
