@@ -136,6 +136,7 @@ LOGGER_WORKFLOW_HASH_KEYS = frozenset({
     "conversationidhash", "turnidhash", "runidhash", "stepidhash", "producerstepidhash",
     "documentidhash", "plannerbindinghash", "documentsethash",
     "consumerrunidhash",
+    "nativecursorhash", "nextnativecursorhash",
 })
 # Application-owned snake_case codes; any other text under these keys is dropped.
 LOGGER_WORKFLOW_CODE_KEYS = frozenset({

@@ -1087,6 +1087,7 @@ function MessageBubbleInner({
                 className={clsx(
                     bubbleWidthClass(chatWidth),
                     'rounded-2xl px-4 py-3',
+                    !isUser && 'chat-assistant-bubble min-w-0',
                     // These are repeated per message, so they use the non-blurred surface:
                     // a backdrop-filter per bubble makes long threads scroll badly.
                     alignRight && !agentPosted
@@ -1434,7 +1435,7 @@ function StreamingBubble() {
 
     return (
         <div data-scroll-live-reply className="flex justify-start">
-            <div className={clsx(streamingContent ? 'glass-flat rounded-2xl px-4 py-3' : 'min-w-0 py-2', bubbleWidthClass(chatWidth))}>
+            <div className={clsx('chat-assistant-bubble min-w-0', streamingContent ? 'glass-flat rounded-2xl px-4 py-3' : 'py-2', bubbleWidthClass(chatWidth))}>
                 {/* Shown while connecting even when partial content is already on screen:
                     without it, a response that stopped mid-sentence just looks frozen. */}
                 {connecting && (

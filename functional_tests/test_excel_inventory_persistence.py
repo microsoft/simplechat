@@ -1,7 +1,7 @@
 # test_excel_inventory_persistence.py
 """
 Functional tests for private, complete, revision-bound Excel inventories.
-Version: 0.261.409
+Version: 0.261.424
 Implemented in: 0.261.408
 UUID import binding regression implemented in: 0.261.409
 
@@ -10,6 +10,7 @@ Tests prove paging, full-text continuations, source binding, publication failure
 fresh authorization, screening capture, and revision-confined cleanup.
 """
 
+import base64
 import json
 import ast
 import sys
@@ -70,7 +71,7 @@ def test_inventory_generations_use_current_uuid_factory(review_workbook, invento
             scoped.setattr(uuid, "uuid4", lambda current=generation: current)
             _, _, reference = persist_excel_inventory(review_workbook, ".xlsx", subject=subject, storage=store)
             scan_id = (
-                f"excel-native:{excel.EXCEL_WORKBOOK_SCHEMA_VERSION}:"
+                f"excel-native:{excel.EXCEL_NATIVE_INSPECTION_SCHEMA_VERSION}:"
                 f"{reference['source_sha256']}:{generation.hex}"
             )
             references.append(reference)
@@ -151,6 +152,12 @@ def test_source_and_section_bound_cursors_cannot_be_replayed(review_workbook, in
     original = review_workbook.read_bytes()
     reader = open_excel_inventory(document, original, ".xlsx", storage=store, authorize=lambda: None)
     page = reader.page("comments", page_size=1)
+    token = page["next_cursor"]
+    legacy = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+    legacy.pop("schema_version")
+    legacy_token = base64.urlsafe_b64encode(json.dumps(legacy).encode()).decode().rstrip("=")
+    with pytest.raises(ValueError, match="different source or section"):
+        reader.page("comments", cursor=legacy_token)
     with pytest.raises(ValueError, match="different source or section"):
         reader.page("objects", cursor=page["next_cursor"])
     updated = open_excel_inventory(document, original + b"new-revision", ".xlsx", storage=store, authorize=lambda: None)
@@ -246,7 +253,7 @@ def test_real_report_backfills_existing_original_without_reupload(review_workboo
     payload = namespace["get_document_accessibility_payload"](
         "workbook", "owner", sheet_name="Budget", cell_range="B4:B4",
     )
-    assert payload["schema_version"] == "2.0"
+    assert payload["schema_version"] == "3.0"
     assert payload["accessibility_metadata"]["comment_summary"]["thread_roots"] == 3
     assert any(item["text"] == "Set cap to 19500." for item in payload["excel_inspection"]["page"]["records"])
     assert payload["excel_inspection"]["cells"][0]["value"] == 15000

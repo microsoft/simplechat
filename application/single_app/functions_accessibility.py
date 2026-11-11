@@ -18,6 +18,8 @@ This module inspects the native file structures in-process using already-install
    corresponding Azure AI Search chunks (`chunk_text`) so zero structural data is lost.
 """
 
+import hashlib
+import json
 import os
 import re
 import zipfile
@@ -28,8 +30,13 @@ import olefile
 from defusedxml.ElementTree import ParseError as DefusedParseError
 from defusedxml.ElementTree import fromstring as defused_fromstring
 from pypdf import PdfReader
+from pypdf.generic import BooleanObject
 
 from functions_appinsights import log_event
+from content_screening.extraction import current_extraction
+from native_document_evidence import bound_native_metadata, drawing_native_fields, inaccessible_field, native_field
+from functions_pdf_native_evidence import bind_pdf_node, inspect_pdf_content, pdf_content_references
+from functions_pptx_native_evidence import inspect_pptx_slide_objects, pptx_core_native_fields
 from functions_excel_accessibility import (
     extract_excel_accessibility_metadata,
     format_excel_comment_for_chat,
@@ -94,6 +101,20 @@ _PPTX_SLIDE_RELS_XML_PATTERN = re.compile(r'^ppt/slides/_rels/slide(\d+)\.xml\.r
 _MANUAL_BULLET_PATTERN = re.compile(r'^\s*(?:[\u2022\u2023\u25E6\u2043\u2219\*\-\+]|(?:\d+|[a-zA-Z])[\.\)])\s+\S')
 
 
+def _native_source_digest(file_path):
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as source:
+        for data in iter(lambda: source.read(65536), b""):
+            digest.update(data)
+    return digest.hexdigest()
+
+
+def _capture_native_accessibility(file_format, blocks):
+    capture = current_extraction()
+    if capture is not None:
+        capture.add_native_accessibility(file_format, blocks)
+
+
 def _safe_deref(obj):
     """Dereference a pypdf IndirectObject safely."""
     try:
@@ -132,6 +153,17 @@ def _pdf_bool(val):
         return False
     text = str(val).strip().lower()
     return text in ('true', '/true', '1', 'yes')
+
+
+def _pdf_container_state(catalog, key):
+    if not hasattr(catalog, 'get'):
+        return 'inaccessible'
+    if key not in catalog:
+        return 'absent'
+    value = _safe_deref(catalog.get(key))
+    if not hasattr(value, 'get'):
+        return 'inaccessible'
+    return 'present_value' if value else 'present_empty'
 
 
 def _clean_pdf_date(date_str):
@@ -239,7 +271,7 @@ def _extract_struct_attr_dict(node_dict):
     return attrs
 
 
-def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000):
+def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000, native_content=None):
     """Walk ``/StructTreeRoot`` in reading order while coalescing unattributed kerning ``<Span>`` leaves.
 
     Preserves 100% of structural/semantic tags and any ``<Span>`` that carries accessibility
@@ -258,6 +290,7 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000):
         'links': [],
         'forms': [],
         'role_map': {},
+        'traversal_complete': True,
     }
 
     root_obj = _safe_deref(struct_root)
@@ -312,6 +345,7 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000):
 
     def _traverse(node, inherited_page=None, depth=0, parent_tag=''):
         if result['raw_node_count'] >= max_visited or depth > 64:
+            result['traversal_complete'] = False
             return
         deref_node = _safe_deref(node)
         if deref_node is None:
@@ -331,6 +365,7 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000):
 
         node_id = id(deref_node)
         if node_id in visited_ids:
+            result['traversal_complete'] = False
             return
         visited_ids.add(node_id)
 
@@ -351,22 +386,25 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000):
         # Determine if this is an unattributed kerning <Span> leaf wrapper
         is_unattributed_span = (
             mapped_tag == 'Span'
-            and not attrs.get('alt')
-            and not attrs.get('actual_text')
-            and not attrs.get('lang')
-            and not attrs.get('expansion')
-            and not attrs.get('title')
+            and not any(key in deref_node for key in ('/Alt', '/ActualText', '/Lang', '/E', '/T'))
         )
 
         if is_unattributed_span:
             result['coalesced_span_count'] += 1
         elif raw_tag:
             node_entry = {
+                'node_id': f"pdf:structure:{result['raw_node_count']}",
                 'tag': mapped_tag,
                 'raw_tag': raw_tag if raw_tag != mapped_tag else None,
                 'page_number': page_num,
                 'depth': depth,
+                'content_refs': pdf_content_references(deref_node.get('/K'), page_num, page_map),
+                'native_fields': {
+                    name: native_field(deref_node, key)
+                    for name, key in (('alt', '/Alt'), ('actual_text', '/ActualText'), ('title', '/T'))
+                },
             }
+            bind_pdf_node(node_entry, native_content or {})
             for k in ('alt', 'actual_text', 'expansion', 'lang', 'title', 'scope', 'col_span', 'row_span', 'headers'):
                 if k in attrs:
                     node_entry[k] = attrs[k]
@@ -393,11 +431,17 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000):
                 alt_text = attrs.get('alt') or ''
                 actual_text = attrs.get('actual_text') or ''
                 result['figures'].append({
+                    'node_id': node_entry['node_id'],
                     'page_number': page_num,
                     'alt_text': alt_text,
                     'actual_text': actual_text,
                     'has_alt': bool(alt_text.strip() or actual_text.strip()),
                     'bbox': attrs.get('bbox'),
+                    'native_fields': node_entry['native_fields'],
+                    'content_refs': node_entry['content_refs'],
+                    'binding_status': node_entry['binding_status'],
+                    'raster_placements': node_entry.get('raster_placements'),
+                    'vector_paint_operations': node_entry.get('vector_paint_operations'),
                 })
             elif mapped_tag == 'Table':
                 t_stats = _inspect_table_subtree(deref_node, page_num, depth=depth)
@@ -558,7 +602,11 @@ def extract_pdf_accessibility_metadata(pdf_path):
     """
     cosmos_meta = {
         'format': 'pdf',
-        'schema_version': '1.0',
+        'schema_version': '2.0',
+        'native_inspection_status': 'inaccessible',
+        'native_properties': {
+            key: inaccessible_field('source_not_inspected') for key in ('title', 'author', 'keywords', 'subject')
+        },
         'is_tagged': False,
         'suspects': False,
         'has_struct_tree': False,
@@ -590,6 +638,7 @@ def extract_pdf_accessibility_metadata(pdf_path):
 
     if not pdf_path or not os.path.exists(pdf_path):
         return cosmos_meta, per_page_details
+    cosmos_meta['source_sha256'] = _native_source_digest(pdf_path)
 
     annotations_by_page = extract_pdf_page_annotations(pdf_path)
     total_annots = sum(len(items) for items in annotations_by_page.values())
@@ -647,6 +696,16 @@ def extract_pdf_accessibility_metadata(pdf_path):
     # 2. Inspect Catalog, /MarkInfo, /StructTreeRoot, /AcroForm, and page dictionaries via pypdf
     try:
         reader = PdfReader(pdf_path)
+        info = reader.metadata
+        cosmos_meta['native_properties'] = {
+            name: {**native_field(info if info is not None else {}, key), 'source': f'/Info{key}'}
+            for name, key in (('title', '/Title'), ('author', '/Author'), ('keywords', '/Keywords'), ('subject', '/Subject'))
+        }
+        native_content = inspect_pdf_content(reader)
+        cosmos_meta['native_inspection_status'] = (
+            'complete' if len(native_content) == len(reader.pages)
+            and all(page['status'] == 'complete' for page in native_content.values()) else 'partial'
+        )
         if not cosmos_meta['page_count']:
             cosmos_meta['page_count'] = len(reader.pages)
 
@@ -657,6 +716,10 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 cosmos_meta['title_present'] = True
 
         root_catalog = _safe_deref(reader.trailer.get('/Root')) if reader.trailer else None
+        cosmos_meta['native_catalog'] = {
+            'mark_info_state': _pdf_container_state(root_catalog, '/MarkInfo'),
+            'struct_tree_state': _pdf_container_state(root_catalog, '/StructTreeRoot'),
+        }
         if hasattr(root_catalog, 'get'):
             lang_val = _pdf_str(root_catalog.get('/Lang'))
             if lang_val:
@@ -664,7 +727,14 @@ def extract_pdf_accessibility_metadata(pdf_path):
 
             mark_info = _safe_deref(root_catalog.get('/MarkInfo'))
             if hasattr(mark_info, 'get'):
-                cosmos_meta['is_tagged'] = _pdf_bool(mark_info.get('/Marked'))
+                raw_marked = _safe_deref(mark_info.get('/Marked'))
+                cosmos_meta['native_catalog']['marked'] = (
+                    native_field({'/Marked': _pdf_bool(raw_marked)}, '/Marked')
+                    if isinstance(raw_marked, (bool, BooleanObject))
+                    else native_field({}, '/Marked') if '/Marked' not in mark_info
+                    else inaccessible_field('invalid_marked_value')
+                )
+                cosmos_meta['is_tagged'] = isinstance(raw_marked, (bool, BooleanObject)) and _pdf_bool(raw_marked)
                 cosmos_meta['suspects'] = _pdf_bool(mark_info.get('/Suspects'))
 
             viewer_prefs = _safe_deref(root_catalog.get('/ViewerPreferences'))
@@ -672,8 +742,10 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 cosmos_meta['display_doc_title'] = _pdf_bool(viewer_prefs.get('/DisplayDocTitle'))
 
             struct_root = _safe_deref(root_catalog.get('/StructTreeRoot'))
-            if struct_root is not None:
+            if hasattr(struct_root, 'get') and struct_root:
                 cosmos_meta['has_struct_tree'] = True
+            else:
+                struct_root = None
 
             # Inspect /AcroForm fields
             acro_form = _safe_deref(root_catalog.get('/AcroForm'))
@@ -704,6 +776,11 @@ def extract_pdf_accessibility_metadata(pdf_path):
                         })
         else:
             struct_root = None
+        if any(value == 'inaccessible' for value in (
+            cosmos_meta['native_catalog']['mark_info_state'], cosmos_meta['native_catalog']['struct_tree_state'],
+            (cosmos_meta['native_catalog'].get('marked') or {}).get('state'),
+        )):
+            cosmos_meta['native_inspection_status'] = 'partial'
 
         page_map = _build_pdf_page_id_map(reader)
 
@@ -722,14 +799,11 @@ def extract_pdf_accessibility_metadata(pdf_path):
             else:
                 non_structure_pages.append(page_idx)
 
-            artifact_count = 0
-            try:
-                contents = page.get_contents()
-                if contents is not None:
-                    raw_bytes = contents.get_data() if hasattr(contents, 'get_data') else b''
-                    artifact_count = len(_ARTIFACT_PATTERN.findall(raw_bytes))
-            except Exception:
-                artifact_count = 0
+            native_page = native_content.get(page_idx, {
+                'status': 'inaccessible', 'records': [], 'limitations': ['content_budget_exceeded'],
+            })
+            native_artifacts = [record for record in native_page['records'] if record['kind'] == 'artifact']
+            artifact_count = len(native_artifacts)
 
             if artifact_count > 0:
                 total_artifact_blocks += artifact_count
@@ -766,6 +840,8 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 'visual_image_count': per_page_visual_images.get(page_idx, 0),
                 'form_widgets': page_widgets,
                 'tag_nodes': [],
+                'native_content': native_page,
+                'artifacts': native_artifacts,
                 'formatting_line': pdf_page_style_lines.get(page_idx, ''),
                 'formatted_accessibility_block': '',
             }
@@ -777,12 +853,30 @@ def extract_pdf_accessibility_metadata(pdf_path):
         cosmos_meta['artifacts_summary'] = {
             'total_artifact_blocks': total_artifact_blocks,
             'pages_with_artifacts': pages_with_artifacts[:200],
+            'items': [
+                artifact for detail in per_page_details.values() for artifact in detail['artifacts']
+            ][:MAX_COSMOS_FIGURES],
         }
+        graphics = [
+            record for page in native_content.values() for record in page['records']
+            if record['raster_placements'] or record['vector_paint_operations']
+        ]
+        cosmos_meta['graphics_summary'] = {
+            'raster_placements': sum(record['raster_placements'] for record in graphics),
+            'vector_groups': sum(record['vector_paint_operations'] > 0 for record in graphics),
+            'items': graphics[:MAX_COSMOS_FIGURES],
+            'items_truncated': len(graphics) > MAX_COSMOS_FIGURES,
+            'coverage': cosmos_meta['native_inspection_status'],
+        }
+        cosmos_meta['unmarked_text'] = [
+            record for page in native_content.values() for record in page['records']
+            if record['kind'] == 'unmarked_text'
+        ][:MAX_COSMOS_SEMANTIC_NODES]
         cosmos_meta['links_summary']['link_annotations'] = link_annot_count
 
         # Walk /StructTreeRoot if present
         if struct_root is not None:
-            tree_data = _walk_pdf_struct_tree(struct_root, page_map)
+            tree_data = _walk_pdf_struct_tree(struct_root, page_map, native_content=native_content)
             cosmos_meta['tag_counts'] = dict(tree_data['tag_counts'])
             cosmos_meta['raw_tag_node_count'] = tree_data['raw_node_count']
             cosmos_meta['coalesced_span_count'] = tree_data['coalesced_span_count']
@@ -792,7 +886,11 @@ def extract_pdf_accessibility_metadata(pdf_path):
 
             all_semantic = tree_data['semantic_nodes']
             cosmos_meta['semantic_tag_tree'] = all_semantic[:MAX_COSMOS_SEMANTIC_NODES]
-            cosmos_meta['semantic_tag_tree_truncated'] = len(all_semantic) > MAX_COSMOS_SEMANTIC_NODES
+            cosmos_meta['semantic_tag_tree_truncated'] = (
+                len(all_semantic) > MAX_COSMOS_SEMANTIC_NODES or not tree_data['traversal_complete']
+            )
+            if not tree_data['traversal_complete']:
+                cosmos_meta['native_inspection_status'] = 'partial'
 
             # Figures summary
             figs = tree_data['figures']
@@ -835,7 +933,15 @@ def extract_pdf_accessibility_metadata(pdf_path):
 
     # 3. Synthesize actionable PDF accessibility issues
     issues = []
-    if not cosmos_meta['is_tagged'] or not cosmos_meta['has_struct_tree']:
+    catalog_states = cosmos_meta.get('native_catalog') or {}
+    if cosmos_meta['native_inspection_status'] != 'inaccessible' and catalog_states and not any(
+        value == 'inaccessible' for value in (
+            catalog_states.get('mark_info_state'), catalog_states.get('struct_tree_state'),
+            (catalog_states.get('marked') or {}).get('state'),
+        )
+    ) and (
+        not cosmos_meta['is_tagged'] or not cosmos_meta['has_struct_tree']
+    ):
         issues.append({
             'code': 'PDF_UNTAGGED',
             'severity': 'high',
@@ -948,6 +1054,11 @@ def extract_pdf_accessibility_metadata(pdf_path):
         })
 
     cosmos_meta['issues'] = issues[:MAX_COSMOS_ISSUES]
+    if cosmos_meta['native_inspection_status'] != 'complete':
+        cosmos_meta['issues'].append({
+            'code': 'PDF_NATIVE_INSPECTION_INCOMPLETE', 'severity': 'warning',
+            'message': 'Native inspection is incomplete; unavailable structures and content are not proof of absence.',
+        })
 
     # 4. Build per-page inline accessibility & tag-tree Markdown blocks
     for page_num, page_detail in per_page_details.items():
@@ -955,7 +1066,10 @@ def extract_pdf_accessibility_metadata(pdf_path):
             page_num, page_detail, cosmos_meta
         )
 
-    return cosmos_meta, per_page_details
+    _capture_native_accessibility('pdf', {
+        number: detail['formatted_accessibility_block'] for number, detail in per_page_details.items()
+    })
+    return bound_native_metadata(cosmos_meta), per_page_details
 
 
 def format_pdf_page_accessibility_block(page_number, page_detail, doc_a11y_meta=None):
@@ -981,8 +1095,13 @@ def format_pdf_page_accessibility_block(page_number, page_detail, doc_a11y_meta=
     visual_imgs = page_detail.get('visual_image_count', 0)
     lines.append(
         f"- Page {page_number} Properties: TabOrder=/{tabs_order}; "
-        f"ArtifactBlocks={artifact_count}; VisualImages={visual_imgs}"
+        f"ArtifactBlocks={artifact_count}; VisualImages={visual_imgs} (raster resources, not total graphics)"
     )
+    if isinstance(doc_a11y_meta, dict) and page_number == 1:
+        for name, field in doc_a11y_meta.get('native_properties', {}).items():
+            lines.append(f"- Native {name}: {json.dumps(field, ensure_ascii=True)[:1000]}")
+    for artifact in page_detail.get('artifacts', [])[:25]:
+        lines.append(f"- Native Artifact: {json.dumps(artifact, ensure_ascii=True)[:2000]}")
 
     tag_nodes = page_detail.get('tag_nodes') or []
     if tag_nodes:
@@ -1007,6 +1126,13 @@ def format_pdf_page_accessibility_block(page_number, page_detail, doc_a11y_meta=
             if node.get('actual_text'):
                 act_preview = str(node['actual_text']).replace('\n', ' ').strip()[:80]
                 extras.append(f'actual="{act_preview}"')
+            if node.get('content_refs'):
+                extras.append(f"content={json.dumps(node['content_refs'], ensure_ascii=True)}")
+            bound_text = node.get('bound_text') or {}
+            if bound_text.get('state') in ('present_value', 'present_empty'):
+                extras.append(f"text={json.dumps(bound_text['value'][:200], ensure_ascii=True)}")
+            elif node.get('content_refs'):
+                extras.append('text=INACCESSIBLE')
 
             token = f"<{tag_name}" + (f" {' '.join(extras)}" if extras else '') + ">"
             sequence_tokens.append(token)
@@ -1229,6 +1355,10 @@ def _inspect_drawing_element(drawing_elem, rel_map, word_offset=None, slide_numb
             'hidden': hidden,
             'word_offset': word_offset,
             'slide_number': slide_number,
+            'native_fields': drawing_native_fields(
+                doc_pr.attrib,
+                next((node.attrib for node in doc_pr.iter() if _xml_local_name(node.tag) == 'decorative'), None),
+            ),
         })
 
     return figures
@@ -1877,7 +2007,9 @@ def _extract_pptx_accessibility(file_path):
     """Extract accessibility and structural metadata from a PowerPoint (.pptx) package."""
     cosmos_meta = {
         'format': 'pptx',
-        'schema_version': '1.0',
+        'schema_version': '2.0',
+        'native_inspection_status': 'inaccessible',
+        'native_package_verified': False,
         'language': '',
         'title': '',
         'title_present': False,
@@ -1906,9 +2038,11 @@ def _extract_pptx_accessibility(file_path):
         'issues': [],
     }
     per_slide_details = {}
+    native_contrast_issues = []
 
     if not file_path or not zipfile.is_zipfile(file_path):
         return cosmos_meta, per_slide_details
+    cosmos_meta['source_sha256'] = _native_source_digest(file_path)
 
     comments_by_slide = extract_pptx_comments(file_path)
     cosmos_meta['comments_summary'] = {
@@ -1920,8 +2054,32 @@ def _extract_pptx_accessibility(file_path):
         entry_names = archive.namelist()
         if len(entry_names) > OFFICE_ZIP_MAX_ENTRIES:
             return cosmos_meta, per_slide_details
+        presentation_bytes = _read_zip_entry_bounded(archive, 'ppt/presentation.xml', OFFICE_DOCUMENT_PART_MAX_BYTES)
+        try:
+            presentation = defused_fromstring(presentation_bytes) if presentation_bytes is not None else None
+            cosmos_meta['native_package_verified'] = presentation is not None and presentation.tag in (
+                '{http://schemas.openxmlformats.org/presentationml/2006/main}presentation',
+                '{http://purl.oclc.org/ooxml/presentationml/main}presentation',
+            ) and len(entry_names) == len(set(entry_names))
+        except (DefusedParseError, ValueError):
+            cosmos_meta['native_package_verified'] = False
 
         core_props = _extract_ooxml_core_properties(archive)
+        core_bytes = _read_zip_entry_bounded(archive, 'docProps/core.xml', OFFICE_DOCUMENT_PART_MAX_BYTES)
+        try:
+            cosmos_meta['native_properties'] = pptx_core_native_fields(
+                defused_fromstring(core_bytes) if core_bytes is not None else defused_fromstring(b'<properties/>')
+            )
+        except (DefusedParseError, ValueError):
+            cosmos_meta['native_properties'] = {
+                name: inaccessible_field('malformed_core_properties') for name in ('title', 'author', 'keywords', 'subject')
+            }
+        if not cosmos_meta['native_package_verified']:
+            cosmos_meta['native_properties'] = {
+                name: inaccessible_field('unsupported_presentation_package')
+                for name in ('title', 'author', 'keywords', 'subject')
+            }
+            log_event("[DOCUMENT_METADATA] Native presentation package could not be verified.", level=30)
         cosmos_meta['title'] = core_props['title']
         cosmos_meta['title_present'] = bool(core_props['title'])
         cosmos_meta['authors'] = core_props['authors']
@@ -2079,6 +2237,7 @@ def _extract_pptx_accessibility(file_path):
                 'slide_title': slide_title,
                 'comments': comments_by_slide.get(slide_num, []),
                 'formatted_accessibility_block': '\n'.join(block_lines),
+                'native_objects': inspect_pptx_slide_objects(slide_root, slide_num, slide_path),
             }
 
         pptx_style_result = safe_style_extraction(
@@ -2090,7 +2249,50 @@ def _extract_pptx_accessibility(file_path):
                 slide_detail = per_slide_details.get(slide_num)
                 if slide_detail:
                     slide_detail['formatted_accessibility_block'] += f"\n- {style_line}"
-    issues = []
+            native_runs = cosmos_meta['style_inventory'].get('native_runs', [])
+            for detail in per_slide_details.values():
+                for obj in detail['native_objects']['records']:
+                    obj['text_runs'] = [
+                        run for run in native_runs
+                        if run['slide_number'] == obj['slide_number'] and run['object_id'] == obj.get('object_id')
+                    ]
+                    background = obj.get('background') or {}
+                    for run in obj['text_runs']:
+                        color = run['native_fields']['color']
+                        size = run['style'].get('size_pt')
+                        if color['state'] == 'present_value' and background.get('state') == 'present_value' and size and (
+                            size >= 18 or size < 14 or run['native_fields']['bold']['state'] == 'present_value'
+                        ):
+                            ratio = compute_wcag_contrast_ratio(color['value'], background['value'])
+                            threshold = 3.0 if size >= 18 or size >= 14 and run['style'].get('bold') is True else 4.5
+                            run['contrast'] = {
+                                'ratio': ratio, 'threshold': threshold, 'low_contrast': ratio < threshold,
+                                'foreground': color['value'], 'background': background['value'],
+                                'scope': 'native solid colors; not a rendered conformance assessment',
+                            }
+                            if ratio < threshold:
+                                native_contrast_issues.append({
+                                    'code': 'PPTX_LOW_TEXT_CONTRAST', 'severity': 'medium',
+                                    'slide_number': obj['slide_number'], 'object_id': obj['object_id'],
+                                    'message': f"Native solid-color text contrast is {ratio}:1 for object {obj['object_id']}.",
+                                })
+                    detail['formatted_accessibility_block'] += (
+                        f"\n- Native object: {json.dumps(obj, ensure_ascii=True)[:4000]}"
+                    )
+        objects = [obj for detail in per_slide_details.values() for obj in detail['native_objects']['records']]
+        cosmos_meta['native_inspection_status'] = (
+            'complete' if cosmos_meta['native_package_verified'] and len(per_slide_details) == len(slide_entries)
+            and all(detail['native_objects']['status'] == 'complete' for detail in per_slide_details.values())
+            else 'partial'
+        )
+        cosmos_meta['objects_summary'] = {
+            'total': len(objects), 'items': objects[:MAX_COSMOS_FIGURES],
+            'items_truncated': len(objects) > MAX_COSMOS_FIGURES,
+            'decorative': sum(obj.get('is_decorative') is True for obj in objects),
+            'scope': 'supported slide-local objects; hidden and group containers identified separately',
+        }
+        cosmos_meta['figures_summary']['scope'] = 'picture/chart preview, not the complete shape inventory'
+    issues = list(native_contrast_issues)
     if not cosmos_meta['title_present']:
         issues.append({
             'code': 'PPTX_MISSING_TITLE',
@@ -2123,7 +2325,10 @@ def _extract_pptx_accessibility(file_path):
         })
 
     cosmos_meta['issues'] = issues[:MAX_COSMOS_ISSUES]
-    return cosmos_meta, per_slide_details
+    _capture_native_accessibility('pptx', {
+        number: detail['formatted_accessibility_block'] for number, detail in per_slide_details.items()
+    })
+    return bound_native_metadata(cosmos_meta), per_slide_details
 
 
 def _extract_legacy_doc_accessibility(file_path):

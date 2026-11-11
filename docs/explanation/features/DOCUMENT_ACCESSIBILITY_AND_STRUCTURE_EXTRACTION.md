@@ -4,7 +4,9 @@
 **Excel implemented in version: 0.261.399**
 **Excel native content/table improvements implemented in version: 0.261.408**
 **Native Word comment inspection fixed/implemented in version: 0.261.422**
-**Related config.py version: `0.261.423`**
+**Native fidelity fixed/implemented in version: 0.261.424**
+**Native audit answer delivery fixed/implemented in version: 0.261.425**
+**Related config.py version: `0.261.425`**
 
 ## 1. Overview and Purpose
 
@@ -15,6 +17,75 @@ Supporting document accessibility review (WCAG 2.1 AA, Section 508, and PDF/UA) 
 - Neither cloud extraction service returns PDF tag hierarchies (`/StructTreeRoot`), `/Artifact` markers, `/Lang`, `/ViewerPreferences/DisplayDocTitle`, `/AcroForm` field `/TU` tooltips, PDF review annotations (`/Annots`), or native Office accessibility properties (`adec:decorative`, `w:tblHeader`, pseudo-headings, floating object overlap, hidden text, and explicit color contrast).
 
 SimpleChat combines visual content extraction (Document Intelligence / Content Understanding) with an in-process native file-format parser (`application/single_app/functions_accessibility.py`) using already-installed Python libraries (`pypdf`, `PyMuPDF`/`fitz`, `defusedxml`, `olefile`) and stores the results across **Azure AI Search chunks** and the **parent Cosmos DB document record**.
+
+## Source-state fidelity and existing files
+
+Fixed/Implemented in version: **0.261.424**
+(`application/single_app/config.py`).
+
+Native inspection distinguishes `absent`, `present_empty`, `present_value`, and
+`inaccessible`. The first means a successfully inspected native location lacks
+the field; the second means the field actually exists with an empty value.
+False, zero, whitespace, and a normalized empty fallback are not interchangeable.
+Raw source values and their locations remain separate from display/search values.
+
+PDF inspection now retains supported page/stream/MCID bindings, exact Info
+properties, raster placements, vector paint groups, and Artifact text/type/subtype.
+XMP is not independently audited by this native field contract.
+Raw Figure marked content does not establish a logical structure tree. Raster
+resources, placed images, vector groups and logical Figure elements are separate
+counts; arbitrary unmarked vector art is not automatically recognized as a chart.
+
+PowerPoint inspection adds supported slide-local objects, including untexted
+decorative shapes, with object-linked run formatting and placeholder origins.
+Slide-local footer text is not master-derived content just because formatting
+can be inherited. Contrast is checked only for supported native solid colors
+with known foreground/background and text size; this is not rendered validation.
+
+For retained, authorized active PDF/PPTX sources, Document Search can inspect
+native evidence locally on request. `native_inspection.page` has bounded records
+and continuation cursors tied to source bytes/revision. No new OCR, vision,
+external-link refresh or bulk customer reprocessing is started. Old indexed
+chunks are not silently refreshed: explicit processing is needed if normal
+Search retrieval must include newly collected evidence. Missing originals may
+require an authorized re-upload; holds and access restrictions cannot be bypassed.
+Legacy snapshots without current native source evidence do not establish exact
+attribute presence or content bindings.
+
+Native blocks also enter the screened canonical capture before publication
+rebuilds chunks, rather than relying on late chunk enrichment that page-mode
+capture discards. Reads use the authorized active representation, never a
+reviewer-only original after a sanitized representation is released.
+
+Source-only Orchestrate native-audit answers validate references to returned
+facts and render their factual tables from server-held values. A model's
+interpretation cannot supply replacement values for those facts. This does not
+turn mixed research, ordinary conversation, or generated deliverables into
+certified native audits. Word's opt-in strict comment reader, threading,
+resolution and zero-comment behavior are unchanged.
+
+### Checked audit answers
+
+Fixed/Implemented in version: **0.261.425**
+(`application/single_app/config.py`).
+
+A native audit now pairs the requested Markdown explanation with the immutable
+source facts. Preparation, checking and correction share the same native contract;
+the checker assesses the rendered answer rather than mistakenly requiring its
+JSON transport format on screen. An explicit checking retry can reuse still-
+authorized retained facts without repeating native reads.
+
+An absent property or unsupported rendered check should produce a useful answer
+with precise limitations, not a generic failed-run notice. An unread source is
+not evidence that a property is absent. Denied/held sources, invalid continuations,
+parsing failures and other genuine technical errors remain explicit.
+
+Excel supports bounded, paged `native_section="all"` across its supported native
+inventory sections, while explicit sections remain available for focused
+questions. This does not read every worksheet cell or calculate formulas.
+Source/schema/section-bound cursors and direct saved-cell range limits are
+unchanged. Aggregate returned-page coverage is distinct from full source or
+rendered accessibility coverage.
 
 ---
 
@@ -34,7 +105,7 @@ flowchart TB
     subgraph Extractors["2. Extraction Engines (Content + Native File Parsers)"]
         direction TB
         CU_DI["Azure Content Understanding / Document Intelligence\n• Page Markdown text & visual layout\n• AI figure descriptions & OCR\n• Table visual grids"]
-        PDF_PARSER["PDF Native Parser (pypdf + PyMuPDF)\n• Catalog: /MarkInfo (Tagged), /Lang, /ViewerPreferences\n• Info & XMP: /Title, /Author, /Subject, /Keywords\n• /StructTreeRoot: Full Tag Tree + Reading Order + /Pg map\n• /AcroForm: Form fields & /TU tooltips\n• Page Content Streams: /Artifact markers\n• Page /Annots: Sticky notes, highlights, free-text comments"]
+        PDF_PARSER["PDF Native Parser (pypdf + PyMuPDF)\n• Catalog: /MarkInfo (Tagged), /Lang, /ViewerPreferences\n• Exact Info: /Title, /Author, /Subject, /Keywords\n• Bounded /StructTreeRoot + supported MCID bindings\n• /AcroForm: Form fields & /TU tooltips\n• Content: raster/vector groups and Artifact associations\n• Page /Annots: Sticky notes, highlights, free-text comments"]
         OOXML_PARSER["Office OOXML Native Parser (defusedxml + python-docx/pptx)\n• docProps/core.xml + styles.xml: Title, Author, Subject, Keywords, w:lang\n• Heading hierarchy (w:outlineLvl) vs. Pseudo-headings (bold/size Normal)\n• Lists (w:numPr vs manual bullets)\n• Tables (w:tblHeader repeat row, w:gridSpan/w:vMerge merged cells)\n• Shapes/Images (wp:docPr @descr/@title Alt Text, adec:decorative='1')\n• Layout & Cues (wp:anchor floating/overlap, w:vanish hidden text, w:color/w:shd contrast)\n• Comments (word/comments.xml + commentsExtended.xml + word_offset anchors;\n  ppt/comments/comment*.xml + modernComment*.xml)"]
         OLE_PARSER["Legacy .doc OLE Parser (olefile + MS-DOC FIB)\n• SummaryInformation & DocumentSummaryInformation\n• FIB Comment Streams (PlcfandRef, PlcfandTxt, anchor_text, word_offset)\n• Paragraph/Heading/Table heuristics"]
     end
@@ -43,7 +114,7 @@ flowchart TB
         direction LR
         subgraph Cosmos["Parent Cosmos DB Document Record\n(user_documents / group_documents / public_documents)"]
             COSMOS_CORE["Core Document Fields\n• id, file_name, version, num_chunks\n• title, authors, abstract (subject), keywords, language\n• word_comment_count, pdf_comment_count, pptx_comment_count"]
-            COSMOS_A11Y["accessibility_metadata (JSON Object)\n• Document Flags: is_tagged, suspects, has_struct_tree,\n  language, title, display_doc_title, has_bookmarks, page_tabs_order\n• Full Inventories: heading_outline, figures_summary (native alt/decorative),\n  tables_summary (TH/tblHeader, scope, merged cells), forms_summary (/TU tooltips),\n  links_summary (tooltips/generic text), artifacts_summary, formatting_and_layout\n• Semantic Tag / Structure Tree (with page/section mapping)\n• Detected Accessibility Issues (code, severity, message)"]
+            COSMOS_A11Y["accessibility_metadata (bounded JSON preview)\n• Document Flags: is_tagged, suspects, has_struct_tree,\n  language, title, display_doc_title, has_bookmarks, page_tabs_order\n• Bounded Inventories: heading_outline, figures_summary (native alt/decorative),\n  tables_summary (TH/tblHeader, scope, merged cells), forms_summary (/TU tooltips),\n  links_summary, artifacts_summary, formatting_and_layout\n• Supported native identities, field states and bindings\n• Detected Accessibility Issues (code, severity, message)"]
         end
 
         subgraph AISearch["Azure AI Search Chunks\n(user / group / public index — 1..N chunks per page/section)"]
@@ -170,12 +241,20 @@ flowchart LR
 
 ## 3. Technical Specifications
 
-### Zero-Loss PDF `/StructTreeRoot` Handling
-In PDFs exported from desktop publishing tools, 80–90% of raw `/StructTreeRoot` nodes are unattributed font-kerning `<Span>` or `<MCR>` leaves inside a paragraph (`<P>`). `_walk_pdf_struct_tree()` in `application/single_app/functions_accessibility.py`:
-1. **Preserves 100% of structural/semantic tags** (`Document`, `Part`, `Art`, `Sect`, `Div`, `H`, `H1`–`H6`, `Title`, `P`, `L`, `LI`, `Lbl`, `LBody`, `Table`, `TR`, `TH`, `TD`, `Figure`, `Formula`, `Caption`, `Link`, `Form`, `Annot`, `Note`, `Reference`, `BlockQuote`, `TOC`, `TOCI`) and maps custom tags via `/RoleMap`.
-2. **Preserves 100% of attributed `<Span>` nodes** carrying `/Lang`, `/Alt`, `/ActualText`, `/E`, or `/T`.
-3. **Coalesces only unattributed kerning `<Span>` leaves** into their parent semantic element while recording `raw_tag_node_count` and `coalesced_span_count`.
-4. **Maps every tag node by `/Pg` to its 1-based page number** and writes each page's ordered tag hierarchy inline into that page's AI Search chunk (`### Page Accessibility & Tag Structure (Page N)`), while storing the document-wide inventory and `accessibility_metadata` on the parent Cosmos DB record.
+### Bounded PDF structure and content bindings
+
+`_walk_pdf_struct_tree()` preserves supported semantic elements in native child
+order, maps custom roles, and coalesces unattributed Span wrappers. Supported
+integer/MCR references retain page and stream scope; OBJR text bindings that are
+not resolved are explicitly inaccessible. Visual/extracted order is not used to
+invent logical bindings.
+
+Traversal and parent inventories are bounded. Content inspection limits include
+4,000 content records, 200,000 operations and 1,000,000 decoded characters.
+Malformed streams, ambiguous text callbacks and exceeded bounds remain partial,
+not empty-success evidence. Parent previews and source-backed inventory pages
+have separate coverage. No universal PDF font/encoding, complex-table,
+multi-column or PDF/UA support is implied.
 
 ### Key Modules Modified
 - `application/single_app/functions_accessibility.py`:
@@ -221,7 +300,7 @@ flowchart LR
 
 - **Cosmos parent record** (`accessibility_metadata.style_inventory`): the document-wide inventory. It is bounded rather than raw: up to 25 fonts, 40 sizes, 25 colours, 100 outlier runs (text that differs from the body font or size, such as undersized text), with the true counts (`font_count`, `outlier_run_count`, `outliers_truncated`) kept so a consumer can tell when the list was capped. Also holds `body_font`, `body_size_pt`, `min_size_pt`, `max_size_pt`, emphasis totals, `layout`, and `page_setup`.
 - **AI Search chunk text**: a compact `Formatting (characters): ...` line per page (PDF), slide (PPTX), or word-offset bucket (Word), so retrieval can answer location-specific formatting questions.
-- **Not kept**: the full uncapped list of every run. Style is computed at ingestion, so documents uploaded before 0.261.392 have no style data until they are re-uploaded.
+- **Not kept**: an uncapped list of every run. New PPTX native records associate bounded runs with object IDs, explicit/resolved style origins and unresolved fields. Retained PDF/PPTX sources can be inspected on request; refreshing previously indexed evidence remains explicit processing.
 
 ### Excel native inspection (0.261.399)
 
