@@ -14,20 +14,23 @@ export function EvidenceSourceBadge({ source }: { source: EvidenceSource }) {
     );
 }
 
-export function EvidenceStatusFooter({ status, expanded, onOpen, controlsId }: {
+export function EvidenceStatusFooter({ status, analysisNotice, expanded, onOpen, controlsId }: {
     status: EvidenceStatus | null; expanded: boolean; onOpen: () => void; controlsId?: string;
+    analysisNotice?: string | null;
 }) {
-    if (!status || status.state === 'complete' || status.state === 'unknown') return null;
+    const state = status && status.state !== 'complete' && status.state !== 'unknown' ? status.state : null;
+    const label = state ? EVIDENCE_LABELS[state] : analysisNotice;
+    if (!label) return null;
     return (
         <div role="status" className="mt-2">
             <button type="button" aria-expanded={expanded} onClick={onOpen}
                 aria-controls={controlsId}
-                data-evidence-state={status.state}
-                aria-label={`${EVIDENCE_LABELS[status.state]}. View source coverage`}
+                data-evidence-state={state ?? undefined}
+                aria-label={`${label}. View source coverage`}
                 className={clsx('inline-flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-left text-xs text-text-1 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent',
-                    status.state === 'missing' ? 'bg-danger-soft' : 'bg-warn-soft')}>
-                <TriangleAlert size={13} className={clsx('shrink-0', status.state === 'missing' ? 'text-danger' : 'text-warn')} aria-hidden="true" />
-                <span>{EVIDENCE_LABELS[status.state]} <span className="underline underline-offset-2">View sources</span></span>
+                    state === 'missing' ? 'bg-danger-soft' : 'bg-warn-soft')}>
+                <TriangleAlert size={13} className={clsx('shrink-0', state === 'missing' ? 'text-danger' : 'text-warn')} aria-hidden="true" />
+                <span>{label} <span className="underline underline-offset-2">View sources</span></span>
             </button>
         </div>
     );
@@ -47,7 +50,11 @@ export function EvidenceStatusDetails({ status }: { status: EvidenceStatus | nul
                         <span className="min-w-0 flex-1 break-words text-text-1">{source.name}</span>
                         <span className="flex flex-col items-end gap-0.5">
                             <EvidenceSourceBadge source={source} />
-                            {source.evidence_count !== undefined && <span className="text-text-3">{source.evidence_count} evidence item{source.evidence_count === 1 ? '' : 's'} returned</span>}
+                            {source.evidence_count !== undefined && <span className="text-text-3">
+                                {source.state === 'complete' && source.evidence_count === 0
+                                    ? 'Inspection completed with no matching records'
+                                    : `${source.evidence_count} evidence item${source.evidence_count === 1 ? '' : 's'} returned`}
+                            </span>}
                         </span>
                     </li>
                 ))}

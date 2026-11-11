@@ -1,4 +1,4 @@
-# V2 model tools and evidence status (v0.261.389)
+# V2 model tools and evidence status (v0.261.424)
 
 ## Overview
 
@@ -86,7 +86,7 @@ authorized source ledger or verified retained Search lineage:
 
 | State | Meaning |
 |---|---|
-| Complete | Evidence was returned for the recorded sources; no warning footer is needed. |
+| Complete | Evidence is available for the recorded sources, including a verified completed native inventory with no comments; no evidence warning footer is needed. |
 | Partial | Some document evidence is available, but another recorded source is missing, partial, unavailable, or unknown. |
 | Missing | No supporting document evidence was returned from the sources actually searched. This is not an exhaustive-corpus absence claim. |
 | Unavailable | Source work failed, was skipped/cancelled, or could not be authorized. This is not evidence that the fact does not exist. |
@@ -96,6 +96,14 @@ authorized source ledger or verified retained Search lineage:
 General chat and historical responses without this metadata do not acquire a
 warning simply because they have no citation chips. The status describes
 document evidence, not the success or relevance of unrelated YAMCS/database tools.
+
+The empty-inventory distinction was implemented in version **0.261.424**,
+coordinated with `application/single_app/config.py`. Native comment coverage is
+read from the exact authorized retained producer, not inferred from citation
+count or answer wording. Zero annotation records do not become missing evidence
+when that coverage establishes a completed inspection. Partial inventories stay
+partial, and a completed comment inspection does not erase a separate Search
+evidence gap. Counts are not increased to manufacture a successful result.
 
 ### Using the V2 controls
 
@@ -115,6 +123,11 @@ The answer still states a genuine inability to answer and may suggest a
 specific clarification, document, time range, or authorized source. Routine
 generic coverage paragraphs are discouraged, not removed with text matching.
 Evidence validation and strict partial-input contracts remain enforced.
+
+Saved Analyze details now live in the response's Sources disclosure rather than
+an always-visible analysis card. Material analysis-validation limitations can
+also use the compact warning; a normal structural-success notice remains in
+Sources. See [saved Analyze results](ANALYZE_RESULTS.md).
 
 Copying an answer preserves a short material evidence notice. **Copy with
 sources** also includes recorded per-source states; it never includes private

@@ -668,6 +668,8 @@ export function MessageActions({
                                     : 'Show sources'
                             }
                             active={inspector === 'sources'}
+                            expanded={inspector === 'sources'}
+                            controls={`message-inspector-${message.id}`}
                             onClick={() => inspect('sources')}
                         >
                             <BookOpen size={15} />

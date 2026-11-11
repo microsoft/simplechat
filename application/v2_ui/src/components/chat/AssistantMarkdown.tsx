@@ -235,6 +235,16 @@ function Markdown({
             // out here would render the raw ⟦cite:N⟧ token as visible text.
             p: ({ children }) => <p>{renderTokens(children)}</p>,
             li: ({ children }) => <li>{renderTokens(children)}</li>,
+            table: ({ node: _node, ...props }) => (
+                <div
+                    className="chat-markdown-table min-w-0 max-w-full overflow-x-auto rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+                    role="region"
+                    aria-label="Table"
+                    tabIndex={0}
+                >
+                    <table {...props} />
+                </div>
+            ),
             td: ({ children }) => <td>{renderTokens(children)}</td>,
             th: ({ children }) => <th>{renderTokens(children)}</th>,
             h1: ({ children }) => <h1>{renderTokens(children)}</h1>,
@@ -374,7 +384,7 @@ function Markdown({
     return (
         <div
             className={clsx(
-                'text-[15px] leading-relaxed break-words',
+                'min-w-0 text-[15px] leading-relaxed break-words',
                 '[&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0',
                 '[&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5',
                 '[&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',

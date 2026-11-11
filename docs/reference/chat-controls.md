@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.423"
+version: "0.261.424"
 ---
 
 ## How to use this reference
@@ -694,8 +694,11 @@ also depends on configured storage and current source access.
 
 Implemented in version **0.261.109**. These response-specific controls appear in
 classic chat and React V2 when an assistant message has a saved Analyze result.
-They are rendered with the response rather than added to the always-visible
-toolbar. See [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
+Since **0.261.424** (`application/single_app/config.py`), open the response's
+**Sources** control to read them instead of finding a separate analysis card
+under every answer. Sources remains available for saved analyses with no
+ordinary citations, zero records, or an unavailable-result explanation.
+See [Read and discuss saved Analyze results]({{ '/guides/analyze-results/' | relative_url }}).
 
 The answer remains the readable overview, even after a supporting export finishes.
 The overview and download previews are not the full findings set. Ordinary
@@ -710,7 +713,8 @@ failed answer or promote partial findings to complete input.
 
 | Control or notice | What it does | Why you would use it | Available when |
 | --- | --- | --- | --- |
-| **Saved analysis** | Identifies the saved result and shows displayed-versus-total record counts, separate source counts, and its validation notice. | Distinguish a readable overview or one page from the full saved findings set. | The assistant message carries a saved result; an unavailable result shows a notice instead of result controls |
+| **Saved analysis** | Identifies the result inside Sources, with total saved findings, displayed-versus-total counts when expanded, separate source counts, and validation details. | Distinguish a readable overview or one page from the full saved findings set. | Sources is open and the assistant message carries a saved result; an unavailable result shows an explanation instead of result controls |
+| **Analysis limitation / View sources** | Keeps a compact warning below the answer for partial, pending, unvalidated, invalid, or unavailable saved analysis. | Notice a material qualification without displaying processing details under every successful answer. | A saved result has a limitation; ordinary structural success does not add a warning |
 | **Findings and limitations** | Expands accepted findings and any **Limitations and validation issues**, loading up to 25 complete records at a time. | Inspect details without downloading a file or displaying the whole result at once. | The saved result is available |
 | **Previous findings** / **Next findings** | Reads the preceding or following page of the same saved result. | Review records outside the currently displayed range. A page's source count may be smaller than the result's total source count. | A corresponding page exists and the current page has loaded |
 | **Evidence for finding …** | Loads that finding's saved supporting passages and any saved filename, page, or chunk location. The label includes the finding's identifier. | Understand what supports a finding without treating it as independently verified. | The finding has saved evidence references |
@@ -732,6 +736,12 @@ exhaustiveness. **Partial analysis**, **Validation pending**, **Validation faile
 and **Not validated** remain distinct notices; execution completion does not turn
 them into successful validation. Saved evidence and explanations do not imply a
 new independent check of the original sources.
+
+A completed native comment inventory can return zero comments and still support
+a cited absence claim. Since **0.261.424**, that is not classified as missing
+document evidence merely because the annotation count is zero. Incomplete
+inspection and missing body-text evidence remain separate limitations. A
+saved-finding count is not a native comment count.
 
 Since **0.261.232**, these results, their evidence, derived explanations, and
 original exports take their access from the originating conversation. A

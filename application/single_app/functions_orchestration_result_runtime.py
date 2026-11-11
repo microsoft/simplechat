@@ -1,7 +1,7 @@
 # functions_orchestration_result_runtime.py
 """Typed runtime handoffs; no clients, model calls, publication, or new storage.
 
-Version: 0.261.365
+Version: 0.261.424
 """
 
 from copy import deepcopy
@@ -274,13 +274,39 @@ def read_result_source_coverage(context, reference):
     return None
 
 
+def _native_inventory_evidence_state(prepared, document_id):
+    """An inspected empty inventory is evidence of absence, not missing excerpts."""
+    coverage = prepared.get('coverage')
+    inventories = coverage.get('native_inspection') if type(coverage) is dict else None
+    if type(inventories) is not list:
+        return 'unknown'
+    matches = [
+        item for item in inventories
+        if type(item) is dict and item.get('document_id') == document_id
+    ]
+    if len(matches) != 1:
+        return 'unknown'
+    inventory = matches[0]
+    if inventory.get('execution_mode') != 'native_inspection' or inventory.get('section') != 'comments':
+        return 'unknown'
+    total, returned = inventory.get('total_records'), inventory.get('returned_records')
+    if type(total) is not int or type(returned) is not int or not 0 <= returned <= total:
+        return 'unknown'
+    flags = ('partial', 'has_more', 'limit_reached')
+    if returned < total or any(inventory.get(flag) is True for flag in flags):
+        return 'partial'
+    if inventory.get('inventory_complete') is True and all(inventory.get(flag) is False for flag in flags):
+        return 'complete'
+    return 'unknown'
+
+
 def _read_result_document_citations(service, reference, *, evidence_status_out=None):
     root = service.open_result(reference, allow_partial=True, require_current_sources=True)
     if root.metadata()['source_count'] == 0:
         return []
     sources, citations, visited, expanded = {}, {}, set(), set()
     coverage_values = {}
-    search_counts, source_names = {}, {}
+    search_counts, source_names, source_outcomes = {}, {}, {}
     citation_fields = (
         'citation_id', 'chunk_id', 'file_name', 'title', 'page_number', 'chunk_sequence',
         'sheet_name', 'location_label', 'location_value', 'classification', 'document_classification', 'score',
@@ -327,6 +353,7 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                 visit(ResultRef.from_dict(parent))
         retained_citations = []
         native_reference = None
+        producer_counts = {}
         if (
             producer.capability_id == 'document_search'
             and (current.output_name, current.kind) in (
@@ -360,7 +387,9 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                 if prepared['content_scope'] in ('native_excel_annotations', 'native_document_annotations'):
                     native_reference = prepared_reader.reference.to_dict()
                 for source in lineage['sources']:
-                    search_counts.setdefault(source_key(source), set())
+                    identity = source_key(source)
+                    search_counts.setdefault(identity, set())
+                    producer_counts[identity] = set()
         elif producer.capability_id == CAPABILITY_ACTION_INVOKE and lineage['sources']:
             prepared = read_complete_input(reader)
             if (
@@ -419,14 +448,21 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
                 producer.capability_id == 'document_search' and identity_key in search_counts
                 and citation.get('evidence_kind') != 'native_annotation_coverage'
             ):
-                search_counts[identity_key].add((
+                evidence_key = (
                     producer, current.manifest_sha256,
                     canonical_digest({name: value for name, value in projected.items() if name != 'evidence_id'}),
-                ))
+                )
+                search_counts[identity_key].add(evidence_key)
+                producer_counts[identity_key].add(evidence_key)
             identity = {key: value for key, value in projected.items() if key != 'evidence_id'}
             citations.setdefault(source_key(matches[0]), {}).setdefault(
                 canonical_digest(identity), projected,
             )
+        for identity, counts in producer_counts.items():
+            state = _native_inventory_evidence_state(prepared, identity[2]) if native_reference is not None else (
+                'complete' if counts else 'missing'
+            )
+            source_outcomes.setdefault(identity, {})[key] = state
         reader.recheck()
 
     visit(reference)
@@ -440,15 +476,20 @@ def _read_result_document_citations(service, reference, *, evidence_status_out=N
         rows = []
         for index, (identity, source) in enumerate(sources.items(), start=1):
             count = len(search_counts[identity]) if identity in search_counts else None
+            outcome = evidence_status_from_sources([
+                {'state': state} for state in source_outcomes.get(identity, {}).values()
+            ])
             row = {
                 "name": str(source_names.get(identity) or source.get("file_name") or f"Selected source {index}")[:160],
                 "document_id": source["document_id"],
-                "state": "missing" if count == 0 else "complete" if count is not None else "unknown",
+                "state": outcome["state"] if outcome is not None else "unknown",
             }
             if count is not None:
                 row["evidence_count"] = count
             rows.append(row)
-        evidence_status_out["value"] = evidence_status_from_sources(rows)
+        evidence_status_out["value"] = evidence_status_from_sources(
+            rows, partial=root.completeness.status == 'partial',
+        )
     return projected
 
 
