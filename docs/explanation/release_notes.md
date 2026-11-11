@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.062)**
+
+#### Bug Fixes
+
+*   **External Public Document API Routes Registered Again**
+    *   Registered the existing bearer-token protected `/external/public_documents` routes (list, upload, delete) in `app.py`, which previously defined them but never mounted them, so external bulk-loading clients received 404 responses.
+    *   Restored the `POST /external/testaccesstoken` preflight route, protected by `@accesstoken_required` (ExternalApi role).
+    *   (Ref: `app.py`, `route_external_health.py`, `route_external_public_documents.py`, `functional_tests/test_external_public_documents_route_registration.py`)
+
 ### **(v0.261.061)**
 
 #### New Features

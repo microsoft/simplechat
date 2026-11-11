@@ -18,6 +18,13 @@ def register_route_external_health(bp):
         time_string = now.strftime("%Y-%m-%d %H:%M:%S")
         return time_string, 200
 
+    @bp.route('/external/testaccesstoken', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @accesstoken_required
+    def external_test_access_token():
+        """Confirm a bearer token is valid and carries the ExternalApi role."""
+        return "Access token is valid.", 200
+
 
 def register_no_auth_health(bp):
     @bp.route('/external/healthcheckz', methods=['GET'])

@@ -44,6 +44,7 @@ PUBLIC_PATHS = {
 
 EXTERNAL_BEARER_PATH_PREFIXES = (
     "/external/public_documents",
+    "/external/testaccesstoken",
 )
 
 INBOUND_MCP_BEARER_PATH_PREFIXES = (

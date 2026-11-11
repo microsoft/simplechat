@@ -70,6 +70,7 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "enhanced_citations": ("login_required", "user_required"),
     "external_health": (),
     "external_no_auth_health": (),
+    "external_public_documents": (),
     "frontend_admin_settings": ("login_required", "admin_required"),
     "frontend_agents": ("login_required", "user_required"),
     "frontend_terms_of_use": (),
