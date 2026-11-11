@@ -15,6 +15,19 @@
                 </button>
             </div>
 
+            <section class="card p-3 mb-4" aria-labelledby="support-consent-heading" data-support-exports="consent">
+                <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                    <h3 id="support-consent-heading" class="h5">Support data requests</h3>
+                    <button class="btn btn-outline-secondary" type="button" data-support-consent-refresh>Refresh support requests</button>
+                </div>
+                <p class="text-muted">Only requests for your own personal conversations appear here. An admin role cannot approve another person's data release.</p>
+                <div class="alert alert-danger d-none" role="alert" data-support-consent-error></div>
+                <div class="row g-3">
+                    <div class="col-lg-4"><div data-support-consent-list>Loading support-data requests...</div><button class="btn btn-sm btn-outline-secondary d-none" type="button" data-support-consent-more>Load more support requests</button></div>
+                    <div class="col-lg-8" data-support-consent-detail></div>
+                </div>
+            </section>
+
             {% if settings.enable_content_screening %}
             <!-- Content Screening Notice -->
             <div class="alert alert-info" id="contentScreeningApprovalsNotice">
@@ -331,6 +344,7 @@
 {% endblock %}
 
 {% block scripts %}
+<script type="module" src="{{ url_for('static', filename='js/support-exports.js') }}?v={{ config['VERSION'] }}"></script>
 <script src="{{ url_for('static', filename='js/chat/chat-m365-approvals.js') }}"></script>
 <script src="{{ url_for('static', filename='js/chat/chat-m365-connect.js') }}"></script>
 <script src="{{ url_for('static', filename='js/m365-pending-actions.js') }}"></script>

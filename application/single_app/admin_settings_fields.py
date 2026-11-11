@@ -8508,6 +8508,17 @@ ADMIN_SETTINGS_FIELDS = {
             "default": False,
         },
     ],
+    "support-log-export-section": [
+        {
+            "type": "component",
+            "component": "support-log-export",
+            "label": "Support Log Export",
+            "help": (
+                "Collect retained diagnostics by user, conversation and time into a private, "
+                "redacted support ZIP. Whole personal-conversation snapshots need their owner's approval."
+            ),
+        },
+    ],
     "debug-logging-section": [
         {
             "key": "enable_debug_logging",

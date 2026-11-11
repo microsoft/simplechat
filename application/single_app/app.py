@@ -45,7 +45,7 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
 from datetime import datetime
-from flask import Blueprint, g, make_response
+from flask import Blueprint, g, has_request_context, make_response
 from urllib.parse import urlencode, urlparse
 
 from route_frontend_authentication import *
@@ -70,6 +70,10 @@ from route_custom_pages import register_route_custom_pages
 
 from route_backend_chats import *
 from route_backend_analysis_results import register_route_backend_analysis_results
+from route_backend_support_exports import (
+    register_route_backend_support_exports,
+    register_route_backend_support_export_consents,
+)
 from route_backend_v2 import (
     register_route_backend_v2,
     register_route_backend_v2_admin,
@@ -407,6 +411,19 @@ def preserve_stream_catalog_revision(response):
     if response.is_streamed:
         response.response = pin_catalog_stream(response.response)
     return response
+
+
+def _support_request_diagnostics():
+    if not has_request_context():
+        return {}
+    authorized = getattr(g, 'authorized_chat_context', None)
+    return {
+        'user_id': get_current_user_id_or_none(),
+        'conversation_id': authorized.get('conversation_id') if isinstance(authorized, dict) else None,
+    }
+
+
+configure_diagnostic_context_provider(_support_request_diagnostics)
 
 
 def get_idle_timeout_settings(settings=None):
@@ -1599,6 +1616,8 @@ register_route_blueprint('backend_group_settings', register_route_backend_group_
 
 # ------------------- API Control Center Routes ---------
 register_route_blueprint('backend_control_center', register_route_backend_control_center, login_required_blueprint)
+register_route_blueprint('backend_support_exports', register_route_backend_support_exports, admin_required_blueprint)
+register_route_blueprint('backend_support_export_consents', register_route_backend_support_export_consents, user_required_blueprint)
 
 # ------------------- API Notifications Routes ----------
 register_route_blueprint('backend_notifications', register_route_backend_notifications, user_required_blueprint)

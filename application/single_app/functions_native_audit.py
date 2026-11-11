@@ -10,7 +10,7 @@ from native_document_evidence import NATIVE_FIELD_STATES, inaccessible_field
 
 
 NATIVE_AUDIT_VERSION = "native-audit-v1"
-NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v3"
+NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v4"
 MAX_AUDIT_FACTS = 1000
 MAX_AUDIT_BYTES = 100000
 NATIVE_AUDIT_ANSWER_ERRORS = {
@@ -53,6 +53,8 @@ NATIVE_AUDIT_REVIEW_POLICY = (
     "states the correct absence. Preserve whitespace, false and zero as present values. "
     "Action-model paraphrases cannot override canonical facts. Native logical order, paint-operation "
     "counts, and complete returned inventory pages do not prove a rendered visible-content review. "
+    "Other authorized named-input sources support their own claims without becoming native fact "
+    "authorities. Their returned content is not unavailable merely because they have no native audit. "
     "An explicit, accurate limitation satisfies an unsupported check alongside useful findings. "
     "The candidate is customer Markdown, not the preparation JSON. Return the requested assessment "
     "schema, not a native-answer envelope."
@@ -330,8 +332,12 @@ def _native_page_chain_complete(pages):
     return expected_offset == total and expected_fragment == 0
 
 
-def native_audit_contract(inputs):
-    """Only recognize actual native-reader invocation results, never document prose."""
+def native_audit_contract(inputs, *, authorized_answer_citations=()):
+    """Native facts come from reader results; only an owner may grant other answer citations.
+
+    ``authorized_answer_citations`` must come from the retained-result owner's reauthorized
+    named-input projection, not source prose or a model's citation declarations.
+    """
     facts, citations, files, limitations = [], [], [], []
     seen, source_hashes, inventory_pages, inventory_files, unfinished = {}, {}, {}, {}, set()
     source_versions = {}
@@ -406,19 +412,27 @@ def native_audit_contract(inputs):
     complete_chains = {key: _native_page_chain_complete(pages) for key, pages in inventory_pages.items()}
     if any(not complete_chains.get(key, False) for key in unfinished):
         limitations.append("A native inventory page has a continuation; only returned records are represented.")
+    if type(authorized_answer_citations) not in (list, tuple) or any(
+        type(citation) is not dict
+        or type(citation.get("document_id")) is not str or not citation["document_id"]
+        or type(citation.get("citation")) is not str or not citation["citation"]
+        for citation in authorized_answer_citations
+    ):
+        raise ValueError("The authorized answer citation contract is invalid.")
     answer_citations = list(citations)
+    supporting_citations = list(authorized_answer_citations)
     for entry in inputs.values():
-        # These are projected by the authorized retained-result owner, never from source prose.
         for citation in entry.get("document_citations") or []:
-            if not isinstance(citation, dict) or citation.get("document_id") not in source_hashes:
-                continue
-            version = citation.get("version")
-            native_version = source_versions[citation["document_id"]]
-            if version is not None and native_version is not None and version != native_version:
-                raise ValueError("A supporting citation refers to a different native source version.")
-            marker = citation.get("citation")
-            if isinstance(marker, str) and marker:
-                answer_citations.append(marker)
+            if isinstance(citation, dict) and citation.get("document_id") in source_hashes:
+                supporting_citations.append(citation)
+    for citation in supporting_citations:
+        version = citation.get("version")
+        native_version = source_versions.get(citation["document_id"])
+        if version is not None and native_version is not None and version != native_version:
+            raise ValueError("A supporting citation refers to a different native source version.")
+        marker = citation.get("citation")
+        if isinstance(marker, str) and marker:
+            answer_citations.append(marker)
     return {
         "facts": facts, "citations": list(dict.fromkeys(citations)), "files": list(dict.fromkeys(files)),
         "answer_citations": list(dict.fromkeys(answer_citations)),
@@ -543,7 +557,9 @@ def native_audit_policy(contract):
         "Disclose that boundary alongside useful native findings, not as an execution error. "
         "Do not infer rendered compliance or invent source assertions or citations. "
         "Copy native_audit_contract.answer_citations verbatim where used; supporting chunk citations "
-        "do not override native property facts. "
+        "do not override native property facts. Authorized supporting documents remain available "
+        "answer evidence even when they have no native inspection; do not describe their returned "
+        "content as unavailable. "
         "The server appends its immutable factual evidence table; do not copy that table into answer. "
         "The checker evaluates the rendered customer answer, not this JSON transport format."
     )

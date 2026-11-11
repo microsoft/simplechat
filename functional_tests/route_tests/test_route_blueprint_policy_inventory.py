@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for route blueprint policy inventory.
-Version: 0.261.411
+Version: 0.261.428
 Implemented in: 0.242.069
 Plan editor policy coverage: 0.261.102
 Selected-group context policy coverage: 0.261.126
@@ -63,6 +63,8 @@ REGISTERED_BLUEPRINT_POLICIES = {
     "backend_collaboration": ("login_required", "user_required"),
     "backend_content_screening": ("login_required", "user_required"),
     "backend_control_center": ("login_required",),
+    "backend_support_exports": ("login_required", "admin_required"),
+    "backend_support_export_consents": ("login_required", "user_required"),
     "backend_conversation_export": ("login_required", "user_required"),
     "backend_conversation_handoffs": ("login_required", "user_required"),
     "backend_conversations": ("login_required", "user_required"),

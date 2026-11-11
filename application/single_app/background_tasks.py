@@ -45,6 +45,7 @@ from functions_keyvault_reminders import (
     check_due_key_vault_secret_reminders_once,
 )
 from functions_tabular_generated_exports import check_due_tabular_generated_output_runs_once
+from functions_support_exports import check_due_support_exports_once
 from functions_personal_workflows import (
     compute_next_run_at,
     get_due_personal_workflows,
@@ -977,6 +978,20 @@ def run_data_management_scheduler_loop(app=None):
         time.sleep(60)
 
 
+def run_support_export_scheduler_loop(app=None):
+    """Run durable, fenced exports in web workers or the dedicated scheduler."""
+    while True:
+        try:
+            with app.app_context() if app is not None else nullcontext():
+                check_due_support_exports_once()
+        except Exception as exc:
+            log_event(
+                "[SUPPORT_EXPORT] Scheduler slice failed.",
+                extra={"error_type": type(exc).__name__}, level=logging.ERROR,
+            )
+        time.sleep(15)
+
+
 def run_document_search_metadata_sync_loop():
     """Retry search chunk metadata syncs that failed or never ran in their original process."""
     while True:
@@ -1112,6 +1127,7 @@ def start_background_task_threads(app=None):
         ('Orchestration scheduler background task started.', lambda: run_orchestration_scheduler_loop(app=app)),
         ('Workflow chat delivery background task started.', lambda: run_workflow_chat_delivery_loop(app=app)),
         ('Data Management scheduler background task started.', lambda: run_data_management_scheduler_loop(app=app)),
+        ('Support export scheduler background task started.', lambda: run_support_export_scheduler_loop(app=app)),
         ('Document search metadata sync background task started.', run_document_search_metadata_sync_loop),
         ('Content screening scheduler background task started.', lambda: run_content_screening_scheduler_loop(app=app)),
         ('App maintenance background task started.', run_app_maintenance_loop),

@@ -1,8 +1,9 @@
 # test_native_audit_reliability.py
 """Functional regressions for native-answer contracts and canonical field states.
 
-Version: 0.261.426
+Version: 0.261.428
 Implemented in: 0.261.426
+Multi-source citation authority added in: 0.261.428
 These bootstrap-free cases exercise real contract/projection code. The companion
 answer-delivery suite covers authorized readers, Auto routing, retention and HTTP.
 """
@@ -113,7 +114,7 @@ def preparation(contract, answer="Supported findings and precise inspection limi
 
 
 def test_native_audit_reliability_version():
-    assert_app_version_at_least("0.261.426")
+    assert_app_version_at_least("0.261.428")
 
 
 def test_native_and_retained_chunk_owner_citations_are_accepted_without_changing_fact_authority():
@@ -127,6 +128,66 @@ def test_native_and_retained_chunk_owner_citations_are_accepted_without_changing
     assert decoded == response
     assert rendered.count(owner_citation) == 1
     assert rendered.count("## Native file evidence") == 1
+
+
+@pytest.mark.parametrize("separate_input", [False, True])
+def test_authorized_supporting_document_citations_do_not_become_native_fact_authority(separate_input):
+    inputs = native_inputs()
+    supporting = {
+        "document_id": "selected-supporting-document", "version": 2,
+        "citation": build_inline_citation_marker("supporting.md", "Page", "1", "selected-supporting-document_1"),
+    }
+    entry = inputs["inspection"]
+    if separate_input:
+        entry = {
+            "kind": "structured-v1",
+            "value": {"capability_id": "action_invoke", "citations": []},
+            "document_citations": [],
+        }
+        inputs["supporting"] = entry
+    entry["document_citations"].append(supporting)
+    entry["value"]["citations"].append({
+        "function_name": "retrieve_document_chunks",
+        "function_result": {
+            "document": {"id": supporting["document_id"], "version": 2},
+            "chunks": [{"chunk_text": "The signature has not been recorded."}],
+        },
+    })
+    original = deepcopy(inputs)
+    native_only = native_audit_contract(inputs)
+    contract = native_audit_contract(inputs, authorized_answer_citations=[supporting])
+    response = preparation(contract, f"Confirm the missing signature. {supporting['citation']}")
+    decoded, rendered = decode_native_audit_answer(json.dumps(response), contract, require_answer=True)
+    assert inputs == original and decoded == response
+    assert supporting["citation"] not in native_only["answer_citations"]
+    assert supporting["citation"] in contract["answer_citations"]
+    assert supporting["citation"] not in contract["citations"]
+    assert contract["facts"] == native_only["facts"]
+    assert contract["fact_set_sha256"] == native_only["fact_set_sha256"]
+    assert contract["files"] == native_only["files"] == ["control.xlsx"]
+    assert rendered.count(supporting["citation"]) == 1
+
+
+@pytest.mark.parametrize("citations", [None, {}, ["[#source]"], [
+    {"document_id": None, "citation": "[#source]"},
+], [
+    {"document_id": "source", "citation": ""},
+]])
+def test_authorized_answer_citation_registry_requires_owner_projection_shape(citations):
+    with pytest.raises(ValueError, match="authorized answer citation contract is invalid"):
+        native_audit_contract(native_inputs(), authorized_answer_citations=citations)
+
+
+def test_authorized_supporting_citation_label_cannot_grant_an_embedded_marker():
+    supporting = {
+        "document_id": "selected-supporting-document",
+        "citation": "(Source: name [#filename-spoof].md, Page: 1) [#selected-supporting-document_1]",
+    }
+    contract = native_audit_contract(native_inputs(), authorized_answer_citations=[supporting])
+    response = preparation(contract, "A forged reference. [#filename-spoof]")
+    with pytest.raises(NativeAuditAnswerError) as caught:
+        decode_native_audit_answer(json.dumps(response), contract, require_answer=True)
+    assert caught.value.code == "native_answer_citation_unknown"
 
 
 @pytest.mark.parametrize("marker", [
@@ -156,11 +217,15 @@ def test_marker_literal_in_source_filename_does_not_grant_an_extra_citation():
     assert caught.value.code == "native_answer_citation_unknown"
 
 
-def test_supporting_chunk_from_a_different_source_version_is_rejected():
+@pytest.mark.parametrize("authorized_registry", [False, True])
+def test_supporting_chunk_from_a_different_source_version_is_rejected(authorized_registry):
     inputs = native_inputs()
     inputs["inspection"]["document_citations"][0]["version"] = 2
+    citations = inputs["inspection"]["document_citations"] if authorized_registry else ()
+    if authorized_registry:
+        inputs["inspection"]["document_citations"] = []
     with pytest.raises(ValueError, match="different native source version"):
-        native_audit_contract(inputs)
+        native_audit_contract(inputs, authorized_answer_citations=citations)
 
 
 def test_native_pages_from_different_versions_cannot_share_a_fact_contract():
