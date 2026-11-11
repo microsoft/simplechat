@@ -48,6 +48,9 @@ export function agentObject(value: unknown): Record<string, unknown> {
 export function isAgentEditorEnvelope(value: unknown): boolean {
     if (!isRecord(value) || !isRecord(value.record) || !Array.isArray(value.secret_paths) ||
         !value.secret_paths.every((path) => typeof path === 'string')) return false;
+    if (value.credential_reentry_required !== undefined && (!Array.isArray(value.credential_reentry_required) ||
+        !value.credential_reentry_required.every((field) => isRecord(field) &&
+            typeof field.path === 'string' && typeof field.label === 'string'))) return false;
     return value.read_only === true || (typeof value.revision === 'string' && value.revision.trim().length > 0);
 }
 

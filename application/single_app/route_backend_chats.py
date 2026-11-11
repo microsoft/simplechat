@@ -68,6 +68,7 @@ from model_endpoint_clients import (
 )
 from functions_model_capabilities import ModelTokenBudgetError
 from functions_model_endpoint_validation import ModelEndpointValidationError
+from functions_agent_credential_recovery import model_configuration_error_payload
 from functions_model_catalog import apply_model_profile
 from functions_fact_memory_autosave import (
     run_fact_memory_autosave,
@@ -22646,7 +22647,7 @@ def register_route_backend_chats(bp):
             return jsonify(error.payload), 400
         except ModelEndpointValidationError as error:
             log_event("[CHAT_API_ERROR] Model connection configuration is invalid.", level=logging.ERROR)
-            return jsonify({"error": error.public_message, "error_code": "model_configuration_invalid"}), 400
+            return jsonify(model_configuration_error_payload(error)), 400
         except M365PolicyError as error:
             return jsonify(error.payload), 403
         except ScreeningError as error:
@@ -27284,7 +27285,7 @@ def register_route_backend_chats(bp):
                 yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except ModelEndpointValidationError as error:
                 log_event("[STREAMING] Model connection configuration is invalid.", level=logging.ERROR)
-                yield f"data: {json.dumps({'error': error.public_message, 'error_code': 'model_configuration_invalid', 'done': True})}\n\n"
+                yield f"data: {json.dumps({**model_configuration_error_payload(error), 'done': True})}\n\n"
             except M365PolicyError as error:
                 yield f"data: {json.dumps({**error.payload, 'done': True})}\n\n"
             except Exception as e:

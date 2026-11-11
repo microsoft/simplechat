@@ -15,7 +15,10 @@ from functions_keyvault import (
     keyvault_agent_delete_helper,
     keyvault_agent_get_helper,
     keyvault_agent_save_helper,
+    keyvault_agent_cleanup_helper,
+    SecretReturnType,
 )
+from agent_credential_contracts import AGENT_CREDENTIAL_BINDINGS, AgentCredentialReentryRequired
 from functions_agent_payload import sanitize_agent_payload
 from functions_agent_delegation import validate_agent_delegation_bindings
 from functions_governance import ensure_governance_access
@@ -25,7 +28,7 @@ from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_vers
 _NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
-def get_group_agents(group_id: str) -> List[Dict[str, Any]]:
+def get_group_agents(group_id: str, return_type=SecretReturnType.TRIGGER) -> List[Dict[str, Any]]:
     """Return all agents scoped to the provided group."""
     try:
         query = "SELECT * FROM c WHERE c.group_id = @group_id"
@@ -39,7 +42,9 @@ def get_group_agents(group_id: str) -> List[Dict[str, Any]]:
                 partition_key=group_id,
             )
         )
-        return [_clean_agent(agent) for agent in results]
+        return [_clean_agent(agent, group_id, return_type) for agent in results]
+    except AgentCredentialReentryRequired:
+        raise
     except exceptions.CosmosResourceNotFoundError:
         return []
     except Exception as exc:
@@ -49,14 +54,16 @@ def get_group_agents(group_id: str) -> List[Dict[str, Any]]:
         return []
 
 
-def get_group_agent(group_id: str, agent_id: str) -> Optional[Dict[str, Any]]:
+def get_group_agent(group_id: str, agent_id: str, return_type=SecretReturnType.TRIGGER) -> Optional[Dict[str, Any]]:
     """Fetch a single group agent document."""
     try:
         agent = cosmos_group_agents_container.read_item(
             item=agent_id,
             partition_key=group_id,
         )
-        return _clean_agent(agent)
+        return _clean_agent(agent, group_id, return_type)
+    except AgentCredentialReentryRequired:
+        raise
     except exceptions.CosmosResourceNotFoundError:
         return None
     except Exception as exc:
@@ -144,12 +151,13 @@ def save_group_agent(group_id: str, agent_data: Dict[str, Any], user_id: Optiona
         payload["max_completion_tokens"] = -1
 
     # Store sensitive values in Key Vault before persistence
-    payload = keyvault_agent_save_helper(payload, payload["id"], scope="group", existing_agent=existing_agent)
+    payload = keyvault_agent_save_helper(payload, payload["id"], scope="group", existing_agent=existing_agent, owner_id=group_id)
 
     try:
         stored = cosmos_group_agents_container.upsert_item(body=payload)
+        keyvault_agent_cleanup_helper(existing_agent, stored, agent_id, scope="group", owner_id=group_id)
         bump_chat_bootstrap_global_cache_version(reason="group_agent_saved")
-        return _clean_agent(stored)
+        return _clean_agent(stored, group_id)
     except Exception as exc:
         debug_print(
             "Error saving group agent %s for %s: %s", agent_id, group_id, exc
@@ -168,7 +176,7 @@ def delete_group_agent(group_id: str, agent_id: str) -> bool:
         return False
 
     try:
-        keyvault_agent_delete_helper(agent, agent.get("id", agent_id), scope="group")
+        keyvault_agent_delete_helper(agent, agent.get("id", agent_id), scope="group", owner_id=group_id)
         cosmos_group_agents_container.delete_item(
             item=agent_id,
             partition_key=group_id,
@@ -230,12 +238,14 @@ def validate_group_agent_payload(payload: Dict[str, Any], partial: bool = False)
             raise ValueError("max_completion_tokens must be an integer")
 
 
-def _clean_agent(agent: Dict[str, Any]) -> Dict[str, Any]:
-    cleaned = {k: v for k, v in agent.items() if not k.startswith("_")}
+def _clean_agent(agent: Dict[str, Any], group_id=None, return_type=SecretReturnType.TRIGGER) -> Dict[str, Any]:
+    cleaned = {k: v for k, v in agent.items() if not k.startswith("_") or k == AGENT_CREDENTIAL_BINDINGS}
     cleaned = keyvault_agent_get_helper(
         cleaned,
         cleaned.get("id", ""),
         scope="group",
+        owner_id=group_id or agent.get("group_id"),
+        return_type=return_type,
     )
     if cleaned.get("max_completion_tokens") is None:
         cleaned["max_completion_tokens"] = -1

@@ -14,7 +14,8 @@ from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from datetime import datetime
 from config import cosmos_global_agents_container
-from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
+from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper, keyvault_agent_cleanup_helper, SecretReturnType
+from agent_credential_contracts import AgentCredentialReentryRequired
 from functions_settings import *
 from functions_agent_payload import sanitize_agent_payload, AgentPayloadError
 from functions_agent_delegation import validate_agent_delegation_bindings
@@ -97,7 +98,7 @@ def ensure_default_global_agent_exists():
         print(f"Error ensuring default global agent exists: {e}")
         traceback.print_exc()
 
-def get_global_agents(include_disabled=False):
+def get_global_agents(include_disabled=False, return_type=SecretReturnType.TRIGGER):
     """
     Get all global agents.
 
@@ -117,7 +118,7 @@ def get_global_agents(include_disabled=False):
             enable_cross_partition_query=True
         ))
         # Mask or replace sensitive keys for UI display
-        agents = [keyvault_agent_get_helper(agent, agent.get('id', ''), scope="global") for agent in agents]
+        agents = [keyvault_agent_get_helper(agent, agent.get('id', ''), scope="global", return_type=return_type) for agent in agents]
         for agent in agents:
             if agent.get('max_completion_tokens') is None:
                 agent['max_completion_tokens'] = -1
@@ -134,6 +135,8 @@ def get_global_agents(include_disabled=False):
             if agent.get('reasoning_effort') == '':
                 agent.pop('reasoning_effort', None)
         return agents
+    except AgentCredentialReentryRequired:
+        raise
     except Exception as e:
         log_event(
             f"Error getting global agents: {e}",
@@ -145,7 +148,7 @@ def get_global_agents(include_disabled=False):
         return []
 
 
-def get_global_agent(agent_id):
+def get_global_agent(agent_id, return_type=SecretReturnType.TRIGGER):
     """
     Get a specific global agent by ID.
     
@@ -160,7 +163,7 @@ def get_global_agent(agent_id):
             item=agent_id,
             partition_key=agent_id
         )
-        agent = keyvault_agent_get_helper(agent, agent_id, scope="global")
+        agent = keyvault_agent_get_helper(agent, agent_id, scope="global", return_type=return_type)
         if agent.get('max_completion_tokens') is None:
             agent['max_completion_tokens'] = -1
         agent.setdefault('is_global', True)
@@ -176,6 +179,8 @@ def get_global_agent(agent_id):
             agent.pop('reasoning_effort', None)
         print(f"Found global agent: {agent_id}")
         return agent
+    except AgentCredentialReentryRequired:
+        raise
     except Exception as e:
         log_event(
             f"Error getting global agent {agent_id}: {e}",
@@ -259,6 +264,7 @@ def save_global_agent(agent_data, user_id=None):
             cleaned_agent.pop('reasoning_effort', None)
 
         result = cosmos_global_agents_container.upsert_item(body=cleaned_agent)
+        keyvault_agent_cleanup_helper(existing_agent, result, cleaned_agent["id"], scope="global")
         log_event(
             "Global agent saved successfully.",
             extra={"agent_id": result['id'], "user_id": user_id},

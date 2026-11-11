@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.373
+Version: 0.261.428
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -270,6 +270,7 @@ def environment(monkeypatch):
         payload = _load_module(stack, "functions_agent_payload")
         health = _load_module(stack, "semantic_kernel_plugins.plugin_health_checker", r"semantic_kernel_plugins\plugin_health_checker.py")
         authoring = _load_module(stack, "functions_workspace_authoring")
+        pinning = _load_module(stack, "functions_mcp_tool_pinning")
         # Execute the actual settings sanitizer without application startup.
         settings_namespace = {
             "TABULAR_GENERATION_BACKEND_SETTING_KEYS": set(),
@@ -310,6 +311,7 @@ def environment(monkeypatch):
             "validate_agent": schema.validate_agent, "validate_plugin": schema.validate_plugin,
             "PLUGIN_STORAGE_MANAGED_FIELDS": schema.PLUGIN_STORAGE_MANAGED_FIELDS,
             "PluginHealthChecker": health.PluginHealthChecker,
+            "validate_mcp_tool_pinning_for_save": pinning.validate_mcp_tool_pinning_for_save,
             "validate_agent_delegation_bindings": delegation.validate_agent_delegation_bindings,
             "ensure_governance_access": services.governance.ensure_governance_access,
             "ensure_action_type_access": services.governance.ensure_action_type_access,
@@ -463,6 +465,8 @@ def configured_action_payload(environment, kind):
         fields["workspaceId"] = "test-workspace"
     elif kind == "mcp":
         fields.update({"transport": "streamable_http", "auth_method": "none"})
+        pinning = importlib.import_module("functions_mcp_tool_pinning")
+        fields[pinning.MCP_TOOL_FINGERPRINTS_FIELD] = pinning.build_mcp_tool_fingerprints([], [])
     elif kind == "embedding_model":
         record.update({"api_version": "2024-06-01", "deployment": "test-embedding"})
     elif kind in {"chart", "simplechat", "msgraph"}:
@@ -1104,6 +1108,12 @@ def test_legacy_stored_placeholders_resolve_only_the_owned_existing_secret(envir
     assert patch_record(env, route_kind, stale, {"description": "Stale"}).status_code == 409
     assert env.services.secret_reads == []
     updated = patch_record(env, route_kind, resource, {"description": "Edited"})
+    if kind == "agents":
+        assert updated.status_code == 400
+        assert "credentials need updating" in updated.get_json()["error"]
+        assert env.services.secret_reads == []
+        assert env.services.vault[expected_reference] == "owned-legacy-credential"
+        return
     assert updated.status_code == 200, updated.get_json()
     current = env.services.records[kind, "personal"]["actor", stored["id"]]
     value = current[path[0]] if len(path) == 1 else current[path[0]][path[1]]
