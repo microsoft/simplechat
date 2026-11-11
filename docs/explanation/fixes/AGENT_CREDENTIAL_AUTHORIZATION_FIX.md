@@ -1,4 +1,4 @@
-# Agent credential authorization and re-entry (0.261.433)
+# Agent credential authorization and re-entry (0.261.434)
 
 Fixed/Implemented in version: **0.261.428**, recorded in
 `application/single_app/config.py`.
@@ -8,6 +8,7 @@ Recovery button presentation updated in version: **0.261.430**.
 Selected guided recovery implemented in version: **0.261.431**.
 Shared-response integration validated in version: **0.261.432**.
 Signed-catalog base integration recorded in version: **0.261.433**.
+Recovery-test review corrections recorded in version: **0.261.434**.
 
 ## Issue and root cause
 
@@ -213,6 +214,16 @@ type checking passed, along with **29** route-policy and **13** documentation
 checks. The full owner-runtime gate passed **1,601** tests using the declared
 pytest 8.4.2 test environment, with **1,104** owners, **430** doubles and zero
 review gaps.
+
+The **0.261.434** review corrections keep the SSE terminal-field mutation
+outside its assertion so optimized Python cannot discard the normalization.
+The UI regression module uses one import style for its shared workspace fixture
+module, with explicit bindings preserving the original fixture objects,
+constants and localhost-origin monkeypatch. These corrections do not change
+the application credential behavior or the selected guided recovery design.
+The complete affected functional and UI files pass **39** and **28** cases,
+respectively. An actual SSE-branch probe also preserves normalization at Python
+optimization levels 0, 1 and 2.
 
 API response redaction and role-appropriate shared configuration projection are
 separate, complementary boundaries. Runtime authorization must not be replaced

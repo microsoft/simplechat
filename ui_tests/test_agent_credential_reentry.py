@@ -1,11 +1,12 @@
 # test_agent_credential_reentry.py
 """Agent credential recovery notices and explicit replacement.
 
-Version: 0.261.431
+Version: 0.261.434
 Implemented in: 0.261.428
 Permission-aware chat recovery links implemented in: 0.261.429
 Recovery button and in-button guidance implemented in: 0.261.430
 Guided recovery implemented in: 0.261.431
+Fixture import consistency reviewed in: 0.261.434
 
 Uses the production SPA and existing Azure Playwright/local-browser fixture.
 All application responses and credentials are synthetic.
@@ -19,13 +20,16 @@ import pytest
 from playwright.sync_api import expect
 
 import ui_tests.fixtures.workspace_authoring as authoring_fixture
-from ui_tests.fixtures.workspace_authoring import (
-    AGENT_ID, ORIGIN, STORED_KEY, connect_options, workspace_ui,
-)
 from ui_tests.test_v2_workspace_authoring import editor_section, save_resource
 
 
+connect_options = authoring_fixture.connect_options
+workspace_ui = authoring_fixture.workspace_ui
+
 pytestmark = pytest.mark.ui
+AGENT_ID = authoring_fixture.AGENT_ID
+ORIGIN = authoring_fixture.ORIGIN
+STORED_KEY = authoring_fixture.STORED_KEY
 
 
 @pytest.mark.parametrize("theme,width,height", [

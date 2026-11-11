@@ -1,8 +1,9 @@
 # test_agent_credential_recovery_links.py
 """Permission-aware agent credential recovery in chat JSON and SSE errors.
 
-Version: 0.261.429
+Version: 0.261.434
 Implemented in: 0.261.429
+Assertion safety reviewed in: 0.261.434
 
 Real personal/global owners use installed-SDK point responses. Group cases run
 the production membership, status, governance and editor access policy. Only the
@@ -260,7 +261,8 @@ def test_actual_chat_json_and_sse_catches_keep_the_recovery_envelope(owners, age
                 frames = list(result)
                 assert len(frames) == 1
                 payload = json.loads(frames[0].removeprefix("data: ").strip())
-                assert payload.pop("done") is True
+                done = payload.pop("done")
+                assert done is True
             else:
                 response, status = result
                 payload = response.get_json()
