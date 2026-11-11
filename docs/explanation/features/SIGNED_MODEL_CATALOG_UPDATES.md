@@ -2,7 +2,7 @@
 layout: page
 title: "Signed model catalog updates"
 description: "Publish reviewed model metadata through an approval-gated signing workflow and install compatible revisions independently of application deployment."
-version: "0.261.428"
+version: "0.261.429"
 ---
 
 # Signed model catalog updates
@@ -23,6 +23,9 @@ and supported token/operation policies. It cannot implement a new provider proto
 or a catalog schema the installed application does not support.
 
 The application uses its local JSON schema, `jsonschema`, and `cryptography`.
+The verifier and publisher pin `cryptography` 46.0.7, satisfying the existing
+Snowflake connector's 46.0.5 minimum; dependency compatibility was aligned in
+**0.261.429** without changing the package's minimum supported application version.
 The publisher additionally needs Azure Key Vault Keys, a GitHub Actions identity,
 and protected GitHub environments described below. Customer
 installations do not need signing credentials or access to the publisher's vault.

@@ -1,6 +1,6 @@
 # requirements-model-catalog.txt
 azure-identity==1.24.0
 azure-keyvault-keys==4.11.0
-cryptography==46.0.3
+cryptography==46.0.7
 jsonschema==4.25.1
 requests==2.33.1
