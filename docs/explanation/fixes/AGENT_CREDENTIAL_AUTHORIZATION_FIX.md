@@ -1,4 +1,4 @@
-# Agent credential authorization and re-entry (0.261.432)
+# Agent credential authorization and re-entry (0.261.433)
 
 Fixed/Implemented in version: **0.261.428**, recorded in
 `application/single_app/config.py`.
@@ -7,6 +7,7 @@ in the same configuration file.
 Recovery button presentation updated in version: **0.261.430**.
 Selected guided recovery implemented in version: **0.261.431**.
 Shared-response integration validated in version: **0.261.432**.
+Signed-catalog base integration recorded in version: **0.261.433**.
 
 ## Issue and root cause
 
@@ -199,6 +200,19 @@ zero review gaps across **1,102** owners and **429** doubles. Both V2 builds,
 type checking, all route-policy/documentation checks and changed-line editor
 XSS checks passed. The full-file editor XSS warning was also confirmed on the
 unchanged Development source; it was not suppressed or modified in this merge.
+
+The **0.261.433** base merge retains signed-catalog snapshot pinning around the
+background chat worker alongside permission-aware credential recovery. The chat
+storage owners themselves are unchanged; their module-level reviews retain
+both catalog and credential runtime evidence. The declared catalog dependency
+pins and upstream workflow timeout changes are preserved.
+
+The **0.261.433** integration passed **183** focused catalog, task-pinning,
+scheduler and credential cases and **59** browser cases. Both V2 builds and
+type checking passed, along with **29** route-policy and **13** documentation
+checks. The full owner-runtime gate passed **1,601** tests using the declared
+pytest 8.4.2 test environment, with **1,104** owners, **430** doubles and zero
+review gaps.
 
 API response redaction and role-appropriate shared configuration projection are
 separate, complementary boundaries. Runtime authorization must not be replaced

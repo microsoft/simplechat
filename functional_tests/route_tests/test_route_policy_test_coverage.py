@@ -2,7 +2,7 @@
 # test_route_policy_test_coverage.py
 """
 Functional test for route policy test coverage completeness.
-Version: 0.250.055
+Version: 0.261.425
 Implemented in: 0.242.069
 
 This test ensures the route inventory and unauthenticated access policy tests
@@ -85,11 +85,25 @@ def test_v2_public_workspace_management_routes_require_control_center_admin():
         assert "control_center_required('admin')" in decorators
 
 
+def test_model_catalog_updates_keep_admin_policy_and_registration():
+    source = ROOT_DIR / "application" / "single_app" / "route_backend_model_catalog_updates.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    handler = next(node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "model_catalog_updates")
+    decorators = [ast.unparse(decorator) for decorator in handler.decorator_list]
+    assert decorators == [
+        "bp.route('/api/admin/model-catalog/updates', methods=['GET', 'POST'])",
+        "swagger_route(security=get_auth_security())", "login_required", "admin_required",
+    ]
+    registrar = (source.parent / "route_backend_models.py").read_text(encoding="utf-8")
+    assert "register_catalog_update_routes(bp)" in registrar
+
+
 if __name__ == "__main__":
     tests = [
         test_route_policy_tests_cover_identical_route_sets,
         test_route_policy_test_files_are_documented_in_repo_instructions,
         test_v2_public_workspace_management_routes_require_control_center_admin,
+        test_model_catalog_updates_keep_admin_policy_and_registration,
     ]
     results = []
     for test in tests:

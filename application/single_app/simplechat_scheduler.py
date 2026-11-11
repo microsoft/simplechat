@@ -12,7 +12,7 @@ from config import cosmos_action_credential_state_container, get_redis_cache_inf
 from functions_action_credential_state import configure_action_credential_state
 from functions_action_credential_runtime import configure_action_credential_runtime
 from functions_appinsights import setup_appinsights_logging
-from functions_settings import configure_application_cache, get_settings
+from functions_settings import configure_application_cache, configure_model_catalog_runtime, get_settings
 
 
 def initialize_scheduler_runtime():
@@ -25,6 +25,7 @@ def initialize_scheduler_runtime():
         get_redis_cache_infrastructure_endpoint(redis_hostname),
         redis_client_factory=functions_redis_client.create_redis_client,
     )
+    configure_model_catalog_runtime()
     initialize_clients(settings)
     configure_action_credential_state(cosmos_action_credential_state_container)
     configure_action_credential_runtime()

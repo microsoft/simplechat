@@ -1,5 +1,6 @@
 // model_catalog_ui.js
 // Shared, locally bundled catalog controls for classic and React V2.
+import { mountCatalogUpdates } from "./model_catalog_updates.js";
 
 const profileFields = ["displayName", "publisher", "summary", "strengths", "limitations", "aliases", "tasks", "capabilities", "sources", "archived"];
 const capabilityNames = ["processesText", "generatesText", "processesImages", "generatesImages", "processesAudio", "generatesAudio", "processesVideo", "generatesVideo", "processesBinaryFiles", "optimizedForCoding", "toolCalling", "structuredOutput", "supportsStreaming", "reasoning"];
@@ -95,7 +96,16 @@ export function mountModelCatalog(root, { request = catalogRequest, onSaved = ()
     const detail = node("div", undefined, "sc-catalog-detail");
     const columns = node("div", undefined, "sc-catalog-columns");
     columns.append(list, detail);
-    root.replaceChildren(toolbar, status, columns);
+    const updates = node("section", undefined, "border-bottom pb-3 mb-3");
+    root.replaceChildren(updates, toolbar, status, columns);
+    const disposeUpdates = mountCatalogUpdates(updates, {
+        request,
+        onApplied: () => { void load(); onSaved(); },
+        canApply: () => {
+            if (dirty) status.replaceChildren(notice("Save or cancel the profile draft before applying a catalog update."));
+            return !dirty;
+        },
+    });
 
     function confirmDiscard(action) {
         if (busy || loading) return;
@@ -125,7 +135,9 @@ export function mountModelCatalog(root, { request = catalogRequest, onSaved = ()
     }
 
     function setDisabled(disabled) {
-        root.querySelectorAll("button, input, select, textarea").forEach((element) => { element.disabled = disabled; });
+        for (const container of [toolbar, status, columns]) {
+            container.querySelectorAll("button, input, select, textarea").forEach((element) => { element.disabled = disabled; });
+        }
         root.setAttribute("aria-busy", String(disabled));
     }
 
@@ -329,6 +341,7 @@ export function mountModelCatalog(root, { request = catalogRequest, onSaved = ()
     void load();
     return () => {
         disposed = true;
+        disposeUpdates();
         controller.abort();
         window.removeEventListener("beforeunload", preventUnload);
         root.replaceChildren();
