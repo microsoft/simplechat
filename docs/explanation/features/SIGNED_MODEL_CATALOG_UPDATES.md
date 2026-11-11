@@ -2,7 +2,7 @@
 layout: page
 title: "Signed model catalog updates"
 description: "Publish reviewed model metadata through an approval-gated signing workflow and install compatible revisions independently of application deployment."
-version: "0.261.429"
+version: "0.261.430"
 ---
 
 # Signed model catalog updates
@@ -274,6 +274,8 @@ exact payload hash and size, package/application/schema compatibility, model
 identity collisions, channel isolation, and evidence references. Local schemas are used; uploaded
 schema URLs are not fetched. Downloads reject redirects and have timeout and
 decoded-size bounds. Online access defaults off and is enforced on the server.
+Since **0.261.430**, untrusted application-version strings use bounded ASCII
+numeric components rather than an unbounded regular expression or integer parse.
 
 SHA-256 detects content changes; a signature additionally authenticates the
 publisher key. Neither proves the catalog's factual claims, guarantees that the

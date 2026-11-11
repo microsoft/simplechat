@@ -93,9 +93,15 @@ def decode_bytes(value, maximum):
 
 
 def version_tuple(value):
-    if not isinstance(value, str) or not re.fullmatch(r"\d+\.\d+\.\d+", value):
+    if not isinstance(value, str) or len(value) > 29:
         raise CatalogUpdateError("The package application version is invalid.")
-    return tuple(int(part) for part in value.split("."))
+    parts = value.split(".")
+    if len(parts) != 3 or any(
+        not part or len(part) > 9 or not part.isascii() or not part.isdecimal()
+        for part in parts
+    ):
+        raise CatalogUpdateError("The package application version is invalid.")
+    return tuple(int(part) for part in parts)
 
 
 def trusted_keys(*, channel=None):

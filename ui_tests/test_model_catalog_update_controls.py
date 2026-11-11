@@ -1,7 +1,7 @@
 # test_model_catalog_update_controls.py
 """
 Classic and React V2 signed-catalog update controls.
-Version: 0.261.426
+Version: 0.261.430
 Implemented in: 0.261.425
 Online-access switch styling updated in: 0.261.426
 
@@ -17,6 +17,10 @@ from playwright.sync_api import expect
 
 from test_model_catalog_management import catalog_page, mount_catalog
 from test_model_endpoint_capacity_editor import capacity_browser
+
+
+# Pytest discovers these deliberately re-exported shared fixtures.
+__all__ = ["catalog_page", "capacity_browser"]
 
 
 @pytest.fixture

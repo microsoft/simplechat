@@ -1,7 +1,7 @@
 # test_model_catalog_publication_lifecycle.py
 """
 Functional tests for isolated catalog channels and exact tested-payload promotion.
-Version: 0.261.429
+Version: 0.261.430
 Implemented in: 0.261.428
 
 Real signatures and publisher code run offline without application/cloud bootstrap.
@@ -250,9 +250,18 @@ def test_weekly_workflow_is_review_only_bounded_and_targets_development():
     assert create["base-branch"] == "Development" and create["draft"] is True
     assert create["max"] == 1 and create["stacked"] is False
     assert not any("trusted_keys" in path or "workflows" in path for path in create["allowed-files"])
-    assert "azure.microsoft.com" in workflow["network"]["allowed"]
+    assert any(domain == "azure.microsoft.com" for domain in workflow["network"]["allowed"])
     assert "provider-wide indexes" in source and "no structured pricing fields" in source
     assert "No schema changes or runtime-code changes" in source
+
+
+@pytest.mark.parametrize("value", [
+    "0" * 10000 + ".1.1", "0.1." + "0" * 10000, "\u0660.1.1",
+    "0.1.1.1", "0..1", "0.1.-1", "0.1. 1", None,
+])
+def test_untrusted_application_versions_are_bounded_ascii_components(value):
+    with pytest.raises(package.CatalogUpdateError, match="application version"):
+        package.version_tuple(value)
 
 
 def test_development_publication_only_advances_development_reference(candidate, monkeypatch):

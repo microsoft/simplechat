@@ -1,7 +1,7 @@
 # test_model_catalog_signed_updates.py
 """
 Functional tests for signed catalog publication, activation, and runtime snapshots.
-Version: 0.261.429
+Version: 0.261.430
 Implemented in: 0.261.425
 
 Real cryptographic signatures and the installed Cosmos SDK response type are used.
@@ -41,7 +41,7 @@ from model_catalog_package import (
     verify_package,
 )
 from model_catalog_runtime import catalog_scope, configure_catalog_provider, effective_catalog, pin_catalog_stream, pin_catalog_task
-from model_catalog_updates import ACTIVE, CHECK, ONLINE, CatalogUpdates
+from model_catalog_updates import ACTIVE, CHECK, CatalogUpdates
 from test_app_settings_store_consistency import FakeCosmos, FakeRedis
 from test_orchestration_result_imports import run_probe
 from test_support.versioning import read_app_version
@@ -363,7 +363,6 @@ def test_background_chat_worker_carries_catalog_and_isolates_public_records(worl
 
 def test_publisher_signs_digest_and_reuses_application_verifier(tmp_path, bundle, signing_key, monkeypatch):
     import azure.identity
-    import model_catalog_package
     spec = importlib.util.spec_from_file_location("catalog_publisher_signing", ROOT / "scripts" / "publish_model_catalog.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
