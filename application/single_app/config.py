@@ -103,7 +103,7 @@ EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.431"
+VERSION = "0.261.432"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -697,6 +697,13 @@ cosmos_tabular_export_runs_container_name = "tabular_export_runs"
 cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_tabular_export_runs_container_name,
     partition_key=PartitionKey(path="/user_id")
+)
+
+cosmos_support_exports_container_name = "support_exports"
+cosmos_support_exports_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_support_exports_container_name,
+    partition_key=PartitionKey(path="/partition_key"),
+    default_ttl=-1,
 )
 
 cosmos_data_management_jobs_container_name = "data_management_jobs"

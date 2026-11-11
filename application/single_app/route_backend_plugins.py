@@ -220,11 +220,15 @@ from functions_legacy_action_management import (
 )
 from functions_workspace_authoring import (
     WorkspaceAuthoringValidation,
+    apply_group_action_write,
     build_action_editor_types,
     clear_editor_test_secrets,
     editor_error_response,
     ensure_editor_access,
+    legacy_editor_write_body,
     personal_editor_response,
+    project_shared_record,
+    read_group_editor_record,
     validate_editor_action_manifest,
 )
 
@@ -1408,8 +1412,10 @@ def get_user_plugins():
         filtered_global_plugins = filter_governed_global_actions_for_user(user_id, get_global_actions())
 
         # Mark global plugins
-        for plugin in filtered_global_plugins:
-            plugin['is_global'] = True
+        filtered_global_plugins = [
+            project_shared_record(plugin, 'actions', global_scope=True)
+            for plugin in filtered_global_plugins
+        ]
         
         # Merge plugins using ID as key to avoid name conflicts
         # This allows both personal and global plugins with same name to coexist
@@ -2052,7 +2058,7 @@ def get_group_actions_route():
     user_id = get_current_user_id()
     try:
         active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
-        assert_group_role(
+        role = assert_group_role(
             user_id,
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
@@ -2079,7 +2085,19 @@ def get_group_actions_route():
         merged_actions = [_normalize_group_action(action) for action in actions]
         merged_actions.sort(key=lambda item: (item.get('displayName') or item.get('display_name') or item.get('name') or '').lower())
 
-    return jsonify({'actions': merged_actions}), 200
+    can_manage = bool(group_action_management_operations(
+        user_id, find_group_by_id(active_group), role, settings,
+    ))
+    response = jsonify({'actions': [
+        project_shared_record(
+            action, 'actions', can_manage=can_manage,
+            global_scope=bool(action.get('is_global')),
+            group_scope=not bool(action.get('is_global')),
+        )
+        for action in merged_actions
+    ]})
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200
 
 
 @bpap.route('/api/group/plugins/<action_id>', methods=['GET'])
@@ -2091,7 +2109,7 @@ def get_group_action_route(action_id):
     user_id = get_current_user_id()
     try:
         active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
-        assert_group_role(
+        role = assert_group_role(
             user_id,
             active_group,
             allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
@@ -2103,15 +2121,26 @@ def get_group_action_route(action_id):
     except PermissionError:
         return jsonify({'error': 'You are not authorized to view this group action.'}), 403
 
-    action = get_group_action(active_group, action_id, return_type=SecretReturnType.TRIGGER)
+    action = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
     if not action:
         return jsonify({'error': 'Action not found'}), 404
     try:
         if not is_retired_mcp_stdio(action):
             ensure_action_type_access('governance_group_actions', user_id, resolve_action_type(action), 'group')
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
-    return jsonify(action), 200
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to view this group action.'}), 403
+    settings = get_settings()
+    can_manage = bool(group_action_management_operations(
+        user_id, find_group_by_id(active_group), role, settings,
+    ))
+    try:
+        if can_manage:
+            action = read_group_editor_record('actions', user_id, active_group, action['id'], settings)
+        response = jsonify(project_shared_record(action, 'actions', can_manage=can_manage, group_scope=True))
+    except Exception as exc:
+        return editor_error_response(exc)
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200
 
 
 @bpap.route('/api/group/plugins', methods=['POST'])
@@ -2125,7 +2154,10 @@ def create_group_action_route():
         active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
-        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+        role = assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+        group = find_group_by_id(active_group)
+        if not group or 'create' not in group_action_management_operations(user_id, group, role, app_settings):
+            raise PermissionError('Group action management is unavailable.')
     except ValueError:
         return jsonify({'error': 'Group action scope is invalid.'}), 400
     except LookupError:
@@ -2133,70 +2165,21 @@ def create_group_action_route():
     except PermissionError:
         return jsonify({'error': 'You are not authorized to create this group action.'}), 403
 
-    payload = request.get_json(silent=True) or {}
-    _apply_plugin_runtime_defaults(payload)
-    if is_legacy_msgraph_type(payload.get('type')):
-        return jsonify({'error': LEGACY_ACTION_CREATION_MESSAGE}), 400
     try:
-        validate_group_action_payload(payload, partial=False)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    if payload.get('is_global'):
-        return jsonify({'error': 'Global actions are managed centrally and cannot be created within a group.'}), 400
-
-    for key in ('group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
-        payload.pop(key, None)
-
-    # Merge with schema to ensure all required fields are present (same as global actions)
-    schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
-    merged = get_merged_plugin_settings(payload.get('type'), payload, schema_dir)
-    payload['metadata'] = merged.get('metadata', payload.get('metadata', {}))
-    payload['additionalFields'] = merged.get('additionalFields', payload.get('additionalFields', {}))
-
-    try:
-        _validate_action_identity_for_scope(
-            payload,
-            WORKSPACE_IDENTITY_SCOPE_GROUP,
-            active_group,
+        payload = request.get_json(silent=True)
+        if isinstance(payload, dict) and payload.get('is_global'):
+            raise WorkspaceAuthoringValidation('Global actions are managed centrally.')
+        saved = apply_group_action_write(
+            user_id, active_group, None, legacy_editor_write_body(payload, None, 'actions'),
+            _prepare_group_action_payload, app_settings,
         )
-    except (ValueError, LookupError, PermissionError):
-        return jsonify({'error': 'Group action identity configuration is invalid.'}), 400
-
-    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(payload, payload.get('type'))
-    if not is_valid:
-        return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
-
-    try:
-        _enforce_mcp_destination_policy(
-            payload,
-            WORKSPACE_IDENTITY_SCOPE_GROUP,
-            active_group,
-            operation='group_action_create',
-            user_id=user_id,
-        )
-    except McpDestinationPolicyError:
-        return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
-    except ValueError:
-        return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
-
-    try:
-        saved = save_group_action(active_group, payload, user_id=user_id)
-    except (ValueError, LookupError) as exc:
-        debug_print('Validation error saving group action: %s', exc)
-        return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
-    except PermissionError as exc:
-        debug_print('Permission denied saving group action: %s', exc)
-        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
-    except RuntimeError as exc:
-        debug_print('Key Vault error saving group action: %s', exc)
-        return jsonify({'error': ACTION_KEY_VAULT_ERROR_MESSAGE}), 500
     except Exception as exc:
-        debug_print('Failed to save group action: %s', exc)
-        return jsonify({'error': 'Unable to save action'}), 500
+        return editor_error_response(exc)
 
     log_action_creation(user_id=user_id, action_id=saved.get('id', ''), action_name=saved.get('name', ''), action_type=saved.get('type', ''), scope='group', group_id=active_group)
-    return jsonify(saved), 201
+    response = jsonify(project_shared_record(saved, 'actions', can_manage=True, group_scope=True))
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 201
 
 
 @bpap.route('/api/group/plugins/<action_id>', methods=['PATCH'])
@@ -2210,89 +2193,37 @@ def update_group_action_route(action_id):
         active_group = resolve_delegation_group_scope(user_id, request.args.get('group_id'))
         app_settings = get_settings()
         allowed_roles = ("Owner",) if app_settings.get('require_owner_for_group_agent_management') else ("Owner", "Admin")
-        assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-    except LookupError as exc:
-        return jsonify({'error': str(exc)}), 404
-    except PermissionError as exc:
-        return jsonify({'error': str(exc)}), 403
+        role = assert_group_role(user_id, active_group, allowed_roles=allowed_roles)
+        group = find_group_by_id(active_group)
+        if not group or 'edit' not in group_action_management_operations(user_id, group, role, app_settings):
+            raise PermissionError('Group action management is unavailable.')
+    except ValueError:
+        return jsonify({'error': 'Group action scope is invalid.'}), 400
+    except LookupError:
+        return jsonify({'error': 'The selected group context was not found.'}), 404
+    except PermissionError:
+        return jsonify({'error': 'You are not authorized to update this group action.'}), 403
 
     existing = get_group_action(active_group, action_id, return_type=SecretReturnType.NAME)
     if not existing:
         return jsonify({'error': 'Action not found'}), 404
 
-    updates = request.get_json(silent=True) or {}
-    if not isinstance(updates, dict):
-        raise McpConfigurationError("Action configuration must be an object.")
-    if updates.get('is_global'):
-        return jsonify({'error': 'Global actions cannot be modified within a group.'}), 400
-
-    for key in ('id', 'group_id', 'last_updated', 'user_id', 'is_global', 'is_group', 'scope'):
-        updates.pop(key, None)
-
-    merged = dict(existing)
-    merged.update(updates)
-    merged['is_global'] = False
-    merged['is_group'] = True
-    merged['id'] = existing.get('id', action_id)
-
-    _apply_plugin_runtime_defaults(merged)
-
     try:
-        validate_group_action_payload(merged, partial=False)
-    except ValueError as exc:
-        return jsonify({'error': str(exc)}), 400
-
-    # Merge with schema to ensure all required fields are present (same as global actions)
-    schema_dir = os.path.join(current_app.root_path, 'static', 'json', 'schemas')
-    schema_merged = get_merged_plugin_settings(merged.get('type'), merged, schema_dir)
-    merged['metadata'] = schema_merged.get('metadata', merged.get('metadata', {}))
-    merged['additionalFields'] = schema_merged.get('additionalFields', merged.get('additionalFields', {}))
-
-    try:
-        _validate_action_identity_for_scope(
-            merged,
-            WORKSPACE_IDENTITY_SCOPE_GROUP,
-            active_group,
+        existing = read_group_editor_record('actions', user_id, active_group, existing['id'], app_settings)
+        updates = request.get_json(silent=True)
+        if isinstance(updates, dict) and updates.get('is_global'):
+            raise WorkspaceAuthoringValidation('Global actions are managed centrally.')
+        saved = apply_group_action_write(
+            user_id, active_group, existing, legacy_editor_write_body(updates, existing, 'actions'),
+            _prepare_group_action_payload, app_settings,
         )
-    except (ValueError, LookupError, PermissionError):
-        return jsonify({'error': 'Group action identity configuration is invalid.'}), 400
-
-    is_valid, validation_errors = PluginHealthChecker.validate_plugin_manifest(merged, merged.get('type'))
-    if not is_valid:
-        return jsonify({'error': f'Plugin validation failed: {"; ".join(validation_errors)}'}), 400
-
-    try:
-        _enforce_mcp_destination_policy(
-            merged,
-            WORKSPACE_IDENTITY_SCOPE_GROUP,
-            active_group,
-            operation='group_action_update',
-            user_id=user_id,
-        )
-    except McpDestinationPolicyError:
-        return jsonify({'error': 'MCP destination is not allowed by governance policy.'}), 403
-    except ValueError:
-        return jsonify({'error': 'MCP destination configuration is invalid.'}), 400
-
-    try:
-        saved = save_group_action(active_group, merged, user_id=user_id)
-    except (ValueError, LookupError) as exc:
-        debug_print('Validation error updating group action %s: %s', action_id, exc)
-        return jsonify({'error': ACTION_VALIDATION_ERROR_MESSAGE}), 400
-    except PermissionError as exc:
-        debug_print('Permission denied updating group action %s: %s', action_id, exc)
-        return jsonify({'error': ACTION_PERMISSION_ERROR_MESSAGE}), 403
-    except RuntimeError as exc:
-        debug_print('Key Vault error updating group action %s: %s', action_id, exc)
-        return jsonify({'error': ACTION_KEY_VAULT_ERROR_MESSAGE}), 500
     except Exception as exc:
-        debug_print('Failed to update group action %s: %s', action_id, exc)
-        return jsonify({'error': 'Unable to update action'}), 500
+        return editor_error_response(exc)
 
     log_action_update(user_id=user_id, action_id=action_id, action_name=saved.get('name', ''), action_type=saved.get('type', ''), scope='group', group_id=active_group)
-    return jsonify(saved), 200
+    response = jsonify(project_shared_record(saved, 'actions', can_manage=True, group_scope=True))
+    response.headers['Cache-Control'] = 'no-store'
+    return response, 200
 
 
 @bpap.route('/api/group/plugins/<action_id>', methods=['DELETE'])

@@ -1,4 +1,4 @@
-# Agent credential authorization and re-entry (0.261.431)
+# Agent credential authorization and re-entry (0.261.432)
 
 Fixed/Implemented in version: **0.261.428**, recorded in
 `application/single_app/config.py`.
@@ -6,6 +6,7 @@ Permission-aware chat recovery implemented in version: **0.261.429**, recorded
 in the same configuration file.
 Recovery button presentation updated in version: **0.261.430**.
 Selected guided recovery implemented in version: **0.261.431**.
+Shared-response integration validated in version: **0.261.432**.
 
 ## Issue and root cause
 
@@ -88,6 +89,15 @@ The shared comfortable-width helper now keeps messages and the composer in a
 16-pixel mobile insets. Explicit **Wide** mode is unchanged. The notice uses
 existing neutral and accent theme tokens rather than hard-coded light-only
 colors.
+
+The **0.261.432** Development merge combines the shared write-only response
+projection with these runtime bindings. Canonical secret discovery retains all
+agent slots, both classic configured-secret controls and the separate re-entry
+notice render, raw editor responses recompute readiness, and cleaned list rows
+retain their authoritative safe readiness metadata. An unchanged legacy inline
+credential is preserved, not silently migrated into Key Vault when storage is
+enabled. Shared-response regressions now check both bound and legacy records
+against the real group cleaning/runtime helpers.
 
 ## Upgrade and recovery
 
@@ -181,6 +191,14 @@ TypeScript, both production/harness builds, classic JavaScript syntax, XSS,
 documentation and whitespace checks passed. The storage inventory still has
 zero review gaps; its previously recorded full runtime gate remains the
 credential/storage evidence.
+
+The **0.261.432** shared-response integration passed **198** focused runtime,
+projection and editor SDK tests and **65** shared-editor/recovery browser cases.
+The renewed full Cosmos gate passed **2,074** tests and **431** subtests, with
+zero review gaps across **1,102** owners and **429** doubles. Both V2 builds,
+type checking, all route-policy/documentation checks and changed-line editor
+XSS checks passed. The full-file editor XSS warning was also confirmed on the
+unchanged Development source; it was not suppressed or modified in this merge.
 
 API response redaction and role-appropriate shared configuration projection are
 separate, complementary boundaries. Runtime authorization must not be replaced

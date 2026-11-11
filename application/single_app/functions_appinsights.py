@@ -6,6 +6,8 @@ import os
 import re
 import sys
 import threading
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from typing import Any, Dict, Optional, Tuple
 
@@ -20,6 +22,8 @@ from semantic_kernel_plugins.sql_connection_diagnostics import (
 _appinsights_logger = None
 _azure_monitor_configured = False
 _logging_settings_load_state = threading.local()
+_diagnostic_context = ContextVar("simplechat_diagnostic_context", default=None)
+_diagnostic_context_provider = None
 CONSOLE_ERROR_HANDLER_ATTRIBUTE = "_simplechat_console_error_handler"
 CONSOLE_ERROR_LOG_FORMAT = "[%(asctime)s] %(levelname)s in %(name)s: %(message)s"
 REDACTED_LOG_VALUE = "***REDACTED***"
@@ -133,7 +137,7 @@ LOGGER_SAFE_TEXT_KEYS = frozenset({
     "taskname",
 })
 LOGGER_WORKFLOW_HASH_KEYS = frozenset({
-    "conversationidhash", "turnidhash", "runidhash", "stepidhash", "producerstepidhash",
+    "useridhash", "conversationidhash", "turnidhash", "runidhash", "stepidhash", "producerstepidhash",
     "documentidhash", "plannerbindinghash", "documentsethash",
     "consumerrunidhash",
     "nativecursorhash", "nextnativecursorhash",
@@ -145,6 +149,41 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     "executionpath", "outcome",
     "schemakeyword", "argumentfield", "resultkind", "sourceformat",
 })
+
+
+def configure_diagnostic_context_provider(provider):
+    """The web owner supplies request context without importing Flask/bootstrap here."""
+    global _diagnostic_context_provider
+    if not callable(provider):
+        raise TypeError("A diagnostic context provider must be callable.")
+    _diagnostic_context_provider = provider
+
+
+@contextmanager
+def diagnostic_log_context(*, user_id=None, conversation_id=None):
+    """Explicit, isolated correlation for non-request and background work."""
+    context = dict(_diagnostic_context.get() or {})
+    context.update({key: value for key, value in (
+        ("user_id", user_id), ("conversation_id", conversation_id),
+    ) if value})
+    token = _diagnostic_context.set(context)
+    try:
+        yield
+    finally:
+        _diagnostic_context.reset(token)
+
+
+def _diagnostic_hashes(extra):
+    context = dict(_diagnostic_context.get() or {})
+    if _diagnostic_context_provider is not None:
+        context.update(_diagnostic_context_provider())
+    fields = {}
+    extra = extra if isinstance(extra, dict) else {}
+    for key in ("user_id", "conversation_id"):
+        value = context.get(key) or (extra or {}).get(key)
+        if isinstance(value, str) and 0 < len(value) <= 128:
+            fields[f"sc_{key}_hash"] = hashlib.sha256(value.encode("utf-8", errors="replace")).hexdigest()
+    return fields
 
 
 def workflow_log_context(*, conversation_id=None, turn_id=None, run_id=None, step_id=None):
@@ -361,6 +400,7 @@ def _build_logger_extra(
             else:
                 logger_extra[normalized_key] = _logger_safe_scalar(value)
 
+    logger_extra.update(_diagnostic_hashes(extra))
     return logger_extra
 
 
@@ -582,7 +622,8 @@ def log_event(
         includeStack (bool, optional): If True, includes the current stack trace in the log.
         stacklevel (int, optional): How many levels up the stack to report as the source.
         exceptionTraceback (Any, optional): If set to True, includes exception traceback.
-        debug_only (bool, optional): If True, emit only debug-gated console output.
+        debug_only (bool, optional): If True, emit debug-gated console output and a
+            tagged Application Insights debug trace when the exporter is configured.
         category (str, optional): Category label used for debug-only console output.
         flush (bool, optional): Flush console output immediately for debug-only output.
         message_args (tuple, optional): Optional printf-style formatting arguments.
@@ -594,6 +635,8 @@ def log_event(
 
         if debug_only:
             _emit_debug_message(cache, formatted_message, category, flush, safe_extra)
+            if cache.get('enable_debug_logging', False):
+                _emit_appinsights_debug_trace(formatted_message, category, safe_extra)
             return
 
         try:

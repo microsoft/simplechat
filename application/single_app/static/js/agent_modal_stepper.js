@@ -4,6 +4,7 @@ import { showToast } from "./chat/chat-toast.js";
 import * as agentsCommon from "./agents_common.js";
 import { getModelSupportedLevels } from "./chat/chat-reasoning.js";
 import { AgentInstructionMentions, buildActionToken, buildKnowledgeToken } from "./agent_instruction_mentions.js";
+import { SharedCredentialEditor } from "./shared-credential-editor.js";
 
 const ACTION_CAPABILITIES_KEY = 'action_capabilities';
 const M365_ACTION_TYPES = ['m365_calendar', 'm365_email', 'm365_onedrive', 'm365_sharepoint'];
@@ -2130,6 +2131,7 @@ export class AgentModalStepper {
     
     // Store original state for change detection
     this.originalAgent = agent ? JSON.parse(JSON.stringify(agent)) : null;
+    this.sharedCredentials = new SharedCredentialEditor(agent);
     
     // Reset modal state
     this.currentStep = 1;
@@ -2170,6 +2172,7 @@ export class AgentModalStepper {
     this.syncAgentTypeSelector();
     this.applyAgentTypeVisibility();
     this.updateAgentTypeLock();
+    this.sharedCredentials.render(document.querySelector('#agentModal .modal-body'));
     this.showCredentialReentryNotice(agent);
     
     // Load models for the modal
@@ -4765,6 +4768,7 @@ export class AgentModalStepper {
           delete agentData[field];
         }
       });
+      this.sharedCredentials?.apply(agentData);
       
       // Use appropriate endpoint and save method based on context
       let saveBtn = document.getElementById('agent-modal-save-btn');

@@ -1,8 +1,9 @@
 # test_native_audit_answer_delivery.py
 """Selected-file native audits through Auto routing, checked correction and delivery.
 
-Version: 0.261.426
+Version: 0.261.428
 Implemented in: 0.261.425
+Multi-source citation authority added in: 0.261.428
 Only external storage/configuration and provider replies are isolated. Real
 ownership, native readers, routing, retention, checking and publication execute.
 """
@@ -26,6 +27,7 @@ from test_native_document_fidelity_http import (
 )
 from test_orchestration_document_action_end_to_end import LEFT, TURN, action_proposal, frames
 from test_native_inspection_request_contract import change_cursor
+from test_orchestration_source_kind_planning import RIGHT
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -77,7 +79,7 @@ SOURCES = [
 
 
 def test_native_audit_delivery_version():
-    assert_app_version_at_least("0.261.425")
+    assert_app_version_at_least("0.261.428")
 
 
 @pytest.fixture
@@ -102,7 +104,7 @@ def delivery(native_http, native_source, inventory_store, monkeypatch, name):
 
     def download(container, blob_path, current):
         downloads.append(current["id"])
-        return data
+        return harness.blobs.records[(container, blob_path)]["data"]
 
     monkeypatch.setattr(importlib.import_module("content_screening.access"), "_download_available_blob", download)
     if path.suffix == ".xlsx":
@@ -123,7 +125,8 @@ def delivery(native_http, native_source, inventory_store, monkeypatch, name):
         state=state, runtime=runtime, harness=harness, path=path, name=name,
         request=PROMPTS[path.suffix], downloads=downloads, contract=None, executions=[],
         candidate_payloads=[], original_fact_digests=[], execution_frames=[], raw_facts={}, retained_facts={},
-        read_chunks=False,
+        read_chunks=False, chunk_document_id=LEFT, selected_document_ids=(LEFT,),
+        supporting_source=None, supporting_citation=None,
     )
     prepare = harness.execution.prepare_harness_execution
 
@@ -191,7 +194,7 @@ def delivery(native_http, native_source, inventory_store, monkeypatch, name):
                 id="native-supporting-chunk",
                 name="document_search-retrieve_document_chunks",
                 arguments=json.dumps({
-                    "document_id": LEFT, "doc_scope": "personal",
+                    "document_id": result.chunk_document_id, "doc_scope": "personal",
                     "window_number": 1, "window_size": 1, "window_unit": "pages",
                 }),
             )])]
@@ -341,7 +344,7 @@ def assessment_reply(delivery, *, status="satisfied"):
 
 
 def submit(delivery, replies):
-    proposal = action_proposal((LEFT,), action=delivery.state.action)
+    proposal = action_proposal(delivery.selected_document_ids, action=delivery.state.action)
     proposal["steps"][0]["arguments"]["task"] = delivery.request
     proposal["steps"][1]["arguments"]["instruction"] = delivery.request
     delivery.harness.replies = [
@@ -354,7 +357,7 @@ def submit(delivery, replies):
     response = delivery.runtime.client.post("/api/v2/orchestration/plan", json={
         "conversation_id": "conversation-1", "turn_id": TURN, "message": delivery.request,
         "planning_submission_id": "native-answer-delivery", "approval_mode": "auto",
-        "model_routing": "auto", "selected_document_ids": [LEFT],
+        "model_routing": "auto", "selected_document_ids": list(delivery.selected_document_ids),
     }, buffered=True)
     events = frames(response)
     plans = [event["plan"] for event in events if event.get("type") == "orchestration_plan"]
@@ -443,20 +446,43 @@ def test_native_audit_correction_can_change_explanation_without_changing_facts(d
     assert delivery.harness.replies == []
 
 
-@pytest.mark.parametrize("name", ["SC-C05.pdf"])
-def test_native_audit_with_real_supporting_chunk_citation_reaches_saved_answer(delivery, name, monkeypatch):
+def configure_supporting_chunks(delivery, monkeypatch, supporting_document_id=RIGHT):
     delivery.read_chunks = True
-    supporting = []
+    delivery.chunk_document_id = supporting_document_id
     search_calls = []
     document_owner = importlib.import_module("functions_documents")
     monkeypatch.setattr(
         document_owner, "cosmos_user_documents_container",
         delivery.harness.config.cosmos_user_documents_container,
     )
+    supporting_name = delivery.name
+    supporting_text = "Cedar delivery review. Fictional pilot: two sites, one release."
+    if supporting_document_id != LEFT:
+        delivery.selected_document_ids = (LEFT, supporting_document_id)
+        delivery.request = (
+            "Check the selected document's title, author, language, reading order and unusually small text. "
+            "Use the selected closure evidence to separate engineering questions from presentation fixes, "
+            "state review limits, and do not modify the source deck."
+        )
+        supporting_name = "closure-evidence.md"
+        supporting_text = "Synthetic closure register. The shift-lead signature is not recorded."
+        document = delivery.harness.config.cosmos_user_documents_container.read_item(
+            supporting_document_id, supporting_document_id,
+        )
+        document.update({
+            "file_name": supporting_name, "blob_path": "synthetic-retained-source/" + supporting_name,
+            "source_file_available": True, "enhanced_citations": False,
+        })
+        delivery.harness.config.cosmos_user_documents_container.upsert_item(document)
+        delivery.harness.blobs.records[(document["blob_container"], document["blob_path"])] = {
+            "data": supporting_text.encode(), "metadata": {"document_id": supporting_document_id},
+            "etag": "supporting-source-etag",
+        }
     chunk = {
-        "id": f"{LEFT}_1", "chunk_id": f"{LEFT}_1", "document_id": LEFT,
-        "file_name": name, "user_id": "owner", "version": 1, "page_number": 1,
-        "chunk_sequence": 1, "chunk_text": "Cedar delivery review. Fictional pilot: two sites, one release.",
+        "id": f"{supporting_document_id}_1", "chunk_id": f"{supporting_document_id}_1",
+        "document_id": supporting_document_id,
+        "file_name": supporting_name, "user_id": "owner", "version": 1, "page_number": 1,
+        "chunk_sequence": 1, "chunk_text": supporting_text,
     }
 
     def search(**kwargs):
@@ -466,27 +492,158 @@ def test_native_audit_with_real_supporting_chunk_citation_reaches_saved_answer(d
     monkeypatch.setattr(document_owner, "CLIENTS", {
         **document_owner.CLIENTS, "search_client_user": SimpleNamespace(search=search),
     })
+    delivery.supporting_source = SimpleNamespace(
+        name=supporting_name, text=supporting_text, search_calls=search_calls,
+    )
+    return delivery.supporting_source
 
-    def answer_with_chunk():
-        response = json.loads(prepared_reply(delivery))
-        payload = current_payload(delivery)
-        citation = next(
-            citation for entry in payload["inputs"].values()
-            for citation in entry["document_citations"] if citation.get("chunk_id")
-        )
-        supporting.append(citation)
-        response["answer"] += f'\nSupporting page text. {citation["citation"]}'
+
+def supporting_reply(delivery, *, missing=False, unknown_citation=False):
+    response = json.loads(prepared_reply(delivery))
+    payload = current_payload(delivery)
+    inputs = payload.get("inputs") or payload["evidence"]
+    citation = next(
+        citation for entry in inputs.values() if isinstance(entry, dict)
+        for citation in entry.get("document_citations", [])
+        if citation.get("chunk_id") and citation["document_id"] == delivery.chunk_document_id
+    )
+    delivery.supporting_citation = citation
+    assert delivery.supporting_source.text in json.dumps(inputs)
+    if missing:
+        response["answer"] += "\nThe supporting file contents are unavailable."
         return json.dumps(response)
+    response["answer"] += f'\nSupporting page text. {citation["citation"]}'
+    if delivery.chunk_document_id != LEFT:
+        language = [
+            fact for fact in delivery.contract["facts"] if fact["field"] in ("language", "lang")
+        ]
+        response["answer"] += "\n### Language\n" + (
+            json.dumps(language, ensure_ascii=True) if language else
+            "The returned native fact set does not establish a document-level language."
+        )
+        response["answer"] += (
+            "\n## Review checklist\n### Engineering questions\n"
+            f'- Confirm the missing shift-lead signature. {citation["citation"]}\n'
+            "### Presentation fixes\n"
+            "Review the returned reading-order and exact text-size records; native structure "
+            "does not establish rendered reading order or legibility.\n"
+            "### Limits of review\n"
+            "No rendered review, language detection, or accessibility certification was performed. "
+            "The source deck was not modified."
+        )
+    if unknown_citation:
+        response["answer"] += f"\nPRIVATE_UNAUTHORIZED_CITATION [#unselected-document_{unknown_citation}]"
+    return json.dumps(response)
 
-    saved, _ = submit(delivery, [answer_with_chunk, lambda: assessment_reply(delivery)])
+
+@pytest.mark.parametrize("name", ["SC-C05.pdf", "SC-C10-R3.pptx"])
+@pytest.mark.parametrize("supporting_document_id", [LEFT, RIGHT])
+def test_native_audit_with_real_supporting_chunk_citation_reaches_saved_answer(
+    delivery, name, monkeypatch, supporting_document_id,
+):
+    source = configure_supporting_chunks(delivery, monkeypatch, supporting_document_id)
+    saved, _ = submit(delivery, [lambda: supporting_reply(delivery), lambda: assessment_reply(delivery)])
     answers = delivery.harness.assistant_messages()
+    citation = delivery.supporting_citation
     assert saved["status"] == "completed", (saved.get("failure"), delivery.state.failures)
-    assert len(supporting) == 1 and supporting[0]["document_id"] == LEFT
-    assert supporting[0]["citation"] in answers[0]["content"]
-    assert supporting[0]["citation"] in delivery.contract["answer_citations"]
-    assert search_calls and all(call["filter"] == f"document_id eq '{LEFT}'" for call in search_calls)
+    assert citation["document_id"] == supporting_document_id
+    assert citation["citation"] in answers[0]["content"]
+    assert citation["citation"] in delivery.contract["answer_citations"]
+    assert source.search_calls and all(
+        call["filter"] == f"document_id eq '{supporting_document_id}'" for call in source.search_calls
+    )
+    assert saved["plan"]["steps"][0]["arguments"]["document_ids"] == list(delivery.selected_document_ids)
+    if supporting_document_id != LEFT:
+        text = answers[0]["content"]
+        assert all(section in text for section in (
+            "### Native document properties", "### Engineering questions",
+            "### Presentation fixes", "### Limits of review",
+        ))
+        assert "shift-lead signature" in text and "not modified" in text
+        assert "The request was only partially completed" not in text
+        assert citation["citation"] not in delivery.contract["citations"]
+        assert delivery.contract["files"] == [name]
+        assert all(source.name not in fact["location"] for fact in delivery.contract["facts"])
     functions = {citation["function_name"] for citation in answers[0]["agent_citations"]}
     assert {"get_document_accessibility_report", "retrieve_document_chunks"} <= functions
+    assert delivery.harness.replies == []
+
+
+@pytest.mark.parametrize("name", ["SC-C10-R3.pptx"])
+def test_multi_source_native_correction_restores_available_evidence_without_losing_its_citation(
+    delivery, name, monkeypatch,
+):
+    source = configure_supporting_chunks(delivery, monkeypatch)
+
+    def reject_false_missing_source():
+        payload = current_payload(delivery)
+        report = json.loads(assessment_reply(delivery))
+        assert source.text in json.dumps(payload["evidence"]["native_findings"])
+        assert "The supporting file contents are unavailable." in payload["candidate"]
+        for identifier in ("supported_claims", "information_limits"):
+            report["requirements"][identifier].update(
+                status="unsupported", answer_quote="",
+                reason="The supporting content was returned; do not claim it is unavailable.",
+                evidence_refs=["native_findings"],
+            )
+        return json.dumps(report)
+
+    saved, _ = submit(delivery, [
+        lambda: supporting_reply(delivery, missing=True), reject_false_missing_source,
+        lambda: supporting_reply(delivery), lambda: assessment_reply(delivery),
+    ])
+    assert saved["status"] == "completed", (saved.get("failure"), delivery.state.failures)
+    steps = delivery.harness.run_store.list_run_steps(saved["id"], "owner", "conversation-1")
+    assert steps[1]["task_completeness"]["corrections"] == 1
+    assert steps[1]["task_completeness"]["deterministic_status"] == "passed"
+    text = delivery.harness.assistant_messages()[0]["content"]
+    assert delivery.supporting_citation["citation"] in text
+    assert "Confirm the missing shift-lead signature." in text
+    assert "The supporting file contents are unavailable." not in text
+    assert text.count("## Native file evidence") == 1
+    assert delivery.harness.replies == []
+
+
+@pytest.mark.parametrize("name", ["SC-C10-R3.pptx"])
+def test_multi_source_native_answer_still_rejects_an_unselected_citation(delivery, name, monkeypatch):
+    configure_supporting_chunks(delivery, monkeypatch)
+    sequence = []
+
+    def invalid():
+        sequence.append(len(sequence) + 1)
+        return supporting_reply(delivery, unknown_citation=sequence[-1])
+
+    saved, _ = submit(delivery, [invalid, invalid, invalid])
+    assert saved["status"] == "failed"
+    assert saved["failure"]["code"] == "completeness_incomplete"
+    steps = delivery.harness.run_store.list_run_steps(saved["id"], "owner", "conversation-1")
+    assert steps[1]["task_completeness"]["corrections"] == 2
+    assert steps[1]["task_completeness"]["deterministic_status"] == "failed"
+    text = delivery.harness.assistant_messages()[0]["content"]
+    assert "PRIVATE_UNAUTHORIZED_CITATION" not in text
+    assert "[#unselected-document_1]" not in text
+    assert delivery.harness.replies == []
+
+
+@pytest.mark.parametrize("name", ["SC-C10-R3.pptx"])
+def test_multi_source_native_answer_rechecks_retained_action_access_after_preparation(
+    delivery, name, monkeypatch,
+):
+    configure_supporting_chunks(delivery, monkeypatch)
+
+    def revoke_action():
+        response = supporting_reply(delivery)
+        action = delivery.state.actions.read_item("native-action", "owner")
+        action["is_enabled"] = False
+        delivery.state.actions.upsert_item(action)
+        return response
+
+    saved, _ = submit(delivery, [revoke_action])
+    assert saved["status"] == "failed"
+    assert saved["failure"]["code"] == "result_unavailable"
+    text = delivery.harness.assistant_messages()[0]["content"]
+    assert "Confirm the missing shift-lead signature." not in text
+    assert delivery.supporting_citation["citation"] not in text
     assert delivery.harness.replies == []
 
 
@@ -628,13 +785,17 @@ def test_native_review_corrects_state_and_rendered_coverage_contradictions(deliv
 
 
 @pytest.mark.parametrize("name", ["SC-C04.pdf"])
-@pytest.mark.parametrize("legacy_checkpoint", [False, True, "native-audit-answer-v2", "invalid_preparation"])
+@pytest.mark.parametrize("legacy_checkpoint", [
+    False, True, "native-audit-answer-v2", "native-audit-answer-v3", "invalid_preparation",
+])
 def test_explicit_native_check_retry_reuses_gathered_source_without_repeating_reads(delivery, monkeypatch, name, legacy_checkpoint):
+    source = configure_supporting_chunks(delivery, monkeypatch) if legacy_checkpoint == "native-audit-answer-v3" else None
+    answer = lambda: supporting_reply(delivery) if source else prepared_reply(delivery)
     invalid_preparation = legacy_checkpoint == "invalid_preparation"
     original, _ = submit(delivery, [
         "Invalid native envelope 1", "Invalid native envelope 2", "Invalid native envelope 3",
     ] if invalid_preparation else [
-        lambda: prepared_reply(delivery), '{"requirements":[]}', '{"requirements":[]}',
+        answer, '{"requirements":[]}', '{"requirements":[]}',
     ])
     assert original["status"] == "failed"
     assert original["failure"]["code"] == (
@@ -654,6 +815,8 @@ def test_explicit_native_check_retry_reuses_gathered_source_without_repeating_re
                     state.pop("native_audit_preparation", None)
                 else:
                     state["native_audit_preparation"]["version"] = legacy_checkpoint
+                    if legacy_checkpoint == "native-audit-answer-v3":
+                        state["identity"] = "0" * 64
             return state
 
         monkeypatch.setattr(store_type, "load_completeness", load_legacy)
@@ -667,9 +830,10 @@ def test_explicit_native_check_retry_reuses_gathered_source_without_repeating_re
     child_id = retry_payload["run"]["run_id"]
     child_record = harness.runs.read_item(child_id, "conversation-1")
     before_reads, before_calls = len(delivery.downloads), len(harness.model_calls)
+    before_searches = len(source.search_calls) if source else 0
     harness.run_id = child_id
     harness.replies = [
-        *([lambda: prepared_reply(delivery)] if legacy_checkpoint else []),
+        *([answer] if legacy_checkpoint else []),
         lambda: assessment_reply(delivery),
     ]
     response = delivery.runtime.client.post("/api/v2/orchestration/run", json={
@@ -682,6 +846,10 @@ def test_explicit_native_check_retry_reuses_gathered_source_without_repeating_re
     assert saved["status"] == "completed", (saved.get("failure"), delivery.state.failures, events[-2:])
     assert len(delivery.downloads) == before_reads
     assert len(harness.model_calls) == before_calls + (2 if legacy_checkpoint else 1)
+    if source:
+        assert len(source.search_calls) == before_searches
+        text = harness.assistant_messages()[-1]["content"]
+        assert delivery.supporting_citation["citation"] in text
     assert harness.replies == []
 
 

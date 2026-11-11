@@ -6,6 +6,12 @@ Dependencies: existing native readers, authorized retained results, configured
 orchestration models, and private checking checkpoints. No dependency, service,
 setting, route, browser asset, or extraction-schema change is introduced.
 
+**Multi-source follow-up (0.261.428):** Native-audit answers can also cite other
+authorized named-input documents without treating them as native fact evidence.
+See the [multi-source citation delivery fix](NATIVE_AUDIT_MULTI_SOURCE_CITATION_FIX.md)
+for the v4 checking contract. The v3 contract below describes the original
+0.261.426 change.
+
 ## Issue and root cause
 
 A successful native read could still be followed by an answer-format failure or

@@ -189,13 +189,21 @@ def load_schema(schema_name):
         schema = json.load(f)
     return schema
 
-def validate_agent(agent):
+def validate_agent(agent, *, existing_id=None):
+    """Keep creation strict while accepting an unchanged, authorized legacy ID."""
     schema = load_schema('agent.schema.json')
     if schema.get("$ref") and schema.get("definitions"):
         validator = Draft7Validator(schema, resolver=RefResolver.from_schema(schema))
     else:
         validator = Draft7Validator(schema)
-    errors = sorted(validator.iter_errors(agent), key=lambda e: e.path)
+    errors = sorted((
+        error for error in validator.iter_errors(agent)
+        if not (
+            isinstance(existing_id, str) and existing_id
+            and agent.get("id") == existing_id
+            and tuple(error.path) == ("id",) and error.validator == "pattern"
+        )
+    ), key=lambda error: error.path)
     if errors:
         return '; '.join([e.message for e in errors])
     return None
