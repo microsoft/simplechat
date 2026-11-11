@@ -3838,10 +3838,10 @@
         ],
         "kind": "class",
         "inherited_bases": [],
-        "imports_sha256": "f9278af09a5e18097c83d4bcc3db4198edede670d4a9ff1fc11c8e522fac1b9c"
+        "imports_sha256": "b73c46ca5e769babb5da3760135588734c680d4cee32a09dc9d23828000e9987"
       },
       "classification": "sdk-default",
-      "contract": "Point read/create and inherited settings responses use the installed CosmosDict; preserve partition equality, not-found/409 behavior and the inherited settings store's ETag and failure callbacks. Nested packages remain ordinary JSON.",
+      "contract": "Point read/create and inherited settings responses use the installed CosmosDict; preserve partition equality, not-found/409 behavior and the inherited settings store's ETag and failure callbacks. Nested packages remain ordinary JSON. Review 0.261.428: only a bootstrap-free read_app_version test-helper import changed; the Cosmos double AST and SDK-default response contract are unchanged. Real activation, conflict, worker and publication regressions were rerun.",
       "tests": [
         "functional_tests/test_model_catalog_signed_updates.py"
       ]
