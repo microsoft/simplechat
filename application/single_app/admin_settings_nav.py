@@ -577,6 +577,7 @@ ADMIN_NAV = [
                 "sections": [
                     {"id": "application-insights-section", "label": "Application Insights", "icon": "bi-graph-up"},
                     {"id": "debug-logging-section", "label": "Debug Logging", "icon": "bi-bug"},
+                    {"id": "support-log-export-section", "label": "Support Log Export", "icon": "bi-file-earmark-zip"},
                     {"id": "file-processing-logs-section", "label": "File Process Logging", "icon": "bi-file-earmark-text"},
                     {"id": "health-check-section", "label": "Health Check", "icon": "bi-heart-pulse"},
                     {"id": "swagger-section", "label": "API Documentation", "icon": "bi-file-earmark-code"},

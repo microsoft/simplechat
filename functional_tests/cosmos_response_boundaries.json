@@ -290,6 +290,21 @@
         "functional_tests/test_action_runtime_recovery.py::test_same_http_request_can_reuse_its_claim_but_etag_races_cannot"
       ]
     },
+    "functional_tests/test_admin_support_export_model_budget.py::test_current_registry_point_response_uses_the_installed_sdk_contract::point-seam-1": {
+      "boundary": {
+        "sha256": "ab8dcd8cb163cde2777b6028d972e80519886e3c8611ec52e2dd49c52c803a84",
+        "methods": [
+          "read_item"
+        ],
+        "kind": "seam",
+        "imports_sha256": "3b61a16613e8ea54c05513be599ed3b75ead8cd736ac0a26702bb82db14ab097"
+      },
+      "classification": "sdk-default",
+      "contract": "The injected current-registry point read returns the installed CosmosDict on every call; the real model evaluator consumes it at entry and before/after inference without replacing its selection, protocol, or coverage checks.",
+      "tests": [
+        "functional_tests/test_admin_support_export_model_budget.py::test_current_registry_point_response_uses_the_installed_sdk_contract"
+      ]
+    },
     "functional_tests/test_agent_delegation_entrypoints.py::test_actual_stream_stop_finalizer_persists_completed_child_sources_and_usage::point-seam-1": {
       "boundary": {
         "sha256": "e3e0a36ba35b8093999d1f708d2e909bedde133b0bac6a07c38e7c2c4fa50720",
@@ -5906,6 +5921,23 @@
         "functional_tests/test_support/safety_review_harness.py"
       ]
     },
+    "functional_tests/test_support/support_exports.py::Records": {
+      "boundary": {
+        "sha256": "7309fb80fdb6571694380a0e2cf67704a4a2ad4424eb954fb2f2903d444a35e3",
+        "methods": [],
+        "kind": "class",
+        "inherited_bases": [
+          "CosmosContainer"
+        ],
+        "imports_sha256": "c639e571510e2bf88c5879f7754ea4d5fcfa47188252554bf61bf67065411a15"
+      },
+      "classification": "sdk-default",
+      "contract": "Inherits SDK-default point/create/replace responses, partition routing, ETags, conflicts, and batches from test_support.m365.CosmosContainer. Only plain-row query behavior is specialized; real store tests assert CosmosDict point responses and conditional-write isolation.",
+      "tests": [
+        "functional_tests/test_admin_support_export_jobs.py::test_real_sdk_normalization_etags_and_lost_updates",
+        "functional_tests/test_admin_support_export_sources.py::test_removed_shared_entries_do_not_hide_later_conversation_pages"
+      ]
+    },
     "functional_tests/test_support/workflow_chat_delivery_fakes.py::FakeContainer": {
       "boundary": {
         "sha256": "8454999fc4a0ea33fb3932eab0e16d1649d7a31220b8e0c3191cfe31409bc6bc",
@@ -7591,10 +7623,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "48da4da09bfa2996fab51aa9a50a5ee6915758a16b50443c29291ee227f910e7"
+        "module_sha256": "f9ecc475d0460cad1933db0af2a8e472c2fdfe062eb3df3f8745b640ebdea5a4"
       },
       "classification": "sdk-compatible",
-      "contract": "Lock takeover field-reads the SDK mapping and builds a plain replacement with its original ETag; create/replace responses are unused. Real SDK regression exercises expired takeover and refusal of a live lease.",
+      "contract": "Renewed module review after support-scheduler wiring: takeover still field-reads the SDK mapping and builds a plain replacement with its original ETag; create/replace responses are unused. The real owner test covers expired takeover and refusal of a live lease.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_m365_workflow_continuation_boundary.py::test_scheduler_locks_consume_sdk_mappings_and_keep_conditional_ownership"
@@ -7617,10 +7649,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "48da4da09bfa2996fab51aa9a50a5ee6915758a16b50443c29291ee227f910e7"
+        "module_sha256": "f9ecc475d0460cad1933db0af2a8e472c2fdfe062eb3df3f8745b640ebdea5a4"
       },
       "classification": "sdk-compatible",
-      "contract": "Lock release compares current holder fields from the SDK point mapping and conditionally deletes with its ETag. Real SDK regression verifies holder isolation, partition routing and If-Match.",
+      "contract": "Renewed module review after support-scheduler wiring: release compares the current holder from the SDK mapping and conditionally deletes with the preserved ETag. The real owner regression proves holder isolation, partition routing and If-Match.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_m365_workflow_continuation_boundary.py::test_scheduler_locks_consume_sdk_mappings_and_keep_conditional_ownership"
@@ -7733,13 +7765,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "0753ee6a859407c3479383b007b2f59f50ebad5902d4f8c9c8349795f44764cd"
+        "module_sha256": "89e549fb78d9c7d3ef64c1e9ce14447bd4da512a989f3068740a4de8a9073393"
       },
       "classification": "sdk-compatible",
-      "contract": "_resolve_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Current-registry SDK point responses are dict-subclass mapping consumers: isinstance(dict), field access, binding projections and deepcopy remain compatible. A real evaluator regression supplies the installed CosmosDict and executes the live entry/per-request/final registry reads with current protocol helpers.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_admin_support_export_model_budget.py::test_current_registry_point_response_uses_the_installed_sdk_contract"
       ]
     },
     "application/single_app/content_screening/repository.py::ScreeningRepository.count": {
@@ -24313,6 +24345,47 @@
         "functional_tests/test_workflow_results_delivery.py"
       ]
     },
+    "application/single_app/functions_support_exports.py::_model_info": {
+      "boundary": {
+        "sha256": "1586a2e62a16c2f19f65a072cfe1aa340671e1025cc9ee36cd8bbac35889b0a5",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "config.cosmos_settings_container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "fb93ab5dad40d2fcdad8e4cbfa8f405d18b3de96994abbdf86e4b410dd1ab072"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalizes the fresh app-settings SDK point document before capability binding and disclosure hashing; credentials/settings are never projected to the browser. Fresh-process real-module integration uses SDK-default external I/O, defeats a deliberately stale cache and detects changed destination fingerprints.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_admin_support_export_startup.py::test_real_web_scheduler_and_fresh_registry_imports"
+      ]
+    },
+    "application/single_app/functions_support_exports.py::audit_support_export": {
+      "boundary": {
+        "sha256": "f4c80597a084a8f6a71ad1f78eeb2dab243c2b57ec1d1fb19b60af6f9b4a48d2",
+        "points": [
+          {
+            "method": "create_item",
+            "receiver": "config.cosmos_activity_logs_container",
+            "response": "unused"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "fb93ab5dad40d2fcdad8e4cbfa8f405d18b3de96994abbdf86e4b410dd1ab072"
+      },
+      "classification": "response-unused",
+      "contract": "Persists a content-free activity record and intentionally ignores the create response. The real runtime startup regression verifies persistence; no SDK document is passed to the audit/logging projection.",
+      "tests": [
+        "functional_tests/test_admin_support_export_startup.py::test_real_web_scheduler_and_fresh_registry_imports"
+      ]
+    },
     "application/single_app/functions_tabular_generated_exports.py::_authorize_tabular_export_run_conversation": {
       "boundary": {
         "sha256": "2db7ce9752384889b7e3c88a920b73086d376abad2b561cc916be2fcb67be600",
@@ -32981,6 +33054,133 @@
         "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
       ]
     },
+    "application/single_app/support_export_sources.py::SupportExportSources._shared": {
+      "boundary": {
+        "sha256": "c3afbeb88faa6d4ac3fc2d3094d0d1cbc28dc486427f4dab6c4efc7780ec6773",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "self.containers['collaboration']",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "672cabc6de51edcc60b9ece0f93466d4306ac462dbc21cefe29ba95d7c9d1520"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalizes the shared-conversation SDK point mapping before the existing object-level membership authority and metadata-only projection. Runtime pagination tests exercise accepted-state reads, real CosmosDict responses, denial filtering and a later accessible shared conversation; no shared transcript is admitted.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_admin_support_export_sources.py::test_removed_shared_entries_do_not_hide_later_conversation_pages"
+      ]
+    },
+    "application/single_app/support_export_sources.py::_bounded_rows": {
+      "boundary": {
+        "sha256": "ee621d861181c77e2361075c5bef820dd87475b29c1758d37cf161c00ba04c25",
+        "points": [],
+        "queries": [
+          {
+            "method": "query_items",
+            "receiver": "container",
+            "response": "consumed"
+          }
+        ],
+        "batches": [],
+        "module_sha256": "672cabc6de51edcc60b9ece0f93466d4306ac462dbc21cefe29ba95d7c9d1520"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Consumes plain query object rows or explicit SELECT VALUE scalar rows, not point wrappers. Bounded JSON projection preserves complete authority metadata for transcript filtering and rejects unsupported values/oversize input. Runtime collectors exercise scalar registered-user lookup, metadata, messages, activity and filtering.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_admin_support_export_jobs.py::test_real_collectors_zip_coverage_and_no_secret_bytes",
+        "functional_tests/test_admin_support_export_sources.py::test_transcripts_keep_authority_metadata_until_filtering_and_omit_binary"
+      ]
+    },
+    "application/single_app/support_export_store.py::SupportExportStore.create": {
+      "boundary": {
+        "sha256": "15d69297e9555876bad4ea588890d9c682b290b5b9a1ff0f2537e9308cafa119",
+        "points": [
+          {
+            "method": "create_item",
+            "receiver": "self.records",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "f64a735bf33d9c84af3550c0536e70103c440633d99228f9087aceac3a20f28e"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalizes the returned SDK create document before immutable job/consent hashing and strict projections, preserving the ETag. Real service/store tests prove default CosmosDict responses and plain returned documents.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_admin_support_export_jobs.py::test_real_sdk_normalization_etags_and_lost_updates"
+      ]
+    },
+    "application/single_app/support_export_store.py::SupportExportStore.query": {
+      "boundary": {
+        "sha256": "cc911c1c7eec801543b9cfabc202ce8f8184a613b6de36a2f98b4594a4b1f815",
+        "points": [],
+        "queries": [
+          {
+            "method": "query_items",
+            "receiver": "self.records",
+            "response": "consumed"
+          }
+        ],
+        "batches": [],
+        "module_sha256": "f64a735bf33d9c84af3550c0536e70103c440633d99228f9087aceac3a20f28e"
+      },
+      "classification": "sdk-compatible",
+      "contract": "Bounded query rows must be Mapping documents before plain-dict copying; arbitrary iterable coercion is rejected. Point-response normalization is owned by read/create/save. Real expiry/runner tests consume plain query rows for cleanup and due-job selection.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_admin_support_export_jobs.py::test_expiry_is_enforced_before_physical_cleanup"
+      ]
+    },
+    "application/single_app/support_export_store.py::SupportExportStore.read": {
+      "boundary": {
+        "sha256": "514fbb313b65ac17c548b8c2845055757c73ba30fdab951c324c98eaa28b94b6",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "self.records",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "f64a735bf33d9c84af3550c0536e70103c440633d99228f9087aceac3a20f28e"
+      },
+      "classification": "normalized-strict",
+      "contract": "Normalizes installed-SDK point mappings before strict job/consent/configuration contracts and copying, preserving all fields and ETags; only real not-found responses mean absence. Real service/store tests prove representation and conditional-write isolation.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_admin_support_export_jobs.py::test_real_sdk_normalization_etags_and_lost_updates"
+      ]
+    },
+    "application/single_app/support_export_store.py::SupportExportStore.save": {
+      "boundary": {
+        "sha256": "b66144eac88b4a1fb5ec2e5da970c14b61f94218053ead322c301c91de062ac2",
+        "points": [
+          {
+            "method": "replace_item",
+            "receiver": "self.records",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "f64a735bf33d9c84af3550c0536e70103c440633d99228f9087aceac3a20f28e"
+      },
+      "classification": "normalized-strict",
+      "contract": "Uses the original ETag for IfNotModified replacement, copies only a validated document body, then normalizes the returned SDK document before downstream strict hashing/projection. Runtime tests verify ETag changes, lost-writer refusal and request/consent fencing.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_admin_support_export_jobs.py::test_real_sdk_normalization_etags_and_lost_updates"
+      ]
+    },
     "application/single_app/utils_cache.py::cache_search_results": {
       "boundary": {
         "sha256": "e0bea415bb25d9e413933836bad689855f300afbfb3b737573a6a83a9a755ed9",
@@ -33279,7 +33479,6 @@
     "application/single_app/app_settings_cache.py::_read_cosmos_cache_version": "f68452b283d9b9e468247732acf7a56d7a8c2c5178d63cf5443f96bf1b4394f6",
     "application/single_app/app_settings_store.py::AppSettingsStore._read_cosmos": "56597c9f9be5567c646e0dfff7123209205054b9bd512c49db3175dd05060fb5",
     "application/single_app/app_settings_store.py::AppSettingsStore._write": "d211afdc1a48792598479fe6a2f216f41e6c2929df544d46f796ff8410a52a82",
-    "application/single_app/content_screening/model.py::_resolve_settings": "31bcf63da58ac891b769e32614ab769c5e69b5c6a68162fbcc1ce3cf5258677a",
     "application/single_app/content_screening/repository.py::ScreeningRepository.count": "c7618b8a8001e74d1a9993be4ccb88d44d2accace184d13703bca73d9a284a96",
     "application/single_app/content_screening/repository.py::ScreeningRepository.create": "44951648de6d005e0e729ac179e240dd3b0443c02a949af147e44fc502596783",
     "application/single_app/content_screening/repository.py::ScreeningRepository.get": "a004a1206c78da432cf2645df25146f7d1f120786f0f56494caec38472cef0b8",

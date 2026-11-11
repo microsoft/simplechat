@@ -4,7 +4,7 @@ counts:
   capabilities: 134
   admin_groups: 15
   admin_tabs: 49
-  admin_sections: 108
+  admin_sections: 109
   actions: 34
   chat_controls: 47
   sub_elements: 3
@@ -907,6 +907,10 @@ admin_sections:
   label: Standard
   tab: citation
   group: chat
+- id: support-log-export-section
+  label: Support Log Export
+  tab: logging
+  group: operations
 - id: support-menu-section
   label: Support
   tab: support-menu
