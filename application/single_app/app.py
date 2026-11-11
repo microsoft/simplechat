@@ -6,6 +6,7 @@ import pickle
 import json
 import os
 import sys
+from model_catalog_runtime import catalog_scope, pin_catalog_stream
 
 # Fix Windows encoding issue with Unicode characters (emojis, IPA symbols, etc.)
 # Must be done before any print statements that might contain Unicode
@@ -356,6 +357,7 @@ def initialize_application(force=False):
             get_redis_cache_infrastructure_endpoint(redis_hostname),
             redis_client_factory=functions_redis_client.create_redis_client,
         )
+        configure_model_catalog_runtime()
         settings = initialize_ai_connections(settings)
         sanitized_settings = sanitize_settings_for_logging(settings)
         debug_print(f"DEBUG:Application settings: {sanitized_settings}")
@@ -389,6 +391,22 @@ def initialize_application(force=False):
 @app.before_request
 def ensure_application_initialized():
     initialize_application()
+    g.model_catalog_scope = catalog_scope()
+    g.model_catalog_scope.__enter__()
+
+
+@app.teardown_request
+def release_model_catalog_scope(_error):
+    scope = g.pop("model_catalog_scope", None)
+    if scope is not None:
+        scope.__exit__(None, None, None)
+
+
+@app.after_request
+def preserve_stream_catalog_revision(response):
+    if response.is_streamed:
+        response.response = pin_catalog_stream(response.response)
+    return response
 
 
 def get_idle_timeout_settings(settings=None):

@@ -19,6 +19,7 @@ import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import date
+from model_catalog_runtime import effective_catalog
 
 
 MODEL_IDENTIFIER_SEPARATOR_PATTERN = re.compile(r"[\s_.]+")
@@ -121,6 +122,9 @@ def reset_model_capability_catalog_cache():
 def _load_model_capability_catalog_document(force_refresh=False):
     """Return the parsed catalog, caching it after the first successful read."""
     global _CATALOG_CACHE
+    effective = effective_catalog()
+    if effective is not None:
+        return effective
     with _CATALOG_LOCK:
         if _CATALOG_CACHE is not None and not force_refresh:
             return _CATALOG_CACHE
