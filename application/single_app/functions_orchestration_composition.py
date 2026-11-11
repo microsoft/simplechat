@@ -1,7 +1,7 @@
 # functions_orchestration_composition.py
 """Explicit content preparation from named authorized result readers.
 
-Version: 0.261.426
+Version: 0.261.428
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 Charts drawn upstream reach the model as their placement tokens in: 0.261.293
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
@@ -689,7 +689,12 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
             transform_context = transform_preparation_context(step, readers, inputs, images)
             transform_policy = f'{TRANSFORM_POLICY} Required mode: {transform_context["mode"]}.'
         plain_text = len(outputs) == 1 and outputs[0]['kind'] in ('text-v1', 'markdown-v1')
-        audit_contract = native_audit_contract(inputs) if plain_text and not images else None
+        # Only the reauthorized owner projection can extend citations beyond native fact sources.
+        audit_contract = native_audit_contract(
+            inputs, authorized_answer_citations=[
+                citation for entry in inputs.values() for citation in entry['document_citations']
+            ],
+        ) if plain_text and not images else None
         unavailable = _missing_optional_inputs(step, context)
         missing_images = [item for item in unavailable if item['capability_id'] == CAPABILITY_GENERATE_IMAGE]
         missing = [item for item in unavailable if item not in missing_images]
