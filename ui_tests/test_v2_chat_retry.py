@@ -1,8 +1,11 @@
 # test_v2_chat_retry.py
 """
 Browser coverage for saved model, agent, and orchestration retry attempts.
-Version: 0.261.320
+Version: 0.261.431
 Implemented in: 0.261.317
+Agent credential recovery links implemented in: 0.261.429
+Recovery button and in-button guidance implemented in: 0.261.430
+Guided recovery implemented in: 0.261.431
 
 Runs the real message list, composer, stores, and controller with production CSS.
 Only HTTP and streaming provider responses are replaced. No live service is called.
@@ -114,6 +117,12 @@ class RetryApi(PlanningApi):
     def handle(self, route):
         request = route.request
         path = urlsplit(request.url).path
+        if path == "/api/action-recovery/context" and request.method == "GET":
+            route.fulfill(json={"csrf_token": "fixture-csrf"})
+            return
+        if path == "/api/chat/action-health" and request.method == "POST":
+            route.fulfill(json={"state": "ready"})
+            return
         preparation = path.endswith("/retry") or path.endswith("/regenerate")
         if preparation and (path.startswith("/api/message/") or "/orchestration/messages/" in path):
             self.requests.append({"path": path, "method": request.method, "body": request.post_data_json})
@@ -289,6 +298,42 @@ def test_refused_preparation_restores_old_answer_without_a_phantom_attempt(retry
     assert [row["id"] for row in state["messages"]][:2] == ["question-1", "answer-1"]
     assert state["attempts"][THREAD] == [1]
     assert not api.calls("/api/chat/stream")
+
+
+def test_agent_credential_recovery_button_belongs_to_the_failed_retry(retry_ui):
+    page, api = retry_ui
+    api.attempts[1][0]["metadata"]["agent_selection"] = {
+        "selected_agent": "original-agent", "agent_id": "agent-original", "is_global": True,
+    }
+    failure = "Agent credentials need updating. Please update the connection settings."
+    edit_url = "/v2/admin/agents/agent-original?section=model"
+
+    def failed_stream(route):
+        api.requests.append({"path": "/api/chat/stream", "method": "POST", "body": route.request.post_data_json})
+        api.attempts[2][0]["metadata"]["response_attempt"].update({"state": "failed", "error": failure})
+        event = {
+            "error": failure, "error_code": "model_configuration_invalid", "done": True,
+            "conversation_id": CONVERSATION,
+            "agent_credential_recovery": {"scope": "global", "can_edit": True, "edit_url": edit_url},
+        }
+        route.fulfill(content_type="text/event-stream", body=f"data: {json.dumps(event)}\n\n")
+
+    page.route("**/api/chat/stream", failed_stream)
+    start(page, api)
+    page.get_by_role("button", name="Retry", exact=True).first.click()
+    notice = page.locator('[data-retry-error="question-2"]').get_by_role("alert")
+    expect(notice).to_contain_text("Agent credentials need updating")
+    expect(notice).to_contain_text("Please update the connection settings.")
+    button = notice.get_by_role("button", name="Update agent credentials", exact=False)
+    expect(button).to_be_visible()
+    expect(notice.get_by_role("list", name="Agent credential recovery").get_by_role("listitem")).to_have_count(2)
+    expect(notice).to_contain_text("select Retry on your message, or start a new conversation")
+    expect(notice).to_contain_text("Nothing retries automatically")
+    expect(notice.get_by_role("link", name="Update agent credentials", exact=False)).to_have_count(0)
+    expect(page.get_by_text("A later answer.", exact=True)).to_be_visible()
+    assert len(api.calls("/api/chat/stream")) == 1
+    page.get_by_role("button", name="Previous attempt", exact=True).first.click()
+    expect(page.get_by_role("button", name="Update agent credentials", exact=False)).to_have_count(0)
 
 
 def test_failed_attempt_error_follows_carousel_and_survives_reload(retry_ui):

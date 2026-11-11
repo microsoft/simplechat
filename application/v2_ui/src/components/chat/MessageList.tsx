@@ -43,7 +43,9 @@ import {
 import { InlineMapCards } from './InlineMapCard';
 import { ChatFilePreview } from './ChatFilePreview';
 import { GeneratedArtifactCard } from './GeneratedArtifactCard';
-import type { SavedAnalysisDescriptor } from '../../lib/types';
+import type { AgentCredentialRecovery, SavedAnalysisDescriptor } from '../../lib/types';
+import { normalizeAgentCredentialEditUrl } from '../../lib/agentCredentialRecovery';
+import { AgentCredentialRecoveryNotice } from './AgentCredentialRecoveryNotice';
 import { IconButton, MessageActions } from './MessageActions';
 import { isCheckingFailureNotice, OrchestrationMessageRecovery } from './OrchestrationRecoveryNotice';
 import { OrchestrationOutputs } from './OrchestrationOutputs';
@@ -1611,8 +1613,18 @@ function ActiveOrchestrationCard({ conversationId }: { conversationId: string })
     return null;
 }
 
-function ResponseError({ message, authUrl }: { message: string; authUrl?: string | null }) {
+function ResponseError({ message, authUrl, agentCredentialRecovery }: {
+    message: string;
+    authUrl?: string | null;
+    agentCredentialRecovery?: AgentCredentialRecovery | null;
+}) {
     const safeAuthUrl = normalizeFoundryAuthUrl(authUrl);
+    const safeAgentUrl = normalizeAgentCredentialEditUrl(agentCredentialRecovery);
+    const recoveryReadOnly = agentCredentialRecovery?.can_edit === false &&
+        ['personal', 'group', 'global'].includes(agentCredentialRecovery.scope);
+    if (!safeAuthUrl && (safeAgentUrl || recoveryReadOnly)) {
+        return <AgentCredentialRecoveryNotice message={message} recovery={agentCredentialRecovery} />;
+    }
     return (
         <GlassPanel role="alert" elevation="flat" className="flex items-start gap-2 p-3 text-sm text-danger">
             <TriangleAlert size={16} className="mt-0.5 shrink-0" />
@@ -1641,6 +1653,7 @@ export function MessageList() {
         streamingContent,
         streamError,
         streamAuthUrl,
+        streamAgentCredentialRecovery,
         activeConversationId,
         activeConversationKind,
         retryPresentation,
@@ -1799,7 +1812,8 @@ export function MessageList() {
                                         ) : null}
                                     {here && <StreamingBubble />}
                                     {here && <StreamingPendingActions />}
-                                    {error && <div data-retry-error={message.id}><ResponseError message={error} authUrl={localRetry?.authUrl} /></div>}
+                                    {error && <div data-retry-error={message.id}><ResponseError message={error}
+                                        authUrl={localRetry?.authUrl} agentCredentialRecovery={localRetry?.agentCredentialRecovery} /></div>}
                                     {!here && savedResponseAttempt(message).state === 'prepared' && (
                                         <p role="status" className="px-1 text-sm text-text-3">This retry is prepared. Select Retry to generate its response.</p>
                                     )}
@@ -1829,7 +1843,8 @@ export function MessageList() {
                     </div>
                 </PendingActionPlacementProvider>
 
-                {streamError && <ResponseError message={streamError} authUrl={streamAuthUrl} />}
+                {streamError && <ResponseError message={streamError} authUrl={streamAuthUrl}
+                    agentCredentialRecovery={streamAgentCredentialRecovery} />}
             </div>
         </div>
     );

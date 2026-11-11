@@ -4,7 +4,7 @@ title: "Build agents and actions in My Workspace"
 description: "Find an available agent or configure a reusable assistant and its approved tools in V2."
 section: "Guides"
 audience: user
-version: "0.261.428"
+version: "0.261.435"
 ---
 
 ## What this does
@@ -86,6 +86,50 @@ instruction-brief drafting command can help produce an initial draft; review it
 before saving. Action and knowledge references make those instructions more
 specific without expanding the agent's permissions.
 
+## Update agent credentials after a security update
+
+Since **0.261.428**, an agent with an older embedded Azure OpenAI API key, APIM
+subscription key, or Foundry service-principal client secret reports
+**Agent credentials need updating**. The notice identifies the affected fields.
+Use **Update credentials** in the native agent editor to reach its connection
+settings, then re-enter the required values and save. The classic editor also
+identifies fields requiring replacement.
+
+Since **0.261.429**, chat also provides **Update agent credentials** when the
+server confirms that you may edit the affected agent. Since **0.261.431**, a
+guided recovery message separates the two tasks. **Update the connection**
+contains the compact button that opens that exact agent's **Model & connection**
+section in a new tab. **Return to this chat** explains how to select **Retry**
+on your message after saving, or start a new conversation. The steps stack on
+phones and sit side by side on larger screens.
+
+The message is never retried automatically. Your conversation stays open, and
+you do not enter these agent secrets in the chat.
+
+If you cannot edit a group agent, the error asks you to contact a **group owner**.
+For an organization-wide agent, it asks you to contact a **site administrator**.
+Disabled personal authoring also directs you to a site administrator. A site
+Admin role does not bypass group membership, owner-only management policy, or a
+group's read-only status. Permissions are checked again when the editor opens
+and when changes are saved.
+
+This is not limited to MCP. It affects agent-level custom credentials, not every
+saved model connection, workspace identity or action. An agent using an approved
+saved model connection can continue using that connection; an inactive legacy
+override still requires replacement before it can be used again.
+
+A masked value, unrelated edit or authentication toggle does not re-enable an
+old credential. You can explicitly remove an unused credential or choose an
+approved saved connection instead. If the agent is read-only for your account,
+ask its owner or an administrator with edit permission to update it.
+
+Changing a custom endpoint or service-principal authority also requires
+replacement of its saved credential. An unchanged masked value is not permission
+to send that credential to a new destination.
+
+Re-entry is not provider-side rotation. If a credential may have been exposed,
+replace it at its provider and enter the new value here.
+
 ## Configure an action
 
 **New action** opens the normal type chooser. Select the tool the agent needs,
@@ -122,7 +166,7 @@ remote service is reachable.
 
 ### Connection destinations and compatibility
 
-Implemented in version: **0.261.432** (`application/single_app/config.py`).
+Implemented in version: **0.261.435** (`application/single_app/config.py`).
 
 Configurable HTTP actions, Smart HTTP, and remote MCP connections check their
 actual destination before opening a service connection. Public services and

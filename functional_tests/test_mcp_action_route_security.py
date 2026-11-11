@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for MCP discovery and connection-test authorization ordering.
-Version: 0.261.432
+Version: 0.261.435
 Implemented in: 0.261.029
 
 Executes real route/helper bodies with Flask requests and mocked I/O boundaries.
@@ -13,7 +13,9 @@ This is behavioral request coverage, not an import-lifecycle test.
 
 import ast
 import asyncio
+import importlib
 import logging
+import re
 from pathlib import Path
 import sys
 import types
@@ -41,7 +43,6 @@ from functions_workspace_authoring import (
     WorkspaceAuthoringValidation, apply_group_action_write, editor_error_response,
     legacy_editor_write_body, validate_action_connection_update,
 )
-from functions_mcp_tool_pinning import build_mcp_tool_fingerprints
 from functions_databricks_operations import DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE
 from test_mcp_legacy_stdio_management import GROUP, OWNER, action_services, remote
 
@@ -102,6 +103,10 @@ class McpActionRouteSecurityTests(unittest.TestCase):
         })
         self.modules.start()
         self.addCleanup(self.modules.stop)
+        logger = types.ModuleType("functions_appinsights")
+        logger.log_event = Mock()
+        sys.modules["functions_appinsights"] = logger
+        fingerprints = importlib.import_module("functions_mcp_tool_pinning")
 
         self.policy = Mock()
         self.hydrate = Mock(side_effect=lambda manifest, *_args, **_kwargs: dict(manifest))
@@ -138,7 +143,6 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "apply_group_action_write": apply_group_action_write,
             "legacy_editor_write_body": legacy_editor_write_body,
             "editor_error_response": Mock(wraps=editor_error_response),
-            "build_mcp_tool_fingerprints": build_mcp_tool_fingerprints,
             "SecretReturnType": types.SimpleNamespace(NAME="name", VALUE="value"),
             "get_current_user_id": lambda: session["user"]["oid"],
             "require_active_group": lambda user_id: "group-a",
@@ -173,6 +177,7 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "McpPluginFactory": types.SimpleNamespace(probe_server_from_config=self.probe),
             "McpDestinationPolicyError": PermissionError,
             "_build_mcp_discovery_log_context": Mock(return_value={}),
+            "build_mcp_tool_fingerprints": fingerprints.build_mcp_tool_fingerprints,
         }
         load_route_functions(self.namespace)
         self.app = Flask(__name__)
@@ -234,6 +239,41 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             response = self.post(route, json=payload)
             self.assertEqual(response.status_code, 403)
         self.assert_no_execution_or_credentials()
+
+    def test_foreign_secret_references_are_rejected_before_key_vault_or_connection(self):
+        from test_keyvault_plugin_secret_scope_enforcement import load_functions
+
+        vault_read = Mock(side_effect=AssertionError("Foreign credentials must never be read."))
+        secret_functions, _ = load_functions(
+            str(APP_DIR / "functions_keyvault.py"),
+            {
+                "clean_name_for_keyvault", "_normalize_allowed_sources", "parse_secret_name_dynamic",
+                "validate_secret_name_dynamic", "secret_reference_matches_context",
+                "_log_secret_reference_context_mismatch", "resolve_secret_reference_for_context",
+            },
+            {
+                "re": re, "logging": logging, "log_event": Mock(),
+                "supported_scopes": ["user", "group", "global", "public"],
+                "supported_sources": ["action", "action-addset", "agent", "identity", "other"],
+                "retrieve_secret_from_key_vault_by_full_name": vault_read,
+            },
+        )
+        self.namespace["validate_secret_name_dynamic"] = secret_functions["validate_secret_name_dynamic"]
+        self.namespace["resolve_secret_reference_for_context"] = secret_functions["resolve_secret_reference_for_context"]
+        for reference in (
+            "another-user--action--user--sample",
+            "another-group--action--group--sample",
+            "global-action--action--global--sample",
+            "current-user--agent--user--sample",
+        ):
+            with self.subTest(reference=reference):
+                response = self.post("/test", json=self.payload(
+                    auth={"type": "key", "key": reference},
+                    additionalFields={"transport": "sse", "auth_method": "bearer"},
+                ))
+                self.assertEqual(response.status_code, 400)
+        vault_read.assert_not_called()
+        self.test_connection.assert_not_called()
 
     def test_group_and_admin_saves_reject_metadata_only_stdio(self):
         for route in ("/group", "/global", "/global/existing"):

@@ -55,7 +55,7 @@ An OpenAPI connection test loads the specification and probes the base URL; it
 does not call a selected operation or prove an agent can use it. Qualify the
 intended operation separately and inspect its actual tool result.
 
-Since **0.261.432**, connection tests and operation requests use a destination
+Since **0.261.435**, connection tests and operation requests use a destination
 guard that permits legitimate public/private services but refuses localhost,
 loopback, link-local and cloud infrastructure targets, including DNS aliases.
 Tests check the base response headers without downloading an unbounded page.

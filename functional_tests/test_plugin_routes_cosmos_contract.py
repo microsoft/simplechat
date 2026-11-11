@@ -1,7 +1,7 @@
 # test_plugin_routes_cosmos_contract.py
 """Runtime evidence for the plugin route owners' Cosmos response contracts.
 
-Version: 0.261.432
+Version: 0.261.435
 Implemented in: 0.261.352
 
 Execute actual route and legacy-validator definitions with the installed SDK's

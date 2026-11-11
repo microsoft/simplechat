@@ -1,8 +1,8 @@
 # test_outbound_destination_policy.py
 """Destination and real-client transport regressions for configurable actions.
 
-Version: 0.261.432
-Implemented in: 0.261.432
+Version: 0.261.435
+Implemented in: 0.261.435
 
 All DNS and external connection boundaries are synthetic. Enterprise private
 destinations remain valid; loopback, metadata, rebinding and retargeting do not.

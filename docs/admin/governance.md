@@ -194,7 +194,7 @@ Use destination governance to limit which remote MCP servers personal, group, an
 actions may contact. Policies apply to saves, discovery, connection tests, and tool
 execution, not just to the server choices shown in the action editor.
 
-Starting in **0.261.432** (`application/single_app/config.py`), remote MCP
+Starting in **0.261.435** (`application/single_app/config.py`), remote MCP
 connections also have a mandatory safety floor independent of the switches
 below. Loopback, link-local and cloud infrastructure destinations cannot be
 enabled by an allowlist, including when a hostname resolves to such an address.

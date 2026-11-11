@@ -1,8 +1,8 @@
 # test_plugin_outbound_destination_security.py
 """Functional tests for action destination, authoring and credential boundaries.
 
-Version: 0.261.432
-Implemented in: 0.261.432
+Version: 0.261.435
+Implemented in: 0.261.435
 
 Real route/merge bodies and validators run with scoped storage seams. HTTP
 connectors are synthetic; DNS and physical connection tests use blocked I/O.

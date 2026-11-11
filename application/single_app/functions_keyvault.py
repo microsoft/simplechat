@@ -3,6 +3,7 @@
 import re
 import logging
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 from functions_appinsights import log_event
@@ -12,6 +13,12 @@ from functions_authentication import *
 from functions_settings import *
 from enum import Enum
 import app_settings_cache
+from agent_credential_contracts import (
+    AGENT_CREDENTIAL_BINDINGS, AGENT_CREDENTIAL_STATUS, AGENT_SECRET_LABELS,
+    AGENT_SECRET_MASKS, AgentCredentialReentryRequired, agent_credential_is_ready,
+    agent_credential_scope, agent_credential_status, agent_credential_target, bind_agent_credential,
+    credential_value, set_credential_value,
+)
 from functions_mcp_operations import MCP_CUSTOM_HEADERS_FIELD, MCP_PLUGIN_TYPE
 from functions_snowflake_operations import SNOWFLAKE_PLUGIN_TYPE, SNOWFLAKE_SENSITIVE_ADDITIONAL_FIELDS
 from functions_yamcs_operations import YAMCS_PLUGIN_TYPE, YAMCS_SENSITIVE_ADDITIONAL_FIELDS
@@ -947,115 +954,117 @@ def validate_secret_name_dynamic(secret_name):
     """
     return parse_secret_name_dynamic(secret_name) is not None
 
-def keyvault_agent_save_helper(agent_dict, scope_value, scope="global", existing_agent=None):
-    """
-    For agent dicts, store sensitive keys in Key Vault and replace their values with the Key Vault secret name.
-    Processes top-level agent keys and supported nested Foundry runtime API keys.
-
-    Args:
-        agent_dict (dict): The agent dictionary to process.
-        scope_value (str): The value for the scope (e.g., agent id).
-        scope (str): The scope (e.g., 'user', 'global').
-        existing_agent (dict, optional): Existing stored agent used to preserve secret references during edit flows.
-
-    Returns:
-        dict: A new agent dict with sensitive values replaced by Key Vault references.
-    Raises:
-        Exception: If storing a key in Key Vault fails.
-    """
+def keyvault_agent_save_helper(
+    agent_dict, scope_value, scope="global", existing_agent=None, *, owner_id=None,
+    preserve_unchanged=False, reentered_paths=(), staged_names=None,
+):
+    """Persist explicit replacements; retain legacy masks only as unusable values."""
+    owner_id = "global" if scope == "global" else owner_id
+    if str(agent_dict.get("id") or "") != str(scope_value or ""):
+        raise ValueError("The agent credential identity is invalid.")
+    updated = deepcopy(agent_dict)
+    updated.pop(AGENT_CREDENTIAL_BINDINGS, None)
+    updated.pop(AGENT_CREDENTIAL_STATUS, None)
     settings = app_settings_cache.get_settings_cache()
-    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
-    key_vault_name = settings.get("key_vault_name", None)
-    if not enable_key_vault_secret_storage or not key_vault_name:
-        return agent_dict
-    source = "agent"
-    updated = dict(agent_dict)
-    agent_name = updated.get('name', 'agent')
-    for field in AGENT_SENSITIVE_SECRET_FIELDS:
-        if not field["enabled"](updated):
+    replaced_paths = set()
+    for path in AGENT_SECRET_LABELS:
+        value = credential_value(updated, path)
+        if value in (None, ""):
             continue
-        path = field["path"]
-        secret_name = field["secret_name"](agent_name)
-        if _get_nested_dict_value(updated, path) in (None, ""):
-            log_event(
-                f"Agent key '{'.'.join(path)}' not found or empty in agent '{agent_name}'. No action taken.",
-                level=logging.INFO,
-            )
+        binding = agent_credential_scope(scope, owner_id, scope_value, path)
+        previous = credential_value(existing_agent, path)
+        if not isinstance(value, str):
+            raise ValueError("Agent credentials must be text values.")
+        is_reference = validate_secret_name_dynamic(value) or bool(re.match(r"^https://[^/]+/secrets/", value, re.I))
+        keep = value in AGENT_SECRET_MASKS or is_reference or (
+            preserve_unchanged and value == previous and path not in reentered_paths
+        )
+        if keep:
+            if previous in (None, "") or (is_reference and value != previous):
+                raise ValueError("Re-enter the agent credential instead of supplying a secret reference.")
+            set_credential_value(updated, path, previous)
+            if (
+                agent_credential_is_ready(existing_agent, path, scope, owner_id)
+                and agent_credential_target(existing_agent, path) == agent_credential_target(updated, path)
+            ):
+                bind_agent_credential(updated, path, scope, owner_id)
             continue
-        try:
-            _store_secret_reference(
-                updated,
-                existing_agent,
-                path,
-                secret_name,
-                scope_value,
-                source,
-                scope,
+        if settings.get("enable_key_vault_secret_storage"):
+            if not settings.get("key_vault_name"):
+                raise ValueError("Key Vault is unavailable for storing agent credentials.")
+            value = store_secret_in_key_vault(
+                f"credential-{uuid.uuid4().hex}", value, binding, source="agent", scope=scope,
             )
-        except ValueError:
-            raise
-        except Exception as e:
-            log_event(
-                f"Failed to store agent key '{'.'.join(path)}' in Key Vault: {e}",
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            raise RuntimeError(f"Failed to store agent key '{'.'.join(path)}' in Key Vault: {e}") from e
+            if not secret_reference_matches_context(value, scope_value=binding, scope=scope, allowed_sources={"agent"}):
+                raise ValueError("Unable to store the agent credential.")
+            if staged_names is not None:
+                staged_names.append(value)
+            set_credential_value(updated, path, value)
+        bind_agent_credential(updated, path, scope, owner_id)
+        replaced_paths.add(path)
+    if ("azure_agent_apim_gpt_subscription_key",) in replaced_paths:
+        updated.pop("azure_apim_gpt_subscription_key", None)
+        updated.get(AGENT_CREDENTIAL_BINDINGS, {}).pop("/azure_apim_gpt_subscription_key", None)
     return updated
 
-def keyvault_agent_get_helper(agent_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER):
-    """
-    For agent dicts, retrieve sensitive keys from Key Vault if they are stored as Key Vault references.
-    Processes top-level agent keys and supported nested Foundry runtime API keys.
 
-    Args:
-        agent_dict (dict): The agent dictionary to process.
-        scope_value (str): The value for the scope (e.g., agent id).
-        scope (str): The scope (e.g., 'user', 'global').
-        return_actual_key (bool): If True, retrieves the actual secret value from Key Vault. If False, replaces with ui_trigger_word.
-
-    Returns:
-        dict: A new agent dict with sensitive values replaced by Key Vault references.
-    Raises:
-        Exception: If retrieving a key from Key Vault fails.
-    """
-    settings = app_settings_cache.get_settings_cache()
-    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
-    key_vault_name = settings.get("key_vault_name", None)
-    if not enable_key_vault_secret_storage or not key_vault_name:
-        return agent_dict
-    updated = dict(agent_dict)
-    agent_name = updated.get('name', 'agent')
-    for field in AGENT_SENSITIVE_SECRET_FIELDS:
-        if not field["enabled"](updated):
+def keyvault_agent_get_helper(
+    agent_dict, scope_value, scope="global", return_type=SecretReturnType.TRIGGER, *,
+    owner_id=None, paths=None,
+):
+    """Mask UI reads without I/O; hydrate only server-bound, explicitly selected slots."""
+    owner_id = "global" if scope == "global" else owner_id
+    if str(agent_dict.get("id") or "") != str(scope_value or ""):
+        raise ValueError("The agent credential identity is invalid.")
+    updated = deepcopy(agent_dict)
+    status = agent_credential_status(updated, scope, owner_id)
+    for path in AGENT_SECRET_LABELS:
+        value = credential_value(updated, path)
+        if value in (None, ""):
             continue
-        path = field["path"]
-        value = _get_nested_dict_value(updated, path)
-        if value == ui_trigger_word:
-            value = build_full_secret_name(
-                field["secret_name"](agent_name),
-                scope_value,
-                "agent",
-                scope,
-            )
-        if not value or not validate_secret_name_dynamic(value):
-            continue
-        try:
-            if return_type == SecretReturnType.VALUE:
-                actual_key = retrieve_secret_from_key_vault_by_full_name(value)
-                _set_nested_dict_value(updated, path, actual_key)
-            elif return_type == SecretReturnType.NAME:
-                _set_nested_dict_value(updated, path, value)
-            else:
-                _set_nested_dict_value(updated, path, ui_trigger_word)
-        except Exception as e:
-            log_event(
-                f"Failed to retrieve agent key '{'.'.join(path)}' for agent '{agent_name}' from Key Vault: {e}",
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            return updated
+        if return_type == SecretReturnType.TRIGGER:
+            set_credential_value(updated, path, ui_trigger_word)
+        elif return_type == SecretReturnType.VALUE and (paths is None or path in paths):
+            if not agent_credential_is_ready(updated, path, scope, owner_id):
+                raise AgentCredentialReentryRequired(agent_id=scope_value, scope=scope, owner_id=owner_id)
+            if validate_secret_name_dynamic(value):
+                try:
+                    value = resolve_secret_reference_for_context(
+                        value,
+                        scope_value=agent_credential_scope(scope, owner_id, scope_value, path),
+                        scope=scope, allowed_sources={"agent"}, context_label="agent credential",
+                    )
+                except (ValueError, TypeError) as exc:
+                    log_event(
+                        "[KEY_VAULT] Agent credential could not be resolved.",
+                        extra={"error_type": type(exc).__name__}, level=logging.WARNING,
+                    )
+                    raise AgentCredentialReentryRequired(agent_id=scope_value, scope=scope, owner_id=owner_id) from None
+                if not value or value in AGENT_SECRET_MASKS or validate_secret_name_dynamic(value):
+                    raise AgentCredentialReentryRequired(agent_id=scope_value, scope=scope, owner_id=owner_id)
+                set_credential_value(updated, path, value)
+    if return_type != SecretReturnType.NAME:
+        updated.pop(AGENT_CREDENTIAL_BINDINGS, None)
+        updated[AGENT_CREDENTIAL_STATUS] = status
     return updated
+
+
+def keyvault_agent_cleanup_helper(previous, current, scope_value, scope="global", *, owner_id=None):
+    """Clean only superseded, newly owner-bound references after a committed save."""
+    if not previous:
+        return
+    candidates = deepcopy(previous)
+    for path in AGENT_SECRET_LABELS:
+        if credential_value(previous, path) == credential_value(current, path):
+            set_credential_value(candidates, path, None)
+    try:
+        keyvault_agent_delete_helper(candidates, scope_value, scope, owner_id=owner_id)
+    except Exception as exc:
+        log_event(
+            "[KEY_VAULT] Superseded agent credential cleanup failed.",
+            extra={"error_type": type(exc).__name__}, level=logging.WARNING,
+        )
+
 
 def keyvault_plugin_save_helper(plugin_dict, scope_value, scope="global", existing_plugin=None):
     """
@@ -1946,49 +1955,27 @@ def keyvault_plugin_delete_helper(plugin_dict, scope_value, scope="global"):
     return plugin_dict
 
 # Helper to delete agent secrets from Key Vault
-def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global"):
-    """
-    For agent dicts, delete sensitive keys from Key Vault if they are stored as Key Vault references.
-    Processes top-level agent keys and supported nested Foundry runtime API keys.
-
-    Args:
-        agent_dict (dict): The agent dictionary to process.
-        scope_value (str): The value for the scope (e.g., agent id).
-        scope (str): The scope (e.g., 'user', 'global').
-
-    Returns:
-        agent_dict (dict): The original agent dict.
-    """
+def keyvault_agent_delete_helper(agent_dict, scope_value, scope="global", *, owner_id=None):
+    """Never delete a legacy or foreign reference through the application identity."""
+    owner_id = "global" if scope == "global" else owner_id
     settings = app_settings_cache.get_settings_cache()
-    enable_key_vault_secret_storage = settings.get("enable_key_vault_secret_storage", False)
-    key_vault_name = settings.get("key_vault_name", None)
-    if not enable_key_vault_secret_storage or not key_vault_name:
+    if not settings.get("enable_key_vault_secret_storage") or not settings.get("key_vault_name"):
         return agent_dict
-    source = "agent"
-    updated = dict(agent_dict)
-    agent_name = updated.get('name', 'agent')
-    for field in AGENT_SENSITIVE_SECRET_FIELDS:
-        if not field["enabled"](updated):
-            continue
-        path = field["path"]
-        secret_name = _get_nested_dict_value(updated, path)
-        if secret_name == ui_trigger_word:
-            secret_name = build_full_secret_name(
-                field["secret_name"](agent_name),
-                scope_value,
-                source,
-                scope,
-            )
+    for path in AGENT_SECRET_LABELS:
+        secret_name = credential_value(agent_dict, path)
         if not secret_name or not validate_secret_name_dynamic(secret_name):
             continue
-        try:
-            key_vault_url = f"https://{key_vault_name}{KEY_VAULT_DOMAIN}"
-            log_event(f"Deleting agent secret '{secret_name}' for agent '{agent_name}' for '{scope}' '{scope_value}'", level=logging.INFO)
-            client = SecretClient(vault_url=key_vault_url, credential=get_keyvault_credential())
-            client.begin_delete_secret(secret_name)
-        except Exception as e:
-            log_event(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}", level=logging.ERROR, exceptionTraceback=True)
-            raise Exception(f"Error deleting secret '{secret_name}' for agent '{agent_name}': {e}")
+        if not agent_credential_is_ready(agent_dict, path, scope, owner_id) or not secret_reference_matches_context(
+            secret_name, scope_value=agent_credential_scope(scope, owner_id, scope_value, path),
+            scope=scope, allowed_sources={"agent"},
+        ):
+            log_event("[KEY_VAULT] Skipped untrusted legacy agent credential cleanup.", level=logging.WARNING)
+            continue
+        client = SecretClient(
+            vault_url=f"https://{settings['key_vault_name']}{KEY_VAULT_DOMAIN}",
+            credential=get_keyvault_credential(),
+        )
+        client.begin_delete_secret(secret_name)
     return agent_dict
 
 def get_keyvault_credential(settings=None, **credential_options):

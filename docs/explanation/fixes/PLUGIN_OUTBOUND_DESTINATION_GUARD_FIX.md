@@ -1,6 +1,6 @@
-# Plugin outbound destination guard (v0.261.432)
+# Plugin outbound destination guard (v0.261.435)
 
-Fixed/Implemented in version: **0.261.432**.
+Fixed/Implemented in version: **0.261.435**.
 
 The application version is recorded in `application/single_app/config.py`.
 There is no new capability toggle, administrator destination allowlist, or

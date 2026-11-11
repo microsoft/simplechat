@@ -1,7 +1,7 @@
 # test_keyvault_plugin_secret_scope_enforcement.py
 """
 Functional test for Key Vault plugin secret scope enforcement.
-Version: 0.261.432
+Version: 0.261.435
 Implemented in: 0.241.011; 0.241.022; 0.250.121; 0.261.096
 
 This test ensures plugin Key Vault references are validated against the

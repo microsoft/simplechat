@@ -317,6 +317,32 @@ function getStreamAuthUrl(errorDetails) {
     return normalizeStreamHttpUrl(errorPayload.auth_url || errorPayload.consent_url || '');
 }
 
+function normalizeAgentCredentialEditUrl(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)
+        || value.can_edit !== true || typeof value.edit_url !== 'string') {
+        return null;
+    }
+    const patterns = {
+        personal: /^\/v2\/workspace\/agents\/([A-Za-z0-9._~%-]+)\?section=model$/,
+        group: /^\/v2\/groups\/([A-Za-z0-9._~%-]+)\/agents\/([A-Za-z0-9._~%-]+)\?section=model$/,
+        global: /^\/v2\/admin\/agents\/([A-Za-z0-9._~%-]+)\?section=model$/
+    };
+    if (!Object.hasOwn(patterns, value.scope)) return null;
+    const match = patterns[value.scope].exec(value.edit_url);
+    if (!match) return null;
+    try {
+        for (const segment of match.slice(1)) {
+            const id = decodeURIComponent(segment);
+            if (!id || id.length > 512 || id !== id.trim() || id === '.' || id === '..'
+                || /[/\\?#,\x00-\x1f\x7f]/.test(id)) return null;
+        }
+    } catch {
+        // Invalid encoded identifiers must not become navigation targets.
+        return null;
+    }
+    return value.edit_url;
+}
+
 function isM365SignInRequired(errorDetails) {
     const payload = getStreamErrorPayload(errorDetails);
     return payload.type === 'm365_sign_in_required'
@@ -371,6 +397,74 @@ function getStreamErrorPersistenceNote(errorPayload, hasPartialContent) {
     return '';
 }
 
+function appendAgentCredentialRecoveryNotice(contentElement, message, safeAgentUrl, persistenceNote) {
+    const prefix = /^(Agent (?:credentials|connection settings) need updating)\.\s*/.exec(message);
+    const heading = prefix ? prefix[1] : 'Agent connection needs attention';
+    const detail = prefix ? message.slice(prefix[0].length) : message;
+    const notice = document.createElement('section');
+    notice.className = 'border rounded-3 bg-body text-body p-3 p-md-4 mt-2';
+    notice.style.maxWidth = '45rem';
+    notice.setAttribute('role', 'alert');
+    notice.setAttribute('data-agent-credential-recovery', '');
+    const title = document.createElement('h3');
+    title.className = 'h6 fw-semibold mb-0';
+    title.textContent = heading;
+    notice.appendChild(title);
+    if (safeAgentUrl && detail) {
+        const description = document.createElement('p');
+        description.className = 'text-body-secondary mt-2 mb-0';
+        description.textContent = detail;
+        notice.appendChild(description);
+    }
+    const steps = document.createElement('ol');
+    steps.className = 'list-unstyled row g-4 mt-1 mb-0';
+    steps.setAttribute('aria-label', 'Agent credential recovery');
+    steps.setAttribute('role', 'list');
+    for (const [index, label] of [safeAgentUrl ? 'Update the connection' : 'Request an update', 'Return to this chat'].entries()) {
+        const step = document.createElement('li');
+        step.className = 'col-12 col-md-6 d-flex align-items-start gap-2';
+        const number = document.createElement('span');
+        number.className = 'border rounded-circle d-inline-flex align-items-center justify-content-center flex-shrink-0 text-body-secondary';
+        number.style.width = '24px';
+        number.style.height = '24px';
+        number.setAttribute('aria-hidden', 'true');
+        number.textContent = String(index + 1);
+        const copy = document.createElement('div');
+        const caption = document.createElement('p');
+        caption.className = 'fw-semibold mb-2';
+        caption.textContent = label;
+        copy.appendChild(caption);
+        if (index === 0 && safeAgentUrl) {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'btn btn-primary d-inline-flex align-items-center gap-2 px-3 py-2';
+            button.style.minHeight = '44px';
+            button.setAttribute('aria-label', 'Update agent credentials (opens in a new tab)');
+            button.setAttribute('aria-description', 'The agent editor opens in a new tab. After saving, select Retry on your message, or start a new conversation.');
+            button.textContent = 'Update agent credentials';
+            button.addEventListener('click', () => window.open(safeAgentUrl, '_blank', 'noopener,noreferrer'));
+            const icon = document.createElement('i');
+            icon.className = 'bi bi-box-arrow-up-right';
+            icon.setAttribute('aria-hidden', 'true');
+            button.appendChild(icon);
+            copy.appendChild(button);
+        }
+        const help = document.createElement('p');
+        help.className = 'text-body-secondary mt-2 mb-0';
+        help.textContent = index === 0
+            ? safeAgentUrl ? 'The agent editor opens in a new tab.' : detail || message
+            : `${safeAgentUrl ? 'After saving' : 'After the agent is updated'}, select Retry on your message, or start a new conversation.`;
+        copy.appendChild(help);
+        step.append(number, copy);
+        steps.appendChild(step);
+    }
+    const footer = document.createElement('p');
+    footer.className = 'border-top pt-3 mt-4 mb-0 text-body-secondary';
+    footer.textContent = ['Nothing retries automatically.', persistenceNote].filter(Boolean).join(' ');
+    notice.append(steps, footer);
+    contentElement.appendChild(notice);
+}
+
 function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}, hasPartialContent = false) {
     const errorPayload = getStreamErrorPayload(errorDetails);
     const m365SignInRequired = isM365SignInRequired(errorPayload);
@@ -381,12 +475,22 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     const authRequired = errorPayload.auth_required === true;
     const rateLimited = errorPayload.rate_limited === true;
     const authUrl = getStreamAuthUrl(errorPayload);
+    const agentEditUrl = normalizeAgentCredentialEditUrl(errorPayload.agent_credential_recovery);
     const displayMessage = String(
         errorMessage || errorPayload.error || errorPayload.message || 'An unknown streaming error occurred.'
     ).trim();
+    const recovery = errorPayload.agent_credential_recovery;
+    const recoveryReadOnly = recovery?.can_edit === false && ['personal', 'group', 'global'].includes(recovery.scope);
+    if (!authRequired && !rateLimited && (agentEditUrl || recoveryReadOnly)) {
+        appendAgentCredentialRecoveryNotice(
+            contentElement, displayMessage, agentEditUrl, getStreamErrorPersistenceNote(errorPayload, hasPartialContent),
+        );
+        return;
+    }
 
     const errorBanner = document.createElement('div');
     errorBanner.className = 'alert alert-warning mt-2 mb-0';
+    errorBanner.setAttribute('role', 'alert');
 
     const icon = document.createElement('i');
     icon.className = rateLimited
@@ -443,12 +547,19 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
         detailText.textContent = 'After access is granted, send the message again.';
     } else if (errorPayload.type === 'm365_approval_required') {
         detailText.textContent = 'The request continues after the approval is decided.';
+    } else if (errorPayload.agent_credential_recovery) {
+        detailText.textContent = [
+            'After the agent is updated, return to this chat and retry your message. It will not retry automatically.',
+            persistenceNote
+        ].filter(Boolean).join(' ');
     } else {
         detailText.textContent = ['Response may be incomplete.', persistenceNote].filter(Boolean).join(' ');
     }
 
-    detailRow.appendChild(detailText);
-    errorBanner.appendChild(detailRow);
+    if (detailText.textContent) {
+        detailRow.appendChild(detailText);
+        errorBanner.appendChild(detailRow);
+    }
     contentElement.appendChild(errorBanner);
 }
 

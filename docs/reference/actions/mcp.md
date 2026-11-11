@@ -56,7 +56,7 @@ saves the action. Discovery updates the draft's approved tool metadata; saving
 remains a separate decision. A successful probe does not qualify a tool's actual
 output or authorize replaying a failed operation.
 
-Since **0.261.432**, all three remote transports also enforce a mandatory
+Since **0.261.435**, all three remote transports also enforce a mandatory
 destination safety boundary, even when the optional destination allowlist is
 off. A public/private FQDN may be used, but its actual connection cannot reach
 loopback, link-local or cloud infrastructure addresses. Existing stricter MCP

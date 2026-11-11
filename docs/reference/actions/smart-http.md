@@ -14,7 +14,7 @@ audience: user
 
 Smart HTTP fetches web content with size management and text extraction. It supports HTML, JSON, and PDF URLs. PDFs can be processed through Document Intelligence, and large documents can be summarized into model-sized content with transparency about original size, chunking, and reduction.
 
-Since **0.261.432**, GET and POST requests enforce the same destination guard as
+Since **0.261.435**, GET and POST requests enforce the same destination guard as
 configurable HTTP actions. Reachable public and enterprise private services
 remain eligible; localhost, loopback, link-local and cloud infrastructure
 addresses are refused, including through DNS and redirects. A missing optional

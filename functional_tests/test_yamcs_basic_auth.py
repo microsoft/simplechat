@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Yamcs reverse-proxy HTTP Basic authentication.
-Version: 0.261.432
+Version: 0.261.435
 Implemented in: 0.261.012
 
 This test ensures a Yamcs action can authenticate against a reverse proxy (such as the

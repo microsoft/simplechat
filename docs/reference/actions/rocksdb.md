@@ -31,7 +31,7 @@ Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
 ## Connection destinations
 
-Implemented in version: **0.261.432** (`application/single_app/config.py`).
+Implemented in version: **0.261.435** (`application/single_app/config.py`).
 
 Private service FQDNs and private IPs remain supported when reachable from
 SimpleChat. Connection tests and runtime operations now refuse loopback,

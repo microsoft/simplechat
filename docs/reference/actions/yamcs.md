@@ -51,7 +51,7 @@ simulator, so no unnecessary credential is sent.
 
 ### Destination checks and existing proxy configurations
 
-Implemented in version: **0.261.432** (`application/single_app/config.py`).
+Implemented in version: **0.261.435** (`application/single_app/config.py`).
 
 The action still connects to the configured Yamcs/proxy Server URL; enabling
 reverse-proxy authentication adds credentials, not a localhost routing hop.

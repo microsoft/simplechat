@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Tableau action plugin configuration.
-Version: 0.261.432
+Version: 0.261.435
 Implemented in: 0.241.210
 
 This test ensures the Tableau action factory, plugin, manifest validation,
