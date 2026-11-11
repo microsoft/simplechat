@@ -1,7 +1,7 @@
 # test_model_catalog_management.py
 """
 Classic and real React V2 catalog workflows on Azure Playwright or local Chromium.
-Version: 0.261.258
+Version: 0.261.425
 Implemented in: 0.261.126
 Orchestrate model picker under Manual controls, Auto by default, since: 0.261.137
 Single orchestration contract updated in: 0.261.139
@@ -60,7 +60,9 @@ def catalog_page(capacity_browser):
         route.fulfill(json={"profiles": profiles, "tasks": TASKS, "etag": str(revision)})
 
     page.route("**/api/admin/model-catalog**", api)
-    page.route("**/api/v2/bootstrap", lambda route: route.fulfill(json={"catalogs": {"models": []}}))
+    page.route("**/api/v2/bootstrap", lambda route: route.fulfill(json={
+        "user": {"id": "catalog-admin"}, "catalogs": {"models": []},
+    }))
     with hb.start_static_server() as base:
         page.goto(f"{base}/{hb.HARNESS_HTML_REL}")
         page.wait_for_function("Boolean(window.OrchHarness)")
@@ -162,6 +164,7 @@ def test_v2_catalog_save_refreshes_model_availability(catalog_page, refresh_fail
     page.route("**/api/v2/bootstrap", lambda route: route.fulfill(
         status=503 if refresh_fails else 200,
         json={"error": "Unavailable"} if refresh_fails else {
+            "user": {"id": "catalog-admin"},
             "catalogs": {"models": [{"selection_key": "refreshed-model"}]},
         },
     ))

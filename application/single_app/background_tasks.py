@@ -12,6 +12,7 @@ from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from azure.core import MatchConditions
+from model_catalog_runtime import catalog_scope
 
 from config import cosmos_m365_execution_runs_container, cosmos_settings_container, exceptions
 from content_screening.jobs import check_due_scan_jobs_once
@@ -828,8 +829,9 @@ def run_workflow_scheduler_loop():
     """Run personal workflow scheduling checks forever."""
     while True:
         try:
-            check_due_workflows_once()
-            check_durable_workflows_once()
+            with catalog_scope():
+                check_due_workflows_once()
+                check_durable_workflows_once()
         except Exception as exc:
             print(f"Error in workflow scheduler check: {exc}")
             log_event(f"[WORKFLOW_SCHEDULER] Error in workflow scheduler check: {exc}", level=logging.ERROR)
@@ -844,7 +846,8 @@ def run_file_sync_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('file_sync_scheduler_scan', lease_seconds=300)
             if lock_document:
-                due_sources = check_due_file_sync_sources_once()
+                with catalog_scope():
+                    due_sources = check_due_file_sync_sources_once()
                 debug_print(f"File Sync scheduler tick processed {len(due_sources or [])} source(s).")
             else:
                 debug_print('Skipping File Sync scheduler tick because another worker holds the lease.')
@@ -865,7 +868,8 @@ def run_tabular_generated_output_scheduler_loop():
         try:
             lock_document = acquire_distributed_task_lock('tabular_generated_output_scheduler_scan', lease_seconds=120)
             if lock_document:
-                processed_run_ids = check_due_tabular_generated_output_runs_once()
+                with catalog_scope():
+                    processed_run_ids = check_due_tabular_generated_output_runs_once()
                 debug_print(
                     f"Tabular generated-output scheduler tick processed {len(processed_run_ids or [])} run(s)."
                 )
@@ -897,7 +901,7 @@ def run_orchestration_scheduler_loop(app=None):
                 'orchestration_harness_scheduler_scan', lease_seconds=120,
             )
             if lock_document:
-                with app.app_context() if app is not None else nullcontext():
+                with catalog_scope(), app.app_context() if app is not None else nullcontext():
                     check_due_orchestration_runs_once(max_runs=4, max_outputs=8)
                 log_event(
                     '[ORCHESTRATION_RUNS] Scheduler slice completed.',
@@ -938,7 +942,7 @@ def run_workflow_chat_delivery_loop(app=None):
                     acquire_lock=acquire_distributed_task_lock,
                     release_lock=release_distributed_task_lock,
                 )
-            with app.app_context() if app is not None else nullcontext():
+            with catalog_scope(), app.app_context() if app is not None else nullcontext():
                 delivery_worker.process_workflow_chat_delivery_hints(services)
                 if sweep_due:
                     delivery_worker.run_workflow_chat_delivery_sweep(services)
@@ -1027,7 +1031,7 @@ def run_content_screening_scheduler_loop(app=None):
                 'content_screening_scheduler_scan', lease_seconds=300,
             )
             if lock_document:
-                with app.app_context() if app is not None else nullcontext():
+                with catalog_scope(), app.app_context() if app is not None else nullcontext():
                     processed = check_due_scan_jobs_once(max_jobs=2)
                 log_event(
                     '[CONTENT_SCREENING] Scheduler slice completed.',

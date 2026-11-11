@@ -19,6 +19,8 @@ from app_settings_store import (
     SettingsConflictError,
     SettingsUnavailableError,
 )
+from model_catalog_runtime import configure_catalog_provider
+from model_catalog_updates import CatalogUpdates
 from config import *
 from content_screening.contracts import (
     ScreeningCitationsRequiredError,
@@ -1415,6 +1417,25 @@ def configure_application_cache(settings, redis_cache_endpoint=None, *, redis_cl
         )
 
 
+def configure_model_catalog_runtime():
+    """Called by web and scheduler owners after their shared cache is initialized."""
+    configure_catalog_provider(get_model_catalog_update_service().snapshot)
+
+
+_catalog_update_service = None
+
+
+def get_model_catalog_update_service():
+    """Construct the storage owner only after configuration has supplied its dependencies."""
+    global _catalog_update_service
+    store = _get_app_settings_store()
+    if _catalog_update_service is None or _catalog_update_service.store is not store:
+        _catalog_update_service = CatalogUpdates(
+            cosmos_settings_container, store, VERSION, log_event,
+        )
+    return _catalog_update_service
+
+
 def _env_flag_enabled(name):
     return str(os.environ.get(name, '')).strip().lower() in {'1', 'true', 'yes', 'on'}
 
@@ -1553,6 +1574,7 @@ def normalize_image_connection_api_version_settings(settings):
 
 def get_settings(use_cosmos=False, include_source=False):
     default_settings = {
+        'enable_model_catalog_online_updates': False,
         # External health check
         'enable_external_healthcheck': False,
         'enable_no_auth_external_healthcheck': False,

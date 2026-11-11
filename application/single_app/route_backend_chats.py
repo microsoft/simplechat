@@ -167,6 +167,7 @@ import threading
 from typing import Any, Dict, List, Mapping, Optional, Tuple
 from config import *
 from flask import Response, copy_current_request_context, g, has_request_context, stream_with_context
+from model_catalog_runtime import pin_catalog_task
 from functions_authentication import *
 from functions_search import *
 from functions_search_service import get_document_accessibility_payload, search_documents, search_relevant_tabular_candidates
@@ -15685,6 +15686,7 @@ def register_route_backend_chats(bp):
                         _release_chat_destination_lease(destination_lease, destination_conversation_id)
                         stream_bridge.finish()
 
+        stream_worker = pin_catalog_task(stream_worker)
         executor = current_app.extensions.get('executor')
         chat_stream_executor = current_app.extensions.get('chat_stream_executor')
         if chat_stream_executor:

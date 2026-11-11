@@ -39,6 +39,7 @@ model-routing:
     - enable_embedding_apim
     - enable_multi_model_endpoints
     - enable_default_model_for_new_conversations
+    - enable_model_catalog_online_updates
   guides:
     - title: "Choose models for orchestration"
       url: /guides/model-catalog-routing/
