@@ -2,7 +2,7 @@
 layout: page
 title: "Signed model catalog updates"
 description: "Publish reviewed model metadata through an approval-gated signing workflow and install compatible revisions independently of application deployment."
-version: "0.261.430"
+version: "0.261.431"
 ---
 
 # Signed model catalog updates
@@ -276,6 +276,9 @@ schema URLs are not fetched. Downloads reject redirects and have timeout and
 decoded-size bounds. Online access defaults off and is enforced on the server.
 Since **0.261.430**, untrusted application-version strings use bounded ASCII
 numeric components rather than an unbounded regular expression or integer parse.
+In **0.261.431**, the complete Cosmos CI job budget is 45 minutes: a prior run
+passed in 23 minutes, while slower runners hit the old 30-minute cap during
+otherwise passing tests. Network blocking and all contract checks remain intact.
 
 SHA-256 detects content changes; a signature additionally authenticates the
 publisher key. Neither proves the catalog's factual claims, guarantees that the

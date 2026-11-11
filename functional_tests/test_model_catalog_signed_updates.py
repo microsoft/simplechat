@@ -1,7 +1,7 @@
 # test_model_catalog_signed_updates.py
 """
 Functional tests for signed catalog publication, activation, and runtime snapshots.
-Version: 0.261.430
+Version: 0.261.431
 Implemented in: 0.261.425
 
 Real cryptographic signatures and the installed Cosmos SDK response type are used.

@@ -1,7 +1,7 @@
 # test_model_catalog_update_controls.py
 """
 Classic and React V2 signed-catalog update controls.
-Version: 0.261.430
+Version: 0.261.431
 Implemented in: 0.261.425
 Online-access switch styling updated in: 0.261.426
 

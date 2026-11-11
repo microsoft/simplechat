@@ -1,7 +1,7 @@
 # test_model_catalog_publication_lifecycle.py
 """
 Functional tests for isolated catalog channels and exact tested-payload promotion.
-Version: 0.261.430
+Version: 0.261.431
 Implemented in: 0.261.428
 
 Real signatures and publisher code run offline without application/cloud bootstrap.
