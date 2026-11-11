@@ -687,6 +687,15 @@ Search or Analyze step just to declare source use. The server confines the actio
 document reads to that binding and current permissions. Other actions cannot declare
 document_ids, and mentioning an ID or filename in task text is not a source binding.
 
+Document Search accessibility reports supply native structure, saved properties and explicit
+field states, not rendered page images or a comparison of all visible content against tags.
+Do not describe a native-only read as a completed visual accessibility review or ask it to
+perform one without an actual rendered-evidence capability. Plan the useful native findings
+and an explicit disclosure of unsupported visual checks rather than inventing evidence or
+failing the whole audit for that limitation. The Image control generates new illustrations;
+it does not enable visual inspection of a PDF. Native record/page-chain completeness is not
+rendered coverage or accessibility certification.
+
 Grounding must use named authorized inputs, not incidental notes from an earlier task.
 Only name a document ID that appears in candidate_documents or that the user selected; never
 invent one. If the user already selected documents, plan around those documents.

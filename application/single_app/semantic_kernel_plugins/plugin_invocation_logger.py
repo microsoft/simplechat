@@ -28,6 +28,7 @@ from functions_appinsights import log_event, get_appinsights_logger
 from functions_authentication import get_current_user_id
 from functions_debug import debug_print
 from functions_m365_citations import captured_m365_records
+from functions_native_audit import sanitize_native_audit_transport
 
 
 REDACTED_INVOCATION_VALUE = "***REDACTED***"
@@ -196,6 +197,7 @@ def sanitize_plugin_invocation_value(
     value: Any,
     max_string_length: Optional[int] = MAX_SAFE_INVOCATION_STRING_LENGTH,
     _depth: int = 0,
+    _native_value: bool = False,
 ) -> Any:
     """Return a browser/model-safe copy of plugin invocation parameters or results."""
     if _depth > 8:
@@ -214,10 +216,16 @@ def sanitize_plugin_invocation_value(
             if _is_sensitive_key(key_text):
                 sanitized[key_text] = REDACTED_INVOCATION_VALUE
             else:
-                sanitized[key_text] = sanitize_plugin_invocation_value(
-                    item,
-                    max_string_length=max_string_length,
-                    _depth=_depth + 1,
+                native = sanitize_native_audit_transport(
+                    item, lambda child: sanitize_plugin_invocation_value(
+                        child, max_string_length=max_string_length, _native_value=True,
+                    ),
+                ) if key_text == "native_audit" and not _native_value else None
+                sanitized[key_text] = (
+                    native if native is not None else sanitize_plugin_invocation_value(
+                        item, max_string_length=max_string_length, _depth=_depth + 1,
+                        _native_value=_native_value,
+                    )
                 )
         return sanitized
 
@@ -227,6 +235,7 @@ def sanitize_plugin_invocation_value(
                 item,
                 max_string_length=max_string_length,
                 _depth=_depth + 1,
+                _native_value=_native_value,
             )
             for item in value
         ]

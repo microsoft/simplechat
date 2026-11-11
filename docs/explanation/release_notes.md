@@ -2,6 +2,27 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.424)**
+
+#### Bug Fixes
+
+*   **Native Document Evidence Keeps Its Source Meaning**
+    *   Distinguishes absent fields, stored empty values, actual values, and information that could not be inspected instead of treating them as interchangeable blanks.
+    *   Recovers supported PDF native properties, text-to-tag reading-order bindings, separate raster/vector evidence, and footer Artifact associations.
+    *   Includes supported PowerPoint shapes, object-linked formatting, slide-local footer/number origins, and qualified solid-color contrast findings.
+    *   (Ref: `functions_accessibility.py`, `functions_pdf_native_evidence.py`, `functions_pptx_native_evidence.py`, `NATIVE_DOCUMENT_FIDELITY_FIX.md`)
+
+*   **Excel Native Attributes And In-Cell Checkboxes**
+    *   Preserves actual picture/chart description and title presence, and recognizes supported saved in-cell checkboxes through their native style/control bindings rather than guessing from Boolean values.
+    *   Keeps invalid control bindings and checked states explicitly inaccessible; native inventory schema/cursors prevent older normalized records from being replayed as current evidence.
+    *   (Ref: `functions_excel_accessibility.py`, `functions_excel_inventory.py`, `EXCEL_NATIVE_INSPECTION.md`)
+
+*   **Source-Backed Inspection And Grounded Native Audit Answers**
+    *   Inspects retained authorized active PDF/PPTX sources locally on request, preserves native evidence through screened publication, and prevents stale original metadata from describing a different sanitized active file.
+    *   Source-only native audit reports validate fact references and render factual values without accepting invented paragraph bindings or absent-as-empty drafts. Existing Word comment behavior remains preserved.
+    *   Starts no bulk re-ingestion or new OCR/vision job. Existing indexed Search evidence still requires explicit processing when it needs refreshing.
+    *   (Ref: `functions_native_document_inspection.py`, `functions_native_audit.py`, `functions_orchestration_composition.py`, `content_screening/extraction.py`, `docs/reference/actions/document-search.md`)
+
 ### **(v0.261.422)**
 
 #### Bug Fixes
