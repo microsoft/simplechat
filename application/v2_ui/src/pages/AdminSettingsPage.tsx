@@ -92,6 +92,7 @@ import { RelatedSectionLink } from '../components/admin/RelatedSectionLink';
 import { RestartStatus } from '../components/admin/RestartStatus';
 import { RetentionResetDefaults, RetentionRunNow } from '../components/admin/RetentionOperations';
 import { RetentionSchedule } from '../components/admin/RetentionSchedule';
+import { SupportExportPanel } from '../components/admin/SupportExportPanel';
 import { SectionGuide, hasSectionGuide } from '../components/admin/guides/sectionGuides';
 import { GovernanceDialogHost } from '../components/admin/governance/GovernanceDialogHost';
 import { GovernanceFeaturePolicies } from '../components/admin/governance/GovernanceFeaturePolicies';
@@ -2046,6 +2047,8 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             disabled={saving}
                         />
                     );
+                case 'support-log-export':
+                    return <SupportExportPanel key={key} />;
                 case 'endpoint-links':
                     return (
                         <EndpointLinks

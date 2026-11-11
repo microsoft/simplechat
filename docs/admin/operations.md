@@ -242,6 +242,37 @@ access projection problems. The index's background maintenance runs either way. 
 | Time Unit | Minutes, hours, days or weeks. | hours | `debug_timer_unit` |
 | Document Access Index diagnostics | Shows the support-only backfill, checkpoint and shadow validation controls on the classic DAI Metrics card. | Off | `enable_dai_debug`; V2 only |
 
+### Support Log Export {#support-log-export-section}
+
+Implemented in **0.261.426**, Support Log Export packages retained diagnostics
+for manual sharing with support. Select one registered user or all users, an
+explicit time range or conversation-derived windows, and the available
+sources. Conversation entries expose metadata, not private message bodies or
+titles.
+
+Resource-context Azure Monitor queries use the configured Application
+Insights/App Service resource IDs and the application identity's read
+permissions. The connected workspace must allow resource permissions or grant
+the workspace access its mode requires. Cosmos activity and optional
+file-processing records are separate sources. Console output is available
+only when Azure already collected it; an ingestion connection string does not
+grant query access.
+
+Credential scrubbing and deterministic PII checks precede any optional
+default-model AI pass. Whole personal transcripts require explicit owner
+approval; shared/group transcripts are unavailable. The privacy checks are
+best effort, not an assurance that the bundle is anonymous.
+
+The tool creates private, authenticated ZIPs with source coverage, a readable
+timeline and a privacy report. Requests are limited to seven days, 20
+conversations, 100,000 records and 50 MiB uncompressed; ZIP availability lasts
+at most 24 hours. **Review export scope**, generation, cancellation and
+download are separate from Save Settings. No logs are enabled or sent to
+support automatically.
+
+Use [Export diagnostic logs for support]({{ '/guides/export-support-logs/' | relative_url }})
+for setup, owner consent and recovery steps.
+
 ### File Process Logging {#file-processing-logs-section}
 
 File processing logs record each step SimpleChat takes with an uploaded file, errors

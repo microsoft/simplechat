@@ -1,8 +1,9 @@
 # test_unified_logging_entrypoint.py
 """
 Functional test for unified logging entry point and debug trace forwarding.
-Version: 0.241.020
+Version: 0.261.426
 Implemented in: 0.241.020
+Support-export debug forwarding coverage: 0.261.426
 
 This test ensures that debug-only logging can be routed through log_event,
 that debug_print can forward tagged traces to Application Insights, and that
@@ -199,19 +200,19 @@ def test_debug_print_forwards_tagged_appinsights_trace():
             print(f"❌ Expected DEBUG trace level, got {record.levelno}")
             return False
 
-        if record.getMessage() != '[debug] [TRACE] Forward trace':
+        if record.getMessage() != functions_appinsights.LOGGER_DEBUG_MESSAGE or getattr(record, 'sc_message', None) != '[debug] [TRACE] Forward trace':
             print(f"❌ Unexpected forwarded trace message: {record.getMessage()!r}")
             return False
 
-        if getattr(record, 'debug_tag', None) != '[debug]':
+        if getattr(record, 'sc_debug_tag_length', None) != len('[debug]'):
             print(f"❌ Missing debug tag on forwarded trace: {record.__dict__}")
             return False
 
-        if getattr(record, 'debug_category', None) != 'TRACE':
+        if getattr(record, 'sc_debug_category_length', None) != len('TRACE'):
             print(f"❌ Missing debug category on forwarded trace: {record.__dict__}")
             return False
 
-        if getattr(record, 'operation', None) != 'debug-forward':
+        if getattr(record, 'sc_operation', None) != 'debug-forward':
             print(f"❌ Missing forwarded custom dimensions: {record.__dict__}")
             return False
 
@@ -227,7 +228,7 @@ def test_debug_print_forwards_tagged_appinsights_trace():
         for handler in list(parent_logger.handlers):
             if isinstance(handler, _CaptureHandler):
                 parent_logger.removeHandler(handler)
-        parent_logger.setLevel(logging.NOTSET)
+        parent_logger.setLevel(original_level)
         _restore_modules(saved_modules)
 
 

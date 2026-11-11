@@ -247,8 +247,24 @@ affect selection. Inclusion proves context delivery, not that the model used it.
 See the [request-memory resolution fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_REQUEST_MEMORY_RESOLUTION_FIX.md)
 for availability states and live-UI validation limits.
 
+## Support export diagnostics
+
+Implemented in **0.261.426**, `[SUPPORT_EXPORT]` records export requests,
+owner-consent decisions, completion/failure, downloads, cancellation, expiry
+and cleanup/configuration failures. It records operation codes, counts and
+error types, never collected log bodies, source transcripts, model prompts,
+credentials or original privacy-match evidence. Content-free lifecycle
+events are also retained in the activity log.
+
+The shared logging entry point preserves hashed user/conversation correlation
+from authenticated/authorized request context or explicit background context.
+Debug-gated `log_event(debug_only=True)` records, like `debug_print`, forward
+one tagged Application Insights debug trace only when debug logging and the
+exporter are active. Historical console-only records are not backfilled.
+
 ## Current tag inventory
 
+- `[SUPPORT_EXPORT]`
 - `[EDITOR_ASSIST]`
 - `[WORKFLOW_ASSIST]`
 - `[WORKFLOW_DOCUMENT_SELECTION]`
