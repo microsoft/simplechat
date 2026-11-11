@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Tableau action plugin configuration.
-Version: 0.250.047
+Version: 0.261.432
 Implemented in: 0.241.210
 
 This test ensures the Tableau action factory, plugin, manifest validation,
@@ -152,10 +152,11 @@ class FakeAuthManager:
 class FakeServer:
     last_instance = None
 
-    def __init__(self, endpoint, use_server_version=True):
+    def __init__(self, endpoint, use_server_version=True, session_factory=None, http_options=None):
         self.endpoint = endpoint
+        self.session = session_factory() if session_factory else None
         self.use_server_version = use_server_version
-        self.http_options = {}
+        self.http_options = dict(http_options or {})
         self.auth = FakeAuthManager()
         self.projects = FakeCollection([
             FakeTableauItem(id="project-1", name="Finance", description="Finance analytics"),

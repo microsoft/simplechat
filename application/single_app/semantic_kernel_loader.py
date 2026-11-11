@@ -20,7 +20,6 @@ from semantic_kernel.agents import Agent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.filters import FilterTypes
-from semantic_kernel.core_plugins import HttpPlugin
 from semantic_kernel_plugins.time_plugin import TimePlugin
 from semantic_kernel_plugins.wait_plugin import WaitPlugin
 from semantic_kernel_plugins.math_plugin import MathPlugin
@@ -1189,23 +1188,13 @@ def load_time_plugin(kernel: Kernel):
     )
 
 def load_http_plugin(kernel: Kernel):
-    try:
-        # Use smart HTTP plugin with 75k character limit (≈50k tokens)
-        smart_plugin = SmartHttpPlugin(max_content_size=75000, extract_text_only=True)
-        kernel.add_plugin(
-            smart_plugin,
-            plugin_name="http",
-            description="Provides HTTP request functions with intelligent content size management for web scraping."
-        )
-        log_event("[SK_LOADER] Loaded Smart HTTP plugin with content size limits.", level=logging.INFO)
-    except ImportError as e:
-        log_event(f"[SK_LOADER] Smart HTTP plugin not available, falling back to standard HttpPlugin: {e}", level=logging.WARNING)
-        # Fallback to standard HTTP plugin
-        kernel.add_plugin(
-            HttpPlugin(),
-            plugin_name="http",
-            description="Provides HTTP request functions for making API calls."
-        )
+    smart_plugin = SmartHttpPlugin(max_content_size=75000, extract_text_only=True)
+    kernel.add_plugin(
+        smart_plugin,
+        plugin_name="http",
+        description="Provides HTTP request functions with intelligent content size management for web scraping."
+    )
+    log_event("[SK_LOADER] Loaded Smart HTTP plugin with content size limits.", level=logging.INFO)
 
 def load_wait_plugin(kernel: Kernel):
     kernel.add_plugin(

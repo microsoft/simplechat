@@ -29,6 +29,22 @@ Set Service Base URL, Authentication Scheme, Column Family, Read-Only, encodings
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
+## Connection destinations
+
+Implemented in version: **0.261.432** (`application/single_app/config.py`).
+
+Private service FQDNs and private IPs remain supported when reachable from
+SimpleChat. Connection tests and runtime operations now refuse loopback,
+link-local and cloud infrastructure destinations, including DNS aliases and
+redirects to those addresses. Localhost refers to the SimpleChat host, not
+an operator's workstation.
+
+Unchanged actions keep their credentials. When moving a service to a different
+origin, re-enter or clear its stored token rather than carrying a masked value
+to the new server. Connection probes read a bounded health/scan response.
+See [connection compatibility]({{ '/guides/workspace-agents-and-actions/' | relative_url }}#connection-destinations-and-compatibility)
+for existing-action upgrade considerations.
+
 ## Related
 
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})

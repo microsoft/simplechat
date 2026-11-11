@@ -20,6 +20,8 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from functions_appinsights import log_event
+from functions_outbound_destinations import OutboundDestinationError
+from functions_outbound_http import guarded_probe_request
 from functions_azure_maps import (
     AZURE_MAPS_DEFAULT_ENDPOINT,
     AZURE_MAPS_DEFAULT_LANGUAGE,
@@ -228,14 +230,20 @@ def test_openapi_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
 
     probe = _build_openapi_probe_request(manifest)
     try:
-        response = requests.get(
+        response = guarded_probe_request(
+            "GET",
             base_url,
+            max_bytes=0,
             headers=probe["headers"],
             params=probe["params"] or None,
             auth=probe["basic_auth"],
             timeout=timeout,
             allow_redirects=True,
         )
+    except OutboundDestinationError as exc:
+        result = build_failure_result(exc.public_message)
+        _log_connection_test("openapi", result, {"stage": "destination_policy"})
+        return result
     except requests.RequestException as exc:
         result = build_failure_result(
             f"The API base URL could not be reached: {sanitize_connection_error(exc, manifest)}",
@@ -277,8 +285,10 @@ def test_azure_maps_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
         return build_failure_result("An Azure Maps subscription key is required before testing this action.")
 
     try:
-        response = requests.get(
+        response = guarded_probe_request(
+            "GET",
             f"{endpoint}/map/tile",
+            max_bytes=0,
             params={
                 "api-version": AZURE_MAPS_TILE_API_VERSION,
                 "tilesetId": AZURE_MAPS_DEFAULT_TILESET_ID,
@@ -292,6 +302,10 @@ def test_azure_maps_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
             },
             timeout=ACTION_CONNECTION_TEST_DEFAULT_TIMEOUT_SECONDS,
         )
+    except OutboundDestinationError as exc:
+        result = build_failure_result(exc.public_message)
+        _log_connection_test("azure_maps_openlayers", result, {"stage": "destination_policy"})
+        return result
     except requests.RequestException as exc:
         result = build_failure_result(
             f"Azure Maps could not be reached: {sanitize_connection_error(exc, manifest)}",
@@ -423,11 +437,16 @@ def test_databricks_connection(manifest: Dict[str, Any]) -> Dict[str, Any]:
         return result
 
     try:
-        response = requests.get(
+        response = guarded_probe_request(
+            "GET",
             f"{plugin.endpoint}/api/2.0/sql/warehouses/{plugin.warehouse_id}",
             headers=headers,
             timeout=timeout,
         )
+    except OutboundDestinationError as exc:
+        result = build_failure_result(exc.public_message)
+        _log_connection_test("databricks", result, {"stage": "destination_policy"})
+        return result
     except requests.RequestException as exc:
         result = build_failure_result(
             f"The Databricks workspace could not be reached: {sanitize_connection_error(exc, manifest)}",

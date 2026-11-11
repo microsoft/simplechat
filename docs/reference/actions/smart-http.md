@@ -14,6 +14,13 @@ audience: user
 
 Smart HTTP fetches web content with size management and text extraction. It supports HTML, JSON, and PDF URLs. PDFs can be processed through Document Intelligence, and large documents can be summarized into model-sized content with transparency about original size, chunking, and reduction.
 
+Since **0.261.432**, GET and POST requests enforce the same destination guard as
+configurable HTTP actions. Reachable public and enterprise private services
+remain eligible; localhost, loopback, link-local and cloud infrastructure
+addresses are refused, including through DNS and redirects. A missing optional
+dependency no longer causes a fallback to an unguarded HTTP plugin.
+See [connection compatibility]({{ '/guides/workspace-agents-and-actions/' | relative_url }}#connection-destinations-and-compatibility).
+
 ## Why and when to use it
 
 Use Smart HTTP when the user gives a URL and the agent needs page or PDF content, especially when content may be large. Do not use it for APIs with structured operations; OpenAPI is safer. Do not use it for broad research over many sources; use Deep Research or web search controls when enabled. Be careful with private or sensitive URLs because the action fetches external content.

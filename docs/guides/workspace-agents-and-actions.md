@@ -120,6 +120,42 @@ does not run the action. If a test fails, resolve the connection or permission
 problem rather than assuming that a successful configuration save proves the
 remote service is reachable.
 
+### Connection destinations and compatibility
+
+Implemented in version: **0.261.432** (`application/single_app/config.py`).
+
+Configurable HTTP actions, Smart HTTP, and remote MCP connections check their
+actual destination before opening a service connection. Public services and
+legitimate private FQDNs/IPs remain supported, including on-premises services and
+Private Link-style DNS. There is no new administrator destination allowlist.
+Existing stricter governance policies still apply.
+
+Localhost, loopback, link-local, reserved non-host addresses and cloud
+infrastructure destinations are not valid action targets. A hostname resolving
+to one of those addresses is also refused. DNS checks are bound to the addresses
+used by the client, including new connections after redirects or reconnects.
+This does not change the application's own Azure identity authentication.
+
+| Existing setup | What to expect |
+|---|---|
+| An unchanged public or reachable private service | No mandatory re-save or credential reset. |
+| Yamcs behind a remote reverse proxy | Basic proxy authentication remains supported. The remote proxy may use localhost for its own upstream. |
+| A Server URL pointing to localhost on SimpleChat | The request is refused. In App Service, localhost means the worker/container, not an operator's workstation or an on-premises server. |
+| A service redirecting to another origin | Configure the final service URL. Same-origin redirects and default-port HTTP-to-HTTPS upgrades remain supported; credentials and request bodies are not forwarded to a different origin. |
+| An action edited to use a different connector, host, scheme or port | Re-enter or explicitly clear retained credentials before testing or saving. Unchanged-destination credential rotation continues normally. |
+
+Connection tests and discovery require the corresponding action-management and
+type permissions. Ordinary execution of an authorized shared action does not
+require its caller to become an editor.
+
+Yamcs's reverse-proxy authentication is not a deployment-wide forward proxy.
+The guarded clients explicitly refuse HTTP(S) forward-proxy routing rather
+than silently bypassing the proxy or allowing it to bypass destination checks.
+Deployments using such routing need separate compatibility review before upgrading.
+Proxy addresses and credentials are not automatically migrated.
+
+### Personal credentials for shared actions
+
 Since **0.261.333**, shared Yamcs actions can request each invoking user's
 personal service or proxy identity. The credential is entered in a private
 chat card, not copied into the shared action or agent. These sources preserve
