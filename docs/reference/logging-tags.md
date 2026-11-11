@@ -249,7 +249,7 @@ for availability states and live-UI validation limits.
 
 ## Support export diagnostics
 
-Implemented in **0.261.426**, `[SUPPORT_EXPORT]` records export requests,
+Implemented in **0.261.428**, `[SUPPORT_EXPORT]` records export requests,
 owner-consent decisions, completion/failure, downloads, cancellation, expiry
 and cleanup/configuration failures. It records operation codes, counts and
 error types, never collected log bodies, source transcripts, model prompts,

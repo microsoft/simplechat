@@ -244,7 +244,7 @@ access projection problems. The index's background maintenance runs either way. 
 
 ### Support Log Export {#support-log-export-section}
 
-Implemented in **0.261.426**, Support Log Export packages retained diagnostics
+Implemented in **0.261.428**, Support Log Export packages retained diagnostics
 for manual sharing with support. Select one registered user or all users, an
 explicit time range or conversation-derived windows, and the available
 sources. Conversation entries expose metadata, not private message bodies or

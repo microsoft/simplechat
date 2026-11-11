@@ -1,9 +1,9 @@
 # test_unified_logging_entrypoint.py
 """
 Functional test for unified logging entry point and debug trace forwarding.
-Version: 0.261.426
+Version: 0.261.428
 Implemented in: 0.241.020
-Support-export debug forwarding coverage: 0.261.426
+Support-export debug forwarding coverage: 0.261.428
 
 This test ensures that debug-only logging can be routed through log_event,
 that debug_print can forward tagged traces to Application Insights, and that

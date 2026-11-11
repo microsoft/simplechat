@@ -1,4 +1,4 @@
-# Admin diagnostic support ZIP exports (v0.261.426)
+# Admin diagnostic support ZIP exports (v0.261.428)
 
 ## Overview
 
@@ -8,7 +8,7 @@ private support ZIP containing structured logs, a readable timeline, source
 coverage, privacy-check results, and optionally approved personal transcripts.
 Nothing is emailed or uploaded to the development team automatically.
 
-Implemented in version: **0.261.426**, tracked by `VERSION` in
+Implemented in version: **0.261.428**, tracked by `VERSION` in
 `application/single_app/config.py`. Related issue: [#1916](https://github.com/microsoft/simplechat/issues/1916).
 
 ## Dependencies and access

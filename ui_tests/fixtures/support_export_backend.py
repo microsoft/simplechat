@@ -1,8 +1,8 @@
 # support_export_backend.py
 """
 Production support APIs behind an isolated browser interception boundary.
-Version: 0.261.426
-Implemented in: 0.261.426
+Version: 0.261.428
+Implemented in: 0.261.428
 
 The real service, store, redactor, ZIP writer, and route registrars run against
 SDK-default in-memory data. No live SSO, Azure logs, or settings are accessed.

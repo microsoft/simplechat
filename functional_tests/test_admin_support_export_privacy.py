@@ -1,8 +1,8 @@
 # test_admin_support_export_privacy.py
 """
 Functional tests for complete support-bundle privacy processing.
-Version: 0.261.426
-Implemented in: 0.261.426
+Version: 0.261.428
+Implemented in: 0.261.428
 
 Exercise real deterministic PII inspection and grounded AI span application,
 including credentials, Unicode, aliases, and fail-closed coverage.

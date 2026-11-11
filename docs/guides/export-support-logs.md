@@ -4,12 +4,12 @@ title: "Export diagnostic logs for support"
 description: "Build a scoped, privacy-reviewed support ZIP without granting admins unrestricted access to personal conversations."
 section: "Guides"
 audience: admin
-version: "0.261.426"
+version: "0.261.428"
 ---
 
 ## What this does
 
-Implemented in version **0.261.426**, the **Support Log Export** tool collects
+Implemented in version **0.261.428**, the **Support Log Export** tool collects
 retained application evidence into one ZIP for manual sharing with support.
 Use it for a reproducible chat, orchestration, upload or infrastructure issue.
 It does not enable logging, retrieve expired data or send the file anywhere.

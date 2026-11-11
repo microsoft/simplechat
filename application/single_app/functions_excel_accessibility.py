@@ -20,15 +20,16 @@ from openpyxl.styles.numbers import BUILTIN_FORMATS
 from openpyxl.utils.cell import get_column_letter
 
 from excel_workbook_reader import (
-    EXCEL_WORKBOOK_SCHEMA_VERSION,
     ExcelWorkbookReader,
     cell_coordinates,
 )
 from functions_appinsights import log_event
 from functions_document_style import StyleAccumulator, format_style_inventory_for_chat
 from functions_office_media import OFFICE_ZIP_MAX_ENTRIES, _read_zip_entry_bounded
+from native_document_evidence import drawing_native_fields, inaccessible_field, native_field
 
 
+EXCEL_NATIVE_INSPECTION_SCHEMA_VERSION = "3.0"
 EXCEL_MAX_PART_BYTES = 16 * 1024 * 1024
 EXCEL_MAX_TOTAL_BYTES = 64 * 1024 * 1024
 EXCEL_MAX_SHEETS = 100
@@ -71,7 +72,7 @@ def _on(value):
 class _Inspection:
     def __init__(self, extension, record_sink=None, progress_callback=None):
         self.meta = {
-            "format": extension.lstrip("."), "schema_version": EXCEL_WORKBOOK_SCHEMA_VERSION,
+            "format": extension.lstrip("."), "schema_version": EXCEL_NATIVE_INSPECTION_SCHEMA_VERSION,
             "coverage": "partial", "coverage_notes": list(EXCEL_COVERAGE_NOTES),
             "properties": {}, "sheets": [], "comments": [], "objects": [], "issues": [],
             "tables": [], "defined_names": [], "hyperlinks": [], "validations": [],
@@ -173,6 +174,7 @@ class _Inspection:
                     "title_text": str(record.get("title") or "")[:1000],
                     "is_decorative": record.get("is_decorative"), "sheet_name": sheet,
                     "cell": record.get("cell"), "object_id": record.get("id"), "placements": [],
+                    "native_fields": record.get("native_fields"),
                 }
                 image["placements"] = list(image["placements"]) + [{
                     "sheet_name": sheet, "cell": record.get("cell"), "object_id": record.get("id"),
@@ -317,7 +319,19 @@ class _Inspection:
 
 def _core_properties(state, root):
     if root is None:
+        state.meta["native_properties"] = {
+            key: inaccessible_field("core_properties_container_absent") for key in ("title", "author", "keywords", "subject")
+        }
         return
+    raw_properties = {_local(item.tag): item.text or "" for item in root}
+    state.meta["native_properties"] = {
+        name: {
+            **(native_field(raw_properties, key) if len(raw_properties.get(key, "")) <= EXCEL_MAX_TEXT
+               else inaccessible_field("native_property_preview_limit")),
+            "source": f"core-properties:{key}",
+        }
+        for name, key in (("title", "title"), ("author", "creator"), ("keywords", "keywords"), ("subject", "subject"))
+    }
     names = {"title", "creator", "subject", "keywords", "description", "language",
              "category", "created", "modified", "lastModifiedBy", "identifier",
              "version", "revision", "lastPrinted", "contentStatus"}
@@ -386,6 +400,57 @@ def _color(element, theme, state, palette=COLOR_INDEX):
     return value
 
 
+def _in_cell_control_definitions(state, archive, workbook_rels, style_root):
+    part = next((path for kind, path in workbook_rels.values() if kind.lower() == "featurepropertybag"), None)
+    if part is None:
+        return {}
+    root = state.xml(archive, part, required=True)
+    bags = list(root)
+    if len(bags) > EXCEL_MAX_STYLE_DEFINITIONS:
+        raise ValueError("Workbook feature property bags exceed inspection limits")
+    mapper = next((bag for bag in bags if bag.get("type") == "XFComplements"), None)
+    mapped = _first(mapper, "a") if mapper is not None else None
+    indexes = list(mapped) if mapped is not None and mapped.get("k") == "MappedFeaturePropertyBags" else []
+    definitions = {}
+    xfs = _first(style_root, "cellXfs")
+    for index, xf in enumerate(xfs if xfs is not None else []):
+        complement = _first(xf, "xfComplement")
+        if complement is None:
+            continue
+        try:
+            mapper_index = int(complement.get("i"))
+            if not 0 <= mapper_index < len(indexes):
+                raise ValueError("Invalid feature property bag mapper")
+            bag_index = int(indexes[mapper_index].text)
+            path_ids = []
+            for expected, key in (("XFComplement", "XFControls"), ("XFControls", "CellControl"), ("Checkbox", None)):
+                if not 0 <= bag_index < len(bags) or bag_index in path_ids:
+                    raise ValueError("Invalid feature property bag reference")
+                path_ids.append(bag_index)
+                bag = bags[bag_index]
+                if bag.get("type") != expected:
+                    raise ValueError("Unsupported in-cell control")
+                if key is not None:
+                    reference = next((child for child in bag if child.get("k") == key), None)
+                    if reference is None:
+                        raise ValueError("Missing feature property bag reference")
+                    bag_index = int(reference.text)
+            definitions[index] = {
+                "type": "checkbox", "control_type_state": "present_value",
+                "feature_property_bag_part": part, "feature_bag_path": path_ids,
+                "xf_complement_index": mapper_index,
+            }
+        except (ValueError, TypeError) as error:
+            definitions[index] = {
+                "type": "unsupported_in_cell_control", "control_type_state": "inaccessible",
+                "feature_property_bag_part": part, "reason": "unresolved_control_binding",
+            }
+            state.note("An in-cell control binding is unsupported or invalid; it is not a Boolean-only or absent-control finding.")
+            log_event("[DOCUMENT_METADATA] In-cell control binding unavailable.", level=30,
+                      extra={"error_type": type(error).__name__})
+    return definitions
+
+
 def _style_definitions(state, archive, workbook_rels):
     theme, theme_fonts = {}, {}
     for kind, path in workbook_rels.values():
@@ -409,6 +474,7 @@ def _style_definitions(state, archive, workbook_rels):
         state.note("No saved workbook style definitions were available.")
         return [{}]
     root = state.xml(archive, style_path, required=True)
+    controls = _in_cell_control_definitions(state, archive, workbook_rels, root)
     indexed = _first(root, "indexedColors")
     palette = [item.get("rgb", "") for item in indexed] if indexed is not None else COLOR_INDEX
     fonts_root, fills_root = _first(root, "fonts"), _first(root, "fills")
@@ -422,7 +488,7 @@ def _style_definitions(state, archive, workbook_rels):
     definitions = []
     base_root = _first(root, "cellStyleXfs")
     base_styles = list(base_root) if base_root is not None else []
-    for xf in xfs if xfs is not None else []:
+    for style_index, xf in enumerate(xfs if xfs is not None else []):
         base_index = int(xf.get("xfId", "0"))
         base = base_styles[base_index] if 0 <= base_index < len(base_styles) else None
         attributes = {**(base.attrib if base is not None else {}), **xf.attrib}
@@ -433,6 +499,8 @@ def _style_definitions(state, archive, workbook_rels):
         font = fonts[font_index] if 0 <= font_index < len(fonts) else None
         fill = fills[fill_index] if 0 <= fill_index < len(fills) else None
         spec = {}
+        if style_index in controls:
+            spec["native_control"] = controls[style_index]
         if font is not None:
             for child in font:
                 name = _local(child.tag)
@@ -835,6 +903,9 @@ def _objects(state, archive, sheet, relationships):
                         if _local(item.tag) == "t" and item.text
                     ) if owner is not None else "",
                     "drawing_part": path,
+                    "native_fields": drawing_native_fields(
+                        properties.attrib, decorative.attrib if decorative is not None else None,
+                    ),
                 }
                 chart = _first(owner, "chart") if owner is not None else None
                 if chart is not None:
@@ -871,6 +942,24 @@ def _sheet(state, archive, entry, path, kind, definitions, reader, persons):
             if not spec:
                 state.note("Some cell style references could not be resolved.")
             reference = cell["cell"]
+            if spec.get("native_control"):
+                boolean_available = (
+                    spec["native_control"]["control_type_state"] == "present_value"
+                    and spec["native_control"]["type"] == "checkbox"
+                    and cell["value_type"] == "boolean" and cell["value_status"] == "saved"
+                )
+                state.record("objects", name, {
+                    **spec["native_control"], "id": f"cell:{reference}", "cell": reference,
+                    "style_id": style_index, "control_representation": "in_cell",
+                    "checked": cell["value"] if boolean_available else None,
+                    "checked_state": "present_value" if boolean_available else "inaccessible",
+                    "saved_value": cell["value"], "saved_value_status": cell["value_status"],
+                    "alt_text": None, "title": None, "alt_inspected": False, "is_decorative": None,
+                    "native_fields": {
+                        "description": inaccessible_field("not_applicable_to_in_cell_control"),
+                        "title": inaccessible_field("not_applicable_to_in_cell_control"),
+                    },
+                })
             state.styles.add(
                 f"{name}!{reference}", state.clean(cell["value"])[:60],
                 **{key: spec.get(key) for key in ("font", "size_pt", "color", "bold", "italic", "underline")},
@@ -899,6 +988,7 @@ def _sheet(state, archive, entry, path, kind, definitions, reader, persons):
         style_id = record.get("style") if record["type"] == "col" else record.get("s")
         if style_id is not None and 0 <= int(style_id) < len(definitions):
             record["saved_style"] = definitions[int(style_id)]
+    sheet["saved_styles"] = list(saved_styles.values())
     state.meta["sheets"].append(state.preview(sheet))
     state.meta["scanned_sheet_count"] = state.meta.get("scanned_sheet_count", 0) + 1
     state.meta["scanned_cells"] = state.meta.get("scanned_cells", 0) + sheet["scanned_cells"]
@@ -938,8 +1028,8 @@ def _extract_ooxml(state, file_path):
         if len(names) > OFFICE_ZIP_MAX_ENTRIES or len(names) != len(set(names)):
             raise ValueError("Workbook archive entry limit or duplicate part")
         relationships = state.rels(archive, "")
-        if any("featurepropertybag" in name.lower() or "activeX/" in name for name in names):
-            state.note("Newer in-cell controls or ActiveX parts are present and are not inspected.")
+        if any("activeX/" in name for name in names):
+            state.note("ActiveX parts are present and are not inspected.")
         workbook_path = next((path for kind, path in relationships.values() if kind == "officeDocument"), "xl/workbook.xml")
         core_path = next((path for kind, path in relationships.values() if kind == "core-properties"), "docProps/core.xml")
         _core_properties(state, state.xml(archive, core_path))

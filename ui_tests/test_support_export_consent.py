@@ -1,8 +1,8 @@
 # test_support_export_consent.py
 """
 Classic and V2 owner-only support-data consent browser coverage.
-Version: 0.261.426
-Implemented in: 0.261.426
+Version: 0.261.428
+Implemented in: 0.261.428
 """
 
 import sys

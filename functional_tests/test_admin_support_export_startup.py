@@ -1,8 +1,8 @@
 # test_admin_support_export_startup.py
 """
 Fresh-process web/scheduler and current-registry support-export integration.
-Version: 0.261.426
-Implemented in: 0.261.426
+Version: 0.261.428
+Implemented in: 0.261.428
 
 Import real application modules in both orders and optimized Python, blocking
 network access and replacing only external Cosmos I/O with SDK-default responses.

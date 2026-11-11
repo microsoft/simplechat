@@ -4,7 +4,7 @@ title: "Review approval requests"
 description: "Find, approve, or deny requests that need reviewer action."
 section: "Guides"
 audience: user
-version: "0.261.426"
+version: "0.261.428"
 ---
 
 ## What this does
@@ -59,7 +59,7 @@ From **0.261.287**, **Approval requests** in the V2 sidebar opens a full-page vi
 | **All requests** | Every approval request you can see. The page opens here. |
 | **Group requests** | Ownership changes, document and group deletion, and user document deletion. |
 | **Microsoft 365** | Source-sharing, extended file analysis, and workflow Run as approvals. |
-| **Support data** | Administrator requests to release your whole personal-conversation snapshots. Only the actual owner can decide. From **0.261.426**. |
+| **Support data** | Administrator requests to release your whole personal-conversation snapshots. Only the actual owner can decide. From **0.261.428**. |
 | **Safety remediation** | Warn, suspend and block requests raised from safety violation reviews. Shown to the **Admin**, **ControlCenterAdmin** and **SafetyViolationAdmin** roles. From **0.261.298**. |
 | **Content screening** | Screened documents waiting for review. Shown only while content screening is turned on. |
 | **Outgoing actions** | Emails and other Microsoft 365 actions waiting for you to send or cancel. |
@@ -78,7 +78,7 @@ Safety reviewers can follow the suspensions and blocks they requested, and appro
 
 ## Support conversation data requests
 
-Implemented in **0.261.426**, support-data requests use a separate owner-only
+Implemented in **0.261.428**, support-data requests use a separate owner-only
 queue, not the generic administrative **Approve & Execute** action. In V2,
 open **Support data**; on the classic page, use **Support data requests**.
 Personal notifications open the specific request.

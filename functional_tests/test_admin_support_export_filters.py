@@ -1,8 +1,8 @@
 # test_admin_support_export_filters.py
 """
 Functional tests for bounded support-export contracts.
-Version: 0.261.426
-Implemented in: 0.261.426
+Version: 0.261.428
+Implemented in: 0.261.428
 
 Validate explicit scope, UTC windows, source configuration, and rejection of
 oversized or ambiguous requests without any Azure/bootstrap dependency.

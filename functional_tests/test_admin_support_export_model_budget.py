@@ -1,8 +1,8 @@
 # test_admin_support_export_model_budget.py
 """
 Real isolated model-detector budget and complete-coverage tests.
-Version: 0.261.426
-Implemented in: 0.261.426
+Version: 0.261.428
+Implemented in: 0.261.428
 
 Use the current real protocol helpers rather than the older AST-extracted
 adapter fixture; only the inference transport and registry read are injected.
