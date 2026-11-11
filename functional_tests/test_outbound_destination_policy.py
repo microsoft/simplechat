@@ -1,7 +1,7 @@
 # test_outbound_destination_policy.py
 """Destination and real-client transport regressions for configurable actions.
 
-Version: 0.261.435
+Version: 0.261.436
 Implemented in: 0.261.435
 
 All DNS and external connection boundaries are synthetic. Enterprise private
@@ -20,8 +20,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import aiohttp
-import httpcore
-import httpx
 import pytest
 import requests
 import urllib3.connection
@@ -367,7 +365,7 @@ def test_websocket_checks_dns_again_after_same_origin_redirect(monkeypatch):
         monkeypatch.setattr(asyncio.get_running_loop(), "sock_connect", connect)
         with pytest.raises(policy.OutboundDestinationError):
             async with transport.guarded_websocket_connection("wss://mcp.corp.internal/endpoint"):
-                raise AssertionError("A forbidden redirect must not open a WebSocket")
+                pass
         assert connect.await_count == 1
 
     asyncio.run(probe())

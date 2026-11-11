@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Yamcs reverse-proxy HTTP Basic authentication.
-Version: 0.261.435
+Version: 0.261.436
 Implemented in: 0.261.012
 
 This test ensures a Yamcs action can authenticate against a reverse proxy (such as the
@@ -158,15 +158,14 @@ class FakeAPIKeyCredentials(FakeCredentials):
     """Mirrors yamcs.client.APIKeyCredentials, which stores the key on `password`."""
 
     def __init__(self, key):
-        self.password = key
+        super().__init__(password=key)
 
 
 class FakeBasicAuthCredentials(FakeCredentials):
     """Mirrors yamcs.client.BasicAuthCredentials, which sends an Authorization header."""
 
     def __init__(self, username, password):
-        self.username = username
-        self.password = password
+        super().__init__(username=username, password=password)
 
 
 def install_fake_yamcs_client(include_basic_auth=True):

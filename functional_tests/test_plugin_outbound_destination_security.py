@@ -1,7 +1,7 @@
 # test_plugin_outbound_destination_security.py
 """Functional tests for action destination, authoring and credential boundaries.
 
-Version: 0.261.435
+Version: 0.261.436
 Implemented in: 0.261.435
 
 Real route/merge bodies and validators run with scoped storage seams. HTTP
@@ -18,10 +18,11 @@ from importlib import import_module
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
+from urllib.parse import urlsplit
 
 import pytest
 import requests
-from flask import Blueprint, session
+from flask import Blueprint
 
 import functions_outbound_http as transport
 from test_support.agent_delegation import execute_functions
@@ -231,7 +232,6 @@ def test_legacy_databricks_type_keeps_its_connection_test_permission(environment
 
 @pytest.mark.parametrize("auth_method", ["none", "api_key"])
 def test_native_yamcs_sdk_keeps_reverse_proxy_authentication_and_tls(environment, monkeypatch, auth_method):
-    env = environment
     captured = []
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.delenv(name, raising=False)
@@ -266,7 +266,8 @@ def test_native_yamcs_sdk_keeps_reverse_proxy_authentication_and_tls(environment
             assert isinstance(client, sdk.YamcsClient)
             client.get_server_info()
             request, options = captured[-1]
-            assert request.url.startswith("https://yamcs.corp.internal:8090/")
+            target = urlsplit(request.url)
+            assert (target.scheme, target.netloc) == ("https", "yamcs.corp.internal:8090")
             assert request.headers["Authorization"] == module.build_yamcs_basic_auth_header(
                 "operator", "synthetic-proxy-password",
             )
@@ -280,7 +281,6 @@ def test_native_yamcs_sdk_keeps_reverse_proxy_authentication_and_tls(environment
 
 
 def test_native_tableau_installs_guard_before_server_version_discovery(environment, monkeypatch):
-    env = environment
     captured = []
     for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         monkeypatch.delenv(name, raising=False)
@@ -312,7 +312,8 @@ def test_native_tableau_installs_guard_before_server_version_discovery(environme
         try:
             adapter, request, options = captured[0]
             assert isinstance(adapter, transport.GuardedHTTPAdapter)
-            assert request.url.startswith("https://tableau.corp.internal/")
+            target = urlsplit(request.url)
+            assert (target.scheme, target.netloc) == ("https", "tableau.corp.internal")
             assert options["timeout"] == 9
             assert server.version == "3.25"
         finally:

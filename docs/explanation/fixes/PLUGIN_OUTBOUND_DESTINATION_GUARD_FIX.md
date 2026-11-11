@@ -1,4 +1,4 @@
-# Plugin outbound destination guard (v0.261.435)
+# Plugin outbound destination guard (v0.261.436)
 
 Fixed/Implemented in version: **0.261.435**.
 
@@ -88,6 +88,11 @@ the guarded connection helpers for their own configurable HTTP calls.
 
 The regressions use synthetic credentials, scoped storage seams and blocked
 network access; no production, on-premises or metadata service is probed.
+
+The v0.261.436 CodeQL follow-up compares parsed URL origins and initializes
+inherited SDK credential fixtures through their base constructors. It removes
+unused test code while retaining the required WebSocket DNS-rejection exception
+and connection-count checks. Production connector behavior is unchanged.
 
 - `functional_tests/test_outbound_destination_policy.py` exercises forbidden
   literal/DNS targets, mixed answers, rebinding, mapped addresses, redirects,

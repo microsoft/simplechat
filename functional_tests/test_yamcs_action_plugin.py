@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Yamcs mission control action plugin.
-Version: 0.261.435
+Version: 0.261.436
 Implemented in: 0.250.212
 
 This test ensures the Yamcs action operations helpers, factory, plugin metadata,
@@ -317,7 +317,7 @@ class FakeAPIKeyCredentials(FakeCredentials):
     """Mirrors yamcs.client.APIKeyCredentials, which stores the key on `password`."""
 
     def __init__(self, key):
-        self.password = key
+        super().__init__(password=key)
 
 
 def install_fake_yamcs_client():
