@@ -699,6 +699,13 @@ cosmos_tabular_export_runs_container = cosmos_database.create_container_if_not_e
     partition_key=PartitionKey(path="/user_id")
 )
 
+cosmos_support_exports_container_name = "support_exports"
+cosmos_support_exports_container = cosmos_database.create_container_if_not_exists(
+    id=cosmos_support_exports_container_name,
+    partition_key=PartitionKey(path="/partition_key"),
+    default_ttl=-1,
+)
+
 cosmos_data_management_jobs_container_name = "data_management_jobs"
 DATA_MANAGEMENT_HISTORY_INDEXING_POLICY = {
     "indexingMode": "consistent",

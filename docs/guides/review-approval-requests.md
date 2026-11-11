@@ -4,7 +4,7 @@ title: "Review approval requests"
 description: "Find, approve, or deny requests that need reviewer action."
 section: "Guides"
 audience: user
-version: "0.261.298"
+version: "0.261.428"
 ---
 
 ## What this does
@@ -59,6 +59,7 @@ From **0.261.287**, **Approval requests** in the V2 sidebar opens a full-page vi
 | **All requests** | Every approval request you can see. The page opens here. |
 | **Group requests** | Ownership changes, document and group deletion, and user document deletion. |
 | **Microsoft 365** | Source-sharing, extended file analysis, and workflow Run as approvals. |
+| **Support data** | Administrator requests to release your whole personal-conversation snapshots. Only the actual owner can decide. From **0.261.428**. |
 | **Safety remediation** | Warn, suspend and block requests raised from safety violation reviews. Shown to the **Admin**, **ControlCenterAdmin** and **SafetyViolationAdmin** roles. From **0.261.298**. |
 | **Content screening** | Screened documents waiting for review. Shown only while content screening is turned on. |
 | **Outgoing actions** | Emails and other Microsoft 365 actions waiting for you to send or cancel. |
@@ -74,6 +75,29 @@ The **Dashboard** category counts the requests you can see, the same ones the li
 ### Safety remediation
 
 Safety reviewers can follow the suspensions and blocks they requested, and approvers can find the ones waiting for them, without searching every request. **Group requests** no longer lists these requests. Which requests you see, and whether you can approve them, is still decided by the server as for every other request.
+
+## Support conversation data requests
+
+Implemented in **0.261.428**, support-data requests use a separate owner-only
+queue, not the generic administrative **Approve & Execute** action. In V2,
+open **Support data**; on the classic page, use **Support data requests**.
+Personal notifications open the specific request.
+
+Review the requesting administrator, purpose, conversations, cutoff, expiry
+and privacy mode. **Review my snapshot preview** prepares a fingerprint-bound
+release; approval covers the whole requested text snapshot, not only the
+small preview or the diagnostic log window. If AI privacy processing is
+selected, approval includes sending already-scrubbed text to the indicated
+default model.
+
+You can approve, decline, or revoke future transcript downloads. An Admin or
+ControlCenterAdmin role does not grant approval authority over another
+person's messages. Changes to content/availability or disclosure require a
+new review. Downloaded copies and already-submitted AI inputs cannot be
+recalled. The regular approval Dashboard/All requests lists remain the
+administrative queue; support-data decisions live in their own category.
+
+See [Export diagnostic logs for support]({{ '/guides/export-support-logs/' | relative_url }}).
 
 ## Microsoft 365 outgoing actions
 
