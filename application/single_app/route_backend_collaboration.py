@@ -2953,6 +2953,8 @@ def register_route_backend_collaboration(bp):
                                 error_payload = {}
                             yield collaboration_stream_error(
                                 error_payload.get('error') or error_payload.get('message') or 'Failed to start collaboration AI workflow',
+                                agent_credential_recovery=error_payload.get('agent_credential_recovery'),
+                                error_code=error_payload.get('error_code'),
                             )
                             return
 
@@ -3046,6 +3048,8 @@ def register_route_backend_collaboration(bp):
                                 return collaboration_stream_error(
                                     stream_payload.get('error'),
                                     partial_content=stream_payload.get('partial_content'),
+                                    agent_credential_recovery=stream_payload.get('agent_credential_recovery'),
+                                    error_code=stream_payload.get('error_code'),
                                 )
                             if stream_payload.get('error'):
                                 stream_payload['done'] = True

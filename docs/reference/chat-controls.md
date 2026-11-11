@@ -4,7 +4,7 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.424"
+version: "0.261.431"
 ---
 
 ## How to use this reference
@@ -157,6 +157,35 @@ check. If the check cannot confirm sign-in, the notice stays visible.
 **Reconnect Microsoft 365** remains specific to a real Microsoft 365 action;
 a failed background outgoing-action lookup does not add an M365 banner to
 an unrelated conversation.
+
+### Agent credential recovery
+
+Fixed/Implemented in version: **0.261.429** (`application/single_app/config.py`).
+Recovery button presentation updated in version: **0.261.430**.
+Guided recovery implemented in version: **0.261.431**.
+When an agent cannot use its embedded connection credentials, the chat error
+explains that the agent needs updating. This is separate from entering your own
+credentials for a shared action.
+
+| Control or guidance | Purpose | Availability |
+| --- | --- | --- |
+| Guided recovery / Update agent credentials | Step 1 opens the affected agent's **Model & connection** settings in a new tab. Step 2 explains how to return and select **Retry** on your message, or start a new conversation. | A failed agent-credential request, and the server confirms current edit permission for that exact personal, group, or global agent |
+| Contact a group owner | Explains who can repair a shared group agent when your current group role, governance policy, or group status does not permit editing. | Group-agent credential failure without edit permission |
+| Contact a site administrator | Directs users to an authorized administrator instead of showing an unusable editor link. | Organization-wide agent failure without the Admin role, or unavailable personal authoring |
+
+After an authorized editor saves the replacement, return to chat and deliberately
+retry the message. Opening the editor or saving the agent never replays the failed
+request automatically. Editor entry and saving still recheck permissions.
+There is no in-chat agent-secret form or email notification.
+The two steps sit side by side on larger screens and stack on phones. Users
+without edit permission see **Request an update**, with the appropriate contact
+guidance, instead of an editor button.
+
+The comfortable chat layout uses the same 720-pixel maximum reading column for
+messages and the composer at the default text size. **Wide** retains its
+full-width layout; mobile message and composer margins remain aligned.
+
+See [Update agent credentials]({{ '/guides/workspace-agents-and-actions/' | relative_url }}#update-agent-credentials-after-a-security-update).
 
 ### Personal action credential cards
 

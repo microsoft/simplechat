@@ -1,7 +1,7 @@
 # shared_secret_responses.py
 """Offline services for real legacy shared-resource routes and credential writes.
 
-Version: 0.261.428
+Version: 0.261.432
 Implemented in: 0.261.428
 """
 
@@ -19,6 +19,7 @@ from azure.core import MatchConditions
 from azure.cosmos import exceptions
 from flask import Blueprint, Flask, current_app
 
+from agent_credential_contracts import AGENT_CREDENTIAL_BINDINGS, AgentCredentialReentryRequired
 from test_support.agent_delegation import execute_functions
 from test_support.group_action_harness import group
 from test_support.m365 import CosmosContainer
@@ -137,6 +138,8 @@ def _build_shared_routes(environment, monkeypatch):
         "cosmos_group_agents_container": containers["agents", "group"],
         "keyvault_plugin_get_helper": env.keyvault.keyvault_plugin_get_helper,
         "keyvault_agent_get_helper": env.keyvault.keyvault_agent_get_helper,
+        "AGENT_CREDENTIAL_BINDINGS": AGENT_CREDENTIAL_BINDINGS,
+        "AgentCredentialReentryRequired": AgentCredentialReentryRequired,
         "hydrate_action_identity_reference": lambda record, *args, **kwargs: record,
         "is_global_action_access_allowed": lambda user_id, record: True,
         "filter_governed_model_endpoints": services.governance.filter_governed_model_endpoints,

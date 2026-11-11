@@ -1,8 +1,9 @@
 # test_shared_agent_secret_responses.py
 """Shared agent metadata and write-only credential response regressions.
 
-Version: 0.261.428
+Version: 0.261.432
 Implemented in: 0.261.428
+Owner-bound runtime integration covered in: 0.261.432
 
 These tests cover legacy group readers, shared global settings and safe edits
 without hydrating real credentials or contacting a provider.
@@ -96,7 +97,7 @@ def test_agent_manager_response_preserves_safe_reentry_metadata_only(shared_rout
     result = response.get_json()
     assert "_agent_credential_bindings" not in result
     assert result["credential_reentry_required"] == [{
-        "path": "/azure_openai_gpt_key", "label": "Model API key",
+        "path": "/azure_openai_gpt_key", "label": "Azure OpenAI API key",
     }]
     assert "CANARY-" not in response.get_data(as_text=True)
 
@@ -126,8 +127,17 @@ def test_legacy_agent_edits_preserve_or_explicitly_change_credentials(shared_rou
         assert not stored.get("azure_openai_gpt_key")
     else:
         value = stored["azure_openai_gpt_key"]
-        actual = env.services.vault[value] if vault_enabled else value
-        assert actual == ("CANARY-replacement" if mode == "replace" else "CANARY-model-key")
+        if mode in {"omitted", "mask"}:
+            assert value == saved["azure_openai_gpt_key"]
+            assert env.services.secret_writes == []
+            assert env.services.secret_reads == []
+            assert response.get_json()["credential_reentry_required"] == [{
+                "path": "/azure_openai_gpt_key", "label": "Azure OpenAI API key",
+            }]
+        else:
+            actual = env.services.vault[value] if vault_enabled else value
+            assert actual == "CANARY-replacement"
+            assert response.get_json()["credential_reentry_required"] == []
 
 
 @pytest.mark.parametrize("user,roles", [
@@ -201,6 +211,29 @@ def test_cleaned_agent_rows_retain_the_backend_readiness_state(shared_routes, mo
         scoped.setattr(env.helper, "editor_resource", raw_record_readiness)
         result = env.helper.project_shared_record(row, "agents", can_manage=True, group_scope=True)
     assert result["credential_reentry_required"] == []
+
+
+@pytest.mark.parametrize("bound", [False, True])
+def test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness(shared_routes, bound):
+    env = shared_routes
+    saved = seed(env, "agents")
+    if bound:
+        saved = env.keyvault.keyvault_agent_save_helper(
+            saved, saved["id"], scope="group", owner_id="group-a",
+        )
+    raw = env.helper.project_shared_record(saved, "agents", can_manage=True, group_scope=True)
+    cleaned = env.routes["_clean_agent"](saved, "group-a")
+    projected = env.helper.project_shared_record(cleaned, "agents", can_manage=True, group_scope=True)
+    expected = [] if bound else [{
+        "path": "/azure_openai_gpt_key", "label": "Azure OpenAI API key",
+    }]
+    assert raw["credential_reentry_required"] == expected
+    assert projected["credential_reentry_required"] == expected
+    assert "_agent_credential_bindings" not in raw
+    assert "_agent_credential_bindings" not in projected
+    assert "CANARY-" not in str(raw)
+    assert "CANARY-" not in str(projected)
+    assert env.services.secret_reads == []
 
 
 @pytest.mark.parametrize("vault_enabled", [False, True])
