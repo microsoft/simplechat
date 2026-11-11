@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.373
+Version: 0.261.428
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -23,6 +23,7 @@ from pathlib import PureWindowsPath
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from azure.core import exceptions as azure_core_exceptions
 import pytest
 from flask import Blueprint, Flask, jsonify, request, session
 
@@ -246,7 +247,7 @@ def environment(monkeypatch):
         stack.enter_context(patch.dict(sys.modules, stubs))
         modules = [stubs["functions_simplechat_operations"], stubs["functions_azure_maps"]]
         for name in (
-            "functions_mcp_operations", "functions_snowflake_operations", "functions_yamcs_operations",
+            "functions_mcp_operations", "functions_mcp_tool_pinning", "functions_snowflake_operations", "functions_yamcs_operations",
             "functions_databricks_operations", "functions_tableau_operations", "functions_blob_storage_operations",
             "functions_chart_operations", "functions_msgraph_operations",
             "functions_azure_endpoint_validation", "functions_icon_utils",
@@ -294,6 +295,7 @@ def environment(monkeypatch):
             "debug_print": Mock(), "check_user_access_status": Mock(return_value=(True, None)),
             "swagger_route": lambda **kwargs: lambda function: function, "get_auth_security": lambda: [],
             "personal_editor_response": authoring.personal_editor_response,
+            "project_shared_record": authoring.project_shared_record,
             "editor_error_response": authoring.editor_error_response,
             "ensure_editor_access": authoring.ensure_editor_access,
             "ensure_editor_options_access": authoring.ensure_editor_options_access,
@@ -463,6 +465,8 @@ def configured_action_payload(environment, kind):
         fields["workspaceId"] = "test-workspace"
     elif kind == "mcp":
         fields.update({"transport": "streamable_http", "auth_method": "none"})
+        pinning = sys.modules["functions_mcp_tool_pinning"]
+        fields[pinning.MCP_TOOL_FINGERPRINTS_FIELD] = pinning.build_mcp_tool_fingerprints([])
     elif kind == "embedding_model":
         record.update({"api_version": "2024-06-01", "deployment": "test-embedding"})
     elif kind in {"chart", "simplechat", "msgraph"}:
@@ -1046,7 +1050,14 @@ def test_changed_assigned_knowledge_uses_real_personal_scope_policy(environment)
             sort_documents=lambda values, *args, **kwargs: values,
         )
         sources = {
+            "azure.core.exceptions": azure_core_exceptions,
             "functions_documents": documents,
+            "functions_document_access_index": module_stub(
+                "functions_document_access_index", DOCUMENT_ACCESS_SOURCE_BATCH_SIZE=100,
+                query_document_access_index_ids=Mock(side_effect=AssertionError(
+                    "Explicit assigned-document validation must use get_document_record, not a catalog query.",
+                )),
+            ),
             "functions_group": module_stub(
                 "functions_group", find_group_by_id=Mock(return_value={"id": "group"}),
                 get_user_role_in_group=Mock(return_value=None),

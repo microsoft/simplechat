@@ -214,7 +214,10 @@ def editor_secret_paths(record, kind):
         redacted = import_module("functions_keyvault").redact_plugin_secret_values(record)
         paths.update(path for path, value in _walk(redacted) if value == EDITOR_SECRET_MASK)
     else:
-        paths.update({("azure_openai_gpt_key",), ("azure_agent_apim_gpt_subscription_key",)})
+        paths.update({
+            ("azure_openai_gpt_key",), ("azure_agent_apim_gpt_subscription_key",),
+            ("azure_apim_gpt_subscription_key",),
+        })
     for path, value in _walk(record):
         if not path:
             continue
@@ -267,6 +270,78 @@ def editor_resource(record, kind, *, global_scope=False, group_scope=False, read
         "secret_paths": sorted(_pointer(path) for path in editor_secret_paths(projected, kind)),
         "read_only": global_scope if read_only is None else bool(read_only),
     }
+
+
+def project_shared_record(record, kind, *, can_manage=False, global_scope=False, group_scope=False):
+    """Keep legacy envelopes while separating capability metadata from editor configuration."""
+    if kind not in {"actions", "agents"}:
+        raise WorkspaceAuthoringValidation("Invalid workspace resource.")
+    resource = None
+    if can_manage and not global_scope:
+        resource = editor_resource(record, kind, group_scope=group_scope, read_only=False)
+        result = resource["record"]
+        result.update({key: resource[key] for key in ("revision", "secret_paths", "read_only")})
+    else:
+        fields = (
+            "id", "name", "displayName", "display_name", "description", "type",
+            "agent_type", "enabled", "is_enabled", "scope", "scope_id", "group_id",
+            "group_name", "catalog_key", "execution_status", "is_legacy",
+        )
+        result = {
+            key: value for key in fields
+            if isinstance((value := record.get(key)), (str, bool))
+        }
+        if kind == "agents":
+            tags = record.get("tags")
+            result["tags"] = [tag for tag in tags if isinstance(tag, str)] if isinstance(tags, list) else []
+            icon = record.get("icon")
+            if isinstance(icon, dict):
+                result["icon"] = {
+                    key: value for key in ("kind", "type", "value", "name", "color")
+                    if isinstance((value := icon.get(key)), str)
+                }
+        result.update(is_global=global_scope, is_group=group_scope, read_only=True)
+    if kind == "agents":
+        required = record.get("credential_reentry_required")
+        # Cleaned list rows have no bindings; only stored records can recompute readiness.
+        if record.get("_etag"):
+            if resource is None:
+                resource = editor_resource(record, kind, global_scope=global_scope, group_scope=group_scope, read_only=True)
+            required = resource.get("credential_reentry_required", required)
+        result.pop("credential_reentry_required", None)
+        if isinstance(required, list):
+            result["credential_reentry_required"] = [
+                {"path": field["path"], "label": field["label"]}
+                for field in required if isinstance(field, dict)
+                and isinstance(field.get("path"), str) and isinstance(field.get("label"), str)
+            ]
+    return result
+
+
+def legacy_editor_write_body(payload, existing, kind):
+    """Adapt classic manifests to the canonical merge/clear/CAS contract."""
+    if not isinstance(payload, dict):
+        raise WorkspaceAuthoringValidation("Updates must be an object.")
+    presentation = {"revision", "secret_paths", "read_only", "credential_reentry_required"}
+    intent = {"expected_revision", "clear_secret_paths", "removed_paths"}
+    updates = {
+        key: deepcopy(value) for key, value in payload.items()
+        if key not in presentation | intent
+        and not key.startswith("_")
+        and (key not in _MANAGED_FIELDS or (key == "id" and not existing and kind == "agents"))
+    }
+    body = {
+        "updates": updates,
+        "clear_secret_paths": payload.get("clear_secret_paths", []),
+        "removed_paths": payload.get("removed_paths", []),
+    }
+    if existing:
+        # Older partial-update clients omit revisions; their authoritative snapshot
+        # still goes through CAS. Updated editors supply their actual read revision.
+        body["expected_revision"] = payload.get(
+            "expected_revision", payload.get("revision", existing.get("_etag")),
+        )
+    return body
 
 
 def clear_editor_test_secrets(record, clear_secret_paths):
@@ -432,6 +507,7 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
         raise WorkspaceAuthoringValidation("A field cannot be both removed and cleared.")
     existing = deepcopy(existing)
     existing_secrets = editor_secret_paths(existing, kind)
+    submitted_secrets = editor_secret_paths(updates, kind)
     if resolve_stored_placeholder:
         for path in existing_secrets - paths["clear_secret_paths"]:
             submitted = _get(updates, path)
@@ -464,6 +540,10 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
             if path not in existing_secrets or before is _MISSING or _is_placeholder(before):
                 raise WorkspaceAuthoringValidation("A stored secret is unavailable. Re-enter its value.")
             return deepcopy(before)
+        if path in existing_secrets | submitted_secrets and isinstance(changes, str) and any(
+            marker in changes for marker in EDITOR_SECRET_PLACEHOLDERS
+        ):
+            raise WorkspaceAuthoringValidation("Re-enter the complete credential rather than combining it with a stored-value marker.")
         if _is_reference(changes):
             if path not in existing_secrets or before != changes:
                 raise WorkspaceAuthoringValidation("Secret references cannot be supplied by an editor.")
@@ -479,7 +559,11 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
             continue
         parent = _get(result, path[:-1])
         if isinstance(parent, dict):
-            parent.pop(path[-1])
+            if kind == "actions" and path == ("auth", "key") and parent.get("type") == "key":
+                # The manifest schema requires this leaf even for unauthenticated OpenAPI.
+                parent["key"] = ""
+            else:
+                parent.pop(path[-1])
         else:
             _set(result, path, "")
     for path in paths["removed_paths"]:

@@ -2,6 +2,7 @@
 // Multi-step modal functionality for action/plugin creation
 import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon, getMcpRetirementStatus, isMcpActionType } from "./workspace/view-utils.js";
+import { SharedCredentialEditor, isStoredCredentialValue } from "./shared-credential-editor.js";
 
 // Action types hidden from the creation UI (backend plugins remain intact).
 // control_center is created in the V2 admin action editor, the one surface that configures it.
@@ -1020,6 +1021,7 @@ export class PluginModalStepper {
 
     // Store original plugin state for change tracking
     this.originalPlugin = plugin ? JSON.parse(JSON.stringify(plugin)) : null;
+    this.sharedCredentials = new SharedCredentialEditor(plugin);
     const retirementStatus = getMcpRetirementStatus(plugin);
     const retirementNotice = document.getElementById('mcp-retirement-notice');
     if (retirementNotice) {
@@ -1063,6 +1065,8 @@ export class PluginModalStepper {
       this.clearForm();
       this.populateActionTypeCards();
     }
+
+    this.sharedCredentials.render(document.querySelector('#plugin-modal .modal-body'));
 
     // Show the modal
     const modal = new bootstrap.Modal(document.getElementById('plugin-modal'));
@@ -5871,7 +5875,7 @@ export class PluginModalStepper {
       auth.type = 'key';
       const username = document.getElementById('plugin-auth-basic-username')?.value.trim() || '';
       const password = document.getElementById('plugin-auth-basic-password')?.value.trim() || '';
-      auth.key = `${username}:${password}`;
+      auth.key = this.sharedCredentials?.basicAuth(username, password) ?? `${username}:${password}`;
       additionalFields.auth_method = 'basic';
     } else if (authType === 'oauth2') {
       auth.type = 'key';
@@ -6834,7 +6838,8 @@ export class PluginModalStepper {
         } else if (authMethod === 'basic') {
           authType = 'basic';
           // Split the combined username:password format
-          const credentials = auth.key ? auth.key.split(':') : ['', ''];
+          const credentials = this.sharedCredentials?.has('/auth/key') && isStoredCredentialValue(auth.key)
+              ? [auth.key, auth.key] : (auth.key ? auth.key.split(':') : ['', '']);
           document.getElementById('plugin-auth-basic-username').value = credentials[0] || '';
           document.getElementById('plugin-auth-basic-password').value = credentials[1] || '';
         } else if (authMethod === 'oauth2') {
@@ -7410,7 +7415,7 @@ export class PluginModalStepper {
         formData.id = this.originalPlugin.id;
     }
 
-    return formData;
+    return this.sharedCredentials?.apply(formData) || formData;
   }
 
   generateActionName(displayName) {

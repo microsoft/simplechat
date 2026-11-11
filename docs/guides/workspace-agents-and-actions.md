@@ -4,7 +4,7 @@ title: "Build agents and actions in My Workspace"
 description: "Find an available agent or configure a reusable assistant and its approved tools in V2."
 section: "Guides"
 audience: user
-version: "0.261.305"
+version: "0.261.428"
 ---
 
 ## What this does
@@ -110,6 +110,10 @@ the same operation as downloading its specification.
 Use a saved reusable identity where appropriate. A field that reports a stored
 secret does not reveal its value; leave it unchanged to keep the credential,
 replace it deliberately, or use its explicit clear control.
+
+Classic group editors follow the same credential-editing contract from version
+**0.261.428**, recorded in `application/single_app/config.py`. When replacing
+stored Basic authentication, enter both the username and password.
 
 Connection tests and discovery are separate commands. Saving configuration
 does not run the action. If a test fails, resolve the connection or permission

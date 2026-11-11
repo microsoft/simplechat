@@ -5906,6 +5906,29 @@
         "functional_tests/test_support/safety_review_harness.py"
       ]
     },
+    "functional_tests/test_support/shared_secret_responses.py::SharedContainer": {
+      "boundary": {
+        "sha256": "f9bd1e22354f9816bbe06a275c54e7029d85ba18a01646a9863063a56ee48374",
+        "methods": [
+          "delete_item",
+          "patch_item"
+        ],
+        "kind": "class",
+        "inherited_bases": [
+          "CosmosContainer"
+        ],
+        "imports_sha256": "1ec45f16dada9ab804e93f19d8a4de30838640dcbb0f6d224bbcc5627603ca2c"
+      },
+      "classification": "sdk-default",
+      "contract": "Inherits installed-SDK CosmosDict point/write responses and plain query rows from the shared container. Scoped name filtering retains partition routing; reminder patches and deletes preserve conditional ETag checks and atomicity. Real editor owners exercise reads, create/replace, patches, deletion, conflicts and secret cleanup.",
+      "tests": [
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes",
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_write_owners_preserve_sdk_revisions_and_cleanup",
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_reminder_owner_consumes_sdk_patch_response",
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_delete_owners_keep_conditional_sdk_semantics",
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_shared_fixture_restores_parent_sdk_modules_before_parent_teardown"
+      ]
+    },
     "functional_tests/test_support/workflow_chat_delivery_fakes.py::FakeContainer": {
       "boundary": {
         "sha256": "8454999fc4a0ea33fb3932eab0e16d1649d7a31220b8e0c3191cfe31409bc6bc",
@@ -26593,13 +26616,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "_assert_available_name: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Personal and global name checks consume plain scoped query rows through field reads. Real-owner SDK runtime coverage exercises unused and duplicate names. The module-only composed-marker guard leaves this owner body and storage-call shapes unchanged. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::_assert_global_available_name": {
@@ -26614,13 +26637,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "_assert_global_available_name: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Global name checks consume plain case-insensitive query rows without strict point-document copying. Real-owner SDK runtime cases cover unused and duplicate names; the module-only write-intent guard does not change this storage consumer. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::_assert_group_available_name": {
@@ -26640,13 +26663,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "_assert_group_available_name: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Group and global collision checks consume plain explicitly scoped query rows. Real-owner SDK runtime cases cover unused and duplicate names. This owner body and its storage calls are unchanged by the shared write-intent guard. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::_cleanup_replaced_secrets": {
@@ -26671,13 +26694,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "_cleanup_replaced_secrets: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Cleanup checks plain personal/group/global query rows before deleting superseded references. Real SDK-default create/replace cases prove committed cleanup and stale-write preservation. The owner body and query contracts are unchanged by the module-only marker validation. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_write_owners_preserve_sdk_revisions_and_cleanup"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::_sync_editor_reminders": {
@@ -26692,13 +26715,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "_sync_editor_reminders: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Reminder synchronization consumes/returns the SDK patch mapping while preserving committed records and ETags. Real personal/group/global save cases exercise conditional SDK patch responses and nested reminder persistence; the owner body is unchanged by the shared merge guard. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_reminder_owner_consumes_sdk_patch_response"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::delete_editor_record": {
@@ -26713,12 +26736,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "response-unused",
-      "contract": "delete_editor_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "The unchanged personal conditional delete discards its response. SDK owner-runtime coverage refuses a stale revision without deleting the record, then deletes the current owned revision. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_delete_owners_keep_conditional_sdk_semantics"
+      ]
     },
     "application/single_app/functions_workspace_authoring.py::delete_global_editor_record": {
       "boundary": {
@@ -26732,12 +26757,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "response-unused",
-      "contract": "delete_global_editor_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "The unchanged global conditional delete discards its response. Real SDK owner-runtime coverage preserves global identity checks, refuses stale revisions and deletes only the current revision. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_delete_owners_keep_conditional_sdk_semantics"
+      ]
     },
     "application/single_app/functions_workspace_authoring.py::delete_group_editor_record": {
       "boundary": {
@@ -26751,12 +26778,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "response-unused",
-      "contract": "delete_group_editor_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "The unchanged group conditional delete discards its response. SDK owner-runtime coverage verifies group partition/ETag routing and storage preservation on stale revisions before deleting a current revision. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
+      "tests": [
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_delete_owners_keep_conditional_sdk_semantics"
+      ]
     },
     "application/single_app/functions_workspace_authoring.py::list_editor_records": {
       "boundary": {
@@ -26775,13 +26804,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "list_editor_records: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Personal listing consumes plain scoped query rows and projects copies without credential hydration. Real SDK-backed owner-runtime cases verify plain projections and unchanged stored records/revisions. The module-only merge guard does not alter this owner. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::list_global_editor_records": {
@@ -26796,13 +26825,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "list_global_editor_records: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Global listing consumes plain query rows; SDK point wrappers never enter its row projection. Real-owner SDK runtime cases verify identity, list projection and storage preservation; the owner body is unchanged by the merge guard. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::list_group_editor_records": {
@@ -26822,13 +26851,13 @@
           }
         ],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "list_group_editor_records: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Group listing consumes plain group/global query rows with scope/governance checks. SDK-backed real-owner runtime cases verify plain rows and unmodified owned storage. The module-only marker guard leaves these query consumers unchanged. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::read_editor_record": {
@@ -26843,13 +26872,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "read_editor_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The personal reader checks exact ownership through SDK mapping fields and preserves ETags through copying. Real-owner installed-SDK cases verify safe nonmutating projection. The owner body and point-read shape are unchanged by the shared merge guard. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::read_global_editor_record": {
@@ -26864,13 +26893,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "read_global_editor_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The global reader validates identity/scope through mapping fields and retains the SDK document/revision. Real-owner SDK cases verify exact reads and safe nonmutating projection. Module-only merge validation does not alter this storage consumer. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::read_group_editor_record": {
@@ -26885,13 +26914,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "read_group_editor_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The group reader checks exact ID/group/governance through mapping fields and preserves SDK documents/ETags. Direct-owner and real legacy-route SDK cases verify safe projections and credential-preserving writes. Its owner body is unchanged by the merge guard. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes",
+        "functional_tests/test_shared_action_secret_responses.py::test_legacy_action_edits_preserve_or_explicitly_change_credentials",
+        "functional_tests/test_shared_agent_secret_responses.py::test_legacy_agent_edits_preserve_or_explicitly_change_credentials"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::read_group_merged_global_record": {
@@ -26906,13 +26937,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "read_group_merged_global_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Merged global reads retain SDK mappings and ETags after merge/scope/governance checks. Real-owner installed-SDK cases cover agent/action reads from group context without storage mutation. The owner body and storage-call shapes remain unchanged. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_read_list_and_name_owners_accept_sdk_shapes"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::save_editor_record": {
@@ -26932,13 +26963,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "save_editor_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The personal owner consumes SDK create/replace mappings while preserving identity, ETags and conditional failures. Real-owner SDK cases exercise staged credentials, committed cleanup and stale-write refusal. Module-only marker validation runs before this unchanged storage owner. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_write_owners_preserve_sdk_revisions_and_cleanup"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::save_global_editor_record": {
@@ -26958,13 +26989,13 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "save_global_editor_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The global owner consumes SDK create/replace mappings and retains ID-keyed partitions and conditional revisions. Real-owner SDK cases verify staging, cleanup and unchanged storage on stale saves. Its owner body is unchanged by module-only merge validation. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_write_owners_preserve_sdk_revisions_and_cleanup"
       ]
     },
     "application/single_app/functions_workspace_authoring.py::save_group_editor_record": {
@@ -26984,13 +27015,15 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "7f081466ee3a2fb89f1be0d1b0176997d5c14b3aff54a4e0606935020f88c813"
+        "module_sha256": "3fa5614902a16c3067a1aff85b03ab1deacc149ccb8dac89870807e2ed597a19"
       },
       "classification": "sdk-compatible",
-      "contract": "save_group_editor_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The group owner retains SDK mappings, group partitions and conditional ETags. Real-owner and legacy-route SDK cases verify credential keep/replace/clear, committed cleanup and stale-write refusal. The module-only composed-mask guard leaves this storage owner unchanged. Readiness-source projection review: this owner AST and storage calls are unchanged; its existing SDK runtime evidence was rerun after the projection-only guard.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_real_editor_write_owners_preserve_sdk_revisions_and_cleanup",
+        "functional_tests/test_shared_action_secret_responses.py::test_legacy_action_edits_preserve_or_explicitly_change_credentials",
+        "functional_tests/test_shared_agent_secret_responses.py::test_legacy_agent_edits_preserve_or_explicitly_change_credentials"
       ]
     },
     "application/single_app/functions_workspace_identities.py::create_workspace_identity": {
@@ -27166,15 +27199,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "bd2fde02df9003723f24ba37a24f0bcdbfcaaa3baa2eb4e65fad7016456546b2"
+        "module_sha256": "ff8feabdf9c6b6ee00ffca94143ad31fa24fda30e6fc0ae6150a0e542399f455"
       },
       "classification": "sdk-compatible",
-      "contract": "_load_all_agent_records_for_default_migration: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Index-first module review: this storage function and its point/query/batch consumers are unchanged (AST and storage-call shapes checked); new metadata identities remain scalar strings and do not alter SDK mapping/ETag handling. Existing owner evidence and representative updated-module SDK runtime cases are retained.",
+      "contract": "The unchanged migration catalog consumes plain global/group/personal query rows, strips Cosmos metadata and preserves scalar scope identities. Real-owner SDK runtime evidence exercises this function and its actual projection; module-only shared responses and unchanged legacy-ID validation do not alter its query contract.",
+      "evidence_scope": "owner-runtime",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain",
-        "functional_tests/test_v2_document_index_coverage.py::test_agent_migration_catalog_retains_plain_query_records"
-      ],
-      "evidence_scope": "owner-runtime"
+        "functional_tests/test_workspace_authoring_sdk_boundaries.py::test_agent_migration_owner_retains_plain_scoped_query_records"
+      ]
     },
     "application/single_app/route_backend_chats.py::_build_tabular_related_document_catalog": {
       "boundary": {
@@ -31822,10 +31854,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aab8729bff9939c921a5597b0576c83fe398dc09063f4337a3a3d77f0a946b36"
+        "module_sha256": "d216807e4d1e88608cf19390c10542d65dba8094782ad9a7f3069cd7809b5ef1"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged route passes the exact scoped point read to validate_legacy_action_update, which accepts dictionary subclasses and reads fields without strict JSON copying. Runtime coverage uses installed CosmosDict via the shared SDK-default container, preserves ID and ETag, and rejects a missing exact ID or mismatched route name before the repository writer.",
+      "contract": "The unchanged admin route passes the exact scoped CosmosDict point read to the mapping-compatible legacy-update validator. Renewed runtime evidence verifies identity/ETag preservation and refuses a missing or mismatched exact record before invoking a writer.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
@@ -31845,10 +31877,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aab8729bff9939c921a5597b0576c83fe398dc09063f4337a3a3d77f0a946b36"
+        "module_sha256": "d216807e4d1e88608cf19390c10542d65dba8094782ad9a7f3069cd7809b5ef1"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged classic collection-save branch passes its actor-partitioned point read to the real legacy-update validator. Installed CosmosDict fields and ETag reach that mapping-compatible validator unchanged; a missing or foreign exact point ID cannot fall back to a same-name action or invoke a writer. Editor creation remains a separate repository-owned path.",
+      "contract": "The unchanged classic collection save passes its actor-partitioned SDK point mapping to the real legacy-update validator. Renewed runtime coverage preserves fields/ETags and refuses foreign or missing exact IDs before any writer; shared list projections do not alter this storage consumer.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
@@ -31868,10 +31900,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aab8729bff9939c921a5597b0576c83fe398dc09063f4337a3a3d77f0a946b36"
+        "module_sha256": "d216807e4d1e88608cf19390c10542d65dba8094782ad9a7f3069cd7809b5ef1"
       },
       "classification": "response-unused",
-      "contract": "The unchanged Cosmos connection probe drains SELECT TOP 1 VALUE c.id only to establish query permission; empty and scalar query rows are discarded, never copied into a strict document/domain contract. Database/container metadata reads are likewise ignored. Runtime coverage verifies query draining, exact query shape, configured client routing, and lazy request-charge response-hook headers.",
+      "contract": "The unchanged connection probe drains scalar SELECT TOP 1 VALUE c.id query rows only to verify permission; it never copies them into a document contract. Renewed owner-runtime coverage verifies SDK metadata handling, lazy query draining, routing and response-hook headers.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_cosmos_connection_drains_query_rows_without_treating_them_as_documents",
@@ -33535,21 +33567,6 @@
     "application/single_app/functions_workflow_result_followup.py::_latest_thread_id": "230e0a4f0f18101155c5d5108211f1ed4b46cc9428eb657ed6e7954299895660",
     "application/single_app/functions_workflow_result_reader.py::_point_read": "8e5fef329d00bf47ee25d58a8c494ca44ee2f936042e986548a0ee9110b6f19c",
     "application/single_app/functions_workflow_result_reader.py::_task_rows": "36048a3df4909105e3a76e8f18a865be3397c50a7e5271178a5e5acb07a885a3",
-    "application/single_app/functions_workspace_authoring.py::_assert_available_name": "709ec82b6a9ea98b57df70665eaaec04cfe250ab70df05a6fe1d12cfb9ff15fd",
-    "application/single_app/functions_workspace_authoring.py::_assert_global_available_name": "2739453d1f448a92656fc94be251c975d34e9a6196afb8675b17f58676954d0c",
-    "application/single_app/functions_workspace_authoring.py::_assert_group_available_name": "68f65eefeb88ed5d3e33fc7769f3bd2594ec358ca5580472d9a5625e701818ad",
-    "application/single_app/functions_workspace_authoring.py::_cleanup_replaced_secrets": "a3911351b078e7638d2f255400159b2540753a2ba9802b7f81550ec12bca5213",
-    "application/single_app/functions_workspace_authoring.py::_sync_editor_reminders": "e064e4c3d1d1cb898adc158f1fb8b4a25f85fd58ee411d3e07cb0780b46c4a6a",
-    "application/single_app/functions_workspace_authoring.py::list_editor_records": "53257910ab4973d24f981d26f9738596cda1deecc52ee68aaaf79e4cad4aa839",
-    "application/single_app/functions_workspace_authoring.py::list_global_editor_records": "e1cc121048e137118274e6cf23ed3940cfc5b4cc1c2737ae31e075370a041250",
-    "application/single_app/functions_workspace_authoring.py::list_group_editor_records": "0924512263dff286af899cbb5bdfbe00f0f027de7772305f446200705f31a581",
-    "application/single_app/functions_workspace_authoring.py::read_editor_record": "2c755a3daa38cbf1f8ecf7153fdfa867553902d711159be813fe452f20cb167e",
-    "application/single_app/functions_workspace_authoring.py::read_global_editor_record": "fbaa2287e2d98cd9f33809874d9780fb2443008fb64d0efa2af6aa8ddaedd15e",
-    "application/single_app/functions_workspace_authoring.py::read_group_editor_record": "b1444000e02616084560a09ac98ac2ddfb33117e5cafe4bf8ddd57d953025a6e",
-    "application/single_app/functions_workspace_authoring.py::read_group_merged_global_record": "57ec16fe972fad3346439822acd8ce93fef5262abf4b53bc99be3ae340daf14e",
-    "application/single_app/functions_workspace_authoring.py::save_editor_record": "d2178de2ecfe58aac7e60be5d718e723caa64ba037a58e0ed197523d7c6f4594",
-    "application/single_app/functions_workspace_authoring.py::save_global_editor_record": "0f8e79f5603c5449a69b9bbda1f86a7b3e972b01d46ae895560dd156421c2739",
-    "application/single_app/functions_workspace_authoring.py::save_group_editor_record": "eed54bf41300e989aa28fcbb193d97cc274b6ad4852daa55b4ade5db58d20f7d",
     "application/single_app/route_backend_content_screening.py::register_route_backend_content_screening.content_screening_update_configuration": "5e28a46d1592f13669c6eee30e048d1892f8677980b123d419b42414d4243a05",
     "application/single_app/route_backend_control_center.py::_control_center_count_users": "a9b77d0f7521cafc59b40f3f89e2d5884442ec7785b8e99491299b099c306001",
     "application/single_app/route_backend_control_center.py::_control_center_iter_users": "d6e706933c48bc54563f87a04ee6b287667d7d6af87c79e3fda363c0124a44fd",

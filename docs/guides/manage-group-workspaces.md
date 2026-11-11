@@ -4,6 +4,7 @@ title: "Manage group workspaces"
 description: "Use group workspaces for shared documents, prompts, agents, actions, and workflows."
 section: "Guides"
 audience: user
+version: "0.261.428"
 ---
 
 ## What this does
@@ -179,6 +180,14 @@ made active.
   From version **0.261.145**, **Discover agents** also works for a
   group-scoped Foundry connection. It needs an Owner or Admin in an active
   group.
+
+From version **0.261.428**, classic group views show capability summaries when
+you cannot manage an action or agent. Permitted managers can review non-secret
+configuration, but stored credential values remain write-only, including for
+Owners and Admins. Leave configured values unchanged to retain them, enter a
+replacement, or select an explicit **Clear** control. A required credential may
+need a corresponding authentication-mode change before it can be cleared.
+See the [credential-editing guidance]({{ '/guides/workspace-agents-and-actions/' | relative_url }}#configure-an-action).
 
 If two people edit the same prompt, action, or agent at once, the second save
 is refused and the editor keeps your changes. From version **0.261.152**, when
