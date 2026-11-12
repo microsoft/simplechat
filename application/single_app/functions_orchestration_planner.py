@@ -25,10 +25,11 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.413
+Version: 0.261.432
 Gathered results must be read, and an action's chart reaches the answer, in: 0.261.293
 Empty-history clarification continuation fixed in: 0.261.367
 Selected-document planning recovery and debug diagnostics added in: 0.261.413
+Referenced failed-turn source identity context added in: 0.261.432
 """
 
 import hashlib
@@ -686,6 +687,9 @@ in arguments.document_ids and bind its prepared output to compose. Do not add a 
 Search or Analyze step just to declare source use. The server confines the action's
 document reads to that binding and current permissions. Other actions cannot declare
 document_ids, and mentioning an ID or filename in task text is not a source binding.
+For a document-bound action, declare document_read_mode as content, native, or mixed.
+This typed purpose selects compatible content/native inspection functions; task wording
+is not an authorization or capability test. Content mode must not request native properties.
 
 Document Search accessibility reports supply native structure, saved properties and explicit
 field states, not rendered page images or a comparison of all visible content against tags.
@@ -705,6 +709,17 @@ do not admit native tabular inputs. To combine the rows of several tabular sourc
 table or file, use tabular_merge with every one of those sources, never compose; it appends
 rows and cannot match rows on a key, so ask when the user may mean that. When their columns
 may differ, choose union, aliases or exclusion, or inspect them with tabular_inspect first.
+For keyed cross-file calculations, dated lookups or grouped totals, use tabular_analyze
+with native_operation="relate" and a complete tabular-relate-v1 relational_spec, not a
+Document Search action or model arithmetic in compose. Bind the exact datasets by alias
+and document_id in the same order as arguments.document_ids. Columns are alias.header;
+join how/cardinality/on and effective-date boundaries are explicit. Use a named table or
+an explicit cell_range/header_row when a worksheet contains separate data regions. CSV
+data has neither native accessibility metadata nor worksheet properties. Derived fields
+and output projection use deterministic tabular-transform-v2 expressions. Declare records,
+lineage and coverage outputs. Compose explains those computed records; render_file can
+export records with an exact-tabular profile. Never present an append/union as a keyed
+reconciliation. Mixed native-layout and data work needs separately compatible steps.
 For mixed narrative/tabular comparisons, prepare each
 source with compatible offered capabilities and compose their named results. Ask each
 preparation step only for its own sources' contribution, such as values, periods, units and
@@ -771,6 +786,10 @@ by itself require research. Read the earlier runs, but the ledger records activi
 evidence: reuse a previous answer for transformations or conversational references when its
 text is actually supplied, and gather again when a requested fact is missing or needs current
 evidence. Earlier assistant claims do not establish current facts or opening hours.
+candidate_documents is a bounded, non-exhaustive relevance list, not a workspace inventory:
+absence from suggestions does not establish that a file is missing or inaccessible.
+Earlier requested_sources preserve source identities even when a run failed; they are not
+successful documents_touched or evidence. Only currently reauthorized selections may be read.
 When source_policy is conversation_only, use the selected historical messages for the
 transformation; do not search workspaces or the web, or invent a document audit.
 conversation_results associates a selected assistant message with its retained answer alias.
@@ -1164,6 +1183,13 @@ answer, preserving their roles. Do not require retrieval merely because a previe
 shortened. A transformation of pasted or prior content uses conversation content first;
 if its target is missing or ambiguous, ask which text/message rather than searching
 workspaces. Earlier assistant assertions are not evidence of external facts.
+previous_source_requests records exact source identities requested by visible earlier
+turns, independently of whether reading them succeeded. For a clear same-source follow-up
+that needs fresh evidence, reference that prior turn's supplied message IDs rather than
+asking the user to attach its entire source set again. These identities are not file
+contents, successful reads, or current permissions: the server must reauthorize them.
+Never apply an earlier selection to a new topic, replace a new explicit selection, or
+infer that a source is unavailable merely because it was not suggested by a bounded search.
 If history is truncated, do not pretend to know what was omitted."""
 
 
@@ -1210,7 +1236,8 @@ def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
 
 def resolve_conversation_request(
     user_message, snapshot, settings=None, answered_questions=None, planner_model=None,
-    *, seeds=None, memory_context=None, selected_sources=None, conversation_id=None, turn_id=None,
+    *, seeds=None, memory_context=None, selected_sources=None, previous_source_requests=None,
+    conversation_id=None, turn_id=None,
 ):
     """Resolve context before retrieval, using the captured model binding when supplied."""
     message = str(user_message or '').strip()
@@ -1245,6 +1272,18 @@ def resolve_conversation_request(
         },
         'selected_sources': resolver_source_context(selected_sources),
         'conversation_attachments': deepcopy((seeds or {}).get('conversation_attachments') or []),
+        'previous_source_requests': [
+            {
+                'run_id': entry.get('run_id'), 'status': entry.get('status'),
+                'message_ids': [identifier for identifier in entry.get('source_message_ids') or []
+                                if identifier in {item['id'] for item in history}],
+                'document_ids': (entry.get('requested_sources') or {}).get('document_ids') or [],
+                'source_count': (entry.get('requested_sources') or {}).get('source_count', 0),
+                'truncated': bool((entry.get('requested_sources') or {}).get('truncated')),
+            }
+            for entry in previous_source_requests or []
+            if set(entry.get('source_message_ids') or []).intersection(item['id'] for item in history)
+        ],
     }
     try:
         if planner_model is not None:
@@ -1328,8 +1367,20 @@ def resolve_conversation_request(
     if resolution['relationship'] == 'new_topic' and not answered_questions:
         resolution['resolved_message'] = message
     if needs_source_resolution and resolution['relationship'] != 'clarification':
-        # Source sufficiency is semantic; unrelated retrieval still cannot supply the source.
-        resolution['requires_retrieval'] = False
+        # "Review that again" can refer to a failed selected-file read, not a
+        # transformation of an available answer. Its exact sources are reauthorized next.
+        failed_source_continuation = (
+            resolution['relationship'] == 'follow_up' and resolution['requires_retrieval']
+            and any(
+                entry.get('status') == 'failed'
+                and (entry.get('requested_sources') or {}).get('source_count')
+                and set(resolution['message_ids']).intersection(entry.get('source_message_ids') or [])
+                for entry in previous_source_requests or []
+            )
+        )
+        if not failed_source_continuation:
+            # Unrelated retrieval still cannot supply a missing conversational source.
+            resolution['requires_retrieval'] = False
     if resolution['relationship'] == 'follow_up' and resolution['requires_retrieval'] is False:
         selected = set(resolution['message_ids'])
         # The user supplied the source and constraints; an assistant answer alone

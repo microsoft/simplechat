@@ -82,6 +82,26 @@ For reviewer feedback and workbook properties, use
 [Document Search](../document-search/) rather than interpreting comments as data.
 See [Inspect Excel workbooks]({{ '/guides/inspect-excel-workbooks/' | relative_url }}).
 
+## Orchestrate calculations across files
+
+Implemented in version: **0.261.432** (`application/single_app/config.py`).
+
+Orchestrate also offers a typed, deterministic cross-file operation through
+`tabular_analyze`. Select the intended files and specify the relationship and
+calculation, such as matching orders to a price list by product code. The plan
+reads complete authorized tables and retains computed records, per-row lineage
+and coverage before explaining or exporting the result.
+
+This is distinct from the direct Tabular Processing action and from
+`tabular_merge`, which appends rows rather than matching keys. The new
+`native_operation="relate"` uses explicit join cardinality, date-effective lookup
+boundaries and precise decimal rules. Ambiguous matches, missing formula caches
+and exceeded bounds fail explicitly; no preview is promoted to a complete table.
+Native accessibility/layout inspection remains a separate compatible capability.
+
+See [Calculate across selected files]({{ '/guides/calculate-across-files/' | relative_url }})
+for source selection, relationship rules, inspection coexistence and output limits.
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.426"
+version: "0.261.432"
 ---
 
 <!-- action-slug: document-search -->
@@ -48,6 +48,23 @@ The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** o
 ## Reading accessibility and formatting metadata
 
 The action includes a `get_document_accessibility_report` function for agents that review documents for accessibility or house style. It returns supported native accessibility/structure data, the style inventory, and detected issues. Retained authorized active PDF/PPTX sources can be inspected locally on request; stored legacy reports do not certify unavailable native fields.
+
+Fixed/Implemented in version: **0.261.432**
+(`application/single_app/config.py`).
+
+Document-bound Orchestrate actions now declare a typed reading purpose:
+`document_read_mode="content"`, `"native"`, or `"mixed"`. Native inspection is
+offered and admitted only for compatible source formats and purposes; task
+wording is not the capability boundary. Older plans without this field retain
+format-compatible access.
+
+CSV content remains readable, but a CSV has no supported native accessibility
+inventory. Row-exact calculations across files use the separate typed
+calculation path, not a native-property report or indexed preview. Multi-file
+requests retain each source's identity and current access checks, including when
+content reading and native inspection are both requested.
+
+See [Calculate across selected files]({{ '/guides/calculate-across-files/' | relative_url }}).
 
 From **0.261.399**, workspace Excel files also expose native workbook properties, cell notes/threaded comments, object alternative text/decorative flags, formatting/layout and header/footer expressions. Modern `.xlsx`/`.xlsm` inspection has explicit saved-state coverage limits; legacy `.xls` is best effort. Use the report for the bounded workbook-wide inventory and document search for sheet/cell-addressed `Excel native inspection` evidence. Enhanced-citation workbooks still index a schema preview plus native evidence, not the complete worksheet data.
 

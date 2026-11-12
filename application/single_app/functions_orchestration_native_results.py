@@ -1,8 +1,9 @@
 # functions_orchestration_native_results.py
 """Native computation to retained orchestration results, without publication.
 
-Version: 0.261.141
+Version: 0.261.432
 Implemented in: 0.261.127
+Typed, bounded cross-file computation added in: 0.261.432
 
 The owner binds the native mode; the default production builder validates
 explicit query/schema/transformation arguments. Runtime/schema/native execution
@@ -56,6 +57,13 @@ _MESSAGES = {
     "native_storage_unavailable": STORAGE_FAILURE_MESSAGE,
     "native_retention_failed": "The complete native output could not be retained. No preview was substituted.",
     "native_cancelled": "Native computation was canceled.",
+    "native_relational_limit": "The complete cross-file calculation exceeds its processing limits. No shortened result was used.",
+    "native_relational_ambiguous": "The selected relationship has duplicate or overlapping matches. Specify the intended relationship before calculating.",
+    "native_relational_invalid": "The cross-file calculation could not use the specified columns, values, or relationship rules. No result was published.",
+    "native_formula_value_unavailable": (
+        "A selected formula has no saved result. Save recalculated values in Excel before calculating; "
+        "no empty value or zero was substituted."
+    ),
 }
 # Service codes meaning the approved source no longer matches what would be read.
 _SOURCE_CHANGED_CODES = frozenset({"native_compute_source_identity_mismatch"})
@@ -76,7 +84,7 @@ class NativeOrchestrationRequest:
 
 
 def _task_type(native_operation, task_type):
-    if native_operation not in ("query", "transform", "analysis"):
+    if native_operation not in ("query", "transform", "analysis", "relate"):
         raise NativeOrchestrationBridgeError("native_request_invalid")
     selected = task_type if task_type is not None else (
         "hierarchical_analysis" if native_operation == "analysis" else "structured_export"
@@ -85,6 +93,7 @@ def _task_type(native_operation, task_type):
         "query": ("structured_export",),
         "transform": ("structured_export", "combined"),
         "analysis": ("hierarchical_analysis",),
+        "relate": ("structured_export",),
     }
     if selected not in allowed[native_operation]:
         raise NativeOrchestrationBridgeError("native_request_invalid")
@@ -97,6 +106,8 @@ def native_orchestration_output_specs(native_operation, *, task_type=None):
     outputs = []
     if selected in ("structured_export", "combined"):
         outputs.append(OutputSpec("records", "records-v1"))
+    if native_operation == "relate":
+        outputs.append(OutputSpec("lineage", "records-v1"))
     if selected in ("hierarchical_analysis", "combined"):
         outputs.append(OutputSpec("analysis", "structured-v1"))
     outputs.append(OutputSpec("coverage", "structured-v1"))
@@ -120,16 +131,20 @@ def native_orchestration_arguments_schema():
             "allowed_values": {"type": "array", "maxItems": 200},
         },
     }
-    return {
+    # The relational grammar is pure and must not bootstrap source/storage clients.
+    from functions_tabular_relational import MAX_RELATIONAL_SOURCES, relational_spec_schema
+
+    schema = {
         "type": "object", "required": ["question", "native_operation", "document_ids"],
         "additionalProperties": False,
         "properties": {
             "question": {"type": "string", "minLength": 1, "maxLength": 24000, "pattern": r"\S"},
             "document_ids": {
-                "type": "array", "minItems": 1, "maxItems": 1, "uniqueItems": True,
+                "type": "array", "minItems": 1, "maxItems": MAX_RELATIONAL_SOURCES, "uniqueItems": True,
                 "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": r"^\S+$"},
             },
-            "native_operation": {"enum": ["query", "transform", "analysis"]},
+            "native_operation": {"enum": ["query", "transform", "analysis", "relate"]},
+            "relational_spec": relational_spec_schema(),
             "task_type": {"enum": ["structured_export", "hierarchical_analysis", "combined"]},
             "query_expression": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": r"\S"},
             "columns": {"type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": True, "items": column},
@@ -161,6 +176,18 @@ def native_orchestration_arguments_schema():
             },
         ],
     }
+    for variant in schema["oneOf"]:
+        variant["properties"]["document_ids"] = {"maxItems": 1}
+        variant["allOf"] = [{"not": {"required": ["relational_spec"]}}]
+    schema["oneOf"].append({
+        "properties": {"native_operation": {"const": "relate"}, "task_type": {"const": "structured_export"}},
+        "required": ["relational_spec"],
+        "not": {"anyOf": [
+            {"required": [name]}
+            for name in ("columns", "query_expression", "selected_sheet", "transformation_spec")
+        ]},
+    })
+    return schema
 
 
 def validate_native_orchestration_arguments(arguments):
@@ -178,6 +205,13 @@ def validate_native_orchestration_arguments(arguments):
             raise NativeOrchestrationBridgeError("native_arguments_invalid")
         normalized = deepcopy(arguments)
         normalized["task_type"] = _task_type(normalized["native_operation"], normalized.get("task_type"))
+        if normalized["native_operation"] == "relate":
+            from functions_tabular_relational import normalize_relational_spec
+
+            normalized["relational_spec"] = normalize_relational_spec(
+                normalized["relational_spec"], normalized["document_ids"],
+            )
+            return normalized
         normalize_tabular_transformation_spec(
             normalized.get("transformation_spec"), public_output_schema=normalized.get("columns"),
         )
@@ -394,6 +428,21 @@ def _failure(step, exc, stage, context=None):
     service_code = service_code if isinstance(service_code, str) else None
     if isinstance(exc, NativeOrchestrationBridgeError):
         code = exc.code
+    elif service_code == "relational_cancelled":
+        code = "native_cancelled"
+    elif service_code == "relational_match_ambiguous":
+        code = "native_relational_ambiguous"
+    elif service_code and service_code.startswith("relational_"):
+        code = "native_relational_limit" if service_code.endswith("_limit") else "native_relational_invalid"
+    elif service_code in {
+        "too_many_sources", "row_limit_exceeded", "cell_too_large", "source_too_large",
+        "workbook_too_large", "too_many_sheets",
+    }:
+        code = "native_relational_limit"
+    elif service_code == "sheet_required":
+        code = "native_relational_invalid"
+    elif service_code == "formula_cache_missing":
+        code = "native_formula_value_unavailable"
     elif isinstance(exc, (PermissionError, ScreeningError)) or service_code in _SOURCE_CHANGED_CODES:
         code = "native_access_unavailable"
     elif isinstance(exc, ResultContractError) and "guard" in exc.code:
@@ -448,6 +497,8 @@ def _runtime(step, context, user_id, binding):
         arguments = validate_native_orchestration_arguments(step.get("arguments"))
         if arguments["native_operation"] != binding.native_operation or arguments["task_type"] != binding.task_type:
             raise NativeOrchestrationBridgeError("native_outputs_invalid")
+    elif binding.native_operation == "relate":
+        raise NativeOrchestrationBridgeError("native_binding_required")
     service = getattr(context, "result_service", None)
     if not isinstance(service, OrchestrationResults):
         raise NativeOrchestrationBridgeError("native_runtime_invalid")
@@ -473,12 +524,12 @@ def _runtime(step, context, user_id, binding):
     return service, producer
 
 
-def _sources(step, context, service, *, require_current, require_replay=False):
+def _sources(step, context, service, *, require_current, require_replay=False, multiple=False):
     manifest = getattr(context, "source_manifest", None)
     if (
-        type(manifest) is not list or len(manifest) != 1 or type(manifest[0]) is not dict
-        or manifest[0].get("source_kind") != "tabular"
-        or manifest[0].get("authorization_status") != "authorized"
+        type(manifest) is not list or not manifest or (not multiple and len(manifest) != 1)
+        or any(type(source) is not dict or source.get("source_kind") != "tabular"
+               or source.get("authorization_status") != "authorized" for source in manifest)
     ):
         raise NativeOrchestrationBridgeError("native_selection_unsupported")
     # A schema discovered during planning belongs to that source revision, not to
@@ -486,29 +537,32 @@ def _sources(step, context, service, *, require_current, require_replay=False):
     from functions_orchestration_source_context import source_planning_revision
 
     revisions = getattr(context, "planning_source_revisions", None) or {}
-    expected = revisions.get(manifest[0].get("document_id"))
-    if expected is not None and expected != source_planning_revision(manifest[0]):
-        raise NativeOrchestrationBridgeError("native_source_changed")
+    for source in manifest:
+        expected = revisions.get(source.get("document_id"))
+        if expected is not None and expected != source_planning_revision(source):
+            raise NativeOrchestrationBridgeError("native_source_changed")
     arguments = step.get("arguments", {})
     if type(arguments) is not dict:
         raise NativeOrchestrationBridgeError("native_runtime_invalid")
     selected = arguments.get("document_ids", [])
     if (
-        type(selected) is not list or len(selected) > 1
-        or (selected and (type(selected[0]) is not str or selected[0] != manifest[0].get("document_id")))
+        type(selected) is not list or (not multiple and len(selected) > 1)
+        or (multiple and selected != [source.get("document_id") for source in manifest])
+        or (selected and any(type(value) is not str for value in selected))
+        or (not multiple and selected and selected[0] != manifest[0].get("document_id"))
         or arguments.get("left_document_id") or arguments.get("right_document_ids")
     ):
         raise NativeOrchestrationBridgeError("native_selection_unsupported")
     if require_replay:
-        source = manifest[0]
-        locator = source.get("storage_locator")
-        if (
-            type(source.get("file_name")) is not str
-            or os.path.splitext(source["file_name"])[1].lower() not in (".csv", ".xlsx", ".xls", ".xlsm")
-            or type(locator) is not dict
-            or any(type(locator.get(key)) is not str or not locator[key] for key in ("container", "blob_path"))
-        ):
-            raise NativeOrchestrationBridgeError("native_selection_unsupported")
+        for source in manifest:
+            locator = source.get("storage_locator")
+            if (
+                type(source.get("file_name")) is not str
+                or os.path.splitext(source["file_name"])[1].lower() not in (".csv", ".xlsx", ".xls", ".xlsm")
+                or type(locator) is not dict
+                or any(type(locator.get(key)) is not str or not locator[key] for key in ("container", "blob_path"))
+            ):
+                raise NativeOrchestrationBridgeError("native_selection_unsupported")
     snapshots = analysis_source_snapshot(manifest)
     # The native engine reads the uploaded tabular file itself, so this is an input read.
     service.access.authorize_input_sources(snapshots, require_snapshot=require_current)
@@ -667,6 +721,63 @@ def _finish(native, context, service, producer, snapshots, binding, cancel_reque
     return _retain(native, context, service, producer, snapshots, binding, cancel_requested, input_fingerprint)
 
 
+def _execute_relational(step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested):
+    """Run the bounded deterministic extension without a provider or native job."""
+    from functions_orchestration_merge import build_tabular_merge_sources, tabular_merge_limits
+    from functions_tabular_merge import read_tabular_source_records
+    from functions_tabular_relational import calculate_relational_sources
+
+    arguments = validate_native_orchestration_arguments(step["arguments"])
+    limits = tabular_merge_limits(settings)
+    if len(manifest) > limits.max_sources:
+        raise NativeOrchestrationBridgeError("native_relational_limit")
+    fingerprint = _input_fingerprint(step, context, binding)
+    sources = build_tabular_merge_sources(
+        manifest, producer.user_id, byte_reader=getattr(context, "merge_source_reader", None),
+    )
+    with orchestration_file_policy(allow_generated_files=False):
+        datasets = {}
+        for source, selected in zip(sources, arguments["relational_spec"]["datasets"]):
+            def open_table(source=source, selected=selected):
+                _check_cancel(cancel_requested)
+                return read_tabular_source_records(
+                    source, sheet=selected.get("sheet"), header_row=selected.get("header_row"),
+                    cell_range=selected.get("cell_range"), table_id=selected.get("table_id"),
+                    limits=limits, cancel_requested=cancel_requested,
+                )
+
+            datasets[selected["alias"]] = open_table
+        calculated = calculate_relational_sources(
+            arguments["relational_spec"], datasets, limits=limits, cancel_requested=cancel_requested,
+        )
+    _check_cancel(cancel_requested)
+    service.access.authorize_input_sources(snapshots, require_snapshot=True)
+    calculated["coverage"]["source_snapshots"] = deepcopy(snapshots)
+    coverage = Coverage(len(snapshots), len(snapshots), "sources")
+    checks = ("complete_authorized_tables", "validated_relational_operations", "precise_decimal_values",
+              "declared_match_cardinality", "exact_row_lineage")
+    count = len(calculated["records"])
+    complete = Completeness("complete", count, count, coverage, "valid", checks, ())
+    columns = tuple(RecordColumn.from_dict(column) for column in calculated["columns"])
+    outputs = [
+        NamedOutput("records", "records-v1", calculated["records"], complete, columns),
+        NamedOutput("lineage", "records-v1", calculated["lineage"], complete, (
+            RecordColumn("result_row", "integer"), RecordColumn("sources", "array"),
+        )),
+        NamedOutput("coverage", "structured-v1", calculated["coverage"],
+                    Completeness("complete", 1, 1, coverage, "valid", checks, ())),
+    ]
+    token = _guard(context, service, producer)
+    options = {"input_fingerprint": fingerprint} if fingerprint is not None else {}
+    task = service.persist_task_result(
+        producer=producer, role="reason", status="complete", outputs=outputs, sources=snapshots,
+        origin="grounded", source_policy=binding.source_policy, guard_token=token, **options,
+    )
+    _check_cancel(cancel_requested)
+    return _step_result(status="completed", summary=f"Calculated and retained {count:,} records from {len(snapshots)} files.",
+                        task_result=task)
+
+
 def execute_native_orchestration_step(
     step, context, *, settings, user_id, emit=None, cancel_requested=None, binding=None,
 ):
@@ -676,9 +787,17 @@ def execute_native_orchestration_step(
     try:
         _check_cancel(cancel_requested)
         service, producer = _runtime(step, context, user_id, binding)
-        manifest, snapshots = _sources(step, context, service, require_current=True, require_replay=True)
+        relational = binding.native_operation == "relate"
+        manifest, snapshots = _sources(
+            step, context, service, require_current=True, require_replay=True, multiple=relational,
+        )
         input_fingerprint = _input_fingerprint(step, context, binding)
         _guard(context, service, producer)
+        if relational:
+            stage = "execution"
+            return _execute_relational(
+                step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
+            )
         with orchestration_file_policy(allow_generated_files=False):
             if binding.model_resolver is None:
                 model = {

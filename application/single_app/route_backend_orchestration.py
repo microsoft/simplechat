@@ -28,7 +28,8 @@ In a shared conversation the person who started it plans in a hidden backing con
 with the shared conversation's id; the question and each final answer are mirrored into the
 shared thread for every participant (0.261.270).
 
-Version: 0.261.270
+Version: 0.261.432
+Referenced failed-turn source continuation added in: 0.261.432
 """
 
 import hashlib
@@ -101,6 +102,7 @@ from functions_orchestration_context import (
     build_run_ledger,
     enrich_planner_candidates,
     collect_answered_questions,
+    continue_requested_sources,
     merge_elicitation_context,
     normalize_elicitation_answer,
     conversation_user_urls,
@@ -876,6 +878,7 @@ def _load_ledger(conversation_id, user_id, settings, *, message_ids=None):
             and isinstance(metadata, dict) and isinstance(thread, dict)
             and not metadata.get('masked') and not metadata.get('masked_ranges')
             and not metadata.get('is_generated_chat_artifact')
+            and not is_soft_deleted_message(source)
             and (metadata.get('saved_analysis') or {}).get('available') is not False
             and thread.get('active_thread') is not False
         ):
@@ -3275,10 +3278,16 @@ def register_route_backend_orchestration(bp):
                 turn_context['memory_scope'] = memory_context['scope']
                 for notice in memory_context['notices']:
                     yield build_planning_thought(notice)
+                context_ids = (
+                    {item['id'] for item in snapshot['messages']}
+                    if turn_context.get('requires_fresh_review') else None
+                )
+                ledger = _load_ledger(resolved_conversation_id, user_id, settings, message_ids=context_ids)
                 resolution = resolve_conversation_request(
                     message, snapshot, settings=settings, answered_questions=answered_record,
                     planner_model=planner_model, seeds=seeds, memory_context=memory_context,
                     selected_sources=selected_sources,
+                    previous_source_requests=ledger.get('runs') or [],
                     conversation_id=resolved_conversation_id, turn_id=turn_id,
                 )
                 log_event(
@@ -3331,6 +3340,29 @@ def register_route_backend_orchestration(bp):
                 effective_message = resolution['resolved_message']
                 turn_context['request_resolution'] = resolution
                 turn_context['resolved_message'] = effective_message
+                continued_seeds = continue_requested_sources(
+                    seeds, resolution, ledger, user_id=user_id,
+                    conversation_id=resolved_conversation_id, settings=settings,
+                )
+                if continued_seeds.get('document_ids') != seeds.get('document_ids'):
+                    seeds = continued_seeds
+                    selected_candidates, _probed = resolve_candidate_documents(
+                        effective_message, user_id, seeds=seeds,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                    )
+                    selected_candidates = enrich_planner_candidates(
+                        selected_candidates, user_id, conversation_id=resolved_conversation_id,
+                        seeds=seeds, source_scopes=source_scopes,
+                        selected_source_context_reader=services.selected_source_context_reader,
+                    )
+                    selected_sources = [
+                        item['planning_source'] for item in selected_candidates if item.get('planning_source')
+                    ]
+                    seeds['planning_source_revisions'] = {
+                        **(seeds.get('planning_source_revisions') or {}),
+                        **{item['document_id']: item['revision'] for item in selected_sources},
+                    }
+                    turn_context['seeds'] = deepcopy(seeds)
                 effective_request = build_elicitation_user_request(effective_message, answered_record)
                 if effective_request != memory_request:
                     memory_context = load_orchestration_memory(
@@ -3369,11 +3401,6 @@ def register_route_backend_orchestration(bp):
                         'image_reference_messages': [],
                     }
                 turn_context['seeds'] = seeds
-                context_ids = (
-                    {item['id'] for item in snapshot['messages']}
-                    if turn_context.get('requires_fresh_review') else None
-                )
-                ledger = _load_ledger(resolved_conversation_id, user_id, settings, message_ids=context_ids)
                 signals = build_conversation_signals(
                     snapshot['messages'], message, truncated=snapshot['truncated'],
                     message_ids=resolution['message_ids'],

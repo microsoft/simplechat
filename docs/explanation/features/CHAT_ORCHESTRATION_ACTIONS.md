@@ -1,6 +1,6 @@
 # Chat Orchestration Action Access
 
-Version: **0.261.423**
+Version: **0.261.432**
 
 Implemented in version: **0.261.098**
 
@@ -13,6 +13,8 @@ Selected-document action binding implemented in version: **0.261.419**
 Canonical plugin discovery and action-stage diagnostics implemented in version: **0.261.421**
 
 Source defaults and shared corrections fixed/implemented in version: **0.261.422**
+
+Source-aware reading and failed-turn source continuation fixed/implemented in version: **0.261.432**
 
 Application version tracking remains in `application/single_app/config.py`.
 

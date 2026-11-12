@@ -1,9 +1,10 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.423
+Version: 0.261.432
 Implemented in: 0.261.355
 Shared two-correction allowance updated in: 0.261.422
+Referenced failed-turn source continuation added in: 0.261.432
 
 Uses real source projection, parsers, resolution and HTTP planning with external
 storage/model I/O replaced. Previews must never become complete export records.
@@ -18,13 +19,16 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from azure.core import MatchConditions
 from openpyxl import Workbook, load_workbook
 
-from test_orchestration_source_kind_planning import modules, real_http_harness, source_runtime
+from test_orchestration_source_kind_planning import (
+    modules, proposal as source_plan_proposal, real_http_harness, source_runtime,
+)
 from test_orchestration_native_results import (
     USER, bridge_runtime, finish_native, use_production_builder,
 )
-from test_support.orchestration_harness_execution import decoded_frames, render_step
+from test_support.orchestration_harness_execution import compose_step, decoded_frames, input_binding, render_step
 
 
 # Re-export shared fixtures for pytest's name-based discovery.
@@ -226,6 +230,285 @@ def frames(response):
         json.loads(frame.partition("data:")[2].strip())
         for frame in response.get_data(as_text=True).split("\n\n") if frame.startswith("data:")
     ]
+
+
+def failed_source_selection(runtime, identifiers):
+    """Persist a real selected-source plan that failed before retaining any evidence."""
+    harness = runtime.harness
+    message = "Review the complete selected source set."
+    raw = source_plan_proposal(narrative_comparison=False)
+    raw["steps"][0]["arguments"]["document_ids"] = list(identifiers)
+    harness.replies = [
+        json.dumps({
+            "relationship": "new_topic", "resolved_message": message,
+            "message_ids": [], "requires_retrieval": True, "clarification": "",
+        }),
+        json.dumps(raw),
+    ]
+    response = runtime.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": "conversation-1", "turn_id": "failed-source-selection",
+        "message": message, "selected_document_ids": list(identifiers), "approval_mode": "manual",
+    }, buffered=True)
+    events = frames(response)
+    plan = next(event["plan"] for event in events if event.get("type") == "orchestration_plan")
+    saved = harness.runs.read_item(plan["run_id"], "conversation-1")
+    saved["status"] = "failed"
+    saved["documents_touched"] = []
+    saved = harness.runs.replace_item(
+        saved["id"], saved, etag=saved["_etag"], match_condition=MatchConditions.IfNotModified,
+    )
+    harness.model_calls.clear()
+    runtime.source_state.reads.clear()
+    return saved
+
+
+@pytest.mark.parametrize("revoke_ninth", [False, True])
+def test_referenced_failed_turn_restores_all_nine_sources_through_current_authority(
+    source_runtime, modules, monkeypatch, revoke_ninth,
+):
+    runtime, harness = source_runtime, source_runtime.harness
+    identifiers = [f"document-{index}" for index in range(9)]
+    previous = failed_source_selection(runtime, identifiers)
+    if revoke_ninth:
+        runtime.source_state.denied.add(identifiers[-1])
+
+    def no_candidate_reconstruction(*args, **kwargs):
+        pytest.fail("A bounded relevance probe must not reconstruct a known source set.")
+
+    monkeypatch.setattr(
+        importlib.import_module("functions_search"), "hybrid_search", no_candidate_reconstruction,
+    )
+    message = "Continue that review using the same complete source set."
+    plan = {
+        "kind": "plan",
+        "steps": [
+            {"step_id": "read", "capability_id": "document_search", "arguments": {
+                "query": "Review the previously requested documents.", "document_ids": identifiers,
+            }},
+            compose_step("answer", inputs={
+                "evidence": {"binding": input_binding("read", "prepared"), "allow_partial": False},
+            }),
+        ],
+        "final_response": input_binding("answer"),
+    }
+    harness.replies = [
+        json.dumps({
+            "relationship": "follow_up", "resolved_message": message,
+            "message_ids": [previous["user_message_id"]], "requires_retrieval": True, "clarification": "",
+        }),
+        json.dumps(plan),
+    ]
+    response = runtime.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": "conversation-1", "turn_id": "source-continuation",
+        "message": message, "approval_mode": "manual",
+    }, buffered=True)
+    events = frames(response)
+    resolver_payload = json.loads(harness.model_calls[0]["messages"][1]["content"])
+    prior = resolver_payload["previous_source_requests"]
+    assert len(prior) == 1 and prior[0]["document_ids"] == identifiers
+    assert previous["documents_touched"] == []
+    assert set(identifiers).issubset({
+        identifier for read in runtime.source_state.reads for identifier in read["document_ids"]
+    })
+    if revoke_ninth:
+        assert any(event.get("error") for event in events)
+        assert not any(event.get("type") == "orchestration_plan" for event in events)
+        assert len(harness.model_calls) == 1
+        assert len(harness.runs.items) == 1
+        return
+    assert response.status_code == 200 and not any(event.get("error") for event in events), events
+    projected = json.loads(harness.model_calls[-1]["messages"][1]["content"])
+    assert projected["user_selected"]["documents"] == identifiers
+    assert [item["document_id"] for item in projected["selected_sources"]] == identifiers
+    ledger_entry = projected["earlier_runs"]["runs"][-1]
+    assert ledger_entry["documents_touched"] == []
+    assert ledger_entry["requested_sources"]["document_ids"] == identifiers
+    continued = next(event["plan"] for event in events if event.get("type") == "orchestration_plan")
+    saved = harness.runs.read_item(continued["run_id"], "conversation-1")
+    assert saved["seeds"]["document_ids"] == identifiers
+    assert saved["seeds"]["continued_source_run_id"] == previous["run_id"]
+    assert set(saved["seeds"]["planning_source_revisions"]) == set(identifiers)
+    assert saved["request_resolution"]["requires_retrieval"] is True
+
+
+@pytest.mark.parametrize("replacement", [True, False])
+def test_continuation_does_not_override_a_replacement_selection_or_new_topic(
+    source_runtime, monkeypatch, replacement,
+):
+    runtime, harness = source_runtime, source_runtime.harness
+    previous = failed_source_selection(runtime, ["document-0", "document-1"])
+    message = "Review this different selected report." if replacement else "Explain the water cycle."
+    selected = ["narrative-doc"] if replacement else []
+    step = {"step_id": "read", "capability_id": "document_search", "arguments": {
+        "query": message, "document_ids": selected,
+    }}
+    answer = compose_step("answer", inputs={
+        "evidence": {"binding": input_binding("read", "prepared"), "allow_partial": False},
+    }) if replacement else compose_step("answer")
+    raw = {
+        "kind": "plan", "steps": [step, answer] if replacement else [answer],
+        "final_response": input_binding("answer"),
+    }
+    monkeypatch.setattr(importlib.import_module("functions_search"), "hybrid_search", lambda *args, **kwargs: [])
+    harness.replies = [
+        json.dumps({
+            "relationship": "follow_up" if replacement else "new_topic", "resolved_message": message,
+            "message_ids": [previous["user_message_id"]] if replacement else [],
+            "requires_retrieval": replacement, "clarification": "",
+        }),
+        json.dumps(raw),
+    ]
+    events = frames(runtime.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": "conversation-1", "turn_id": "new-source-choice",
+        "message": message, "selected_document_ids": selected, "approval_mode": "manual",
+    }, buffered=True))
+    assert not any(event.get("error") for event in events), events
+    payload = json.loads(harness.model_calls[-1]["messages"][1]["content"])
+    assert payload["user_selected"]["documents"] == selected
+    assert [item["document_id"] for item in payload["selected_sources"]] == selected
+    current_reads = {identifier for read in runtime.source_state.reads for identifier in read["document_ids"]}
+    assert not current_reads.intersection({"document-0", "document-1"})
+
+
+@pytest.mark.parametrize("hidden", [
+    {"masked": True}, {"is_deleted": True}, {"thread_info": {"active_thread": False}},
+])
+def test_hidden_source_turn_cannot_restore_its_requested_documents(source_runtime, modules, hidden):
+    runtime, harness = source_runtime, source_runtime.harness
+    previous = failed_source_selection(runtime, ["document-0", "document-1"])
+    message = harness.messages.read_item(previous["user_message_id"], "conversation-1")
+    message["metadata"] = {**(message.get("metadata") or {}), **hidden}
+    harness.messages.replace_item(
+        message["id"], message, etag=message["_etag"], match_condition=MatchConditions.IfNotModified,
+    )
+    ledger = modules.route._load_ledger("conversation-1", "owner", harness.settings)
+    restored = runtime.context.continue_requested_sources(
+        {}, {"relationship": "follow_up", "message_ids": [previous["user_message_id"]]},
+        ledger, user_id="owner", conversation_id="conversation-1", settings=harness.settings,
+    )
+    assert ledger["runs"] == []
+    assert restored.get("document_ids", []) == []
+    assert runtime.source_state.reads == []
+
+
+@pytest.mark.parametrize("source_count,max_bytes", [(101, 16384), (30, 1024)])
+def test_limited_continuation_discloses_the_full_set_limit_instead_of_dropping_sources(
+    source_runtime, source_count, max_bytes,
+):
+    context = source_runtime.context
+    identifiers = [f"source-{index}-" + "x" * 50 for index in range(source_count)]
+    ledger = context.build_run_ledger([{
+        "id": "previous", "status": "failed", "user_message_id": "previous-user",
+        "seeds": {"document_ids": identifiers}, "documents_touched": [],
+    }], settings={"chat_orchestration_ledger_max_bytes": max_bytes})
+    requested = ledger["runs"][0]["requested_sources"]
+    assert requested["source_count"] == source_count
+    assert requested["truncated"] is True
+    with pytest.raises(context.CatalogResolutionError) as failure:
+        context.continue_requested_sources(
+            {}, {"relationship": "follow_up", "message_ids": ["previous-user"]}, ledger,
+            user_id="owner", conversation_id="conversation-1",
+        )
+    assert failure.value.code == "source_continuation_limited"
+    assert "no sources were silently omitted" in str(failure.value)
+    assert source_runtime.source_state.reads == []
+
+
+def test_requested_sources_remain_distinct_from_bounded_successful_document_history(source_runtime):
+    context = source_runtime.context
+    identifiers = [f"document-{index}" for index in range(9)]
+    ledger = context.build_run_ledger([{
+        "id": "previous", "status": "failed", "user_message_id": "previous-user",
+        "plan": {"inputs": {"documents": [{"document_id": identifier} for identifier in identifiers]}},
+        "documents_touched": [{"document_id": identifier} for identifier in identifiers],
+    }])
+    entry = ledger["runs"][0]
+    assert len(entry["documents_touched"]) == 8
+    assert entry["requested_sources"]["document_ids"] == identifiers
+    restored = context.continue_requested_sources(
+        {}, {"relationship": "follow_up", "message_ids": ["previous-user"]}, ledger,
+        user_id="owner", conversation_id="conversation-1",
+    )
+    assert restored["document_ids"] == identifiers
+    merged = context.merge_elicitation_context(restored, {"choice": {"references": [{
+        "kind": "document", "id": "tabular-doc", "label": "Additional file",
+        "scope": {"kind": "personal", "id": "owner"},
+    }]}})
+    assert merged["document_ids"] == [*identifiers, "tabular-doc"]
+    assert restored["document_ids"] == identifiers
+
+
+def test_ambiguous_source_history_requires_a_choice_instead_of_a_relevance_probe(source_runtime):
+    context = source_runtime.context
+    ledger = context.build_run_ledger([
+        {
+            "id": f"previous-{index}", "status": "failed", "user_message_id": f"user-{index}",
+            "seeds": {"document_ids": [f"document-{index}"]},
+        }
+        for index in range(2)
+    ])
+    with pytest.raises(context.CatalogResolutionError) as failure:
+        context.continue_requested_sources(
+            {}, {"relationship": "follow_up", "message_ids": ["user-0", "user-1"]}, ledger,
+            user_id="owner", conversation_id="conversation-1",
+        )
+    assert failure.value.code == "source_continuation_ambiguous"
+    assert source_runtime.source_state.reads == []
+
+
+def test_source_continuation_keeps_original_workspace_and_tag_constraints(source_runtime):
+    context = source_runtime.context
+    ledger = context.build_run_ledger([{
+        "id": "previous", "status": "failed", "user_message_id": "previous-user",
+        "seeds": {
+            "document_ids": ["document-0"], "doc_scope": "group",
+            "active_group_ids": ["original-group"], "tags": ["approved"],
+            "document_filter_mode": "intersection",
+        },
+    }])
+    resolution = {"relationship": "follow_up", "message_ids": ["previous-user"], "requires_retrieval": True}
+    restored = context.continue_requested_sources(
+        {"doc_scope": "all"}, resolution, ledger, user_id="owner", conversation_id="conversation-1",
+    )
+    assert restored["doc_scope"] == "group"
+    assert restored["active_group_ids"] == ["original-group"]
+    assert restored["tags"] == ["approved"] and restored["document_filter_mode"] == "intersection"
+    replacement = {"doc_scope": "group", "active_group_ids": ["different-group"]}
+    unchanged = context.continue_requested_sources(
+        replacement, resolution, ledger, user_id="owner", conversation_id="conversation-1",
+    )
+    assert unchanged == replacement
+
+
+def test_identical_ids_with_different_source_constraints_are_not_an_unambiguous_continuation(source_runtime):
+    context = source_runtime.context
+    ledger = context.build_run_ledger([{
+        "id": f"previous-{index}", "status": "failed", "user_message_id": f"user-{index}",
+        "seeds": {"document_ids": ["document-0"], "doc_scope": "group",
+                  "active_group_ids": [f"group-{index}"]},
+    } for index in range(2)])
+    with pytest.raises(context.CatalogResolutionError) as error:
+        context.continue_requested_sources(
+            {}, {"relationship": "follow_up", "message_ids": ["user-0", "user-1"]}, ledger,
+            user_id="owner", conversation_id="conversation-1",
+        )
+    assert error.value.code == "source_continuation_ambiguous"
+
+
+def test_conversation_only_transformation_does_not_inherit_failed_turn_files(source_runtime):
+    context = source_runtime.context
+    ledger = context.build_run_ledger([{
+        "id": "previous", "status": "failed", "user_message_id": "previous-user",
+        "seeds": {"document_ids": ["document-0"]},
+    }])
+    restored = context.continue_requested_sources(
+        {}, {
+            "relationship": "follow_up", "message_ids": ["previous-user"], "requires_retrieval": False,
+        },
+        ledger, user_id="owner", conversation_id="conversation-1",
+    )
+    assert restored.get("document_ids", []) == []
+    assert source_runtime.source_state.reads == []
 
 
 @pytest.mark.parametrize("input_format", ["csv", "xlsx"])

@@ -990,3 +990,21 @@ def evaluate_tabular_transformation_rows(transformation_spec, source_rows):
         evaluate_tabular_transformation_row(normalized_spec, source_row)
         for source_row in list(source_rows or [])
     ]
+
+
+def aggregate_precise_tabular_values(values, operation):
+    """Aggregate decimal text exactly, returning decimal text without float loss."""
+    if operation not in {"sum", "min", "max"}:
+        raise TabularTransformationEvaluationError("Numeric aggregation is unsupported")
+    result = Decimal(0) if operation == "sum" else None
+    try:
+        with localcontext(_PRECISE_DECIMAL_CONTEXT):
+            for raw in values:
+                value = _parse_decimal_value(raw, precise=True)
+                if operation == "sum":
+                    result = _validate_precise_decimal(result + value)
+                elif result is None or (value < result if operation == "min" else value > result):
+                    result = value
+            return None if result is None else format(result, "f")
+    except DecimalException as exc:
+        raise TabularTransformationEvaluationError("Numeric aggregation exceeds bounded decimal limits") from exc
