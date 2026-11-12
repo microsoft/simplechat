@@ -1,7 +1,7 @@
 # test_workspace_authoring_backend.py
 """Executable contracts for native personal agent/action authoring.
 
-Version: 0.261.432
+Version: 0.261.435
 Implemented in: 0.261.096
 
 Real Flask route definitions, validators, payload normalizers, Key Vault helpers,
@@ -26,6 +26,8 @@ from unittest.mock import Mock, patch
 from azure.core import exceptions as azure_core_exceptions
 import pytest
 from flask import Blueprint, Flask, jsonify, request, session
+from functions_outbound_http import guard_login_credentials, guard_requests_session
+from functions_outbound_destinations import OutboundDestinationError
 
 from test_support.agent_delegation import (
     APP_ROOT,
@@ -204,6 +206,7 @@ def environment(monkeypatch):
         services.modules["config"].SECRET_KEY = "test-only-not-a-production-credential"
         services.appinsights.sanitize_log_message = lambda message: message
         services.appinsights.debug_print = Mock()
+        services.appinsights.is_debug_enabled = lambda: False
         for prefix in ("agent", "action"):
             for operation in ("creation", "update", "deletion"):
                 setattr(services.activity, f"log_{prefix}_{operation}", Mock())
@@ -305,6 +308,10 @@ def environment(monkeypatch):
             "clear_editor_test_secrets": authoring.clear_editor_test_secrets,
             "WorkspaceAuthoringValidation": authoring.WorkspaceAuthoringValidation,
             "validate_editor_action_manifest": authoring.validate_editor_action_manifest,
+            "validate_action_connection_update": authoring.validate_action_connection_update,
+            "guard_login_credentials": guard_login_credentials,
+            "guard_requests_session": guard_requests_session,
+            "OutboundDestinationError": OutboundDestinationError,
             "sanitize_agent_payload": payload.sanitize_agent_payload,
             "is_azure_ai_foundry_agent": payload.is_azure_ai_foundry_agent,
             "AgentPayloadError": payload.AgentPayloadError,
@@ -378,6 +385,7 @@ def environment(monkeypatch):
             "_resolve_action_identity_context", "_resolve_plugin_secret_context",
             "_action_test_origin", "_action_origin_secret_context", "_handle_mcp_configuration_error",
             "_prepare_action_test_manifest",
+            "_authorize_action_test_scope", "_resolve_group_for_test", "_validate_flat_http_action_test",
             "_flatten_editor_test_fields", "_prepare_editor_sql_test_data", "_prepare_editor_yamcs_test_data",
             "_is_personal_editor_test_request", "_assert_personal_editor_test_access",
             "_hydrate_sql_test_identity", "_load_existing_plugin_for_sql_test", "_resolve_secret_value_for_sql_test",
@@ -1489,6 +1497,7 @@ def test_sql_editor_driver_failures_do_not_echo_resolved_credentials(environment
 
 def test_new_yamcs_identity_testing_does_not_expand_group_or_admin_behavior(environment):
     env = environment
+    env.namespace["require_active_group"] = Mock(side_effect=PermissionError("No group editing grant"))
     for scope in ("group", "global"):
         response = env.client.post("/api/plugins/test-yamcs-connection", json={
             "identity_id": "another-scope-identity",
@@ -1496,7 +1505,7 @@ def test_new_yamcs_identity_testing_does_not_expand_group_or_admin_behavior(envi
             "additionalFields": {"instance": "demo"},
             "server_url": "https://yamcs.example.test", "instance": "demo", "action_scope": scope,
         })
-        assert response.status_code == 400
+        assert response.status_code == 403
     env.identities.hydrate_action_identity_reference.assert_not_called()
 
 

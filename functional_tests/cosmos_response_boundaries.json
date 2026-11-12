@@ -7212,36 +7212,38 @@
     },
     "functional_tests/test_yamcs_action_plugin.py::FakeConfigCosmosContainer": {
       "boundary": {
-        "sha256": "4018e342fac645ac62a882cfc9e1c46c2102e9ad98f53bc5c6d115bf958f8558",
+        "sha256": "187d877dea5503f3170edf943b0649002ffd2c1b6cde7472d83feccf45f3c1e2",
         "methods": [
-          "read_item",
-          "upsert_item"
+          "read_item"
         ],
         "kind": "class",
-        "inherited_bases": [],
-        "imports_sha256": "c627a61e49bf8d17af74ea2e167c6ee7539348e10ea5cffa9c46b26610908c10"
+        "inherited_bases": [
+          "CosmosContainer"
+        ],
+        "imports_sha256": "9c59f1321c626e81c32b5864e955d3e1abaa18b2e2c9c78328c867512bb8f3d4"
       },
-      "classification": "legacy-inline",
-      "contract": "Unchanged inline Cosmos-shaped test container outside the migrated shared defaults. Its test-specific response behavior is an explicit staged-migration baseline, not blanket runtime SDK proof.",
+      "classification": "sdk-default",
+      "contract": "The bootstrap container inherits the shared SDK-default CosmosContainer. Its deterministic settings read returns native CosmosDict responses; inherited writes, ETags, scoped query rows and stale conditional-write refusal retain the shared SDK contract.",
       "tests": [
-        "functional_tests/test_yamcs_action_plugin.py"
+        "functional_tests/test_outbound_destination_policy.py::test_yamcs_bootstrap_doubles_use_native_sdk_contracts_in_isolated_processes"
       ]
     },
     "functional_tests/test_yamcs_basic_auth.py::FakeConfigCosmosContainer": {
       "boundary": {
-        "sha256": "4018e342fac645ac62a882cfc9e1c46c2102e9ad98f53bc5c6d115bf958f8558",
+        "sha256": "187d877dea5503f3170edf943b0649002ffd2c1b6cde7472d83feccf45f3c1e2",
         "methods": [
-          "read_item",
-          "upsert_item"
+          "read_item"
         ],
         "kind": "class",
-        "inherited_bases": [],
-        "imports_sha256": "f117480d3a78090c5ace2f23e79f1303a1bdc7b0fca5cb570ce9eb9cffa2c0a5"
+        "inherited_bases": [
+          "CosmosContainer"
+        ],
+        "imports_sha256": "f5580c8884e0a6ff58b9ba9f869b30ceccbfe265597ee679bbc585f63e7fe469"
       },
-      "classification": "legacy-inline",
-      "contract": "Unchanged inline Cosmos-shaped test container outside the migrated shared defaults. Its test-specific response behavior is an explicit staged-migration baseline, not blanket runtime SDK proof.",
+      "classification": "sdk-default",
+      "contract": "The bootstrap container inherits the shared SDK-default CosmosContainer. The runtime probe verifies native point responses, updated ETags, plain scoped query rows and preservation after a stale conditional write.",
       "tests": [
-        "functional_tests/test_yamcs_basic_auth.py"
+        "functional_tests/test_outbound_destination_policy.py::test_yamcs_bootstrap_doubles_use_native_sdk_contracts_in_isolated_processes"
       ]
     }
   },
@@ -7460,9 +7462,7 @@
     "functional_tests/test_workflow_result_followup.py::Messages": "36d789c1247b2f2488093045647a6670d1f7f24e548aac09f24650f90e292b6d",
     "functional_tests/test_workflow_runtime_integration.py::ServiceContainer": "cffcfe612c3e5963875a758197331c393c580d29adec7191eefecd93e0533999",
     "functional_tests/test_workflow_structured_flow.py::JournalContainer": "22617222c341f976e6438a50dad225229aba459fb17ae631c2da34a931e488f6",
-    "functional_tests/test_workflow_task_result_handoff.py::RunItemsContainer": "c3b26a1b2428fe15593ce4f45db10df0e208217f4dfee7f200f74d75650b3dde",
-    "functional_tests/test_yamcs_action_plugin.py::FakeConfigCosmosContainer": "484348ec19021ba279aa44c152721f7d0f8da6eb16f72afca92c0035156e5588",
-    "functional_tests/test_yamcs_basic_auth.py::FakeConfigCosmosContainer": "98e363d239d8d8432772c3921fe34da109d39895a30ae200ce76823c0e968589"
+    "functional_tests/test_workflow_task_result_handoff.py::RunItemsContainer": "c3b26a1b2428fe15593ce4f45db10df0e208217f4dfee7f200f74d75650b3dde"
   },
   "owners": {
     "application/single_app/app_settings_cache.py::_append_stream_session_event_fallback": {
@@ -26729,10 +26729,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Personal name lookup consumes plain query rows through id/name mapping access. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Personal name lookup consumes plain query rows through id/name mapping access. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26752,10 +26752,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Global name lookup consumes plain query rows through id mapping access. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Global name lookup consumes plain query rows through id mapping access. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26780,10 +26780,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Group name/merge lookup consumes plain query rows and preserves explicit group partition routing. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Group name/merge lookup consumes plain query rows and preserves explicit group partition routing. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26813,10 +26813,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Cleanup iterates plain query-row mappings and only compares stored string references; no strict response contract. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Cleanup iterates plain query-row mappings and only compares stored string references; no strict response contract. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26836,10 +26836,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Post-commit conditional patch returns the SDK mapping with its new ETag; the editor projection consumes mappings and constructs plain browser records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Post-commit conditional patch returns the SDK mapping with its new ETag; the editor projection consumes mappings and constructs plain browser records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_reminder_patch_preserves_sdk_response_and_etag",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26859,10 +26859,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Conditional delete response is unused; its authorized input record and ETag are mapping-compatible, with SDK ETag/conflict behavior retained. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Conditional delete response is unused; its authorized input record and ETag are mapping-compatible, with SDK ETag/conflict behavior retained. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26882,10 +26882,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Conditional delete response is unused; its authorized input record and ETag are mapping-compatible, with SDK ETag/conflict behavior retained. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Conditional delete response is unused; its authorized input record and ETag are mapping-compatible, with SDK ETag/conflict behavior retained. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26905,10 +26905,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Conditional delete response is unused; its authorized input record and ETag are mapping-compatible, with SDK ETag/conflict behavior retained. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Conditional delete response is unused; its authorized input record and ETag are mapping-compatible, with SDK ETag/conflict behavior retained. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26933,10 +26933,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Plain query rows are read through mapping guards and projected before browser JSON; no strict point-response consumer. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Plain query rows are read through mapping guards and projected before browser JSON; no strict point-response consumer. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26956,10 +26956,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Plain query rows are read through mapping guards and projected before browser JSON; no strict point-response consumer. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Plain query rows are read through mapping guards and projected before browser JSON; no strict point-response consumer. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -26984,10 +26984,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "Plain query rows are read through mapping guards and projected before browser JSON; no strict point-response consumer. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "Plain query rows are read through mapping guards and projected before browser JSON; no strict point-response consumer. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -27007,10 +27007,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -27030,10 +27030,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -27053,10 +27053,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -27076,10 +27076,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "SDK point mapping is checked through get(), retains its ETag and authorized partition, and remains mapping-compatible through editor projection/merge. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -27104,10 +27104,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK create/replace mapping preserves conditional ETags and credential bindings; downstream reminder/projection helpers consume mappings and build plain editor records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "SDK create/replace mapping preserves conditional ETags and credential bindings; downstream reminder/projection helpers consume mappings and build plain editor records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -27132,10 +27132,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK create/replace mapping preserves conditional ETags and credential bindings; downstream reminder/projection helpers consume mappings and build plain editor records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "SDK create/replace mapping preserves conditional ETags and credential bindings; downstream reminder/projection helpers consume mappings and build plain editor records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -27160,10 +27160,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "aa067e8f3673492d50165f24ca184812f8e70e4d67cde0dfae9b64bf2f527b67"
+        "module_sha256": "94eaaca4a036c2b65909e181df4a3cb8ae84e6377190fb27fb0f6bf4bf503bd9"
       },
       "classification": "sdk-compatible",
-      "contract": "SDK create/replace mapping preserves conditional ETags and credential bindings; downstream reminder/projection helpers consume mappings and build plain editor records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination.",
+      "contract": "SDK create/replace mapping preserves conditional ETags and credential bindings; downstream reminder/projection helpers consume mappings and build plain editor records. Merge integration: this storage implementation remains AST-identical to the reviewed credential owner. Shared projection/classic-write consumers are now combined with binding readiness. Installed-SDK editor CRUD/CAS, reminder, and raw/cleaned readiness regressions exercise that combination. Combined outbound-action/agent-credential integration review: this storage owner body and call shapes match Development; real-owner SDK and shared-agent regressions were rerun with both protections present.",
       "tests": [
         "functional_tests/test_agent_credential_owner_runtime.py::test_native_agent_owner_sdk_contracts",
         "functional_tests/test_shared_agent_secret_responses.py::test_shared_agent_raw_and_cleaned_projections_keep_real_runtime_readiness",
@@ -32077,7 +32077,7 @@
     },
     "application/single_app/route_backend_plugins.py::edit_plugin": {
       "boundary": {
-        "sha256": "33d4fff6f75f78a7b47db4aab6feac61be6aa97534c858376aee87a74509195c",
+        "sha256": "a4adb7ce73e1ddd340cd0ad8e11fae911390bde4fed9f6108229300ad9219b35",
         "points": [
           {
             "method": "read_item",
@@ -32087,20 +32087,20 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d216807e4d1e88608cf19390c10542d65dba8094782ad9a7f3069cd7809b5ef1"
+        "module_sha256": "ede4197b34141f5becd0af22b3b9f246028bf45b3e70d9a569dd5efd12c02752"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged admin route passes the exact scoped CosmosDict point read to the mapping-compatible legacy-update validator. Renewed runtime evidence verifies identity/ETag preservation and refuses a missing or mismatched exact record before invoking a writer.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The admin route still passes its exact scoped CosmosDict point read to the mapping-compatible legacy validator. Added connection-retention validation consumes authorized record fields without a new strict point-document contract. Renewed real-owner SDK cases preserve IDs/ETags and refuse missing or mismatched exact records before writing.",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
         "functional_tests/test_plugin_routes_cosmos_contract.py::test_global_legacy_update_consumes_sdk_point_response"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_plugins.py::set_user_plugins": {
       "boundary": {
-        "sha256": "2a84bcceb1cea62cb4c5e3c20803005f63a499e4def57c408eef93e1e8e04aa9",
+        "sha256": "d22151658ecfb4e5314062dbd3fbdfa90f428595e18fbebaa6340aaa717a3b0a",
         "points": [
           {
             "method": "read_item",
@@ -32110,20 +32110,20 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "d216807e4d1e88608cf19390c10542d65dba8094782ad9a7f3069cd7809b5ef1"
+        "module_sha256": "ede4197b34141f5becd0af22b3b9f246028bf45b3e70d9a569dd5efd12c02752"
       },
       "classification": "sdk-compatible",
-      "contract": "The unchanged classic collection save passes its actor-partitioned SDK point mapping to the real legacy-update validator. Renewed runtime coverage preserves fields/ETags and refuses foreign or missing exact IDs before any writer; shared list projections do not alter this storage consumer.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The classic collection save retains its actor-partitioned SDK point mapping and real legacy-update validator. Added name disambiguation and destination checks consume mapping fields, not a strict copied SDK document. Renewed runtime evidence preserves IDs/ETags and refuses foreign or missing exact records before writers.",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
         "functional_tests/test_plugin_routes_cosmos_contract.py::test_personal_legacy_update_consumes_sdk_point_response"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_plugins.py::test_cosmos_connection": {
       "boundary": {
-        "sha256": "b0a291494272cabf99d1c4e6c442e397453712b28ad1434291b0192fe717120e",
+        "sha256": "5d45f4562dbb127855097b923cb1fd96ed445060882d84187b32acbc9a4a3db7",
         "points": [],
         "queries": [
           {
@@ -32133,15 +32133,15 @@
           }
         ],
         "batches": [],
-        "module_sha256": "d216807e4d1e88608cf19390c10542d65dba8094782ad9a7f3069cd7809b5ef1"
+        "module_sha256": "ede4197b34141f5becd0af22b3b9f246028bf45b3e70d9a569dd5efd12c02752"
       },
       "classification": "response-unused",
-      "contract": "The unchanged connection probe drains scalar SELECT TOP 1 VALUE c.id query rows only to verify permission; it never copies them into a document contract. Renewed owner-runtime coverage verifies SDK metadata handling, lazy query draining, routing and response-hook headers.",
-      "evidence_scope": "owner-runtime",
+      "contract": "The authorized probe drains scalar SELECT TOP 1 VALUE c.id query rows only to verify permission; it never copies them into a document contract. Added authoring/credential checks precede the query and leave this consumer unchanged. Renewed SDK runtime cases verify metadata handling, lazy draining, routing and response-hook headers.",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_cosmos_connection_drains_query_rows_without_treating_them_as_documents",
         "functional_tests/test_plugin_routes_cosmos_contract.py::test_cosmos_connection_consumes_lazy_query_results"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_public_documents.py::register_route_backend_public_documents.api_bulk_tag_public_documents": {
       "boundary": {

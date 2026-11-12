@@ -9,6 +9,8 @@ from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_outbound_destinations import normalize_outbound_url
+from functions_outbound_http import create_guarded_session
 from functions_tableau_operations import (
     TABLEAU_AUTH_METHOD_PAT,
     TABLEAU_AUTH_METHOD_USERNAME_PASSWORD,
@@ -182,6 +184,7 @@ class TableauPlugin(BasePlugin):
         )
 
     def _create_server(self):
+        normalize_outbound_url(self.endpoint)
         tsc = self._require_tsc()
         debug_print(
             f"[TABLEAU_PLUGIN] Creating Tableau server client endpoint={self.endpoint} "
@@ -189,7 +192,10 @@ class TableauPlugin(BasePlugin):
             f"auth_method={self.auth_method} timeout={self.timeout} "
             f"use_server_version={self.use_server_version}"
         )
-        server = tsc.Server(self.endpoint, use_server_version=self.use_server_version)
+        server = tsc.Server(
+            self.endpoint, use_server_version=self.use_server_version,
+            session_factory=create_guarded_session, http_options={"timeout": self.timeout},
+        )
         if hasattr(server, "add_http_options"):
             try:
                 server.add_http_options({"timeout": self.timeout})

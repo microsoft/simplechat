@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional tests for MCP discovery and connection-test authorization ordering.
-Version: 0.261.428
+Version: 0.261.435
 Implemented in: 0.261.029
 
 Executes real route/helper bodies with Flask requests and mocked I/O boundaries.
@@ -22,6 +22,7 @@ import types
 import time
 import unittest
 import uuid
+from copy import deepcopy
 from unittest.mock import AsyncMock, Mock, patch
 
 from flask import Flask, jsonify, request, session
@@ -38,7 +39,11 @@ from functions_legacy_action_management import (
 )
 import functions_mcp_operations as operations
 import json_schema_validation as validation
-from functions_workspace_authoring import WorkspaceAuthoringValidation
+from functions_workspace_authoring import (
+    WorkspaceAuthoringValidation, apply_group_action_write, editor_error_response,
+    legacy_editor_write_body, validate_action_connection_update,
+)
+from functions_databricks_operations import DATABRICKS_PLUGIN_TYPE, DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE
 from test_mcp_legacy_stdio_management import GROUP, OWNER, action_services, remote
 
 
@@ -54,6 +59,9 @@ ROUTE_FUNCTIONS = {
     "_resolve_secret_value_for_action_test",
     "_hydrate_mcp_custom_headers_for_test",
     "_prepare_action_test_manifest",
+    "_authorize_action_test_scope",
+    "_resolve_group_for_test",
+    "_prepare_group_action_payload",
     "_run_action_connection_test",
     "test_mcp_action_connection",
     "discover_mcp_tools",
@@ -84,7 +92,15 @@ class McpActionRouteSecurityTests(unittest.TestCase):
         presets = types.ModuleType("functions_mcp_presets")
         presets.normalize_mcp_preset_id = lambda value: value or "generic"
         presets.mcp_server_preset_exists = lambda value: value == "generic"
-        self.modules = patch.dict(sys.modules, {"functions_mcp_presets": presets})
+        keyvault = types.ModuleType("functions_keyvault")
+        keyvault.redact_plugin_secret_values = deepcopy
+        keyvault.validate_secret_name_dynamic = lambda value: value.startswith("kv-")
+        appinsights = types.ModuleType("functions_appinsights")
+        appinsights.log_event = Mock()
+        self.modules = patch.dict(sys.modules, {
+            "functions_mcp_presets": presets, "functions_keyvault": keyvault,
+            "functions_appinsights": appinsights,
+        })
         self.modules.start()
         self.addCleanup(self.modules.stop)
         logger = types.ModuleType("functions_appinsights")
@@ -106,6 +122,7 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "logging": logging,
             "time": time,
             "uuid": uuid,
+            "deepcopy": deepcopy,
             "jsonify": jsonify,
             "request": request,
             "session": session,
@@ -113,6 +130,8 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "debug_print": Mock(),
             "CHART_PLUGIN_TYPE": "chart",
             "MSGRAPH_PLUGIN_TYPE": "msgraph",
+            "DATABRICKS_PLUGIN_TYPE": DATABRICKS_PLUGIN_TYPE,
+            "DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE": DATABRICKS_LEGACY_TABLE_PLUGIN_TYPE,
             "WORKSPACE_IDENTITY_SCOPE_PERSONAL": "personal",
             "WORKSPACE_IDENTITY_SCOPE_GROUP": "group",
             "WORKSPACE_IDENTITY_SCOPE_GLOBAL": "global",
@@ -120,11 +139,20 @@ class McpActionRouteSecurityTests(unittest.TestCase):
             "LegacyActionConflictError": LegacyActionConflictError,
             "LegacyActionSourceUpdateError": LegacyActionSourceUpdateError,
             "WorkspaceAuthoringValidation": WorkspaceAuthoringValidation,
+            "validate_action_connection_update": validate_action_connection_update,
+            "apply_group_action_write": apply_group_action_write,
+            "legacy_editor_write_body": legacy_editor_write_body,
+            "editor_error_response": Mock(wraps=editor_error_response),
             "SecretReturnType": types.SimpleNamespace(NAME="name", VALUE="value"),
             "get_current_user_id": lambda: session["user"]["oid"],
             "require_active_group": lambda user_id: "group-a",
-            "resolve_delegation_group_scope": lambda user_id, group_id: group_id or "group-a",
             "assert_group_role": Mock(),
+            "ensure_editor_access": Mock(),
+            "resolve_delegation_group_scope": lambda user_id, group_id=None: group_id or "group-a",
+            "find_group_by_id": lambda group_id: {"id": group_id},
+            "get_user_role_in_group": lambda group, user_id: "Owner",
+            "group_action_management_operations": lambda *args: {"create", "edit", "delete", "test"},
+            "get_group_workflow_management_roles": lambda settings: ("Owner", "Admin"),
             "get_personal_action": self.get_personal,
             "get_group_action": Mock(return_value=None),
             "delete_group_action": Mock(return_value=True),
@@ -257,7 +285,11 @@ class McpActionRouteSecurityTests(unittest.TestCase):
                 )
                 response = self.post(route, json=payload)
                 self.assertEqual(response.status_code, 400)
-                self.assertEqual(response.get_json()["error_type"], "mcp_stdio_removed")
+                if route == "/group":
+                    rejected = self.namespace["editor_error_response"].call_args.args[0]
+                    self.assertIsInstance(rejected, manifests.McpStdioRemovedError)
+                else:
+                    self.assertEqual(response.get_json()["error_type"], "mcp_stdio_removed")
         self.assert_no_execution_or_credentials()
 
     def test_group_cleanup_exception_is_limited_to_retired_owned_actions(self):

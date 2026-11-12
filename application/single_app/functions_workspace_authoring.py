@@ -22,6 +22,7 @@ from agent_credential_contracts import (
     agent_credential_is_ready, agent_credential_scope, agent_credential_status,
     credential_value,
 )
+from functions_outbound_destinations import OutboundDestinationError, action_connection_signature
 
 
 EDITOR_SECRET_MASK = "***REDACTED***"
@@ -485,6 +486,35 @@ def list_editor_records(kind, user_id, settings):
     return records
 
 
+def validate_action_connection_update(existing, updated, submitted):
+    """Never carry an opaque saved credential to a different connector/origin."""
+    try:
+        updated_signature = action_connection_signature(updated)
+    except OutboundDestinationError as exc:
+        raise WorkspaceAuthoringValidation(exc.public_message) from exc
+    if not existing:
+        return
+    try:
+        unchanged = action_connection_signature(existing) == updated_signature
+    except OutboundDestinationError:
+        # A previously unsafe record can be repaired, but not by retaining its secrets.
+        unchanged = False
+    if unchanged:
+        return
+    for path in editor_secret_paths(existing, "actions"):
+        retained = _get(updated, path)
+        if retained is _MISSING or retained in (None, ""):
+            continue
+        provided = _get(submitted, path)
+        if (
+            provided is _MISSING or provided in (None, "")
+            or _is_placeholder(provided) or _is_reference(provided)
+        ):
+            raise WorkspaceAuthoringValidation(
+                "Re-enter or clear stored credentials when changing an action's connection destination."
+            )
+
+
 def merge_editor_write(existing, payload, kind, *, creating=False, resolve_stored_placeholder=None):
     """Apply changed leaves; removals and clearing configured secrets require explicit intent."""
     if not isinstance(payload, dict) or set(payload) - {
@@ -587,6 +617,8 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
             raise WorkspaceAuthoringValidation("Clear stored credentials explicitly before replacing their configuration.")
     if any(_is_placeholder(value) for _, value in _walk(result)):
         raise WorkspaceAuthoringValidation("A stored secret is unavailable. Re-enter its value.")
+    if kind == "actions":
+        validate_action_connection_update(existing, result, updates)
     return result
 
 

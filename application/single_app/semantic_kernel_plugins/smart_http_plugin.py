@@ -44,6 +44,9 @@ from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_log
 import re
 import functools
 
+from functions_outbound_destinations import OutboundDestinationError, normalize_outbound_url
+from functions_outbound_http import create_guarded_aiohttp_session
+
 def async_plugin_logger(plugin_name: str):
     """Async-compatible plugin function logger decorator."""
     def decorator(func):
@@ -216,8 +219,9 @@ class SmartHttpPlugin:
         content_type = "unknown"
         
         try:
+            uri = normalize_outbound_url(uri).url
             timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with create_guarded_aiohttp_session(timeout=timeout) as session:
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
                 }
@@ -276,6 +280,10 @@ class SmartHttpPlugin:
                             self._track_function_call("get_web_content", parameters, result, call_start, uri, "text/plain")
                             return result
                         
+        except OutboundDestinationError as exc:
+            error_result = f"Error: {exc.public_message}"
+            self._track_function_call("get_web_content", parameters, error_result, call_start, uri, "destination_policy")
+            return error_result
         except asyncio.TimeoutError:
             error_result = "Error: Request timed out (30 seconds). The website may be slow or unresponsive."
             self._track_function_call("get_web_content", parameters, error_result, call_start, uri, "timeout")
@@ -727,8 +735,9 @@ class SmartHttpPlugin:
         parameters = {"uri": uri, "body": body[:100] + "..." if len(body) > 100 else body}  # Truncate body for display
         
         try:
+            uri = normalize_outbound_url(uri).url
             timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with create_guarded_aiohttp_session(timeout=timeout) as session:
                 headers = {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
                     'Content-Type': 'application/json'
@@ -750,6 +759,10 @@ class SmartHttpPlugin:
                     self._track_function_call("post_web_content", parameters, result, call_start, uri, "application/json")
                     return result
                     
+        except OutboundDestinationError as exc:
+            error_result = f"Error: {exc.public_message}"
+            self._track_function_call("post_web_content", parameters, error_result, call_start, uri, "destination_policy")
+            return error_result
         except Exception as e:
             self.logger.error(f"Error posting to {uri}: {str(e)}")
             error_result = f"Error posting content: {str(e)}"
