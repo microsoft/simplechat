@@ -983,11 +983,18 @@ CAPABILITY_REGISTRY = (
         'request_gate': None,
         'summary': "Compute over CSV or Excel data rather than reading it as prose.",
         'when_to_use': (
-            'Compute over exactly one authorized replayable CSV or workbook without publishing files. '
+            'Compute over authorized replayable CSV or workbook data without publishing files. '
             'Query requires a row-local query_expression and explicit columns; transformations require '
             'an executable transformation_spec or explicit schema. Analysis-only returns analysis, '
             'not implicit source rows. Declare exactly the selected result_output_variants outputs. '
-            'Mixed/multiple sources and bare prose aggregate plans are unsupported.'
+            'query/transform/analysis accept one file. For precise multi-file calculations or grouped '
+            'totals, native_operation=relate requires a tabular-relate-v1 relational_spec: datasets '
+            'bind aliases to document_ids in the same order, steps perform explicit keyed/date-effective '
+            'joins, filters, precise derives and aggregates, result names the final step, and output '
+            'projects exact fields with tabular-transform-v2. Each dataset column is alias.header. '
+            'Join how/cardinality/on are explicit; null keys never match. Aggregated sum/min/max are '
+            'decimal strings, not floats. The records, lineage and coverage outputs must all be declared. '
+            'All bound datasets must contribute to the result. No prose-only calculation or narrative source is admitted.'
         ),
         'settings_gates': (),
         'settings_gates_any': (
@@ -1475,7 +1482,9 @@ CAPABILITY_REGISTRY = (
             "Bind earlier research or prepared content as named inputs. Do not duplicate agent work."
             " When the action catalog says document_binding_supported, bind selected workspace "
             "documents in arguments.document_ids. Native metadata inspection can then satisfy "
-            "the selected-source requirement without a redundant Search or Analyze step."
+            "the selected-source requirement without a redundant Search or Analyze step. "
+            "Declare document_read_mode=content for text, native for native properties/layout/comments, "
+            "or mixed for both; a native report is never a CSV data or calculation reader."
         ),
         'settings_gates': (
             'enable_chat_orchestration',
@@ -1509,6 +1518,14 @@ CAPABILITY_REGISTRY = (
                         'Exact selected workspace document IDs. Only an action whose catalog says '
                         'document_binding_supported may use this field. Every read is confined to '
                         'these sources and the action/user permissions.'
+                    ),
+                },
+                'document_read_mode': {
+                    'type': 'string', 'enum': ['content', 'native', 'mixed'],
+                    'description': (
+                        'Purpose of a document-bound action: content reads, native metadata inspection, '
+                        'or both. Requires document_ids and a Document Search action. '
+                        'Source format and current permissions still restrict every function.'
                     ),
                 },
                 'visuals': {
@@ -2033,6 +2050,7 @@ def _resolve_descriptor(descriptor):
             for operation, task_type in (
                 ('query', 'structured_export'), ('transform', 'structured_export'),
                 ('analysis', 'hierarchical_analysis'), ('transform', 'combined'),
+                ('relate', 'structured_export'),
             )
         ]
     return capability

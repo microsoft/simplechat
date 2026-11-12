@@ -1,9 +1,10 @@
 # test_orchestration_document_action_end_to_end.py
 """
 Authenticated native-document orchestration from HTTP submission to saved answer.
-Version: 0.261.426
+Version: 0.261.437
 Implemented in: 0.261.419
 Production plugin discovery coverage added in: 0.261.421
+Source-aware native reader coexistence added in: 0.261.437
 
 Real routes, plugin discovery, approval/leases, native action filters,
 report/citation projection, retention, composition, completeness and publication
@@ -91,7 +92,7 @@ def native_http(source_runtime, modules, monkeypatch):
     monkeypatch.setattr(telemetry, "get_appinsights_logger", lambda: logger)
     state = SimpleNamespace(
         runtime=runtime, modules=modules, action=action, actions=actions, users=users,
-        logger=logger, native_calls=[], report_reads=[], fail_report=False, failures=[],
+        logger=logger, native_calls=[], offered_functions=[], report_reads=[], fail_report=False, failures=[],
     )
     log_failure = harness.execution._log_failure
 
@@ -133,6 +134,7 @@ def native_http(source_runtime, modules, monkeypatch):
 
     async def native_reply(self, history, settings):
         state.native_calls.append(deepcopy([message.to_dict() for message in history.messages]))
+        state.offered_functions.append([tool["function"]["name"] for tool in settings.tools])
         if len(state.native_calls) == 1:
             return [ChatMessageContent(role=AuthorRole.ASSISTANT, items=[FunctionCallContent(
                 id="read-native", name="document_search-get_document_accessibility_report",
@@ -217,6 +219,7 @@ def test_native_auto_turn_reaches_a_saved_cited_answer(native_http, caplog, exte
     answer = f"{finding} Formal conformance is not determined. {marker}"
     proposal = action_proposal((LEFT,), action=state.action)
     proposal["steps"][0]["arguments"]["task"] = MESSAGE
+    proposal["steps"][0]["arguments"]["document_read_mode"] = "native"
     proposal["steps"][1]["arguments"]["instruction"] = (
         "Report the native facts, source citations, and explicit inspection limits."
     )
@@ -288,6 +291,12 @@ def test_native_auto_turn_reaches_a_saved_cited_answer(native_http, caplog, exte
             assert [record.sc_outcome for record in reads] == ["started", "failed"]
             assert not any(record.sc_stage in ("gather_retained", "compose_retained") for record in records)
         return
+    assert all(
+        "document_search-get_document_accessibility_report" in functions
+        for functions in state.offered_functions
+    )
+    profile = json.loads(state.native_calls[0][-1]["content"])["document_sources"][0]
+    assert profile["document_read_mode"] == "native"
     assert response.status_code == 200 and saved["status"] == "completed", "\n".join(state.failures)
     assert [step["capability_id"] for step in plan["steps"]] == ["action_invoke", "compose"]
     assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]

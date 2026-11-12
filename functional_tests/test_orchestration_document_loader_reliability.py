@@ -1,8 +1,9 @@
 # test_orchestration_document_loader_reliability.py
 """
 Functional tests for shared document-action loading and safe failure outcomes.
-Version: 0.261.423
+Version: 0.261.437
 Implemented in: 0.261.421
+Source-aware reader admission added in: 0.261.437
 
 Real authenticated routes, discovery, source checks, SDK-shaped document stores,
 chunk readers, action filters, retention, and final publication run offline.
@@ -16,9 +17,11 @@ import importlib.util
 import json
 import logging
 from copy import deepcopy
+from io import BytesIO
 from types import SimpleNamespace
 
 import pytest
+from openpyxl import Workbook
 from semantic_kernel.connectors.ai.open_ai import AzureChatCompletion
 from semantic_kernel.contents import AuthorRole, ChatMessageContent, FunctionCallContent
 
@@ -27,6 +30,7 @@ from test_orchestration_document_action_end_to_end import (
     LEFT, PRIVATE, frames, modules, native_http, real_http_harness, source_runtime,
 )
 from test_orchestration_planner_contract_recovery import action_proposal
+from test_orchestration_source_kind_planning import RIGHT
 
 
 __all__ = ["modules", "native_http", "real_http_harness", "source_runtime"]
@@ -38,9 +42,31 @@ FAILURE_CASES = (
 )
 
 
-def submit_action_turn(state, message, answer, turn_id):
-    proposal = action_proposal((LEFT,), action=state.action)
+def source_chunk(document):
+    return {
+        "id": f'{document["id"]}_1', "document_id": document["id"], "user_id": "owner",
+        "file_name": document["file_name"], "version": document["version"],
+        "chunk_id": "1", "chunk_sequence": 1, "page_number": 1,
+        "chunk_text": "The stored row has Code 001 and Amount 25.",
+    }
+
+
+def source_marker(citations, document, operation):
+    payload = citations.annotate_document_search_payload({
+        "document": {"id": document["id"], "file_name": document["file_name"], "version": document["version"]},
+        "scope": "personal", "chunks": [source_chunk(document)],
+    }, operation)
+    return payload["chunks"][0]["citation"] if operation == "retrieve_document_chunks" else payload["citation"]
+
+
+def submit_action_turn(
+    state, message, answer, turn_id, *, document_ids=(LEFT,), context_documents=None, compose_reply=None,
+    document_read_mode=None,
+):
+    proposal = action_proposal(document_ids, action=state.action)
     proposal["steps"][0]["arguments"]["task"] = message
+    if document_read_mode is not None:
+        proposal["steps"][0]["arguments"]["document_read_mode"] = document_read_mode
     proposal["steps"][1]["arguments"]["instruction"] = (
         "Use only the returned source evidence and copy its citation."
     )
@@ -50,7 +76,7 @@ def submit_action_turn(state, message, answer, turn_id):
             "requires_retrieval": True, "clarification": "",
         }),
         json.dumps(proposal),
-        answer,
+        compose_reply or answer,
         json.dumps({"requirements": [{
             "id": identifier, "requirement": requirement, "status": "satisfied",
             "reason": "", "evidence_refs": [], "answer_quote": answer,
@@ -59,7 +85,7 @@ def submit_action_turn(state, message, answer, turn_id):
     response = state.runtime.client.post("/api/v2/orchestration/plan", json={
         "conversation_id": "conversation-1", "turn_id": turn_id, "message": message,
         "planning_submission_id": f"{turn_id}-submit", "approval_mode": "auto",
-        "selected_document_ids": [LEFT],
+        "selected_document_ids": list(document_ids), "context_documents": context_documents or [],
     }, buffered=True)
     events = frames(response)
     plans = [event["plan"] for event in events if event.get("type") == "orchestration_plan"]
@@ -68,6 +94,290 @@ def submit_action_turn(state, message, answer, turn_id):
     plan = plans[0]
     saved = state.runtime.harness.runs.read_item(plan["run_id"], "conversation-1")
     return response, events, plan, saved
+
+
+@pytest.mark.parametrize("source_count", [1, 3, 9])
+def test_tabular_content_reads_keep_every_authorized_source_and_exclude_native_inspection(
+    native_http, monkeypatch, source_count,
+):
+    state = native_http
+    harness = state.runtime.harness
+    identifiers = [LEFT, *(f"document-{index}" for index in range(source_count - 1))]
+    harness.settings["max_auto_invoke_attempts"] = max(4, source_count + 1)
+    documents = harness.config.cosmos_user_documents_container
+    owner = importlib.import_module("functions_documents")
+    citations = importlib.import_module("functions_agent_document_citations")
+    offered = []
+    read_ids = []
+    markers = []
+    monkeypatch.setattr(owner, "cosmos_user_documents_container", documents)
+    for index, identifier in enumerate(identifiers):
+        document = documents.read_item(identifier, identifier)
+        document.update({
+            "file_name": f"records-{index}.csv", "title": f"Display-only-{index}.pdf",
+            "num_chunks": 1, "indexed_chunk_count_version": document["version"],
+        })
+        documents.upsert_item(document)
+        marker = source_marker(citations, document, "retrieve_document_chunks")
+        markers.append(marker)
+
+    def search(**kwargs):
+        identifier = next(
+            identifier for identifier in identifiers if kwargs.get("filter") == f"document_id eq '{identifier}'"
+        )
+        read_ids.append(identifier)
+        document = documents.read_item(identifier, identifier)
+        return [source_chunk(document)]
+
+    monkeypatch.setattr(owner, "_get_search_client", lambda **kwargs: SimpleNamespace(search=search))
+
+    async def content_reply(self, history, settings):
+        state.native_calls.append(deepcopy([message.to_dict() for message in history.messages]))
+        offered.append([tool["function"]["name"] for tool in settings.tools])
+        results = [item.result for message in history.messages for item in message.items if hasattr(item, "result")]
+        if not results:
+            return [ChatMessageContent(role=AuthorRole.ASSISTANT, items=[
+                FunctionCallContent(
+                    id=f"content-{index}", name="document_search-retrieve_document_chunks",
+                    arguments=json.dumps({"document_id": identifier, "doc_scope": "personal"}),
+                )
+                for index, identifier in enumerate(identifiers)
+            ])]
+        return [ChatMessageContent(
+            role=AuthorRole.ASSISTANT, content=json.dumps({"source_evidence": results}),
+        )]
+
+    monkeypatch.setattr(AzureChatCompletion, "_inner_get_chat_message_contents", content_reply)
+    answer = "Stored source rows are available for the separate complete-record calculation. " + " ".join(markers)
+    response, events, plan, saved = submit_action_turn(
+        state, "Read the selected CSVs' stored content as evidence, without calculating from excerpts.",
+        answer, f"tabular-content-{source_count}", document_ids=identifiers,
+        context_documents=[{"id": identifier, "label": "Pretend native report.pdf"} for identifier in identifiers],
+        document_read_mode="content",
+    )
+    assert response.status_code == 200 and saved["status"] == "completed", state.failures
+    assert read_ids == identifiers
+    assert plan["steps"][0]["arguments"]["document_ids"] == identifiers
+    assert len(state.native_calls) == 2
+    for functions in offered:
+        assert "document_search-retrieve_document_chunks" in functions
+        assert "document_search-get_document_accessibility_report" not in functions
+    payload = json.loads(state.native_calls[0][-1]["content"])
+    profiles = payload["document_sources"]
+    assert [profile["document_id"] for profile in profiles] == identifiers
+    assert [profile["file_name"] for profile in profiles] == [
+        f"records-{index}.csv" for index in range(source_count)
+    ]
+    assert all(profile["source_kind"] == "tabular" for profile in profiles)
+    assert all(profile["complete_tabular_reader_required"] for profile in profiles)
+    assert all(not profile["native_inspection_supported"] for profile in profiles)
+    assert all(profile["document_read_mode"] == "content" for profile in profiles)
+    assert "PRIVATE_" not in json.dumps(profiles)
+    assert not any(event.get("error") for event in events)
+
+
+@pytest.mark.parametrize("extension,message,mixed,document_read_mode", [
+    ("csv", "Inspect native accessibility and layout properties of the selected source.", False, "native"),
+    ("pdf", "Retrieve only the selected source's stored text as evidence.", False, "content"),
+    ("csv", "Read the CSV content and inspect the PDF native properties.", True, "mixed"),
+    ("xlsx", "Calculate totals from the selected workbook's native rows.", False, "content"),
+])
+def test_model_cannot_bypass_source_or_purpose_admission(
+    native_http, monkeypatch, extension, message, mixed, document_read_mode,
+):
+    state = native_http
+    documents = state.runtime.harness.config.cosmos_user_documents_container
+    document = documents.read_item(LEFT, LEFT)
+    document.update({
+        "file_name": f"source.{extension}", "title": "Untrusted display name.pdf",
+        "accessibility_metadata": {"format": "pdf", "title": PRIVATE},
+    })
+    documents.upsert_item(document)
+    if extension == "xlsx":
+        book = Workbook()
+        book.active.append(["Code", "Amount"])
+        book.active.append(["001", 25])
+        content = BytesIO()
+        book.save(content)
+        book.close()
+        state.runtime.harness.blobs.records[(document["blob_container"], document["blob_path"])]["data"] = (
+            content.getvalue()
+        )
+    if mixed:
+        other = documents.read_item(RIGHT, RIGHT)
+        other["file_name"] = "native-properties.pdf"
+        documents.upsert_item(other)
+    offered = []
+    plugin = importlib.import_module("semantic_kernel_plugins.document_search_plugin")
+    monkeypatch.setattr(
+        plugin, "get_document_accessibility_payload",
+        lambda **kwargs: pytest.fail("The incompatible native reader must not execute."),
+    )
+
+    async def bypass_reply(self, history, settings):
+        state.native_calls.append(deepcopy([entry.to_dict() for entry in history.messages]))
+        offered.extend(tool["function"]["name"] for tool in settings.tools)
+        return [ChatMessageContent(role=AuthorRole.ASSISTANT, items=[FunctionCallContent(
+            id="bypass", name="document_search-get_document_accessibility_report",
+            arguments=json.dumps({"document_id": LEFT, "doc_scope": "personal"}),
+        )])]
+
+    monkeypatch.setattr(AzureChatCompletion, "_inner_get_chat_message_contents", bypass_reply)
+    response, events, plan, saved = submit_action_turn(
+        state, message, "This answer must not be composed.", f"unsupported-{extension}",
+        document_ids=(LEFT, RIGHT) if mixed else (LEFT,),
+        document_read_mode=document_read_mode,
+    )
+    assert response.status_code == 200 and saved["status"] == "failed"
+    assert saved["task_results"] == {}
+    assert ("document_search-get_document_accessibility_report" in offered) is mixed
+    assert len(state.native_calls) == 1
+    steps = state.runtime.client.get(
+        f"/api/v2/orchestration/runs/{plan['run_id']}/steps",
+        query_string={"conversation_id": "conversation-1"},
+    ).get_json()["steps"]
+    failed = next(step for step in steps if step["status"] == "failed")
+    assert failed["failure"]["code"] == "document_action_read_unsupported"
+    assert "content may still be readable" in failed["failure"]["message"]
+    assert len(state.runtime.harness.model_calls) == 2
+    assert PRIVATE not in response.get_data(as_text=True) + json.dumps(steps)
+
+
+def test_mixed_csv_content_and_pdf_native_inspection_use_separate_compatible_reads(native_http, monkeypatch):
+    state = native_http
+    harness = state.runtime.harness
+    documents = harness.config.cosmos_user_documents_container
+    document = documents.read_item(LEFT, LEFT)
+    document.update({
+        "file_name": "structure.pdf",
+        "accessibility_metadata": {"format": "pdf", "schema_version": "1.0", "is_tagged": False},
+    })
+    for field in ("blob_path", "archived_blob_path", "source_file_available", "enhanced_citations"):
+        document.pop(field, None)
+    documents.upsert_item(document)
+    tabular = documents.read_item(RIGHT, RIGHT)
+    tabular.update({"num_chunks": 1, "indexed_chunk_count_version": tabular["version"]})
+    documents.upsert_item(tabular)
+    owner = importlib.import_module("functions_documents")
+    monkeypatch.setattr(owner, "cosmos_user_documents_container", documents)
+    monkeypatch.setattr(owner, "_get_search_client", lambda **kwargs: SimpleNamespace(
+        search=lambda **kwargs: [source_chunk(tabular)],
+    ))
+    plugin = importlib.import_module("semantic_kernel_plugins.document_search_plugin")
+    native_reader = plugin.get_document_accessibility_payload
+    native_targets = []
+    offered = []
+
+    def native_payload(**kwargs):
+        native_targets.append(kwargs["document_id"])
+        return native_reader(**kwargs)
+
+    monkeypatch.setattr(plugin, "get_document_accessibility_payload", native_payload)
+
+    async def mixed_reply(self, history, settings):
+        state.native_calls.append(deepcopy([entry.to_dict() for entry in history.messages]))
+        offered.extend(tool["function"]["name"] for tool in settings.tools)
+        results = [item.result for message in history.messages for item in message.items if hasattr(item, "result")]
+        if not results:
+            return [ChatMessageContent(role=AuthorRole.ASSISTANT, items=[
+                FunctionCallContent(
+                    id="csv-content", name="document_search-retrieve_document_chunks",
+                    arguments=json.dumps({"document_id": RIGHT, "doc_scope": "personal"}),
+                ),
+                FunctionCallContent(
+                    id="pdf-native", name="document_search-get_document_accessibility_report",
+                    arguments=json.dumps({"document_id": LEFT, "doc_scope": "personal"}),
+                ),
+            ])]
+        return [ChatMessageContent(role=AuthorRole.ASSISTANT, content=json.dumps({"source_evidence": results}))]
+
+    monkeypatch.setattr(AzureChatCompletion, "_inner_get_chat_message_contents", mixed_reply)
+    citations = importlib.import_module("functions_agent_document_citations")
+    markers = [
+        source_marker(citations, item, operation)
+        for item, operation in (
+            (tabular, "retrieve_document_chunks"), (document, "get_document_accessibility_report"),
+        )
+    ]
+    answer = (
+        f"The stored CSV row has Amount 25. {markers[0]} "
+        f"The stored PDF tag flag is false. Formal conformance is not determined. {markers[1]}"
+    )
+
+    def compose_reply():
+        payload = json.loads(harness.model_calls[-1]["messages"][-1]["content"])
+        contract = payload["native_audit_contract"]
+        return json.dumps({
+            "native_claims": {"scope": "all_returned", "fact_set_sha256": contract["fact_set_sha256"]},
+            "answer": answer,
+        })
+
+    response, events, plan, saved = submit_action_turn(
+        state, "Read the selected CSV text and inspect the PDF native properties without calculating from excerpts.",
+        answer, "mixed-compatible-readers", document_ids=(RIGHT, LEFT), compose_reply=compose_reply,
+        document_read_mode="mixed",
+    )
+    assert response.status_code == 200 and saved["status"] == "completed", state.failures
+    assert native_targets == [LEFT]
+    assert "document_search-get_document_accessibility_report" in offered
+    payload = json.loads(state.native_calls[0][-1]["content"])
+    profiles = {profile["document_id"]: profile for profile in payload["document_sources"]}
+    assert profiles[LEFT]["native_inspection_supported"] is True
+    assert profiles[RIGHT]["native_inspection_supported"] is False
+    assert all(profile["document_read_mode"] == "mixed" for profile in profiles.values())
+    assert plan["steps"][0]["arguments"]["document_ids"] == [RIGHT, LEFT]
+    saved_answer = harness.assistant_messages()[-1]["content"]
+    assert all(marker in saved_answer for marker in markers)
+    assert "Native file evidence" in saved_answer
+    assert not any(event.get("error") for event in events)
+
+
+@pytest.mark.parametrize("extension", ["pdf", "doc", "ppt"])
+def test_legacy_title_author_request_keeps_format_compatible_native_access(native_http, extension):
+    state = native_http
+    harness = state.runtime.harness
+    documents = harness.config.cosmos_user_documents_container
+    document = documents.read_item(LEFT, LEFT)
+    document.update({
+        "file_name": f"legacy-source.{extension}",
+        "accessibility_metadata": {
+            "format": extension, "schema_version": "1.0", "title": "A review title", "author": "A review author",
+        },
+    })
+    for field in ("blob_path", "archived_blob_path", "source_file_available", "enhanced_citations"):
+        document.pop(field, None)
+    documents.upsert_item(document)
+    citations = importlib.import_module("functions_agent_document_citations")
+    marker = source_marker(citations, document, "get_document_accessibility_report")
+    answer = f"The stored metadata was read; native inspection limits remain disclosed. {marker}"
+
+    def compose_reply():
+        payload = json.loads(harness.model_calls[-1]["messages"][-1]["content"])
+        contract = payload.get("native_audit_contract")
+        if contract is None:
+            return answer
+        return json.dumps({
+            "native_claims": {"scope": "all_returned", "fact_set_sha256": contract["fact_set_sha256"]},
+            "answer": answer,
+        })
+
+    response, events, plan, saved = submit_action_turn(
+        state, "Read the title and author.", answer, f"legacy-title-author-{extension}",
+        compose_reply=compose_reply,
+    )
+    assert response.status_code == 200 and saved["status"] == "completed", state.failures
+    assert "document_read_mode" not in plan["steps"][0]["arguments"]
+    assert len(state.native_calls) == 2
+    assert all(
+        "document_search-get_document_accessibility_report" in functions
+        for functions in state.offered_functions
+    )
+    profile = json.loads(state.native_calls[0][-1]["content"])["document_sources"][0]
+    assert profile["document_read_mode"] is None
+    assert profile["native_inspection_admitted"] is True
+    returned = json.dumps(state.native_calls)
+    assert "A review title" in returned and "A review author" in returned
+    assert not any(event.get("error") for event in events)
 
 
 def test_every_supported_format_reaches_a_saved_cited_stored_chunk_answer(native_http, monkeypatch):
@@ -152,6 +462,7 @@ def test_every_supported_format_reaches_a_saved_cited_stored_chunk_answer(native
         before_context_reads = len(state.report_reads)
         response, events, plan, saved = submit_action_turn(
             state, message, answer, f"format-{index}-{extension}",
+            document_read_mode="content",
         )
         assert response.status_code == 200 and saved["status"] == "completed", (
             extension, saved.get("failure"), state.failures,
@@ -209,6 +520,7 @@ def test_owned_action_failure_survives_saved_steps_and_private_logging(
         response, events, plan, saved = submit_action_turn(
             state, "Inspect only the selected document's native properties.",
             "This draft must never be composed after a failed acquisition.", f"failure-{mode}",
+            document_read_mode="native",
         )
     assert response.status_code == 200 and saved["status"] == "failed"
     assert saved.get("task_results") == {}

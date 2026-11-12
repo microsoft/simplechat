@@ -570,6 +570,13 @@ tabular-analysis:
         before relying on the result. The illustrated data is synthetic, not a
         benchmark or a capacity promise.
       media_id: slide-tabular-analysis
+    - heading: "Relate separate files without guessing the math"
+      text: >-
+        Orchestrate can match complete selected CSV and Excel datasets by explicit
+        keys or effective dates, calculate precise values, and retain records with
+        source-row lineage and coverage. Duplicate matches and processing limits
+        remain visible failures, not sampled answers. Native layout and comment
+        inspection uses separate compatible readers.
   default_state: "Mixed"
   admin_tab: agents-actions
   setting_keys:
@@ -592,6 +599,8 @@ tabular-analysis:
   reference:
     - title: "Tabular processing action"
       url: /reference/actions/tabular-processing/
+    - title: "Calculate across selected files"
+      url: /guides/calculate-across-files/
 document-compare:
   name: "Cross-format document compare"
   area: "Media and ingestion"

@@ -1,13 +1,14 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.248
+Version: 0.261.437
 Implemented in: 0.261.239
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.240
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.241
 Workbooks with unsafe or unreadable XML refused in: 0.261.245
 Spooled rows written to the container's scratch directory in: 0.261.247
 CodeQL cleanup for intentionally ignored reader cleanup failures added in: 0.261.248
+Complete calculation readers, selectors and formula-cache refusal added in: 0.261.437
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage, routes, or models, and performs no model work.
@@ -31,6 +32,7 @@ import bisect
 import codecs
 import csv
 from array import array
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
@@ -38,11 +40,13 @@ import io
 import json
 import math
 import os
+import posixpath
 import re
 import tempfile
 from typing import Callable, List, Mapping, Optional, Sequence, Tuple
 import unicodedata
 import zipfile
+from xml.etree import ElementTree
 
 from functions_ooxml_package_guard import UnreadablePackageError, first_unsafe_xml_part
 from functions_temp_files import scratch_file_dir
@@ -786,6 +790,166 @@ class TabularMergeResult:
 # ---------------------------------------------------------------------------
 # Merging
 # ---------------------------------------------------------------------------
+
+
+@contextmanager
+def read_tabular_source_records(
+    source, *, sheet=None, header_row=None, cell_range=None, table_id=None, limits=None, cancel_requested=None,
+):
+    """Read a complete selected table, preserving its original record numbers.
+
+    Unlike a merge's first-sheet default, calculation requires an explicit sheet
+    for a workbook with multiple visible worksheets.
+    """
+    limits = limits or TabularMergeLimits()
+    options = TabularMergeOptions(sheet=sheet, header_row=header_row, include_source_column=False)
+    _validate_sources([source], limits, minimum=1)
+    if cell_range is not None and table_id is not None:
+        raise TabularMergeError("invalid_options", "Select one named table or one explicit range, not both.")
+    if source.resolved_extension() == ".csv" and sheet is not None:
+        raise TabularMergeError("invalid_options", "CSV data does not have named worksheets.")
+    if (cell_range is not None or table_id is not None) and source.resolved_extension() not in (".xlsx", ".xlsm"):
+        raise TabularMergeError("invalid_options", "Named tables and cell ranges require an XLSX or XLSM source.")
+    if cell_range is not None and header_row is None:
+        raise TabularMergeError("invalid_options", "An explicit range requires its actual worksheet header row.")
+    content = _load_source_bytes(source, limits)
+    reader = _open_reader(source, content, limits, require_formula_cache=True)
+    table = None
+    try:
+        visible = [name for name, state in reader.sheet_states() if state == "visible"]
+        if sheet is None and len(visible) > 1:
+            raise TabularMergeError("sheet_required", "Select the worksheet to calculate over.")
+        selected = reader.plan(options, limits)[0][0]
+        if table_id is not None:
+            cell_range = _named_workbook_table_range(content, selected, table_id, limits)
+        if cell_range is not None:
+            from openpyxl.utils.cell import range_boundaries
+
+            try:
+                first_column, first_row, last_column, last_row = range_boundaries(cell_range)
+            except (TypeError, ValueError) as exc:
+                raise TabularMergeError("invalid_options", "The selected cell range is invalid.") from exc
+            if (
+                any(type(value) is not int or value < 1
+                    for value in (first_column, first_row, last_column, last_row))
+                or first_column > last_column or first_row > last_row
+                or last_column > 16384 or last_row > 1048576
+                or last_column - first_column + 1 > limits.max_columns
+                or last_row - first_row > limits.max_total_rows
+                or (header_row is not None and not first_row <= header_row <= last_row)
+            ):
+                raise TabularMergeError("invalid_options", "The selected cell range exceeds its bounds.")
+            table = reader.open_table(selected, header_row or first_row, cell_range=cell_range)
+        else:
+            table = reader.open_table(selected, header_row)
+        entry = _new_source_entry(source, reader, selected)
+        columns = tuple(name for name, _key in _header_names(table.header, source, limits, entry))
+
+        def records():
+            count = 0
+            for number, values in table.rows():
+                _check_cancel(cancel_requested)
+                cells = list(values)
+                if len(cells) > len(columns):
+                    if any(_cell_has_content(value) for value in cells[len(columns):]):
+                        raise TabularMergeError("row_has_extra_values", "A source row has more values than headers.")
+                    cells = cells[:len(columns)]
+                if not any(_cell_has_content(value) for value in cells):
+                    continue
+                cells.extend([""] * (len(columns) - len(cells)))
+                if any(len(value) > limits.max_cell_chars for value in cells):
+                    raise TabularMergeError("cell_too_large", "A source cell exceeds the calculation limit.")
+                count += 1
+                if count > limits.max_total_rows:
+                    raise TabularMergeError("row_limit_exceeded", "The source exceeds the calculation row limit.")
+                yield number, dict(zip(columns, cells))
+
+        yield columns, records(), selected
+    finally:
+        if table is not None:
+            table.close()
+        reader.close()
+
+
+def _named_workbook_table_range(content, sheet, table_id, limits):
+    """Resolve saved table definitions without loading or executing a workbook."""
+    main = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    relationships = "http://schemas.openxmlformats.org/package/2006/relationships"
+    document_relationships = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+    def target(base, value):
+        if not isinstance(value, str) or any(marker in value for marker in (":", "\\", "?", "#")):
+            raise TabularMergeError("invalid_options", "The workbook table relationship is invalid.")
+        name = posixpath.normpath(value.lstrip("/") if value.startswith("/") else posixpath.join(base, value))
+        if not name.startswith("xl/") or "/../" in name:
+            raise TabularMergeError("invalid_options", "The workbook table relationship is invalid.")
+        return name
+
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        def part(name):
+            entry = archive.getinfo(name)
+            if entry.file_size > min(limits.max_source_bytes, 8 * 1024 * 1024):
+                raise TabularMergeError("workbook_too_large", "A table definition exceeds the inspection limit.")
+            return ElementTree.fromstring(archive.read(entry))
+
+        try:
+            workbook = part("xl/workbook.xml")
+            references = part("xl/_rels/workbook.xml.rels")
+            selected = [
+                node for node in workbook.findall(f".//{{{main}}}sheet") if node.get("name") == sheet
+            ]
+            if len(selected) != 1:
+                raise TabularMergeError("sheet_not_found", "The selected worksheet is unavailable.")
+            identifier = selected[0].get(f"{{{document_relationships}}}id")
+            reference = [
+                node for node in references.findall(f"{{{relationships}}}Relationship")
+                if node.get("Id") == identifier and node.get("TargetMode") != "External"
+                and node.get("Type") == f"{document_relationships}/worksheet"
+            ]
+            if len(reference) != 1:
+                raise TabularMergeError("invalid_options", "The selected worksheet relationship is invalid.")
+            worksheet_path = target("xl", reference[0].get("Target"))
+            ids = set()
+            with archive.open(worksheet_path) as stream:
+                for _event, node in ElementTree.iterparse(stream):
+                    if node.tag == f"{{{main}}}tablePart":
+                        ids.add(node.get(f"{{{document_relationships}}}id"))
+                    node.clear()
+            relative = posixpath.join(
+                posixpath.dirname(worksheet_path), "_rels", posixpath.basename(worksheet_path) + ".rels",
+            )
+            table_refs = part(relative)
+            matches = []
+            for node in table_refs.findall(f"{{{relationships}}}Relationship"):
+                if (
+                    node.get("Id") not in ids or node.get("TargetMode") == "External"
+                    or node.get("Type") != f"{document_relationships}/table"
+                ):
+                    continue
+                table = part(target(posixpath.dirname(worksheet_path), node.get("Target")))
+                if table.tag != f"{{{main}}}table":
+                    raise TabularMergeError("unreadable_workbook", "The saved table definition is invalid.")
+                if table_id not in (table.get("name"), table.get("displayName")):
+                    continue
+                if table.get("headerRowCount", "1") != "1":
+                    raise TabularMergeError("invalid_options", "The selected table has no supported header row.")
+                reference = table.get("ref")
+                totals = table.get("totalsRowCount", "0")
+                if totals not in ("0", "1"):
+                    raise TabularMergeError("invalid_options", "The saved table totals row is invalid.")
+                if totals == "1" and isinstance(reference, str):
+                    from openpyxl.utils.cell import get_column_letter, range_boundaries
+
+                    first_column, first_row, last_column, last_row = range_boundaries(reference)
+                    if last_row <= first_row:
+                        raise TabularMergeError("invalid_options", "The saved table range is invalid.")
+                    reference = f"{get_column_letter(first_column)}{first_row}:{get_column_letter(last_column)}{last_row - 1}"
+                matches.append(reference)
+            if len(matches) != 1 or not isinstance(matches[0], str):
+                raise TabularMergeError("table_not_found", "The selected named table is unavailable.")
+            return matches[0]
+        except (KeyError, ElementTree.ParseError, zipfile.BadZipFile) as exc:
+            raise TabularMergeError("unreadable_workbook", "The saved table definition could not be read.") from exc
 
 
 def merge_tabular_sources(
@@ -1863,12 +2027,12 @@ class _Reader:
         return None
 
 
-def _open_reader(source, content, limits):
+def _open_reader(source, content, limits, *, require_formula_cache=False):
     table_format = TABULAR_MERGE_EXTENSION_FORMATS[source.resolved_extension()]
     if table_format == TABULAR_MERGE_FORMAT_CSV:
         return _CsvReader(source, content)
     if table_format == TABULAR_MERGE_FORMAT_XLSX:
-        return _XlsxReader(source, content, limits)
+        return _XlsxReader(source, content, limits, require_formula_cache=require_formula_cache)
     return _XlsReader(source, content)
 
 
@@ -1992,17 +2156,23 @@ def _detect_delimiter(text):
 class _XlsxReader(_Reader):
     format = TABULAR_MERGE_FORMAT_XLSX
 
-    def __init__(self, source, content, limits):
+    def __init__(self, source, content, limits, *, require_formula_cache=False):
         super().__init__(source)
         _guard_workbook_archive(content, source, limits)
         # openpyxl is imported only when a workbook is merged; it is a large binary dependency.
         from openpyxl import load_workbook
 
+        self._formula_workbook = None
         try:
             self._workbook = load_workbook(
                 io.BytesIO(content), read_only=True, data_only=True, keep_links=False,
             )
+            if require_formula_cache:
+                self._formula_workbook = load_workbook(
+                    io.BytesIO(content), read_only=True, data_only=False, keep_links=False,
+                )
         except Exception as exc:
+            self.close()
             raise TabularMergeError(
                 "unreadable_workbook", f"{_safe_name(source)} couldn't be opened as an Excel workbook.",
             ) from exc
@@ -2018,9 +2188,13 @@ class _XlsxReader(_Reader):
                 "unreadable_workbook", f"{_safe_name(self.source)} couldn't be read as an Excel workbook.",
             ) from exc
 
-    def open_table(self, sheet, header_row):
+    def open_table(self, sheet, header_row, *, cell_range=None):
         try:
-            return _XlsxTable(self.source, self._workbook[sheet], sheet, header_row)
+            return _XlsxTable(
+                self.source, self._workbook[sheet], sheet, header_row,
+                formula_worksheet=self._formula_workbook[sheet] if self._formula_workbook is not None else None,
+                cell_range=cell_range,
+            )
         except TabularMergeError:
             raise
         except Exception as exc:
@@ -2029,28 +2203,41 @@ class _XlsxReader(_Reader):
             ) from exc
 
     def close(self):
-        workbook = getattr(self, "_workbook", None)
-        if workbook is not None:
-            self._workbook = None
-            try:
-                workbook.close()
-            except Exception:
-                # The reader is closing; library cleanup failures are safe to ignore.
-                pass
+        for attribute in ("_workbook", "_formula_workbook"):
+            workbook = getattr(self, attribute, None)
+            if workbook is not None:
+                setattr(self, attribute, None)
+                try:
+                    workbook.close()
+                except Exception:
+                    # The reader is closing; library cleanup failures are safe to ignore.
+                    pass
 
 
 class _XlsxTable(_Table):
     format = TABULAR_MERGE_FORMAT_XLSX
 
-    def __init__(self, source, worksheet, sheet, header_row):
+    def __init__(self, source, worksheet, sheet, header_row, *, formula_worksheet=None, cell_range=None):
         self._source = source
         self.sheet = sheet
         worksheet.reset_dimensions()
-        self._iterator = worksheet.iter_rows(values_only=True)
-        self._row_number = 0
+        bounds = {}
+        if header_row is not None:
+            bounds["min_row"] = header_row
+        if cell_range is not None:
+            from openpyxl.utils.cell import range_boundaries
+
+            first_column, _first_row, last_column, last_row = range_boundaries(cell_range)
+            bounds.update(min_col=first_column, max_col=last_column, max_row=last_row)
+        self._iterator = worksheet.iter_rows(values_only=True, **bounds)
+        if formula_worksheet is not None:
+            formula_worksheet.reset_dimensions()
+        self._formulas = formula_worksheet.iter_rows(**bounds) if formula_worksheet is not None else None
+        self._row_number = bounds.get("min_row", 1) - 1
         self._header = None
         for values in self._iterator:
             self._row_number += 1
+            self._check_formula_values(values)
             if header_row is not None and self._row_number < header_row:
                 continue
             cells = [_excel_text(value) for value in values]
@@ -2076,6 +2263,7 @@ class _XlsxTable(_Table):
         try:
             for values in self._iterator:
                 self._row_number += 1
+                self._check_formula_values(values)
                 yield self._row_number, [_excel_text(value) for value in values]
         except TabularMergeError:
             raise
@@ -2083,6 +2271,16 @@ class _XlsxTable(_Table):
             raise TabularMergeError(
                 "unreadable_workbook", f"{_safe_name(self._source)} couldn't be read near row {self._row_number}.",
             ) from exc
+
+    def _check_formula_values(self, values):
+        if self._formulas is None:
+            return
+        formulas = next(self._formulas, ())
+        if any(cell.data_type == "f" and (index >= len(values) or values[index] is None)
+               for index, cell in enumerate(formulas)):
+            raise TabularMergeError(
+                "formula_cache_missing", "A formula has no saved value. Save recalculated values before calculating.",
+            )
 
 
 def _guard_workbook_archive(content, source, limits):

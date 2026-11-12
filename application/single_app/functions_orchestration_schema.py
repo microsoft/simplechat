@@ -33,10 +33,11 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.304
+Version: 0.261.437
 Missing signed-in session reported as its own step failure in: 0.261.209
 Microsoft 365 step failures, with their sources, added in: 0.261.238
 Microsoft 365 approval stops carry their pending approval id in: 0.261.304
+Typed multi-file computation and document read purposes added in: 0.261.437
 """
 
 import hashlib
@@ -1167,6 +1168,14 @@ def validate_dependency_plan(
                     arguments = validate_native_orchestration_arguments(arguments)
                 except ValueError as exc:
                     raise PlanValidationError('The native computation arguments are unsupported.') from exc
+                if arguments['native_operation'] == 'relate':
+                    from functions_orchestration_merge import tabular_merge_limits
+
+                    if len(arguments['document_ids']) > tabular_merge_limits(settings).max_sources:
+                        raise PlanValidationError(
+                            'The complete calculation source selection exceeds the document limit.',
+                            code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_document_budget',
+                        )
             if capability_id == CAPABILITY_WORKFLOW_PROPOSE:
                 # Loaded only when a plan proposes a workflow; the draft service is not needed otherwise.
                 from functions_orchestration_workflows import prepare_workflow_proposal_arguments
@@ -1236,6 +1245,13 @@ def validate_dependency_plan(
                         'The selected action cannot bind workspace documents.', raw,
                         code='source_binding_invalid', rule='action_document_reader_required',
                     )
+            if capability_id == CAPABILITY_ACTION_INVOKE and (
+                'document_read_mode' in arguments and 'document_ids' not in arguments
+            ):
+                raise _step_contract_error(
+                    'A document read purpose requires an exact document source binding.', raw,
+                    code='source_binding_invalid', rule='source_binding_required',
+                )
             limit = get_capability_document_limit(capability, settings=settings)
             for name in ('document_ids', 'right_document_ids'):
                 if name in arguments:
@@ -2094,6 +2110,10 @@ FAILURE_MESSAGES = {
         'The action could not complete the selected document read. Check the file availability '
         'and requested inspection, then retry.'
     ),
+    'document_action_read_unsupported': (
+        'The requested native inspection is not supported for the selected source or task. '
+        "The file's content may still be readable."
+    ),
     'action_results_missing': (
         'The action returned no usable function results. No findings from this step were used. '
         'Ask an admin to check the action and model tool support if it keeps failing.'
@@ -2275,7 +2295,7 @@ M365_STEP_FAILURE_CODES = frozenset({
 EXCEPTION_FAILURE_CODES = M365_STEP_FAILURE_CODES | {
     'external_session_required', 'operation_recovery_required', 'integration_input_unavailable',
     'action_initialization_failed', 'document_reader_identity_mismatch',
-    'document_action_read_failed', 'action_results_missing',
+    'document_action_read_failed', 'document_action_read_unsupported', 'action_results_missing',
     STORAGE_FAILURE_CODE,
 }
 # Steps that hand work to an integration; input-reading failures have their own code.

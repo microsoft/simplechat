@@ -50,7 +50,8 @@ Charts, Mermaid diagrams and image proposals follow ``functions_orchestration_vi
 gathering steps keep what a planned visual needs, an action step can chart its exact
 results, and the compose step places those charts and writes the diagrams and proposals.
 
-Version: 0.261.139
+Version: 0.261.437
+Source-aware action admission and format rechecks added in: 0.261.437
 """
 
 import inspect
@@ -2339,7 +2340,9 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
                     for current, original in zip(fresh, sources)
                 )
                 same_revision = same_count and all(
-                    all(current.get(key) == original.get(key) for key in ('source_version', 'source_revision'))
+                    all(current.get(key) == original.get(key) for key in (
+                        'source_version', 'source_revision', 'source_kind', 'file_name', 'extension',
+                    ))
                     for current, original in zip(fresh, sources)
                 )
                 authorized = all(source.get('authorization_status') == 'authorized' for source in fresh)
@@ -2357,6 +2360,8 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
             invocation_kwargs.update(
                 document_sources=sources, document_source_check=recheck_document_sources,
             )
+            if 'document_read_mode' in arguments:
+                invocation_kwargs['document_read_mode'] = arguments['document_read_mode']
         if visual_request:
             invocation_kwargs['visual_request'] = visual_request
         invocation_kwargs['m365_request_key'], invocation_kwargs['m365_origin'] = _m365_step_identity(step, context)
@@ -2398,6 +2403,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
             'action_initialization_failed': 'action_initialization',
             'document_reader_identity_mismatch': 'action_initialization',
             'document_action_read_failed': 'document_action_read',
+            'document_action_read_unsupported': 'document_action_admission',
             'action_results_missing': 'action_results',
         }.get(failure_code, 'action_invocation')
         log_event(
