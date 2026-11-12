@@ -1,6 +1,6 @@
 # Selected-document reader routing and source continuity fix
 
-Version: **0.261.437**
+Version: **0.261.438**
 
 Fixed/Implemented in version: **0.261.437**
 
@@ -73,6 +73,13 @@ reading, native inspection coexistence and related continuation behavior.
 The multi-file calculation/retention suites cover actual computed rows, matching
 diagnostics, source authority, exact exports and failure controls. Existing
 precision and merge suites guard compatibility.
+
+Merge source loading remains an execution-only dependency, after the application
+has initialized settings and clients. Native schema discovery must not import
+that owner. Fresh-process checks cover native metadata discovery, both
+post-bootstrap reader/merge import orders, web and scheduler startup, and
+storage-failure controls under normal and optimized Python with network access
+blocked. The legacy merge owner is not a supported pre-bootstrap entry point.
 
 The investigation observed serving version 0.261.428 and inspected matching
 core source contracts. Implementation regressions are offline; they do not

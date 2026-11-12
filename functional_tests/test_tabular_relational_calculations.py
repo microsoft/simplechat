@@ -1,7 +1,7 @@
 # test_tabular_relational_calculations.py
 """
 Functional tests for complete multi-file calculations and per-row lineage.
-Version: 0.261.437
+Version: 0.261.438
 Implemented in: 0.261.437
 
 These offline cases use unrelated schemas, precise source values and the real
@@ -256,11 +256,10 @@ def test_multisheet_workbook_needs_an_explicit_sheet_for_calculation():
     content = io.BytesIO()
     book.save(content)
     book.close()
-    spec = join_spec()
     source = TabularMergeSource("sales", "source.xlsx", lambda: content.getvalue())
     with pytest.raises(TabularMergeError) as error:
-        with read_tabular_source_records(source):
-            raise AssertionError("An ambiguous worksheet must not be used.")
+        with read_tabular_source_records(source) as (_columns, records, _sheet):
+            list(records)
     assert error.value.code == "sheet_required"
 
 
