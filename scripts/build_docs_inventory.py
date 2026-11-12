@@ -34,6 +34,7 @@ PLUGIN_INFRASTRUCTURE_FILES = {
     "__init__.py",
     "base_plugin.py",
     "logged_plugin_loader.py",
+    "mcp_guarded_transport.py",  # Native transport infrastructure, not an authorable action.
     "plugin_health_checker.py",
     "plugin_invocation_logger.py",
     "plugin_invocation_thoughts.py",

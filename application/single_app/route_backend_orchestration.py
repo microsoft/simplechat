@@ -28,8 +28,8 @@ In a shared conversation the person who started it plans in a hidden backing con
 with the shared conversation's id; the question and each final answer are mirrored into the
 shared thread for every participant (0.261.270).
 
-Version: 0.261.432
-Referenced failed-turn source continuation added in: 0.261.432
+Version: 0.261.437
+Referenced failed-turn source continuation added in: 0.261.437
 """
 
 import hashlib

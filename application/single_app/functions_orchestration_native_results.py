@@ -1,9 +1,9 @@
 # functions_orchestration_native_results.py
 """Native computation to retained orchestration results, without publication.
 
-Version: 0.261.432
+Version: 0.261.437
 Implemented in: 0.261.127
-Typed, bounded cross-file computation added in: 0.261.432
+Typed, bounded cross-file computation added in: 0.261.437
 
 The owner binds the native mode; the default production builder validates
 explicit query/schema/transformation arguments. Runtime/schema/native execution

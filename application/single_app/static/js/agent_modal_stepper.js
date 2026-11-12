@@ -2173,6 +2173,7 @@ export class AgentModalStepper {
     this.applyAgentTypeVisibility();
     this.updateAgentTypeLock();
     this.sharedCredentials.render(document.querySelector('#agentModal .modal-body'));
+    this.showCredentialReentryNotice(agent);
     
     // Load models for the modal
     this.loadModelsForModal();
@@ -2613,6 +2614,53 @@ export class AgentModalStepper {
     if (descriptionInput && !descriptionInput.value.trim()) {
       descriptionInput.value = selected.description || '';
     }
+  }
+
+  showCredentialReentryNotice(agent) {
+      const notice = document.getElementById('agent-credential-reentry-notice');
+      this.credentialReentryInputs = new Map();
+      if (!notice) return;
+      notice.replaceChildren();
+      const fields = Array.isArray(agent?.credential_reentry_required) ? agent.credential_reentry_required : [];
+      notice.classList.toggle('d-none', fields.length === 0);
+      if (!fields.length) return;
+      const heading = document.createElement('strong');
+      const agentName = typeof agent?.display_name === 'string' ? agent.display_name
+        : typeof agent?.name === 'string' ? agent.name : '';
+      heading.textContent = agentName ? `Agent credentials need updating: ${agentName}` : 'Agent credentials need updating';
+      const explanation = document.createElement('p');
+      explanation.className = 'mb-2 mt-1';
+      explanation.textContent = 'A security update requires re-entry before these custom-connection credentials can be used. Approved saved model connections are unaffected. If you cannot edit this agent, contact its owner or an administrator.';
+      notice.append(heading, explanation);
+      const list = document.createElement('ul');
+      for (const field of fields) {
+        if (typeof field.path !== 'string' || typeof field.label !== 'string') continue;
+        const item = document.createElement('li');
+        item.textContent = field.label;
+        list.appendChild(item);
+        const id = field.path === '/azure_openai_gpt_key' ? 'agent-gpt-key'
+          : field.path === '/azure_agent_apim_gpt_subscription_key' ? 'agent-apim-subscription-key' : '';
+        const input = id ? document.getElementById(id) : null;
+        if (input) {
+          input.value = '';
+          input.type = 'password';
+          input.placeholder = 'Re-enter required credential';
+        }
+        if (/^\/other_settings\/(azure_ai_foundry|new_foundry|foundry_workflow)\/client_secret$/.test(field.path)) {
+          const label = document.createElement('label');
+          const replacement = document.createElement('input');
+          replacement.id = `agent-reentry-secret-${this.credentialReentryInputs.size}`;
+          replacement.type = 'password';
+          replacement.autocomplete = 'new-password';
+          replacement.className = 'form-control';
+          label.htmlFor = replacement.id;
+          label.className = 'form-label';
+          label.textContent = `Re-enter ${field.label}`;
+          notice.append(label, replacement);
+          this.credentialReentryInputs.set(field.path, replacement);
+        }
+      }
+      notice.appendChild(list);
   }
 
   populateFields(agent) {
@@ -4698,6 +4746,15 @@ export class AgentModalStepper {
         agentData.other_settings = JSON.parse(agentData.other_settings) || {};
       }
       agentData.other_settings[ASSIGNED_KNOWLEDGE_KEY] = this.getAssignedKnowledgeConfig();
+      for (const [path, input] of this.credentialReentryInputs || []) {
+        const section = path.split('/')[2];
+        const configured = agentData.other_settings[section];
+        if (!agentData.model_endpoint_id && configured?.authentication_type === 'service_principal' && input.value) {
+          agentData.other_settings[section] = {
+            ...configured, client_secret: input.value,
+          };
+        }
+      }
       
       // Clean up empty reasoning_effort (inherit from model default)
       if (!agentData.reasoning_effort || agentData.reasoning_effort === '') {
@@ -4826,7 +4883,22 @@ export class AgentModalStepper {
     const modelEndpointId = modelEndpointInput?.value || selectedModelOption?.dataset?.endpointId || '';
     const modelId = modelIdInput?.value || selectedModelOption?.value || '';
     const modelProvider = modelProviderInput?.value || selectedModelOption?.dataset?.provider || '';
-    const foundryAuthenticationType = 'delegated_user';
+    const settingsText = document.getElementById('agent-additional-settings')?.value || '{}';
+    let configuredSettings;
+    try {
+      configuredSettings = JSON.parse(settingsText);
+    } catch (error) {
+      throw new Error('Additional settings must contain valid JSON.');
+    }
+    if (!configuredSettings || typeof configuredSettings !== 'object' || Array.isArray(configuredSettings)) {
+      throw new Error('Additional settings must contain a JSON object.');
+    }
+    const settingsKey = {
+      aifoundry: 'azure_ai_foundry', new_foundry: 'new_foundry', foundry_workflow: 'foundry_workflow'
+    }[selectedAgentType];
+    const configuredAuthentication = configuredSettings[settingsKey]?.authentication_type;
+    const foundryAuthenticationType = ['service_principal', 'managed_identity'].includes(configuredAuthentication)
+      ? configuredAuthentication : 'delegated_user';
 
     const formData = {
       display_name: document.getElementById('agent-display-name')?.value || '',
@@ -4841,7 +4913,7 @@ export class AgentModalStepper {
       model: modelSelect?.value || '',
       instructions: this.getInstructionsValue() || '',
       custom_connection: document.getElementById('agent-custom-connection')?.checked || false,
-      other_settings: document.getElementById('agent-additional-settings')?.value || '{}',
+      other_settings: settingsText,
       max_completion_tokens: parseInt(document.getElementById('agent-max-completion-tokens')?.value.trim()) || null,
       reasoning_effort: document.getElementById('agent-reasoning-effort')?.value || '',
       agent_type: selectedAgentType,
@@ -5092,16 +5164,24 @@ export class AgentModalStepper {
   async savePersonalAgent(agentData) {
     // For personal agents, use the user API endpoints
     const res = await fetch('/api/user/agents');
-    let agents = [];
-    if (res.ok) {
-      agents = await res.json();
-    }
+    if (!res.ok) throw new Error('Unable to load the current agents. Nothing was saved. Reload and try again.');
+    const agents = await res.json();
+    if (!Array.isArray(agents)) throw new Error('The current agent list is unavailable. Nothing was saved.');
     
     // If editing, replace; else, add
     const idx = this.isEditMode && this.originalAgent ? 
       agents.findIndex(a => a.id === this.originalAgent.id) : -1;
     
     if (idx >= 0) {
+      const required = new Set((Array.isArray(agents[idx].credential_reentry_required)
+        ? agents[idx].credential_reentry_required : [])
+        .filter(field => typeof field?.path === 'string').map(field => field.path));
+      const cleared = new Set(Array.isArray(agentData.clear_secret_paths) ? agentData.clear_secret_paths : []);
+      for (const field of ['azure_openai_gpt_key', 'azure_agent_apim_gpt_subscription_key']) {
+        if (required.has(`/${field}`) && !cleared.has(`/${field}`) && !Object.prototype.hasOwnProperty.call(agentData, field)) {
+          agentData[field] = 'Stored_In_KeyVault';
+        }
+      }
       agents[idx] = agentData;
     } else {
       agents.push(agentData);

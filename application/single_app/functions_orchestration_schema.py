@@ -33,11 +33,11 @@ Two contracts live here:
     render through the very same card. Our own paging lives in a sibling ``ui_hints``
     field rather than inside the schema, which keeps the schema itself MCP-clean.
 
-Version: 0.261.432
+Version: 0.261.437
 Missing signed-in session reported as its own step failure in: 0.261.209
 Microsoft 365 step failures, with their sources, added in: 0.261.238
 Microsoft 365 approval stops carry their pending approval id in: 0.261.304
-Typed multi-file computation and document read purposes added in: 0.261.432
+Typed multi-file computation and document read purposes added in: 0.261.437
 """
 
 import hashlib

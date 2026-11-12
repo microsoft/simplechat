@@ -1,10 +1,10 @@
 # test_plugin_routes_cosmos_contract.py
 """Runtime evidence for the plugin route owners' Cosmos response contracts.
 
-Version: 0.261.353
+Version: 0.261.435
 Implemented in: 0.261.352
 
-Execute unchanged route and legacy-validator definitions with the installed SDK's
+Execute actual route and legacy-validator definitions with the installed SDK's
 CosmosDict point responses and offline external services. This covers the owners
 whose module fingerprints changed with PR #1787's SQL diagnostics.
 """
@@ -24,6 +24,7 @@ from flask import Blueprint, Flask, current_app, jsonify, request
 import pytest
 
 from functions_action_manifest import McpConfigurationError, is_retired_mcp_stdio, resolve_action_type
+from functions_workspace_authoring import validate_action_connection_update
 from test_support.agent_delegation import APP_ROOT, execute_functions
 from test_support.m365 import CosmosContainer
 from test_support.offline_bootstrap import OfflineCosmos
@@ -54,6 +55,8 @@ def plugin_routes(monkeypatch):
         "McpConfigurationError": McpConfigurationError,
         "is_retired_mcp_stdio": is_retired_mcp_stdio,
         "resolve_action_type": resolve_action_type,
+        "validate_action_connection_update": validate_action_connection_update,
+        "_authorize_action_test_scope": Mock(return_value=("personal", "actor")),
     }
     # Load the real validator and its constants without unrelated app bootstrap.
     tree = ast.parse((APP_ROOT / "json_schema_validation.py").read_text(encoding="utf-8"))

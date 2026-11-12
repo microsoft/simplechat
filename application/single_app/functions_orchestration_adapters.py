@@ -50,8 +50,8 @@ Charts, Mermaid diagrams and image proposals follow ``functions_orchestration_vi
 gathering steps keep what a planned visual needs, an action step can chart its exact
 results, and the compose step places those charts and writes the diagrams and proposals.
 
-Version: 0.261.432
-Source-aware action admission and format rechecks added in: 0.261.432
+Version: 0.261.437
+Source-aware action admission and format rechecks added in: 0.261.437
 """
 
 import inspect

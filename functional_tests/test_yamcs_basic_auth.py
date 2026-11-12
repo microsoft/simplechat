@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Yamcs reverse-proxy HTTP Basic authentication.
-Version: 0.261.012
+Version: 0.261.436
 Implemented in: 0.261.012
 
 This test ensures a Yamcs action can authenticate against a reverse proxy (such as the
@@ -19,6 +19,12 @@ import traceback
 import types
 from pathlib import Path
 
+import requests
+from azure.core import MatchConditions
+from azure.cosmos import exceptions as cosmos_exceptions
+from azure.cosmos._cosmos_responses import CosmosDict
+
+from test_support.m365 import CosmosContainer
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -42,25 +48,21 @@ plugin_invocation_logger_stub.plugin_function_logger = plugin_function_logger
 sys.modules.setdefault("semantic_kernel_plugins.plugin_invocation_logger", plugin_invocation_logger_stub)
 
 
-class FakeConfigCosmosContainer:
-    """Minimal Cosmos container stand-in for importing app config in tests."""
+class FakeConfigCosmosContainer(CosmosContainer):
+    """SDK-default container with a deterministic bootstrap settings document."""
 
     def __init__(self):
-        self.items = {}
+        super().__init__(partition_field="id")
 
     def read_item(self, item, partition_key=None):
-        if item in self.items:
-            return self.items[item]
-        if item == "app_settings":
-            return {"id": "app_settings", "settings": {}}
-        raise KeyError(item)
-
-    def upsert_item(self, item):
-        self.items[item["id"]] = item
-        return item
-
-    def query_items(self, *args, **kwargs):
-        return []
+        partition_key = item if partition_key is None else partition_key
+        with self.lock:
+            try:
+                return super().read_item(item, partition_key)
+            except cosmos_exceptions.CosmosResourceNotFoundError:
+                if item == "app_settings" and partition_key == item:
+                    return self.create_item({"id": item, "settings": {}})
+                raise
 
 
 class FakeConfigCosmosDatabase:
@@ -114,11 +116,11 @@ finally:
     azure_cosmos.CosmosClient = original_cosmos_client
 
 
-class FakeSession:
+class FakeSession(requests.Session):
     """requests.Session stand-in that records the headers the plugin applies."""
 
     def __init__(self):
-        self.headers = {}
+        super().__init__()
 
     def request(self, *args, **kwargs):
         return None
@@ -132,10 +134,10 @@ class FakeContext:
 class FakeYamcsClient:
     def __init__(self, address, credentials=None, tls_verify=True, user_agent=None, **kwargs):
         self.address = address
-        self.credentials = credentials
         self.tls_verify = tls_verify
         self.user_agent = user_agent
         self.ctx = FakeContext()
+        self.credentials = credentials.login(self.ctx.session, None, None) if credentials else None
         self.closed = False
 
     def close(self):
@@ -148,20 +150,22 @@ class FakeCredentials:
         self.password = password
         self.access_token = access_token
 
+    def login(self, session, auth_root, on_token_update):
+        return self
 
-class FakeAPIKeyCredentials:
+
+class FakeAPIKeyCredentials(FakeCredentials):
     """Mirrors yamcs.client.APIKeyCredentials, which stores the key on `password`."""
 
     def __init__(self, key):
-        self.password = key
+        super().__init__(password=key)
 
 
-class FakeBasicAuthCredentials:
+class FakeBasicAuthCredentials(FakeCredentials):
     """Mirrors yamcs.client.BasicAuthCredentials, which sends an Authorization header."""
 
     def __init__(self, username, password):
-        self.username = username
-        self.password = password
+        super().__init__(username=username, password=password)
 
 
 def install_fake_yamcs_client(include_basic_auth=True):
@@ -514,6 +518,25 @@ def test_modal_payload_preserves_stored_credential_when_disabled():
     return True
 
 
+def test_bootstrap_container_sdk_contract():
+    container = FakeConfigCosmosContainer()
+    initial = container.read_item("app_settings", "app_settings")
+    saved = container.upsert_item({**initial, "settings": {"test": True}})
+    assert isinstance(initial, CosmosDict) and isinstance(saved, CosmosDict)
+    assert initial["_etag"] != saved["_etag"]
+    try:
+        container.replace_item("app_settings", initial, etag=initial["_etag"], match_condition=MatchConditions.IfNotModified)
+    except cosmos_exceptions.CosmosHttpResponseError as exc:
+        assert exc.status_code == 412
+    else:
+        raise AssertionError("A stale conditional write must fail")
+    current = container.read_item("app_settings", "app_settings")
+    rows = list(container.query_items("SELECT * FROM c", partition_key="app_settings"))
+    assert current["settings"] == {"test": True}
+    assert type(rows[0]) is dict
+    return True
+
+
 def test_app_version():
     """The application version is at least the release that added basic auth support."""
     print("Testing SimpleChat version floor...")
@@ -535,6 +558,7 @@ if __name__ == "__main__":
         test_basic_auth_password_is_treated_as_a_secret,
         test_proxy_identity_reference_contract,
         test_modal_payload_preserves_stored_credential_when_disabled,
+        test_bootstrap_container_sdk_contract,
         test_app_version,
     ]
 

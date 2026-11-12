@@ -17,6 +17,12 @@ from pathlib import Path
 
 from flask import has_request_context, jsonify, request, session
 from functions_ai_connections import filter_model_endpoints_by_capability
+from agent_credential_contracts import (
+    AGENT_CREDENTIAL_STATUS, AGENT_SECRET_LABELS, AGENT_SECRET_MASKS,
+    agent_credential_is_ready, agent_credential_scope, agent_credential_status,
+    credential_value,
+)
+from functions_outbound_destinations import OutboundDestinationError, action_connection_signature
 
 
 EDITOR_SECRET_MASK = "***REDACTED***"
@@ -25,6 +31,7 @@ EDITOR_SECRET_PLACEHOLDERS = frozenset({
 })
 _MISSING = object()
 _MANAGED_FIELDS = frozenset({
+    AGENT_CREDENTIAL_STATUS,
     "id", "user_id", "owner_id", "owner_user_id", "group_id", "scope", "scope_type",
     "scope_id", "is_global", "is_group", "created_at", "created_by", "modified_at",
     "modified_by", "updated_at", "updated_by", "last_updated",
@@ -214,10 +221,7 @@ def editor_secret_paths(record, kind):
         redacted = import_module("functions_keyvault").redact_plugin_secret_values(record)
         paths.update(path for path, value in _walk(redacted) if value == EDITOR_SECRET_MASK)
     else:
-        paths.update({
-            ("azure_openai_gpt_key",), ("azure_agent_apim_gpt_subscription_key",),
-            ("azure_apim_gpt_subscription_key",),
-        })
+        paths.update(AGENT_SECRET_LABELS)
     for path, value in _walk(record):
         if not path:
             continue
@@ -264,12 +268,17 @@ def project_editor_record(record, kind, *, global_scope=False, group_scope=False
 
 def editor_resource(record, kind, *, global_scope=False, group_scope=False, read_only=None):
     projected = project_editor_record(record, kind, global_scope=global_scope, group_scope=group_scope)
-    return {
+    result = {
         "record": projected,
         "revision": record.get("_etag") or "",
         "secret_paths": sorted(_pointer(path) for path in editor_secret_paths(projected, kind)),
         "read_only": global_scope if read_only is None else bool(read_only),
     }
+    if kind == "agents":
+        scope = "global" if global_scope else "group" if group_scope else "user"
+        owner_id = "global" if global_scope else record.get("group_id" if group_scope else "user_id")
+        result[AGENT_CREDENTIAL_STATUS] = agent_credential_status(record, scope, owner_id)
+    return result
 
 
 def project_shared_record(record, kind, *, can_manage=False, global_scope=False, group_scope=False):
@@ -477,6 +486,35 @@ def list_editor_records(kind, user_id, settings):
     return records
 
 
+def validate_action_connection_update(existing, updated, submitted):
+    """Never carry an opaque saved credential to a different connector/origin."""
+    try:
+        updated_signature = action_connection_signature(updated)
+    except OutboundDestinationError as exc:
+        raise WorkspaceAuthoringValidation(exc.public_message) from exc
+    if not existing:
+        return
+    try:
+        unchanged = action_connection_signature(existing) == updated_signature
+    except OutboundDestinationError:
+        # A previously unsafe record can be repaired, but not by retaining its secrets.
+        unchanged = False
+    if unchanged:
+        return
+    for path in editor_secret_paths(existing, "actions"):
+        retained = _get(updated, path)
+        if retained is _MISSING or retained in (None, ""):
+            continue
+        provided = _get(submitted, path)
+        if (
+            provided is _MISSING or provided in (None, "")
+            or _is_placeholder(provided) or _is_reference(provided)
+        ):
+            raise WorkspaceAuthoringValidation(
+                "Re-enter or clear stored credentials when changing an action's connection destination."
+            )
+
+
 def merge_editor_write(existing, payload, kind, *, creating=False, resolve_stored_placeholder=None):
     """Apply changed leaves; removals and clearing configured secrets require explicit intent."""
     if not isinstance(payload, dict) or set(payload) - {
@@ -579,33 +617,19 @@ def merge_editor_write(existing, payload, kind, *, creating=False, resolve_store
             raise WorkspaceAuthoringValidation("Clear stored credentials explicitly before replacing their configuration.")
     if any(_is_placeholder(value) for _, value in _walk(result)):
         raise WorkspaceAuthoringValidation("A stored secret is unavailable. Re-enter its value.")
+    if kind == "actions":
+        validate_action_connection_update(existing, result, updates)
     return result
 
 
 def _secret_scope(kind, user_id, record, path, group_id=None, *, global_scope=False):
-    """Resolve the Key Vault (scope_value, source, scope) for one credential path.
-
-    Group resources store their credentials in the group's Key Vault namespace so a
-    saved group record never writes into the saving member's personal namespace,
-    and so the saved-record test path (which resolves group secrets with
-    ``scope="group"``) can rehydrate them.
-
-    Agents are keyed by the agent id (source ``agent``) in whichever namespace they
-    live: personal agents use ``user`` scope, and group agents use ``group`` scope
-    so ``{agent_id}--agent--group--{name}`` names written by the legacy group route
-    resolve, and so a group agent never mints a ``--user--`` secret the legacy
-    ``scope="group"`` delete would leave behind (M4C §2.1).
-
-    Global agents and actions are keyed by their own id in the ``global`` namespace,
-    which is how ``save_global_agent`` and ``save_global_action`` name them, so a
-    record saved by the classic admin editor can be edited here and the reverse.
-    """
-    if global_scope:
-        if kind == "agents":
-            return (record["id"], "agent", "global")
-        return (record["id"], "action" if path[0] == "auth" else "action-addset", "global")
+    """Bind agent slots to their complete owner/resource context; keep action scopes."""
     if kind == "agents":
-        return (record["id"], "agent", "group" if group_id else "user")
+        scope = "global" if global_scope else "group" if group_id else "user"
+        owner_id = "global" if global_scope else group_id or user_id
+        return (agent_credential_scope(scope, owner_id, record["id"], path), "agent", scope)
+    if global_scope:
+        return (record["id"], "action" if path[0] == "auth" else "action-addset", "global")
     source = "action" if path[0] == "auth" else "action-addset"
     if group_id:
         return (group_id, source, "group")
@@ -613,19 +637,16 @@ def _secret_scope(kind, user_id, record, path, group_id=None, *, global_scope=Fa
 
 
 def _legacy_editor_secret_reference(record, path, kind, user_id, settings, group_id=None, *, global_scope=False):
-    """Recover a legacy stored trigger only from its owned, conventional Key Vault name."""
+    """Resolve conventional action triggers only; agent triggers need explicit re-entry."""
+    if kind == "agents":
+        raise WorkspaceAuthoringValidation("Agent credentials need updating. Re-enter the affected credential.")
     unavailable = "A stored secret is unavailable. Re-enter its value."
     if not settings.get("enable_key_vault_secret_storage") or not settings.get("key_vault_name"):
         raise WorkspaceAuthoringValidation(unavailable)
     keyvault = import_module("functions_keyvault")
     name = record.get("name", "")
     secret_name = None
-    if kind == "agents":
-        for field in keyvault.AGENT_SENSITIVE_SECRET_FIELDS:
-            if path == field["path"]:
-                secret_name = field["secret_name"](name)
-                break
-    elif path == ("auth", "key"):
+    if path == ("auth", "key"):
         secret_name = name
     elif len(path) == 2 and path[0] == "auth" and path[1] in keyvault.SQL_PLUGIN_SENSITIVE_AUTH_FIELDS:
         secret_name = f"{name}-{path[1]}"
@@ -658,12 +679,7 @@ def _supported_storage_paths(record, kind):
     if kind == "actions":
         redacted = keyvault.redact_plugin_secret_values(record)
         return {path for path, value in _walk(redacted) if value == EDITOR_SECRET_MASK}
-    return {
-        ("azure_openai_gpt_key",), ("azure_agent_apim_gpt_subscription_key",),
-        *(("other_settings", section, "client_secret") for section in (
-            "azure_ai_foundry", "new_foundry", "foundry_workflow",
-        )),
-    }
+    return set(AGENT_SECRET_LABELS)
 
 
 def _check_stored_references(record, kind, user_id, group_id=None, *, global_scope=False):
@@ -699,9 +715,27 @@ def _cleanup_staged_secrets(references):
         )
 
 
-def _stage_editor_secrets(record, kind, user_id, settings, staged, group_id=None, *, global_scope=False):
+def _stage_editor_secrets(
+    record, kind, user_id, settings, staged, group_id=None, *, global_scope=False,
+    existing=None, credential_updates=None,
+):
     """Fresh names isolate failed CAS writes from every credential in a stored manifest."""
     keyvault = import_module("functions_keyvault")
+    if kind == "agents":
+        scope = "global" if global_scope else "group" if group_id else "user"
+        reentered = {
+            path for path in AGENT_SECRET_LABELS
+            if isinstance(credential_value(credential_updates or {}, path), str)
+            and credential_value(credential_updates or {}, path) not in AGENT_SECRET_MASKS | {""}
+        }
+        prepared = keyvault.keyvault_agent_save_helper(
+            record, record["id"], scope=scope, owner_id="global" if global_scope else group_id or user_id,
+            existing_agent=existing, preserve_unchanged=True, reentered_paths=reentered,
+            staged_names=staged,
+        )
+        record.clear()
+        record.update(prepared)
+        return
     _check_stored_references(record, kind, user_id, group_id, global_scope=global_scope)
     if not settings.get("enable_key_vault_secret_storage", False):
         return
@@ -738,6 +772,10 @@ def _cleanup_replaced_secrets(record, kind, user_id, settings, group_id=None, *,
         scope_value, source, kv_scope = _secret_scope(
             kind, user_id, record, path, group_id, global_scope=global_scope,
         )
+        if kind == "agents" and not agent_credential_is_ready(
+            record, path, kv_scope, "global" if global_scope else group_id or user_id,
+        ):
+            continue
         if isinstance(value, str) and keyvault.secret_reference_matches_context(
             value, scope_value=scope_value, scope=kv_scope, allowed_sources={source},
         ):
@@ -843,7 +881,7 @@ def _invalidate_editor_catalog(kind, user_id, operation, group_id=None, *, globa
         )
 
 
-def save_editor_record(kind, user_id, record, existing, settings):
+def save_editor_record(kind, user_id, record, existing, settings, *, credential_updates=None):
     """Save one prepared manifest using a mandatory conditional Cosmos write."""
     ensure_editor_access(kind, user_id, settings)
     if existing:
@@ -881,7 +919,7 @@ def save_editor_record(kind, user_id, record, existing, settings):
     write_started = False
     exceptions = import_module("azure.cosmos.exceptions")
     try:
-        _stage_editor_secrets(result, kind, user_id, settings, staged)
+        _stage_editor_secrets(result, kind, user_id, settings, staged, existing=existing, credential_updates=credential_updates)
         container = _container(kind)
         write_started = True
         if existing:
@@ -1053,7 +1091,7 @@ def _assert_group_available_name(kind, user_id, group_id, record, existing):
             raise WorkspaceAuthoringConflict("An item with this name already exists.")
 
 
-def save_group_editor_record(kind, user_id, group_id, record, existing, settings):
+def save_group_editor_record(kind, user_id, group_id, record, existing, settings, *, credential_updates=None):
     """Save one prepared group manifest with a mandatory conditional write."""
     if existing:
         try:
@@ -1101,7 +1139,7 @@ def save_group_editor_record(kind, user_id, group_id, record, existing, settings
     write_started = False
     exceptions = import_module("azure.cosmos.exceptions")
     try:
-        _stage_editor_secrets(result, kind, user_id, settings, staged, group_id)
+        _stage_editor_secrets(result, kind, user_id, settings, staged, group_id, existing=existing, credential_updates=credential_updates)
         container = _container(kind, "group")
         write_started = True
         if existing:
@@ -1212,7 +1250,9 @@ def apply_group_agent_write(user_id, group_id, existing, body, prepare, settings
     if existing:
         prepared = _preserve_unedited_values(existing, proposed, prepared)
     _assert_group_available_name("agents", user_id, group_id, prepared, existing)
-    return save_group_editor_record("agents", user_id, group_id, prepared, existing, settings)
+    return save_group_editor_record(
+        "agents", user_id, group_id, prepared, existing, settings, credential_updates=body.get("updates"),
+    )
 
 
 # === Global (administrator) agent and action editor ===
@@ -1283,7 +1323,7 @@ def _assert_global_available_name(kind, record, existing):
         raise WorkspaceAuthoringValidation(f"A global {label} with this name already exists.")
 
 
-def save_global_editor_record(kind, user_id, record, existing, settings):
+def save_global_editor_record(kind, user_id, record, existing, settings, *, credential_updates=None):
     """Save one prepared global manifest with a mandatory conditional write."""
     if existing:
         try:
@@ -1327,7 +1367,7 @@ def save_global_editor_record(kind, user_id, record, existing, settings):
     write_started = False
     exceptions = import_module("azure.cosmos.exceptions")
     try:
-        _stage_editor_secrets(result, kind, user_id, settings, staged, global_scope=True)
+        _stage_editor_secrets(result, kind, user_id, settings, staged, global_scope=True, existing=existing, credential_updates=credential_updates)
         container = _container(kind, "global")
         write_started = True
         if existing:
@@ -1444,7 +1484,7 @@ def apply_global_agent_write(user_id, existing, body, prepare, settings):
     if existing:
         prepared = _preserve_unedited_values(existing, proposed, prepared)
     _assert_global_available_name("agents", prepared, existing)
-    return save_global_editor_record("agents", user_id, prepared, existing, settings)
+    return save_global_editor_record("agents", user_id, prepared, existing, settings, credential_updates=body.get("updates"))
 
 
 def _validate_agent_editor_changes(record, existing, settings, user_id, *, scope="personal"):
@@ -1640,7 +1680,10 @@ def personal_editor_response(kind, user_id, prepare, record_id=None, *, migrate=
                 if existing:
                     prepared = _preserve_unedited_values(existing, proposed, prepared)
                 _assert_available_name(kind, user_id, prepared, existing)
-                saved = save_editor_record(kind, user_id, prepared, existing, settings)
+                saved = save_editor_record(
+                    kind, user_id, prepared, existing, settings,
+                    credential_updates=(request.get_json(silent=True) or {}).get("updates"),
+                )
                 result, status = editor_resource(saved, kind), 200 if existing else 201
             activity = import_module("functions_activity_logging")
             operation = "deletion" if request.method == "DELETE" else "update" if existing else "creation"

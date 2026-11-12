@@ -20,7 +20,6 @@ from semantic_kernel.agents import Agent
 from semantic_kernel.connectors.ai.prompt_execution_settings import PromptExecutionSettings
 from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
 from semantic_kernel.filters import FilterTypes
-from semantic_kernel.core_plugins import HttpPlugin
 from semantic_kernel_plugins.time_plugin import TimePlugin
 from semantic_kernel_plugins.wait_plugin import WaitPlugin
 from semantic_kernel_plugins.math_plugin import MathPlugin
@@ -116,7 +115,7 @@ from functions_keyvault import (
     validate_secret_name_dynamic,
 )
 from functions_global_actions import get_global_actions
-from functions_global_agents import get_global_agents
+from functions_global_agents import get_global_agent, get_global_agents
 from functions_group_agents import get_group_agent, get_group_agents
 from functions_group_actions import get_group_actions
 from functions_group import assert_group_role, get_group_model_endpoints, get_optional_active_group, require_active_group
@@ -124,9 +123,10 @@ from functions_personal_actions import (
     get_governed_personal_actions,
     ensure_migration_complete as ensure_actions_migration_complete,
 )
-from functions_personal_agents import get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
-from functions_governance import filter_actions_by_action_type_access, filter_governed_global_actions_for_user
+from functions_personal_agents import get_personal_agent, get_personal_agents, ensure_migration_complete as ensure_agents_migration_complete
+from functions_governance import ensure_governance_access, filter_actions_by_action_type_access, filter_governed_global_actions_for_user
 from functions_agent_payload import can_agent_use_default_multi_endpoint_model
+from agent_credential_contracts import AgentCredentialReentryRequired
 from functions_workspace_identities import (
     WORKSPACE_IDENTITY_SCOPE_GLOBAL,
     WORKSPACE_IDENTITY_SCOPE_GROUP,
@@ -467,7 +467,6 @@ def resolve_foundry_endpoint_from_settings(foundry_settings, settings):
 
 def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id=None):
     debug_print(f"[SK_LOADER] resolve_agent_config called for agent: {agent.get('name')}")
-    debug_print(f"[SK_LOADER] Agent config: {agent}")
     debug_print(f"[SK_LOADER] Agent is_global flag: {agent.get('is_global')}")
     debug_print(f"[SK_LOADER] Agent is_group flag: {agent.get('is_group')}")
     agent_type = (agent.get('agent_type') or 'local').lower()
@@ -476,7 +475,6 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
 
     gpt_model_obj = settings.get('gpt_model', {})
     selected_model = gpt_model_obj.get('selected', [{}])[0] if gpt_model_obj.get('selected') else {}
-    debug_print(f"[SK_LOADER] Global selected_model: {selected_model}")
     debug_print(f"[SK_LOADER] Global selected_model deploymentName: {selected_model.get('deploymentName')}")
 
     # User APIM enabled if agent has enable_agent_gpt_apim True (or 1, or 'true')
@@ -486,8 +484,18 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
     allow_user_custom_endpoints = settings.get('allow_user_custom_endpoints', False) or settings.get('allow_user_custom_agent_endpoints', False)
     allow_group_custom_endpoints = settings.get('allow_group_custom_endpoints', False) or settings.get('allow_group_custom_agent_endpoints', False)
     is_group_agent = agent.get("is_group", False)
-    is_global_agent = agent.get("is_global", False)
+    is_global_agent = not is_group_agent and bool(agent.get("is_global", False))
     explicit_group_scope_id = str(group_scope_id or "").strip()
+    if is_group_agent:
+        scope_actor = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
+        authorized_group_id = explicit_group_scope_id or str(agent.get("group_id") or "").strip()
+        if explicit_group_scope_id and agent.get("group_id") and explicit_group_scope_id != str(agent["group_id"]).strip():
+            raise PermissionError("The agent does not belong to this group context.")
+        if not scope_actor or not authorized_group_id:
+            raise PermissionError("An authorized group agent context is required.")
+        assert_group_role(
+            scope_actor, authorized_group_id, allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
 
     if is_group_agent:
         allow_custom_agent_endpoints = allow_group_custom_endpoints
@@ -500,10 +508,40 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
     debug_print(f"[SK_LOADER] allow_user_custom_endpoints: {allow_user_custom_endpoints}, allow_group_custom_endpoints: {allow_group_custom_endpoints}, allow_custom_agent_endpoints_resolved: {allow_custom_agent_endpoints}")
     debug_print(f"[SK_LOADER] Max completion tokens from agent: {agent.get('max_completion_tokens')}")
 
-    def resolve_secret_value_if_needed(value, scope_value, source, scope):
-        if validate_secret_name_dynamic(value):
-            return retrieve_secret_from_key_vault(value, scope_value, scope, source)
-        return value
+    stored_agent = None
+
+    def authorized_agent_credential(path):
+        nonlocal stored_agent
+        actor = execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
+        if is_group_agent:
+            owner_id = explicit_group_scope_id or str(agent.get("group_id") or "").strip()
+            if not actor or not owner_id:
+                raise PermissionError("An authorized group agent context is required.")
+            assert_group_role(actor, owner_id, allowed_roles=("Owner", "Admin", "DocumentManager", "User"))
+            scope = "group"
+            if stored_agent is None:
+                stored_agent = get_group_agent(owner_id, agent.get("id"), return_type=SecretReturnType.NAME)
+        elif is_global_agent:
+            owner_id, scope = "global", "global"
+            if actor:
+                ensure_governance_access(
+                    "governance_global_agents_usage", actor,
+                    item_entity_type="global_agent", item_id=str(agent.get("id") or ""),
+                )
+            if stored_agent is None:
+                stored_agent = get_global_agent(agent.get("id"), return_type=SecretReturnType.NAME)
+        else:
+            if not actor:
+                raise PermissionError("An authorized personal agent context is required.")
+            owner_id, scope = actor, "user"
+            if stored_agent is None:
+                stored_agent = get_personal_agent(actor, agent.get("id"), return_type=SecretReturnType.NAME)
+        if not stored_agent:
+            raise AgentCredentialReentryRequired()
+        return keyvault_agent_get_helper(
+            stored_agent, stored_agent["id"], scope=scope, owner_id=owner_id,
+            return_type=SecretReturnType.VALUE, paths=(path,),
+        )
 
     def any_filled(*fields):
         return any(bool(f) for f in fields)
@@ -544,24 +582,11 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             return ""
 
     def get_user_apim():
-        endpoint = agent.get("azure_apim_gpt_endpoint")
-        key = agent.get("azure_apim_gpt_subscription_key")
-        deployment = agent.get("azure_apim_gpt_deployment")
-        api_version = agent.get("azure_apim_gpt_api_version")
-
-        # Check if key vault secret storage is enabled in settings
-        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
-            try:
-                if validate_secret_name_dynamic(key):
-                    # Try to retrieve the secret from Key Vault
-                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
-                    if resolved_key:
-                        # Update the agent dict with the resolved key for this session
-                        agent["azure_apim_gpt_subscription_key"] = resolved_key
-                        key = resolved_key
-            except Exception as e:
-                log_event(f"[SK_LOADER] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_apim: {e}", level=logging.ERROR, exceptionTraceback=True)
-                # Fallback to using the value as-is
+        current = authorized_agent_credential(("azure_agent_apim_gpt_subscription_key",))
+        endpoint = current.get("azure_agent_apim_gpt_endpoint")
+        key = current.get("azure_agent_apim_gpt_subscription_key")
+        deployment = current.get("azure_agent_apim_gpt_deployment")
+        api_version = current.get("azure_agent_apim_gpt_api_version")
         endpoint = resolve_model_inference_endpoint(
             endpoint, use_responses_api=agent.get("azure_apim_gpt_use_responses_api", agent.get("azure_agent_apim_gpt_use_responses_api")),
         )
@@ -590,24 +615,11 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         return (endpoint, key, deployment, api_version)
 
     def get_user_gpt():
-        endpoint = agent.get("azure_openai_gpt_endpoint")
-        key = agent.get("azure_openai_gpt_key")
-        deployment = agent.get("azure_openai_gpt_deployment")
-        api_version = agent.get("azure_openai_gpt_api_version")
-
-        # Check if key vault secret storage is enabled in settings
-        if settings.get("enable_key_vault_secret_storage", False) and settings.get("key_vault_name") and key:
-            try:
-                if validate_secret_name_dynamic(key):
-                    # Try to retrieve the secret from Key Vault
-                    resolved_key = retrieve_secret_from_key_vault_by_full_name(key)
-                    if resolved_key:
-                        # Update the agent dict with the resolved key for this session
-                        agent["azure_openai_gpt_key"] = resolved_key
-                        key = resolved_key
-            except Exception as e:
-                log_event(f"[SK_LOADER] Failed to resolve Key Vault secret for agent '{agent.get('name')}' in get_user_gpt: {e}", level=logging.ERROR, exceptionTraceback=True)
-                # Fallback to using the value as-is
+        current = authorized_agent_credential(("azure_openai_gpt_key",))
+        endpoint = current.get("azure_openai_gpt_endpoint")
+        key = current.get("azure_openai_gpt_key")
+        deployment = current.get("azure_openai_gpt_deployment")
+        api_version = current.get("azure_openai_gpt_api_version")
         endpoint = resolve_model_inference_endpoint(endpoint, use_responses_api=agent.get("azure_openai_gpt_use_responses_api"))
         return (endpoint, key, deployment, api_version)
 
@@ -866,12 +878,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         return endpoint_cfg
 
     def hydrate_agent_foundry_secret_values(foundry_settings):
-        hydrated_agent = keyvault_agent_get_helper(
-            agent,
-            agent.get("id", ""),
-            scope="group" if is_group_agent else "global" if is_global_agent else "user",
-            return_type=SecretReturnType.VALUE,
-        )
+        if str(foundry_settings.get("authentication_type") or "").lower() != "service_principal":
+            return foundry_settings
+        hydrated_agent = authorized_agent_credential(("other_settings", foundry_settings_key, "client_secret"))
         hydrated_other_settings = hydrated_agent.get("other_settings", {}) or {}
         return hydrated_other_settings.get(foundry_settings_key, {}) or foundry_settings
 
@@ -945,6 +954,9 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         endpoint_cfg = resolve_foundry_endpoint_config()
         if endpoint_cfg:
             foundry_settings = enrich_foundry_settings(foundry_settings, endpoint_cfg)
+        elif agent_type == "aifoundry":
+            foundry_settings = hydrate_agent_foundry_secret_values(foundry_settings)
+            other_settings[foundry_settings_key] = foundry_settings
         elif agent_type in {"new_foundry", "foundry_workflow"}:
             foundry_settings = hydrate_agent_foundry_secret_values(foundry_settings)
             foundry_settings["endpoint"] = foundry_settings.get("endpoint") or agent.get("azure_openai_gpt_endpoint", "")
@@ -1069,12 +1081,7 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
             log_event(f"[SK_LOADER] Error resolving agent config: {e}", level=logging.ERROR, exceptionTraceback=True)
 
     # --- PATCHED DECISION TREE ---
-    u_apim = get_user_apim()
-    g_apim = get_global_apim()
-    u_gpt = get_user_gpt()
-    g_gpt = get_global_gpt()
-    can_use_agent_endpoints = allow_custom_agent_endpoints
-    user_apim_allowed = user_apim_enabled and can_use_agent_endpoints
+    can_use_agent_endpoints = allow_custom_agent_endpoints or is_global_agent
 
     if multi_endpoint_config and multi_endpoint_config.get("provider") in ("aoai", "aifoundry", "new_foundry", "foundry_workflow", "custom"):
         auth = multi_endpoint_config.get("auth", {}) or {}
@@ -1123,31 +1130,44 @@ def resolve_agent_config(agent, settings, group_scope_id=None, execution_user_id
         }
         return result
 
-    # 1. User APIM enabled and any user APIM values set: use user APIM (merge with global APIM if needed)
-    if user_apim_allowed and any_filled(*u_apim):
-        debug_print(f"[SK_LOADER] Using user APIM with global fallback")
-        merged = merge_fields(u_apim, g_apim if global_apim_enabled and any_filled(*g_apim) else (None, None, None, None))
-        endpoint, key, deployment, api_version = merged
-    # 2. User APIM enabled but no user APIM values, and global APIM enabled and present: use global APIM
-    elif user_apim_enabled and global_apim_enabled and any_filled(*g_apim):
-        debug_print(f"[SK_LOADER] Using global APIM (user APIM enabled but not present)")
-        endpoint, key, deployment, api_version = g_apim
-    # 3. User GPT config is FULLY filled: use user GPT (all fields filled)
-    elif all_filled(*u_gpt) and can_use_agent_endpoints:
-        debug_print(f"[SK_LOADER] Using agent GPT config (all fields filled)")
-        endpoint, key, deployment, api_version = u_gpt
-    # 4. User GPT config is PARTIALLY filled, global APIM is NOT enabled: merge user GPT with global GPT
-    elif any_filled(*u_gpt) and not global_apim_enabled and can_use_agent_endpoints:
-        debug_print(f"[SK_LOADER] Using agent GPT config (partially filled, merging with global GPT, global APIM not enabled)")
-        endpoint, key, deployment, api_version = merge_fields(u_gpt, g_gpt)
-    # 5. Global APIM enabled and present: use global APIM
-    elif global_apim_enabled and any_filled(*g_apim):
-        debug_print(f"[SK_LOADER] Using global APIM (fallback)")
-        endpoint, key, deployment, api_version = g_apim
-    # 6. Fallback to global GPT config
-    else:
-        debug_print(f"[SK_LOADER] Using global GPT config (fallback)")
-        endpoint, key, deployment, api_version = g_gpt
+    if can_use_agent_endpoints and (
+        user_apim_enabled or any(agent.get(field) for field in (
+            "azure_openai_gpt_endpoint", "azure_openai_gpt_key",
+        ))
+    ):
+        endpoint, key, deployment, api_version = get_user_apim() if user_apim_enabled else get_user_gpt()
+        if not all_filled(endpoint, key, deployment, api_version):
+            raise AgentCredentialReentryRequired(
+                incomplete=True, agent_id=(stored_agent or {}).get("id"),
+                scope="group" if is_group_agent else "global" if is_global_agent else "user",
+                owner_id=get_group_scope_id() if is_group_agent else (
+                    "global" if is_global_agent else
+                    execution_user_id or get_execution_user_id() or get_current_user_id_or_none()
+                ),
+            )
+        return {
+            "endpoint": endpoint, "key": key, "deployment": deployment,
+            "api_version": api_version, "token_provider": None,
+            "instructions": agent.get("instructions", ""),
+            "actions_to_load": agent.get("actions_to_load", []),
+            "additional_settings": agent.get("additional_settings", {}),
+            "name": agent.get("name"), "display_name": agent.get("display_name", agent.get("name")),
+            "description": agent.get("description", ""), "id": agent.get("id", ""),
+            "default_agent": agent.get("default_agent", False),
+            "is_global": is_global_agent, "is_group": is_group_agent,
+            "group_id": agent.get("group_id"), "group_name": agent.get("group_name"),
+            "enable_agent_gpt_apim": user_apim_enabled,
+            "max_completion_tokens": agent.get("max_completion_tokens", -1),
+            "agent_type": agent_type, "other_settings": other_settings,
+        }
+
+    # No custom connection can borrow credentials or a token provider from this branch.
+    g_apim = get_global_apim() if global_apim_enabled else (None, None, None, None)
+    g_gpt = get_global_gpt() if not global_apim_enabled else (None, None, None, None)
+    endpoint, key, deployment, api_version = g_apim if global_apim_enabled else g_gpt
+    if can_use_agent_endpoints and not global_apim_enabled:
+        deployment = agent.get("azure_openai_gpt_deployment") or deployment
+        api_version = agent.get("azure_openai_gpt_api_version") or api_version
 
     token_provider = resolve_global_gpt_token_provider(key)
 
@@ -1189,23 +1209,13 @@ def load_time_plugin(kernel: Kernel):
     )
 
 def load_http_plugin(kernel: Kernel):
-    try:
-        # Use smart HTTP plugin with 75k character limit (≈50k tokens)
-        smart_plugin = SmartHttpPlugin(max_content_size=75000, extract_text_only=True)
-        kernel.add_plugin(
-            smart_plugin,
-            plugin_name="http",
-            description="Provides HTTP request functions with intelligent content size management for web scraping."
-        )
-        log_event("[SK_LOADER] Loaded Smart HTTP plugin with content size limits.", level=logging.INFO)
-    except ImportError as e:
-        log_event(f"[SK_LOADER] Smart HTTP plugin not available, falling back to standard HttpPlugin: {e}", level=logging.WARNING)
-        # Fallback to standard HTTP plugin
-        kernel.add_plugin(
-            HttpPlugin(),
-            plugin_name="http",
-            description="Provides HTTP request functions for making API calls."
-        )
+    smart_plugin = SmartHttpPlugin(max_content_size=75000, extract_text_only=True)
+    kernel.add_plugin(
+        smart_plugin,
+        plugin_name="http",
+        description="Provides HTTP request functions with intelligent content size management for web scraping."
+    )
+    log_event("[SK_LOADER] Loaded Smart HTTP plugin with content size limits.", level=logging.INFO)
 
 def load_wait_plugin(kernel: Kernel):
     kernel.add_plugin(
@@ -1667,7 +1677,7 @@ def load_agent_specific_plugins(
         if before_plugins_load is not None:
             return plugin_manifests
         
-    except (ActionLoadRequired, ActionRecoveryError, ActionCredentialsRequired, M365PolicyError, ImportError, PermissionError):
+    except (AgentCredentialReentryRequired, ActionLoadRequired, ActionRecoveryError, ActionCredentialsRequired, M365PolicyError, ImportError, PermissionError):
         raise
     except Exception as e:
         if before_plugins_load is not None:
@@ -1704,7 +1714,7 @@ def _preflight_m365_plugin_manifests(plugin_manifests):
         if not isinstance(permitted, list) or any(not isinstance(manifest, dict) for manifest in permitted):
             raise TypeError("Microsoft 365 preflight must return effective manifests.")
         return permitted
-    except M365PolicyError:
+    except (AgentCredentialReentryRequired, M365PolicyError):
         raise
     except (AttributeError, TypeError, ValueError, RuntimeError, LookupError, PermissionError, AzureError) as exc:
         log_event(
@@ -2344,7 +2354,7 @@ def load_single_agent_for_kernel(
                 f"[SK_LOADER] Initializing APIM chat completion for agent: {agent_config['name']} ({mode_label})",
                 {
                     "aoai_endpoint": agent_config["endpoint"],
-                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                    "has_aoai_key": bool(agent_config.get("key")),
                     "aoai_deployment": agent_config["deployment"],
                     "agent_name": agent_config["name"],
                     "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
@@ -2357,7 +2367,7 @@ def load_single_agent_for_kernel(
                 f"[SK_LOADER] Initializing GPT Direct chat completion for agent: {agent_config['name']} ({mode_label})",
                 {
                     "aoai_endpoint": agent_config["endpoint"],
-                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                    "has_aoai_key": bool(agent_config.get("key")),
                     "aoai_deployment": agent_config["deployment"],
                     "agent_name": agent_config["name"],
                     "endpoint_protocol": resolve_agent_endpoint_protocol(agent_config),
@@ -2424,7 +2434,7 @@ def load_single_agent_for_kernel(
             f"[SK_LOADER] Chat completion service registered for agent: {agent_config['name']} ({mode_label})",
             {
                 "aoai_endpoint": agent_config["endpoint"],
-                "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                "has_aoai_key": bool(agent_config.get("key")),
                 "aoai_deployment": agent_config["deployment"],
                 "agent_name": agent_config["name"],
                 "apim_enabled": agent_config.get("enable_agent_gpt_apim", False),
@@ -2447,7 +2457,7 @@ def load_single_agent_for_kernel(
             {
                 "agent_name": agent_config["name"],
                 "aoai_endpoint": agent_config["endpoint"],
-                "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                "has_aoai_key": bool(agent_config.get("key")),
                 "token_provider": token_provider_present,
                 "aoai_deployment": agent_config["deployment"],
             },
@@ -2636,7 +2646,7 @@ def load_single_agent_for_kernel(
                 f"[SK_LOADER] ChatCompletionAgent initialized for agent: {agent_config['name']} ({mode_label})",
                 {
                     "aoai_endpoint": agent_config["endpoint"],
-                    "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                    "has_aoai_key": bool(agent_config.get("key")),
                     "aoai_deployment": agent_config["deployment"],
                     "agent_name": agent_config["name"],
                     "max_completion_tokens": agent_config.get("max_completion_tokens", -1),
@@ -3618,7 +3628,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                             f"[SK_LOADER] Creating chat completion service {service_id} for agent: {agent_config['name']}",
                             {
                                 "aoai_endpoint": agent_config["endpoint"],
-                                "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                                "has_aoai_key": bool(agent_config.get("key")),
                                 "aoai_deployment": agent_config["deployment"],
                                 "agent_name": agent_config["name"],
                                 "actions_to_load": agent_config.get("actions_to_load", []),
@@ -3678,7 +3688,7 @@ def load_semantic_kernel(kernel: Kernel, settings):
                         f"[SK_LOADER] ChatCompletionAgent initialized for agent: {agent_config['name']}",
                         {
                             "aoai_endpoint": agent_config["endpoint"],
-                            "aoai_key": f"{agent_config['key'][:3]}..." if agent_config["key"] else None,
+                            "has_aoai_key": bool(agent_config.get("key")),
                             "aoai_deployment": agent_config["deployment"],
                             "agent_name": agent_config["name"],
                             "description": agent_obj.description,

@@ -1,8 +1,8 @@
 # test_tabular_relational_calculations.py
 """
 Functional tests for complete multi-file calculations and per-row lineage.
-Version: 0.261.432
-Implemented in: 0.261.432
+Version: 0.261.437
+Implemented in: 0.261.437
 
 These offline cases use unrelated schemas, precise source values and the real
 CSV/Excel readers. They do not invoke a model or change source documents.

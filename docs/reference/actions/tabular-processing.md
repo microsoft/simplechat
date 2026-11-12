@@ -84,7 +84,7 @@ See [Inspect Excel workbooks]({{ '/guides/inspect-excel-workbooks/' | relative_u
 
 ## Orchestrate calculations across files
 
-Implemented in version: **0.261.432** (`application/single_app/config.py`).
+Implemented in version: **0.261.437** (`application/single_app/config.py`).
 
 Orchestrate also offers a typed, deterministic cross-file operation through
 `tabular_analyze`. Select the intended files and specify the relationship and

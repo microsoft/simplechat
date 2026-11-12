@@ -1,10 +1,10 @@
 # test_orchestration_document_action_end_to_end.py
 """
 Authenticated native-document orchestration from HTTP submission to saved answer.
-Version: 0.261.432
+Version: 0.261.437
 Implemented in: 0.261.419
 Production plugin discovery coverage added in: 0.261.421
-Source-aware native reader coexistence added in: 0.261.432
+Source-aware native reader coexistence added in: 0.261.437
 
 Real routes, plugin discovery, approval/leases, native action filters,
 report/citation projection, retention, composition, completeness and publication

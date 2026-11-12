@@ -1,8 +1,8 @@
 # Selected-document reader routing and source continuity fix
 
-Version: **0.261.432**
+Version: **0.261.437**
 
-Fixed/Implemented in version: **0.261.432**
+Fixed/Implemented in version: **0.261.437**
 
 Application version tracking remains in `application/single_app/config.py`.
 

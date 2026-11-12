@@ -1,14 +1,14 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.432
+Version: 0.261.437
 Implemented in: 0.261.239
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.240
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.241
 Workbooks with unsafe or unreadable XML refused in: 0.261.245
 Spooled rows written to the container's scratch directory in: 0.261.247
 CodeQL cleanup for intentionally ignored reader cleanup failures added in: 0.261.248
-Complete calculation readers, selectors and formula-cache refusal added in: 0.261.432
+Complete calculation readers, selectors and formula-cache refusal added in: 0.261.437
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage, routes, or models, and performs no model work.

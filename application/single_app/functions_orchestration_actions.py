@@ -5,12 +5,12 @@ When the request asks for a chart, a separate chart sub-step runs after gatherin
 kernel holds only the built-in chart tools, never the action's own functions, so saved
 visual preferences can be applied there without reaching calls to the integration.
 
-Version: 0.261.432
+Version: 0.261.437
 Microsoft 365 actions authorized for their own step in: 0.261.238
 SharePoint and OneDrive steps bind their model's token budget and analysis model in: 0.261.300
 Explicit operation intent and named input consumption added in: 0.261.321
 Canonical plugin identity and safe action-stage failures added in: 0.261.421
-Source-aware document function admission added in: 0.261.432
+Source-aware document function admission added in: 0.261.437
 """
 
 import asyncio

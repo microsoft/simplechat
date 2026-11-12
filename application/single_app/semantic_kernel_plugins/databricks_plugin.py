@@ -15,6 +15,7 @@ from semantic_kernel.functions import kernel_function
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_outbound_http import guarded_request
 from functions_azure_endpoint_validation import validate_azure_databricks_endpoint
 from functions_databricks_operations import (
     DATABRICKS_ALLOWED_READ_STATEMENTS,
@@ -269,7 +270,8 @@ class DatabricksPlugin(BasePlugin):
             f"warehouse_id_present={bool(self.warehouse_id)} first_word={self._first_word(statement) if hasattr(self, '_first_word') else ''} "
             f"statement_length={len(statement)} timeout={self.timeout} wait_timeout={self.wait_timeout}"
         )
-        response = requests.post(
+        response = guarded_request(
+            "POST",
             self._statement_url(),
             headers=self._headers(),
             json=payload,
@@ -297,7 +299,8 @@ class DatabricksPlugin(BasePlugin):
                 f"[DATABRICKS_PLUGIN] Polling statement status statement_id={statement_id} "
                 f"current_state={state} timeout={self.timeout}"
             )
-            response = requests.get(
+            response = guarded_request(
+                "GET",
                 self._statement_url(statement_id),
                 headers=self._headers(),
                 timeout=self.timeout,

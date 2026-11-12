@@ -1,8 +1,8 @@
 # Multi-file tabular calculations
 
-Version: **0.261.432**
+Version: **0.261.437**
 
-Implemented in version: **0.261.432**
+Implemented in version: **0.261.437**
 
 Application version tracking remains in `application/single_app/config.py`.
 

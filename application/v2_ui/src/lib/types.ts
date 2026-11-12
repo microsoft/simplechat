@@ -1323,6 +1323,12 @@ export interface WorkspaceAvailability {
  * signalled by the presence of `content` / `done` rather than by a `type` value, which is
  * why almost everything here is optional.
  */
+export interface AgentCredentialRecovery {
+    scope: 'personal' | 'group' | 'global';
+    can_edit: boolean;
+    edit_url?: string;
+}
+
 export interface ChatStreamEvent {
     input_request?: import('../stores/userInputStore').UserInputRequest;
     credential_request?: CredentialRequest;
@@ -1346,6 +1352,7 @@ export interface ChatStreamEvent {
     /** Direct image generation completes with a source URL rather than assistant text. */
     image_url?: string;
     error?: string;
+    agent_credential_recovery?: AgentCredentialRecovery;
     auth_required?: boolean;
     /** Same-origin handoff that reauthorizes the target and starts Foundry consent. */
     auth_url?: string;

@@ -16,6 +16,8 @@ from action_credential_contracts import (
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_outbound_destinations import normalize_outbound_url
+from functions_outbound_http import guard_login_credentials, guard_requests_session
 from functions_yamcs_operations import (
     YAMCS_ALLOWED_READ_STATEMENTS,
     YAMCS_AUTH_METHOD_API_KEY,
@@ -28,6 +30,7 @@ from functions_yamcs_operations import (
     YAMCS_SUPPORTED_AUTH_METHODS,
     YAMCS_SUPPORTED_AUTH_TYPES,
     build_yamcs_basic_auth_header,
+    build_yamcs_api_key_credentials,
     normalize_yamcs_additional_fields,
     normalize_yamcs_server_url,
     yamcs_basic_auth_conflicts_with_auth_method,
@@ -295,20 +298,7 @@ class YamcsPlugin(BasePlugin):
 
         auth_key = str(self._auth.get("key") or "")
         if self.auth_method == YAMCS_AUTH_METHOD_API_KEY:
-            try:
-                from yamcs.client import APIKeyCredentials
-            except ImportError:
-                # yamcs-client 1.8.8 exposes core Credentials, but no API-key
-                # holder. Its Context calls before_request for every request.
-                class APIKeyCredentials(Credentials):
-                    def __init__(self, api_key):
-                        super().__init__()
-                        self.api_key = api_key
-
-                    def before_request(self, session, auth_url):
-                        session.headers.update({"x-api-key": self.api_key})
-
-            return APIKeyCredentials(auth_key)
+            return build_yamcs_api_key_credentials(auth_key)
         if self.auth_method == YAMCS_AUTH_METHOD_BEARER_TOKEN:
             return Credentials(access_token=auth_key)
         return Credentials(username=str(self._auth.get("identity") or ""), password=auth_key)
@@ -333,6 +323,7 @@ class YamcsPlugin(BasePlugin):
         return BasicAuthCredentials(self.basic_auth_username, self.basic_auth_password)
 
     def _connect(self):
+        normalize_outbound_url(self.server_url)
         try:
             from yamcs.client import YamcsClient
         except ImportError as exc:
@@ -363,7 +354,7 @@ class YamcsPlugin(BasePlugin):
             credentials = BoundCredentials()
         client = YamcsClient(
             self.server_url,
-            credentials=credentials,
+            credentials=guard_login_credentials(credentials),
             tls_verify=self.tls_verify,
             user_agent="SimpleChat",
         )
@@ -371,6 +362,7 @@ class YamcsPlugin(BasePlugin):
         # slow or unreachable ground segment cannot hang an agent turn indefinitely.
         session = getattr(getattr(client, "ctx", None), "session", None)
         if session is not None:
+            guard_requests_session(session)
             session.request = self._with_timeout(session.request)
             self._apply_basic_auth_header(session)
         return client

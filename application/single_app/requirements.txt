@@ -54,6 +54,12 @@ pillow==13.0.0
 ffmpeg-binaries-compat==1.0.1
 ffmpeg-python==0.2.0
 semantic-kernel==1.39.4
+# Action destination guards use these clients' transport extension contracts.
+mcp==1.30.0
+httpx==0.28.1
+httpcore==1.0.9
+urllib3==2.7.0
+websockets==15.0.1
 # Required by Semantic Kernel's Handlebars template parser.
 PyMeta3==0.5.1
 snowflake-connector-python[pandas]==4.7.3

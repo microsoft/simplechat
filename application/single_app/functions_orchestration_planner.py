@@ -25,11 +25,11 @@ error, not evidence that the task can be answered without gathering information.
 Every plan uses the Gather / Reason / Render contract. There is one planner prompt,
 ``PLANNER_SYSTEM_PROMPT``, and one validator.
 
-Version: 0.261.432
+Version: 0.261.437
 Gathered results must be read, and an action's chart reaches the answer, in: 0.261.293
 Empty-history clarification continuation fixed in: 0.261.367
 Selected-document planning recovery and debug diagnostics added in: 0.261.413
-Referenced failed-turn source identity context added in: 0.261.432
+Referenced failed-turn source identity context added in: 0.261.437
 """
 
 import hashlib

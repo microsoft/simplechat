@@ -4,10 +4,10 @@ title: "Calculate across selected files"
 description: "Match and calculate complete CSV or Excel records without confusing data with document layout."
 section: "Guides"
 audience: user
-version: "0.261.432"
+version: "0.261.437"
 ---
 
-Implemented in version: **0.261.432**, tracked in
+Implemented in version: **0.261.437**, tracked in
 `application/single_app/config.py`.
 
 ## Select the related data and name the relationship

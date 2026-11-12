@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.432"
+version: "0.261.437"
 ---
 
 <!-- action-slug: document-search -->
@@ -49,7 +49,7 @@ The V2 editor no longer offers ad hoc custom fields. Use **Advanced → JSON** o
 
 The action includes a `get_document_accessibility_report` function for agents that review documents for accessibility or house style. It returns supported native accessibility/structure data, the style inventory, and detected issues. Retained authorized active PDF/PPTX sources can be inspected locally on request; stored legacy reports do not certify unavailable native fields.
 
-Fixed/Implemented in version: **0.261.432**
+Fixed/Implemented in version: **0.261.437**
 (`application/single_app/config.py`).
 
 Document-bound Orchestrate actions now declare a typed reading purpose:

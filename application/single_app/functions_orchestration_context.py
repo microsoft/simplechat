@@ -27,8 +27,8 @@ a document, an agent, a model, a prompt -- narrows the plan rather than suggesti
 A user who picked a document and then watched the planner search their whole workspace
 would rightly conclude the control did nothing.
 
-Version: 0.261.432
-Referenced failed-turn source continuation added in: 0.261.432
+Version: 0.261.437
+Referenced failed-turn source continuation added in: 0.261.437
 """
 
 import hashlib

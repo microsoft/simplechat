@@ -1,10 +1,10 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.432
+Version: 0.261.437
 Implemented in: 0.261.355
 Shared two-correction allowance updated in: 0.261.422
-Referenced failed-turn source continuation added in: 0.261.432
+Referenced failed-turn source continuation added in: 0.261.437
 
 Uses real source projection, parsers, resolution and HTTP planning with external
 storage/model I/O replaced. Previews must never become complete export records.

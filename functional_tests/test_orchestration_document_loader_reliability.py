@@ -1,9 +1,9 @@
 # test_orchestration_document_loader_reliability.py
 """
 Functional tests for shared document-action loading and safe failure outcomes.
-Version: 0.261.432
+Version: 0.261.437
 Implemented in: 0.261.421
-Source-aware reader admission added in: 0.261.432
+Source-aware reader admission added in: 0.261.437
 
 Real authenticated routes, discovery, source checks, SDK-shaped document stores,
 chunk readers, action filters, retention, and final publication run offline.

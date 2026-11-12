@@ -4,7 +4,7 @@ title: "Build agents and actions in My Workspace"
 description: "Find an available agent or configure a reusable assistant and its approved tools in V2."
 section: "Guides"
 audience: user
-version: "0.261.428"
+version: "0.261.435"
 ---
 
 ## What this does
@@ -86,6 +86,50 @@ instruction-brief drafting command can help produce an initial draft; review it
 before saving. Action and knowledge references make those instructions more
 specific without expanding the agent's permissions.
 
+## Update agent credentials after a security update
+
+Since **0.261.428**, an agent with an older embedded Azure OpenAI API key, APIM
+subscription key, or Foundry service-principal client secret reports
+**Agent credentials need updating**. The notice identifies the affected fields.
+Use **Update credentials** in the native agent editor to reach its connection
+settings, then re-enter the required values and save. The classic editor also
+identifies fields requiring replacement.
+
+Since **0.261.429**, chat also provides **Update agent credentials** when the
+server confirms that you may edit the affected agent. Since **0.261.431**, a
+guided recovery message separates the two tasks. **Update the connection**
+contains the compact button that opens that exact agent's **Model & connection**
+section in a new tab. **Return to this chat** explains how to select **Retry**
+on your message after saving, or start a new conversation. The steps stack on
+phones and sit side by side on larger screens.
+
+The message is never retried automatically. Your conversation stays open, and
+you do not enter these agent secrets in the chat.
+
+If you cannot edit a group agent, the error asks you to contact a **group owner**.
+For an organization-wide agent, it asks you to contact a **site administrator**.
+Disabled personal authoring also directs you to a site administrator. A site
+Admin role does not bypass group membership, owner-only management policy, or a
+group's read-only status. Permissions are checked again when the editor opens
+and when changes are saved.
+
+This is not limited to MCP. It affects agent-level custom credentials, not every
+saved model connection, workspace identity or action. An agent using an approved
+saved model connection can continue using that connection; an inactive legacy
+override still requires replacement before it can be used again.
+
+A masked value, unrelated edit or authentication toggle does not re-enable an
+old credential. You can explicitly remove an unused credential or choose an
+approved saved connection instead. If the agent is read-only for your account,
+ask its owner or an administrator with edit permission to update it.
+
+Changing a custom endpoint or service-principal authority also requires
+replacement of its saved credential. An unchanged masked value is not permission
+to send that credential to a new destination.
+
+Re-entry is not provider-side rotation. If a credential may have been exposed,
+replace it at its provider and enter the new value here.
+
 ## Configure an action
 
 **New action** opens the normal type chooser. Select the tool the agent needs,
@@ -119,6 +163,42 @@ Connection tests and discovery are separate commands. Saving configuration
 does not run the action. If a test fails, resolve the connection or permission
 problem rather than assuming that a successful configuration save proves the
 remote service is reachable.
+
+### Connection destinations and compatibility
+
+Implemented in version: **0.261.435** (`application/single_app/config.py`).
+
+Configurable HTTP actions, Smart HTTP, and remote MCP connections check their
+actual destination before opening a service connection. Public services and
+legitimate private FQDNs/IPs remain supported, including on-premises services and
+Private Link-style DNS. There is no new administrator destination allowlist.
+Existing stricter governance policies still apply.
+
+Localhost, loopback, link-local, reserved non-host addresses and cloud
+infrastructure destinations are not valid action targets. A hostname resolving
+to one of those addresses is also refused. DNS checks are bound to the addresses
+used by the client, including new connections after redirects or reconnects.
+This does not change the application's own Azure identity authentication.
+
+| Existing setup | What to expect |
+|---|---|
+| An unchanged public or reachable private service | No mandatory re-save or credential reset. |
+| Yamcs behind a remote reverse proxy | Basic proxy authentication remains supported. The remote proxy may use localhost for its own upstream. |
+| A Server URL pointing to localhost on SimpleChat | The request is refused. In App Service, localhost means the worker/container, not an operator's workstation or an on-premises server. |
+| A service redirecting to another origin | Configure the final service URL. Same-origin redirects and default-port HTTP-to-HTTPS upgrades remain supported; credentials and request bodies are not forwarded to a different origin. |
+| An action edited to use a different connector, host, scheme or port | Re-enter or explicitly clear retained credentials before testing or saving. Unchanged-destination credential rotation continues normally. |
+
+Connection tests and discovery require the corresponding action-management and
+type permissions. Ordinary execution of an authorized shared action does not
+require its caller to become an editor.
+
+Yamcs's reverse-proxy authentication is not a deployment-wide forward proxy.
+The guarded clients explicitly refuse HTTP(S) forward-proxy routing rather
+than silently bypassing the proxy or allowing it to bypass destination checks.
+Deployments using such routing need separate compatibility review before upgrading.
+Proxy addresses and credentials are not automatically migrated.
+
+### Personal credentials for shared actions
 
 Since **0.261.333**, shared Yamcs actions can request each invoking user's
 personal service or proxy identity. The credential is entered in a private

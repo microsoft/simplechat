@@ -5,6 +5,7 @@ from copy import deepcopy
 from typing import Any, Dict, List
 
 from functions_icon_utils import normalize_icon_payload
+from agent_credential_contracts import AGENT_CREDENTIAL_BINDINGS, AGENT_CREDENTIAL_STATUS
 
 _SUPPORTED_AGENT_TYPES = {"local", "aifoundry", "new_foundry", "foundry_workflow"}
 _APIM_FIELDS = [
@@ -54,6 +55,8 @@ _STRING_DEFAULT_FIELDS = [
     "model_provider",
 ]
 _SERVER_MANAGED_FIELDS = [
+    AGENT_CREDENTIAL_BINDINGS,
+    AGENT_CREDENTIAL_STATUS,
     "_attachments",
     "_etag",
     "_rid",

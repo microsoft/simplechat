@@ -13,7 +13,7 @@ import type { ChatWidth } from '../stores/uiStore';
  * composer cramped on a wide screen. "wide" lets both fill the pane.
  */
 export function chatWidthClass(width: ChatWidth): string {
-    return width === 'wide' ? 'max-w-none' : 'max-w-4xl';
+    return width === 'wide' ? 'max-w-none' : 'max-w-[45rem]';
 }
 
 /**

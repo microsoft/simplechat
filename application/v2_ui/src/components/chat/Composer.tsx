@@ -1780,7 +1780,7 @@ export function Composer({ initialAgentSelection }: { initialAgentSelection?: st
     };
 
     return (
-        <div className="chat-composer shrink-0 px-2 pb-2 md:px-4 md:pb-4">
+        <div className="chat-composer shrink-0 px-4 pb-2 md:pb-4">
             {largeRun && (
                 <LargeRunDialog
                     estimate={largeRun.estimate}

@@ -11,7 +11,6 @@ from mcp.types import CallToolResult
 from semantic_kernel.connectors.mcp import (
     MCPSsePlugin,
     MCPStreamableHttpPlugin,
-    MCPWebsocketPlugin,
     _mcp_call_tool_result_to_kernel_contents,
 )
 
@@ -25,6 +24,7 @@ from functions_action_manifest import (
     resolve_action_type,
 )
 from functions_debug import debug_print
+from functions_outbound_http import create_guarded_httpx_client
 from functions_mcp_operations import (
     MCP_CUSTOM_HEADERS_FIELD,
     MCP_PLUGIN_TYPE,
@@ -54,6 +54,7 @@ from functions_mcp_destinations import (
 )
 from functions_mcp_preconfigurations import authorize_mcp_action
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
+from semantic_kernel_plugins.mcp_guarded_transport import GuardedMcpWebsocketPlugin
 
 
 class McpPluginFactory:
@@ -562,15 +563,17 @@ class McpPluginFactory:
                 load_prompts=load_prompts,
                 request_timeout=request_timeout,
                 description=description,
+                httpx_client_factory=create_guarded_httpx_client,
             )
         if transport == "websocket":
-            return MCPWebsocketPlugin(
+            return GuardedMcpWebsocketPlugin(
                 name=name,
                 url=endpoint,
                 load_tools=load_tools,
                 load_prompts=load_prompts,
                 request_timeout=request_timeout,
                 description=description,
+                connect_timeout=timeout,
             )
 
         return MCPStreamableHttpPlugin(
@@ -584,6 +587,7 @@ class McpPluginFactory:
             load_prompts=load_prompts,
             request_timeout=request_timeout,
             description=description,
+            httpx_client_factory=create_guarded_httpx_client,
         )
 
     @classmethod
