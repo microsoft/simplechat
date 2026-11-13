@@ -370,6 +370,7 @@ def initialize_application(force=False):
 
         initialize_clients(settings)
         ensure_custom_logo_file_exists(app, settings)
+        ensure_custom_favicon_file_exists(app, settings)
         print("Setting up Application Insights logging...")
         setup_appinsights_logging(settings)
         logging.basicConfig(level=logging.DEBUG)
@@ -395,6 +396,8 @@ def initialize_application(force=False):
 @app.before_request
 def ensure_application_initialized():
     initialize_application()
+    if request.endpoint == 'static' and (request.view_args or {}).get('filename') == 'images/favicon.ico':
+        ensure_custom_favicon_file_exists(app, get_request_settings())
     g.model_catalog_scope = catalog_scope()
     g.model_catalog_scope.__enter__()
 
