@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional tests for the Yamcs action's TLS verification setting.
-Version: 0.261.062
-Implemented in: 0.261.062
+Version: 0.261.064
+Implemented in: 0.261.064
 
 Runs real plugin and connection-test bodies with the pinned Yamcs/Requests
 libraries and intercepted HTTP transport. Selected definitions avoid Azure

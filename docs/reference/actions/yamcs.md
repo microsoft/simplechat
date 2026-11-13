@@ -33,7 +33,7 @@ Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 ## TLS verification
 
 **Verify TLS** is enabled by default so the action checks the HTTPS server's
-identity against its trusted CA bundle. As of **0.261.062**, the selected setting
+identity against its trusted CA bundle. As of **0.261.064**, the selected setting
 is honored during connection testing, initial login, action requests, and token
 renewal, including when an environment CA bundle is configured.
 

@@ -97,7 +97,7 @@ Every retrieval is bounded before it reaches an agent:
 
 ### TLS verification policy
 
-Corrected in version **0.261.062**, with the related patch update in
+Corrected in version **0.261.064**, with the related patch update in
 `application/single_app/config.py`.
 
 The configured `tls_verify` is passed as a request default for connection testing,

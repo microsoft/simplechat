@@ -2,7 +2,7 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
-### **(v0.261.062)**
+### **(v0.261.064)**
 
 #### Bug Fixes
 
@@ -11,6 +11,23 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Initial login and token renewal use the same configured TLS policy and timeout as action requests. Verification remains enabled by default, with no automatic insecure retry.
     *   Existing organization CA certificate support and deployment settings are unchanged.
     *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `route_backend_plugins.py`, [Yamcs TLS Setting Fix](fixes/YAMCS_TLS_VERIFY_ENV_OVERRIDE_FIX.md), #1934)
+
+### **(v0.261.063)**
+
+#### Bug Fixes
+
+*   **Custom Favicon Recovery Clarification**
+    *   Documented that a missing instance-local favicon is expected and falls through to regeneration from the saved icon. This addresses the CodeQL review finding without changing behavior.
+    *   (Ref: `ensure_custom_favicon_file_exists()`, [Custom Favicon Persistence Fix](fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md), [#1932](https://github.com/microsoft/simplechat/issues/1932))
+
+### **(v0.261.062)**
+
+#### Bug Fixes
+
+*   **Custom Favicon Persistence Across Instances**
+    *   Restores the saved custom favicon when an instance starts and reconciles it before serving the favicon, preventing fresh or scaled-out instances from displaying the bundled icon instead.
+    *   Preserves existing favicon versioning and works with Redis-backed settings or direct Cosmos reads. Changed files are replaced atomically; unchanged icons are not rewritten.
+    *   (Ref: `app.py`, `ensure_custom_favicon_file_exists()`, [Custom Favicon Persistence Fix](fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md), [#1932](https://github.com/microsoft/simplechat/issues/1932))
 
 ### **(v0.261.061)**
 

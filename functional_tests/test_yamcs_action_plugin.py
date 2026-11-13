@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Yamcs mission control action plugin.
-Version: 0.261.062
+Version: 0.261.064
 Implemented in: 0.250.212
 
 This test ensures the Yamcs action operations helpers, factory, plugin metadata,

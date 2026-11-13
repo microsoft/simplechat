@@ -98,7 +98,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.062"
+VERSION = "0.261.064"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -1115,38 +1115,51 @@ def ensure_custom_logo_file_exists(app, settings):
             print(f"Unexpected error writing {logo_dark_filename}: {ex}")
 
 def ensure_custom_favicon_file_exists(app, settings):
-    """
-    If custom_favicon_base64 is present in settings, ensure static/images/favicon.ico
-    exists and reflects the current base64 data. Overwrites if necessary.
-    If base64 is empty/missing, uses the default favicon.
-    """
+    """Materialize the stored favicon atomically, leaving identical files untouched."""
     custom_favicon_b64 = settings.get('custom_favicon_base64', '')
-    # Ensure the filename is consistent
-    favicon_filename = 'favicon.ico'
-    favicon_path = os.path.join(app.root_path, 'static', 'images', favicon_filename)
-    images_dir = os.path.dirname(favicon_path)
-
-    # Ensure the directory exists
-    os.makedirs(images_dir, exist_ok=True)
-
     if not custom_favicon_b64:
-        # No custom favicon in DB; no need to remove the static file as we want to keep the default
         return
 
-    # Custom favicon exists in settings, write/overwrite the file
+    favicon_path = os.path.join(app.root_path, 'static', 'images', 'favicon.ico')
+    temporary_path = None
     try:
-        # Decode the current base64 string
-        decoded = base64.b64decode(custom_favicon_b64)
+        decoded = base64.b64decode(custom_favicon_b64, validate=True)
+        with Image.open(BytesIO(decoded)) as image:
+            if image.format != 'ICO':
+                raise ValueError("Stored favicon is not an ICO image.")
+            image.verify()
 
-        # Write the decoded data to the file, overwriting if it exists
-        with open(favicon_path, 'wb') as f:
-            f.write(decoded)
-        print(f"Ensured {favicon_filename} exists and matches current settings.")
+        try:
+            with open(favicon_path, 'rb') as existing_file:
+                if existing_file.read() == decoded:
+                    return
+        except FileNotFoundError:
+            # Missing instance files are created below from the stored favicon.
+            pass
 
-    except (base64.binascii.Error, TypeError, OSError) as ex: # Catch specific errors
-        print(f"Failed to write/overwrite {favicon_filename}: {ex}")
-    except Exception as ex: # Catch any other unexpected errors
-        print(f"Unexpected error during favicon file write for {favicon_filename}: {ex}")
+        images_dir = os.path.dirname(favicon_path)
+        os.makedirs(images_dir, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=images_dir, prefix='.favicon-', suffix='.ico', delete=False) as temporary_file:
+            temporary_path = temporary_file.name
+            temporary_file.write(decoded)
+        os.replace(temporary_path, favicon_path)
+        temporary_path = None
+    except (ValueError, TypeError, OSError, SyntaxError, Image.DecompressionBombError) as error:
+        log_event(
+            "[BRANDING] Could not synchronize the custom favicon file.",
+            extra={"error_type": type(error).__name__},
+            level=logging.ERROR,
+        )
+    finally:
+        if temporary_path is not None:
+            try:
+                os.unlink(temporary_path)
+            except OSError as error:
+                log_event(
+                    "[BRANDING] Could not remove a temporary favicon file.",
+                    extra={"error_type": type(error).__name__},
+                    level=logging.ERROR,
+                )
 
 def initialize_clients(settings):
     """

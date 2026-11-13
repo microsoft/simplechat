@@ -104,6 +104,8 @@ Use **General > Branding** when you want the app header and landing experience t
 
 After saving, check both light and dark themes. Logos that look crisp on a white background can disappear on dark mode if they use transparent dark text.
 
+Starting in **0.261.062**, each instance restores the saved custom favicon at startup and checks it again before serving the favicon image. The existing favicon version in the image URL prevents reuse of an older browser-cached icon after an upload. Redis shares settings, not generated image files; this restoration also works when settings are read directly from Cosmos without Redis. See [Custom Favicon Persistence Fix](../explanation/fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md).
+
 ## Home Page Text
 
 Use **General > Home Page Text** to control the copy users see before entering the app.

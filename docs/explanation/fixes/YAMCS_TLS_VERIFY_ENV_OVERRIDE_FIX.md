@@ -1,9 +1,9 @@
-# Yamcs TLS Verification Setting Fix (v0.261.062)
+# Yamcs TLS Verification Setting Fix (v0.261.064)
 
-Fixed/Implemented in version: **0.261.062**
+Fixed/Implemented in version: **0.261.064**
 
 Related configuration update: `application\single_app\config.py` increments
-`VERSION` from `0.261.061` to `0.261.062`.
+`VERSION` from `0.261.063` to `0.261.064` after merging the latest main changes.
 
 Related issue: [#1934](https://github.com/microsoft/simplechat/issues/1934).
 
