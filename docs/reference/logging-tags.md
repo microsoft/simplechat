@@ -49,6 +49,7 @@ Last inventoried: 2026-08-10
 - `[AZURE_MONITOR]`
 - `[BACKEND_SEARCH]`
 - `[BLOB_STORAGE_PLUGIN]`
+- `[BRANDING]`
 - `[BULK_TAG]`
 - `[CHART_PLUGIN]`
 - `[CHAT_API]`
