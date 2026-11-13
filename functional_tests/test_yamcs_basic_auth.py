@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Yamcs reverse-proxy HTTP Basic authentication.
-Version: 0.261.436
+Version: 0.261.442
 Implemented in: 0.261.012
 
 This test ensures a Yamcs action can authenticate against a reverse proxy (such as the
@@ -137,7 +137,10 @@ class FakeYamcsClient:
         self.tls_verify = tls_verify
         self.user_agent = user_agent
         self.ctx = FakeContext()
-        self.credentials = credentials.login(self.ctx.session, None, None) if credentials else None
+        self.credentials = (
+            credentials.login(self.ctx.session, f"{address}/auth", None)
+            if credentials is not None else None
+        )
         self.closed = False
 
     def close(self):

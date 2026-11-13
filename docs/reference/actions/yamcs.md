@@ -4,7 +4,7 @@ title: "Yamcs"
 description: "Reference for the Yamcs SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.333"
+version: "0.261.442"
 ---
 
 <!-- action-slug: yamcs -->
@@ -35,6 +35,20 @@ Reverse proxy credentials now live in **Authentication** under **Reverse proxy a
 Connection testing appears in **Authentication**, after both Yamcs and optional proxy credentials. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
+
+## TLS verification
+
+**Verify TLS** is enabled by default so the action checks the HTTPS server's
+identity against its trusted CA bundle. As of Development **0.261.442**, the
+selected setting is honored during connection testing, initial login, action
+requests, and token renewal, including when an environment CA bundle is configured.
+
+Disabling verification is an explicit diagnostic choice that weakens server
+identity checks; a failed verified connection is never retried without
+verification. For organization-issued certificates, use the
+[existing container CA workflow](../../guides/docker-customization.md#custom-certificate-authorities)
+with verification enabled. That certificate mechanism and the destination checks
+below are unchanged.
 
 ## Reaching a Yamcs server behind an authenticating proxy
 

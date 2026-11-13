@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for the Yamcs mission control action plugin.
-Version: 0.261.436
+Version: 0.261.442
 Implemented in: 0.250.212
 
 This test ensures the Yamcs action operations helpers, factory, plugin metadata,
@@ -266,7 +266,10 @@ class FakeYamcsClient:
         self.tls_verify = tls_verify
         self.user_agent = user_agent
         self.ctx = FakeContext()
-        self.credentials = credentials.login(self.ctx.session, None, None) if credentials else None
+        self.credentials = (
+            credentials.login(self.ctx.session, f"{address}/auth", None)
+            if credentials is not None else None
+        )
         self.closed = False
         FakeYamcsClient.last_instance = self
 
