@@ -2,6 +2,14 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.063)**
+
+#### Bug Fixes
+
+*   **Custom Favicon Recovery Clarification**
+    *   Documented that a missing instance-local favicon is expected and falls through to regeneration from the saved icon. This addresses the CodeQL review finding without changing behavior.
+    *   (Ref: `ensure_custom_favicon_file_exists()`, [Custom Favicon Persistence Fix](fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md), [#1932](https://github.com/microsoft/simplechat/issues/1932))
+
 ### **(v0.261.062)**
 
 #### Bug Fixes

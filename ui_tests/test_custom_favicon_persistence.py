@@ -1,7 +1,7 @@
 # test_custom_favicon_persistence.py
 """
 Browser regression for versioned custom favicon delivery after instance recovery.
-Version: 0.261.062
+Version: 0.261.063
 Implemented in: 0.261.062
 
 Uses the real base-template head and app favicon hook in an offline temporary

@@ -98,7 +98,7 @@ DOTENV_LOAD_RESULT = load_simplechat_dotenv()
 EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.062"
+VERSION = "0.261.063"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -1134,6 +1134,7 @@ def ensure_custom_favicon_file_exists(app, settings):
                 if existing_file.read() == decoded:
                     return
         except FileNotFoundError:
+            # Missing instance files are created below from the stored favicon.
             pass
 
         images_dir = os.path.dirname(favicon_path)
