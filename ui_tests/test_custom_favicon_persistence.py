@@ -64,7 +64,8 @@ def test_versioned_favicon_survives_instance_file_loss(page, favicon_server):
     initial_bytes = initial_icon.body()
     assert initial_icon.ok
     with Image.open(BytesIO(initial_bytes)) as image:
-        assert image.convert("RGB").getpixel((16, 16)) == (255, 0, 0)
+        initial_pixel = image.convert("RGB").getpixel((16, 16))
+    assert initial_pixel == (255, 0, 0)
 
     changed = page.request.post(favicon_server + "/_test/change")
     assert changed.status == 204
@@ -77,4 +78,5 @@ def test_versioned_favicon_survives_instance_file_loss(page, favicon_server):
     assert updated_icon.ok
     assert updated_bytes != initial_bytes
     with Image.open(BytesIO(updated_bytes)) as image:
-        assert image.convert("RGB").getpixel((16, 16)) == (0, 0, 255)
+        updated_pixel = image.convert("RGB").getpixel((16, 16))
+    assert updated_pixel == (0, 0, 255)
