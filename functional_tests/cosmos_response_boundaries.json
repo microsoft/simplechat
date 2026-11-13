@@ -20076,10 +20076,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
+        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
       },
       "classification": "sdk-compatible",
-      "contract": "Read-only retained-result projection ends before screening and publication; its operation cache never contains message responses or conditional publication state. The published SDK point mapping is projected with items() into plain message JSON and compared with publication_documents_match, accepting only lossless integral-float/integer round trips. Stored guard fingerprints, all domain fields and Mapping-compatible mirroring remain unchanged; durable outcome telemetry reads finalized scalar fields. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
+      "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner's AST or SDK response consumers. The published point mapping is projected with items() into plain message JSON and compared with publication_documents_match; conditional publication fields, all domain values and Mapping-compatible mirroring remain unchanged. Renewed SDK-default runtime coverage exercises publication, result citations, failure finalization and ownership fences.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20105,10 +20105,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
+        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
       },
       "classification": "sdk-compatible",
-      "contract": "The previous assistant point mapping is checked for conversation/run ownership; model and reasoning fields are projected into plain dictionaries, without passing the SDK wrapper to an exact-dictionary contract. Read-operation reuse does not wrap this metadata lookup. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
+      "contract": "Review 0.261.439: only failure diagnostics changed in this module; this owner and its SDK point consumers are unchanged. The previous assistant mapping is checked for conversation/run ownership and projected into plain model/reasoning dictionaries. No SDK wrapper reaches an exact-dictionary contract, and metadata reads stay outside retained-result operation reuse. Renewed SDK-default runtime evidence verifies delivery metadata and recovery.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20128,10 +20128,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
+        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
       },
       "classification": "sdk-compatible",
-      "contract": "The question point mapping supplies role and nested plain thread metadata; only a deepcopy of the validated nested thread dictionary is returned. Regeneration metadata is outside the retained-result read scope. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
+      "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner. The SDK question mapping supplies role and nested plain thread metadata; only the validated nested thread dictionary is copied. Regeneration metadata remains outside result-read caching. Renewed SDK-default runtime evidence verifies original identity and forced review.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20151,10 +20151,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
+        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
       },
       "classification": "sdk-compatible",
-      "contract": "A normalized owned conversation retains its _etag for IfNotModified replacement; the returned SDK mapping is consumed only by the Mapping-compatible cache invalidator. Lost-CAS retries retain current ownership. This write remains outside read-operation reuse. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
+      "contract": "Review 0.261.439: only failure diagnostics changed; this owner's response boundary is unchanged. The normalized owned conversation retains its ETag for IfNotModified replacement, and the returned SDK mapping is consumed by the Mapping-compatible cache invalidator. Lost-CAS retries preserve current ownership and do not reuse result-read snapshots. Renewed SDK-default runtime coverage verifies conditional updates and delivery.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -20179,10 +20179,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "9a7de6fa7f15f0e382e67661b7d68d00f069fa71d364db940e367f8c3d510e93"
+        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned turn/source point mappings are reauthorized, checked for visibility and converted by normalize_history_message before strict saved-snapshot validation. Full source messages are resolved only after fingerprint checks; history disablement and revoked shared access cannot broaden reads. Result-operation snapshots never replace these message reads. Review 0.261.417: Only review transport/checker handling changed in this module; this owner AST and SDK response consumers are unchanged. Existing owner-runtime evidence is retained.",
+      "contract": "Review 0.261.439: failure diagnostic changes do not alter this owner or its SDK response consumers. Partitioned message mappings are reauthorized, visibility-checked and converted with normalize_history_message before strict saved-snapshot validation. Fingerprint and shared-access checks still precede full source reads; result-operation snapshots cannot replace them. Renewed SDK-default runtime tests cover contextual messages and ownership.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
@@ -23542,10 +23542,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "85094e7e04ad6d91e388c55bb30044b3a6439595eae52ef79db5ad3932dbffb2"
+        "module_sha256": "b58a48e4c98625c660da02e8a8629d3e58ce24d187dcc612345017501b326e0e"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation owner still consumes SDK CosmosDict through mapping access and validates conversation/user identity. Native request and private source-record handoff helpers changed the module fingerprint, not this owner's read or strict-source checks. Renewed real-owner SDK-default evidence verifies authorized and denied point responses without casts or metadata loss.",
+      "contract": "Review 0.261.439: native report-section validation changed the module fingerprint, not this owner's point read or ownership checks. It consumes CosmosDict with Mapping access and validates conversation/user identity. Renewed real-owner SDK-default tests verify authorized and denied responses without casts or ETag loss.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"
@@ -23569,10 +23569,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "85094e7e04ad6d91e388c55bb30044b3a6439595eae52ef79db5ad3932dbffb2"
+        "module_sha256": "b58a48e4c98625c660da02e8a8629d3e58ce24d187dcc612345017501b326e0e"
       },
       "classification": "sdk-compatible",
-      "contract": "The upload owner still consumes SDK-default point documents with mapping getters and plain metadata-query rows, then builds a plain resolved-document descriptor. Native all-section and owned-record handoff changes are independent of this owner. Renewed real-owner SDK evidence verifies conversation authorization and upload projection with preserved source identity.",
+      "contract": "Review 0.261.439: native report compatibility validation is independent of this unchanged upload owner. SDK-default point documents are consumed through Mapping getters and metadata-query rows stay plain; the resolved document descriptor is plain JSON. Renewed real-owner SDK tests verify conversation authorization and preserved source identity.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"

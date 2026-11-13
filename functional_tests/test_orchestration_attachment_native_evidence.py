@@ -1,7 +1,7 @@
 # test_orchestration_attachment_native_evidence.py
 """Real planning, inventory paging, retained evidence and composition regressions.
 
-Version: 0.261.424
+Version: 0.261.439
 Implemented in: 0.261.416
 Word-native comment routing and evidence delivery: 0.261.422
 Complete empty native inventory evidence status: 0.261.424
@@ -32,6 +32,7 @@ from test_excel_inventory_persistence import inventory_store, review_workbook
 from test_support.orchestration_harness_execution import compose_step, input_binding
 from test_support.orchestration_results import source
 from functions_workflow_result_store import WorkflowResultIntegrityError
+from native_document_evidence import NativeInspectionRequestError
 
 
 __all__ = ["modules", "real_http_harness", "runtime", "inventory_store", "review_workbook"]
@@ -546,8 +547,9 @@ def test_word_anchor_completeness_requires_an_unclipped_closed_range(runtime, mo
 def test_comment_only_metadata_request_rejects_an_unsupported_format(runtime, monkeypatch):
     _, calls, _ = configure_word_inventory(runtime, monkeypatch, word_comment_package(), extension="pdf")
     service = importlib.import_module("functions_search_service")
-    with pytest.raises(LookupError, match="native comment inventory is unavailable"):
+    with pytest.raises(NativeInspectionRequestError) as failure:
         service.get_document_accessibility_payload("document-1", "owner", sections="comments")
+    assert failure.value.code == "native_comments_format_unsupported"
     assert calls == []
 
 

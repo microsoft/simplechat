@@ -42,6 +42,27 @@ and capability codes. A cancelled stream is informational, not an error.
 Orchestration records an outcome only after its saved state is confirmed;
 replaying a cached response does not record another execution.
 
+## Retest contract diagnostics
+
+Implemented in version **0.261.439**, tracked in
+`application/single_app/config.py`.
+
+`[ORCHESTRATION_PLANNER]` preserves native semantic rejection rules and the
+specific source-header preflight rule. Planner response failures also retain a
+bounded `response_finish_reason` category; provider replies, refusals and
+credentials are not recorded. The existing correction allowance is unchanged.
+
+`[ORCHESTRATION_ADAPTERS] Document action read checkpoint.` distinguishes a known
+request rejected before source reading from a failed read. One format correction
+uses the existing call budget; a read/access failure is not silently retried.
+
+`[ORCHESTRATION_RUNS] A retained result alias could not be admitted.` records
+`result_alias_hash`, producer/consumer run hashes, stage, result kind and the
+actual safe `authority_reason`. Headless preparation failures also retain their
+owned lower result-contract/refusal code. Raw aliases, actor IDs, guards,
+exception messages and retained data do not enter these fields. This is
+diagnostic information, not a relaxation of result or source authorization.
+
 ## Plugin discovery and action failures
 
 Implemented in version **0.261.421**, tracked in

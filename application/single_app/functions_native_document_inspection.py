@@ -11,7 +11,7 @@ from functions_accessibility import extract_office_accessibility_metadata, extra
 from native_document_evidence import NativeInspectionRequestError
 
 
-NATIVE_DOCUMENT_INSPECTION_VERSION = "1.0"
+NATIVE_DOCUMENT_INSPECTION_VERSION = "1.1"
 NATIVE_DOCUMENT_MAX_BYTES = 64 * 1024 * 1024
 NATIVE_DOCUMENT_SECTIONS = frozenset({"all", "properties", "structure", "objects", "artifacts", "content", "issues"})
 
@@ -43,6 +43,10 @@ def _native_records(metadata, details):
         for node in sorted(nodes.values(), key=lambda node: int(node["node_id"].rsplit(":", 1)[-1]))
     )
     for detail in details.values():
+        records.extend(
+            {"section": "content", **record}
+            for record in detail.get("native_annotations", {}).get("records", [])
+        )
         for content in detail.get("native_content", {}).get("records", []):
             section = "artifacts" if content["kind"] == "artifact" else "objects" if (
                 content["raster_placements"] or content["vector_paint_operations"]

@@ -20,9 +20,99 @@ def stream_identity(reference, page_number):
     return f"xref:{reference.idnum}" if hasattr(reference, "idnum") else f"page:{page_number}"
 
 
-def pdf_content_references(kids, page_number, page_map):
+def _annotation_field(annotation, name):
+    if not hasattr(annotation, "get"):
+        return inaccessible_field("annotation_object_unavailable")
+    if name not in annotation:
+        return native_field(annotation, name)
+    try:
+        value = dereference(annotation[name])
+    except (PdfReadError, ValueError, TypeError, KeyError, RecursionError):
+        return inaccessible_field("annotation_field_unresolved")
+    if name != "/F" and not isinstance(value, str):
+        return inaccessible_field("annotation_field_type_invalid")
+    if isinstance(value, str) and len(value) > MAX_NATIVE_TEXT_CHARACTERS:
+        return inaccessible_field("annotation_text_limit")
+    return native_field({name: value}, name)
+
+
+def inspect_pdf_annotations(reader):
+    """Read native page annotations independently of semantic tags and content streams."""
+    pages, count, characters = {}, 0, 0
+    for number, page in enumerate(reader.pages, 1):
+        records, limitations = [], []
+        try:
+            raw_references = page.get("/Annots")
+            references = [] if raw_references is None else dereference(raw_references)
+            if not isinstance(references, list):
+                raise ValueError("annotation_array_invalid")
+            for index, reference in enumerate(references):
+                if count >= MAX_NATIVE_CONTENT_RECORDS:
+                    limitations.append("annotation_record_limit")
+                    break
+                count += 1
+                try:
+                    annotation = dereference(reference)
+                except (PdfReadError, ValueError, TypeError, KeyError, RecursionError):
+                    annotation = None
+                    limitations.append("annotation_object_unresolved")
+                object_ref = (
+                    stream_identity(reference, number) if hasattr(reference, "idnum")
+                    else f"page:{number}:annotation:{index + 1}"
+                )
+                fields = {
+                    field: _annotation_field(annotation, key)
+                    for field, key in (
+                        ("contents", "/Contents"), ("author", "/T"), ("subject", "/Subj"),
+                        ("created", "/CreationDate"), ("modified", "/M"), ("name", "/NM"),
+                        ("state", "/State"), ("state_model", "/StateModel"), ("flags", "/F"),
+                        ("subtype", "/Subtype"),
+                    )
+                }
+                for name, field in tuple(fields.items()):
+                    value = field.get("value")
+                    if not isinstance(value, str):
+                        continue
+                    if characters + len(value) > MAX_NATIVE_TEXT_CHARACTERS:
+                        fields[name] = inaccessible_field("annotation_text_limit")
+                    else:
+                        characters += len(value)
+                reply = native_field(annotation, "/IRT")
+                if hasattr(annotation, "get") and "/IRT" in annotation:
+                    target = annotation.get("/IRT")
+                    reply = (
+                        {"state": "present_value", "value": stream_identity(target, number)}
+                        if hasattr(target, "idnum") else inaccessible_field("annotation_reply_reference_unresolved")
+                    )
+                fields["reply_to"] = reply
+                records.append({
+                    "id": f"pdf:p{number}:annotation:{object_ref}",
+                    "kind": "annotation", "page_number": number, "object_ref": object_ref,
+                    "native_fields": fields,
+                })
+            if any(
+                field["state"] == "inaccessible" for record in records
+                for field in record["native_fields"].values()
+            ):
+                limitations.append("annotation_fields_inaccessible")
+        except (PdfReadError, ValueError, TypeError, KeyError, RecursionError) as error:
+            limitations.append("annotation_array_unresolved")
+            log_event(
+                "[DOCUMENT_METADATA] PDF native annotations could not be fully inspected.",
+                level=30, extra={"page_number": number, "error_type": type(error).__name__},
+            )
+        pages[number] = {
+            "status": "partial" if limitations else "complete",
+            "records": records, "limitations": list(dict.fromkeys(limitations)),
+        }
+    return pages
+
+
+def pdf_content_references(kids, page_number, page_map, *, annotation_budget=None):
     """Keep content references, not descendants' unrelated semantic elements."""
     references = []
+    if annotation_budget is None:
+        annotation_budget = {"remaining": MAX_NATIVE_TEXT_CHARACTERS}
     stack = [(kids, page_number)]
     while stack and len(references) < MAX_NATIVE_CONTENT_RECORDS:
         value, page = stack.pop()
@@ -41,9 +131,20 @@ def pdf_content_references(kids, page_number, page_map):
                     "mcid": int(value["/MCID"]),
                 })
             elif kind == "/OBJR":
+                try:
+                    annotation = dereference(value.get("/Obj"))
+                    text = _annotation_field(annotation, "/Contents")
+                except (PdfReadError, ValueError, TypeError, KeyError, RecursionError):
+                    text = inaccessible_field("annotation_object_unresolved")
+                if isinstance(text.get("value"), str):
+                    length = len(text["value"])
+                    if length > annotation_budget["remaining"]:
+                        text = inaccessible_field("annotation_reference_text_limit")
+                    else:
+                        annotation_budget["remaining"] -= length
                 references.append({
                     "page_number": page, "object_ref": stream_identity(value.get("/Obj"), page),
-                    "binding_status": "inaccessible", "reason": "object_reference_text_unresolved",
+                    "annotation_contents": text,
                 })
             elif str(value.get("/S") or "") == "/Span" and not any(
                 key in value for key in ("/Alt", "/ActualText", "/Lang", "/E", "/T")
@@ -182,7 +283,16 @@ def inspect_pdf_content(reader):
 
 def bind_pdf_node(node, content):
     matches = []
+    texts = []
     for reference in node.get("content_refs", []):
+        if "object_ref" in reference:
+            field = reference.get("annotation_contents") or inaccessible_field("object_reference_text_unresolved")
+            if field["state"] not in ("present_value", "present_empty"):
+                node["binding_status"] = field["state"]
+                node["bound_text"] = field
+                return
+            texts.append(str(field["value"]))
+            continue
         page = content.get(reference.get("page_number"), {})
         candidates = [
             record for record in page.get("records", [])
@@ -195,10 +305,11 @@ def bind_pdf_node(node, content):
             node["bound_text"] = inaccessible_field("content_reference_unresolved")
             return
         matches.append(candidates[0])
-    if matches:
+        texts.append(candidates[0]["text"])
+    if matches or texts:
         node["content_ids"] = [record["id"] for record in matches]
         node["binding_status"] = "bound"
-        value = "".join(record["text"] for record in matches)
+        value = "".join(texts)
         node["bound_text"] = native_field({"text": value}, "text")
         node["raster_placements"] = sum(record["raster_placements"] for record in matches)
         node["vector_paint_operations"] = sum(record["vector_paint_operations"] for record in matches)

@@ -60,6 +60,10 @@ _MESSAGES = {
     "native_relational_limit": "The complete cross-file calculation exceeds its processing limits. No shortened result was used.",
     "native_relational_ambiguous": "The selected relationship has duplicate or overlapping matches. Specify the intended relationship before calculating.",
     "native_relational_invalid": "The cross-file calculation could not use the specified columns, values, or relationship rules. No result was published.",
+    "native_source_schema_mismatch": (
+        "The calculation's column assertion does not match the complete source header. "
+        "Review the source schema and calculation plan; no result was published."
+    ),
     "native_formula_value_unavailable": (
         "A selected formula has no saved result. Save recalculated values in Excel before calculating; "
         "no empty value or zero was substituted."
@@ -70,8 +74,9 @@ _SOURCE_CHANGED_CODES = frozenset({"native_compute_source_identity_mismatch"})
 
 
 class NativeOrchestrationBridgeError(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, *, rule=None):
         self.code = code
+        self.rule = rule or code
         super().__init__(_MESSAGES[code])
 
 
@@ -194,6 +199,7 @@ def validate_native_orchestration_arguments(arguments):
     """Validate an explicit plan without providers, source reads, or query execution."""
     # Native grammar imports are pure and deferred for registry metadata discovery.
     from functions_tabular_csv_query import validate_tabular_csv_query_expression
+    from functions_tabular_relational import TabularRelationalError, normalize_relational_spec
     from functions_tabular_transformations import normalize_tabular_transformation_spec
 
     if type(arguments) is not dict or next(
@@ -206,8 +212,6 @@ def validate_native_orchestration_arguments(arguments):
         normalized = deepcopy(arguments)
         normalized["task_type"] = _task_type(normalized["native_operation"], normalized.get("task_type"))
         if normalized["native_operation"] == "relate":
-            from functions_tabular_relational import normalize_relational_spec
-
             normalized["relational_spec"] = normalize_relational_spec(
                 normalized["relational_spec"], normalized["document_ids"],
             )
@@ -215,6 +219,10 @@ def validate_native_orchestration_arguments(arguments):
         normalize_tabular_transformation_spec(
             normalized.get("transformation_spec"), public_output_schema=normalized.get("columns"),
         )
+    except TabularRelationalError as exc:
+        raise NativeOrchestrationBridgeError("native_arguments_invalid", rule=exc.code) from exc
+    except NativeOrchestrationBridgeError:
+        raise
     except (ValueError, TypeError, RecursionError) as exc:
         raise NativeOrchestrationBridgeError("native_arguments_invalid") from exc
     try:
@@ -432,6 +440,8 @@ def _failure(step, exc, stage, context=None):
         code = "native_cancelled"
     elif service_code == "relational_match_ambiguous":
         code = "native_relational_ambiguous"
+    elif service_code == "relational_schema_changed":
+        code = "native_source_schema_mismatch"
     elif service_code and service_code.startswith("relational_"):
         code = "native_relational_limit" if service_code.endswith("_limit") else "native_relational_invalid"
     elif service_code in {
@@ -454,6 +464,7 @@ def _failure(step, exc, stage, context=None):
         else "context_unavailable" if code == "native_access_unavailable"
         else "ownership_lost" if code == "native_guard_unavailable"
         else "analysis_result_not_saved" if code == "native_retention_failed"
+        else "source_schema_mismatch" if code == "native_source_schema_mismatch"
         else STORAGE_FAILURE_CODE if code == "native_storage_unavailable"
         else "result_invalid"
     )

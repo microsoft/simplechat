@@ -1,8 +1,9 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.423
+Version: 0.261.439
 Implemented in: 0.261.419; 0.261.422
+Source-schema preflight and native semantic correction added in: 0.261.439
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
@@ -20,6 +21,7 @@ from test_orchestration_document_planning_recovery import planning, proposal, ru
 from test_orchestration_harness_routes import modules, real_http_harness
 from test_orchestration_source_kind_planning import LEFT, RIGHT, candidates, enrich, source_runtime
 from test_support.orchestration_harness_execution import compose_step, input_binding
+from test_tabular_relational_calculations import join_spec
 
 
 __all__ = ["planning", "modules", "real_http_harness", "source_runtime"]
@@ -86,6 +88,69 @@ def correction_records(caplog):
         if getattr(record, "sc_message", None)
         == "[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan."
     ]
+
+
+@pytest.mark.parametrize("fault,rule", [
+    ("header_subset", "relational_schema_mismatch"),
+    ("selection_order", "relational_selection_invalid"),
+])
+def test_native_calculation_drafts_get_precise_correction_without_becoming_previews(planning, caplog, fault, rule):
+    columns = {LEFT: ["exercise", "code", "quantity"], RIGHT: ["exercise", "sku", "price"]}
+    sources = [{
+        "document_id": identifier, "file_name": f"{identifier}.csv", "source_kind": "tabular",
+        "availability": "available",
+        "inspection": {
+            "status": "inspected",
+            "tables": [{"sheet": None, "header_row": 1, "columns": header, "sample_rows": []}],
+        },
+    } for identifier, header in columns.items()]
+    spec = join_spec()
+    spec["datasets"][0].update(document_id=LEFT, columns=columns[LEFT])
+    spec["datasets"][1].update(document_id=RIGHT, columns=columns[RIGHT])
+    corrected = proposal([LEFT, RIGHT])
+    corrected["steps"][0] = {
+        "step_id": "read", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Compute complete order amounts from both original sources.",
+            "native_operation": "relate", "document_ids": [LEFT, RIGHT], "relational_spec": spec,
+        },
+    }
+    corrected["steps"][1]["inputs"] = {
+        name: {"binding": input_binding("read", name), "allow_partial": False}
+        for name in ("records", "lineage", "coverage")
+    }
+    invalid = deepcopy(corrected)
+    if fault == "header_subset":
+        invalid["steps"][0]["arguments"]["relational_spec"]["datasets"][0]["columns"] = ["code", "quantity"]
+    else:
+        invalid["steps"][0]["arguments"]["document_ids"].reverse()
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [invalid, corrected], identifiers=(LEFT, RIGHT),
+            context_updates={"selected_sources": sources},
+        )
+    assert kind == "plan"
+    assert len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == rule
+    assert plan["steps"][0]["capability_id"] == "tabular_analyze"
+    assert plan["steps"][0]["arguments"]["relational_spec"]["datasets"][0]["columns"] == columns[LEFT]
+    assert {output["name"] for output in plan["steps"][0]["outputs"]} == {"records", "lineage", "coverage"}
+    assert planning.harness.assistant_messages() == []
+    assert planning.harness.blobs.file_uploads == 0
+
+
+def test_document_gather_reference_must_come_from_the_admitted_catalog(planning, caplog):
+    invalid = action_proposal()
+    invalid["steps"][0]["arguments"]["action_ref"] = "DocumentSearchPlugin"
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_action_plan(planning, [invalid, action_proposal()])
+    assert kind == "plan"
+    assert len(planning.harness.model_calls) == 2
+    assert plan["steps"][0]["arguments"]["action_ref"] == ACTION["action_ref"]
+    assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
+    assert correction_records(caplog)[0].sc_validation_rule == "action_unavailable"
+    assert planning.harness.assistant_messages() == []
+    assert planning.harness.blobs.file_uploads == 0
 
 
 @pytest.mark.parametrize("options,records", [

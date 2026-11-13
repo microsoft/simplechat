@@ -84,7 +84,9 @@ COMPOSE_POLICY = (
     'status, because the owner may have sent or cancelled it during this run. Do not state that '
     'prepared or scheduled actions are still unsent. Graph acceptance does not prove '
     'recipient delivery. Disclose refused, failed or uncertain operations. No tools, source '
-    'retrieval, or file publication are available.'
+    'retrieval, or file publication are available. Prior partial reads do not contradict a '
+    'later verified complete chain for the same source/version/section. Use current coverage; '
+    'extraction, returned records and business completion are distinct.'
 )
 AVAILABLE_INFORMATION_INSTRUCTIONS = (
     'Answer every requested question using supported information or a precise explanation of '

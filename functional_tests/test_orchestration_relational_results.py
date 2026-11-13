@@ -1,8 +1,9 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.437
+Version: 0.261.439
 Implemented in: 0.261.437
+Source-header failure classification added in: 0.261.439
 
 Real source authorization, bounded computation and retained records run offline.
 Only documents, blobs and model I/O are doubled by the existing native harness.
@@ -180,6 +181,19 @@ def test_relational_arguments_and_legacy_single_source_contracts_are_distinct():
             "question": "Read both.", "native_operation": "query", "document_ids": ["sales", "catalog"],
             "query_expression": "index == index", "columns": ["code"],
         })
+
+
+def test_source_schema_assertion_failure_is_not_reported_as_missing_named_outputs(monkeypatch):
+    with bridge_runtime(monkeypatch) as runtime:
+        prepare(runtime)
+        runtime.step["arguments"]["relational_spec"]["datasets"][0]["columns"] = ["code"]
+        result = execute(runtime)
+        assert result["status"] == "failed"
+        assert result["failure"]["code"] == "source_schema_mismatch"
+        assert result["failure"]["native_code"] == "native_source_schema_mismatch"
+        assert "complete source header" in result["error"]
+        assert commits(runtime) == []
+        assert runtime.provider.calls == []
 
 
 def test_real_compiler_executor_and_export_consume_computed_not_model_generated_rows(runtime):

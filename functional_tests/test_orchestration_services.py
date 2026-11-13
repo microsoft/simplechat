@@ -1,8 +1,9 @@
 # test_orchestration_services.py
 """
 Initialized service and owning-guard wiring for retained orchestration results.
-Version: 0.261.127
+Version: 0.261.439
 Implemented in: 0.261.127
+Retained-provenance policy and exact alias-failure diagnostics covered in: 0.261.439
 
 Uses real services, result persistence, runtime contexts and checkpoint adapters
 with external storage/access doubled. No route, provider or model is substituted
@@ -11,6 +12,8 @@ for the service boundary under test.
 
 from copy import deepcopy
 from dataclasses import replace
+import hashlib
+import logging
 
 import pytest
 
@@ -315,7 +318,7 @@ def test_lost_execution_lease_cannot_prepare_new_guard():
     assert not fixture.container.items
 
 
-def test_admitted_aliases_reopen_real_refs_and_recheck_current_sources():
+def test_admitted_aliases_preserve_source_provenance_but_require_the_owned_conversation():
     fixture = ResultFixture()
     saved = fixture.save()
     reference = saved.output("findings")
@@ -323,8 +326,42 @@ def test_admitted_aliases_reopen_real_refs_and_recheck_current_sources():
     aliases = admitted_result_aliases(record, fixture.restart())
     assert aliases == {"prior_findings": reference}
     fixture.denied.add("document-1")
+    retained = admitted_result_aliases(record, fixture.restart())
+    assert retained == aliases
+    assert fixture.source_reads == []
+    fixture.conversation["user_id"] = "another-owner"
     with pytest.raises(PermissionError):
         admitted_result_aliases(record, fixture.restart())
+
+
+def test_alias_refusal_logs_exact_reason_and_hashed_identity_without_changing_the_guard(monkeypatch, caplog):
+    import functions_appinsights
+
+    fixture = ResultFixture()
+    saved = fixture.save()
+    reference = saved.output("findings")
+    alias = "private_saved_alias"
+    logger = logging.getLogger("test.retained.alias.refusal")
+    monkeypatch.setattr(functions_appinsights, "get_appinsights_logger", lambda: logger)
+    monkeypatch.setattr(functions_appinsights, "_load_logging_settings", lambda: {})
+
+    def refuse(*args, **kwargs):
+        raise ResultUnavailableError("result_external_snapshot_changed")
+
+    monkeypatch.setattr(fixture.service, "open_result", refuse)
+    with caplog.at_level(logging.WARNING, logger=logger.name):
+        with pytest.raises(ResultUnavailableError) as failure:
+            admitted_result_aliases(
+                {"id": "current-run", "result_aliases": {alias: reference.to_dict()}},
+                fixture.service,
+            )
+    assert failure.value.code == "result_external_snapshot_changed"
+    record = next(row for row in caplog.records if hasattr(row, "sc_result_alias_hash"))
+    assert record.sc_result_alias_hash == hashlib.sha256(alias.encode()).hexdigest()
+    assert record.sc_authority_reason == failure.value.code
+    assert record.sc_consumer_run_id_hash == hashlib.sha256(b"current-run").hexdigest()
+    assert record.sc_stage == "result_alias_admission"
+    assert alias not in str(record.__dict__)
 
 
 def test_alias_admission_rejects_foreign_producer_and_preview():
@@ -348,27 +385,35 @@ def test_discovery_is_bounded_and_reports_current_access_omissions():
     record["task_results"] = {"analyze": saved.to_dict()}
     available = discover_result_aliases([deepcopy(record)], fixture.restart())
     fixture.held.add("document-1")
-    unavailable = discover_result_aliases([deepcopy(record)], fixture.restart())
+    retained = discover_result_aliases([deepcopy(record)], fixture.restart())
     assert list(available["aliases"].values()) == list(saved.outputs)
     assert available["unavailable_count"] == 0
+    assert retained == available
+
+    def denied_conversation(identifier):
+        raise PermissionError("Saved conversation access denied.")
+
+    reopened = fixture.restart()
+    reopened.access.read_conversation = denied_conversation
+    unavailable = discover_result_aliases([deepcopy(record)], reopened)
     assert unavailable == {"aliases": {}, "unavailable_count": 1}
     with pytest.raises(ResultContractError):
         discover_result_aliases([deepcopy(record)] * 11, fixture.service)
 
 
 @pytest.mark.parametrize("failure_type", [ScreeningError, ScreeningConfigurationError])
-def test_discovery_does_not_omit_results_when_current_screening_cannot_be_checked(monkeypatch, failure_type):
+def test_discovery_propagates_result_admission_infrastructure_failures(monkeypatch, failure_type):
     fixture = ResultFixture()
     saved = fixture.save()
     record = fixture.runs["run-1"]
     record["plan"]["planner_contract_version"] = 2
     record["task_results"] = {"analyze": saved.to_dict()}
 
-    def failed_metadata(*args, **kwargs):
-        raise failure_type("Private screening backend details.")
+    def failed_admission(*args, **kwargs):
+        raise failure_type("Private result-admission backend details.")
 
-    monkeypatch.setattr(fixture, "metadata", failed_metadata)
     reopened = fixture.restart()
+    monkeypatch.setattr(reopened, "open_result", failed_admission)
     with pytest.raises(failure_type):
         discover_result_aliases([deepcopy(record)], reopened)
 
