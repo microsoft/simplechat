@@ -2,6 +2,16 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.062)**
+
+#### Bug Fixes
+
+*   **Yamcs TLS Verification Setting**
+    *   Yamcs actions and Test Yamcs Connection now honor the selected TLS verification setting even when an environment CA bundle is configured.
+    *   Initial login and token renewal use the same configured TLS policy and timeout as action requests. Verification remains enabled by default, with no automatic insecure retry.
+    *   Existing organization CA certificate support and deployment settings are unchanged.
+    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `route_backend_plugins.py`, [Yamcs TLS Setting Fix](fixes/YAMCS_TLS_VERIFY_ENV_OVERRIDE_FIX.md), #1934)
+
 ### **(v0.261.061)**
 
 #### New Features

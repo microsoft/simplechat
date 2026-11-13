@@ -30,6 +30,19 @@ Set Server URL, Instance, Processor, Authentication Method, credentials, Max Row
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
+## TLS verification
+
+**Verify TLS** is enabled by default so the action checks the HTTPS server's
+identity against its trusted CA bundle. As of **0.261.062**, the selected setting
+is honored during connection testing, initial login, action requests, and token
+renewal, including when an environment CA bundle is configured.
+
+Disabling verification is an explicit diagnostic choice that weakens server
+identity checks; a failed verified connection is never retried without
+verification. For organization-issued certificates, use the
+[existing container CA workflow](../../guides/docker-customization.md#custom-certificate-authorities)
+with verification enabled. That certificate mechanism is unchanged.
+
 ## Reaching a Yamcs server behind an authenticating proxy
 
 Ground segments often publish Yamcs through a reverse proxy, such as Apache, that

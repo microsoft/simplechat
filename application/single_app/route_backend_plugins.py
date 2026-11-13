@@ -134,6 +134,7 @@ from functions_yamcs_operations import (
     build_yamcs_basic_auth_header,
     normalize_yamcs_additional_fields,
     normalize_yamcs_server_url,
+    wrap_yamcs_login_credentials,
     yamcs_basic_auth_conflicts_with_auth_method,
 )
 from functions_mcp_operations import (
@@ -2967,21 +2968,24 @@ def test_yamcs_connection():
         else:
             credentials = Credentials(username=username, password=auth_key)
 
+        def with_request_settings(request_callable):
+            def request_with_timeout(*args, **kwargs):
+                kwargs.setdefault('timeout', timeout)
+                kwargs.setdefault('verify', tls_verify)
+                return request_callable(*args, **kwargs)
+
+            return request_with_timeout
+
         client = YamcsClient(
             server_url,
-            credentials=credentials,
+            credentials=wrap_yamcs_login_credentials(credentials, with_request_settings),
             tls_verify=tls_verify,
             user_agent='SimpleChat',
         )
         session = getattr(getattr(client, 'ctx', None), 'session', None)
         if session is not None:
-            original_request = session.request
-
-            def request_with_timeout(*args, **kwargs):
-                kwargs.setdefault('timeout', timeout)
-                return original_request(*args, **kwargs)
-
-            session.request = request_with_timeout
+            if credentials is None:
+                session.request = with_request_settings(session.request)
 
             # API key auth travels in x-api-key, so the Authorization header stays free for
             # a reverse proxy. Unauthenticated Yamcs uses BasicAuthCredentials instead.

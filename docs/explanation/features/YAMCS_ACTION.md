@@ -95,6 +95,21 @@ Every retrieval is bounded before it reaches an agent:
 - `timeout`: HTTP request timeout in seconds, bounded from 1 to 300; defaults to 30.
 - `byte_limit`: approximate serialized result size limit, bounded from 1000 to 2000000.
 
+### TLS verification policy
+
+Corrected in version **0.261.062**, with the related patch update in
+`application/single_app/config.py`.
+
+The configured `tls_verify` is passed as a request default for connection testing,
+initial login, action API calls, and token renewal. Explicitly disabling
+verification is no longer overridden by an environment CA bundle. Verification
+remains enabled by default, and verified requests still use the configured CA
+bundle. There is no automatic retry with verification disabled.
+
+The [existing container certificate workflow](../../guides/docker-customization.md#custom-certificate-authorities)
+is unchanged. See the [TLS setting fix](../fixes/YAMCS_TLS_VERIFY_ENV_OVERRIDE_FIX.md)
+for the request-policy details and regression coverage.
+
 ### Authentication mapping
 
 | UI authentication method | `auth.type` | `auth.identity` | `auth.key` | Yamcs client credential |
@@ -173,6 +188,8 @@ After saving the action, assign it to agents that need Yamcs telemetry or archiv
 
 - Functional coverage: `functional_tests/test_yamcs_action_plugin.py` (14 tests)
 - Reverse proxy coverage: `functional_tests/test_yamcs_basic_auth.py` (12 tests)
+- TLS request-policy coverage: `functional_tests/test_yamcs_tls_verify.py` (6 tests,
+  also exercised with optimized Python)
 - Route policy coverage: `functional_tests/route_tests/` — the new endpoint is covered by the existing authenticated-route prefix rules
 - JavaScript syntax checks: `plugin_modal_stepper.js` and `workspace/view-utils.js`
 - Python compile checks cover the Yamcs helper, plugin, factory, loaders, health checker, routes, identity, Key Vault, and governance updates
