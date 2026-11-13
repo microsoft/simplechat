@@ -1,7 +1,7 @@
 # test_custom_favicon_persistence.py
 """
 Regression coverage for custom favicon restoration and cross-instance updates.
-Version: 0.261.440
+Version: 0.261.441
 Implemented in: 0.261.440
 
 Real application modules run in fresh processes with external I/O blocked.

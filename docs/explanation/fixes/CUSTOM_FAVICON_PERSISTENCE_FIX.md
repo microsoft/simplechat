@@ -1,6 +1,6 @@
 # Custom Favicon Persistence Fix
 
-Fixed in version: **0.261.440**
+Fixed in version: **0.261.441**
 
 Related issue: [#1932](https://github.com/microsoft/simplechat/issues/1932). Related historical branding report: [#292](https://github.com/microsoft/simplechat/issues/292).
 
@@ -22,7 +22,7 @@ Redis cannot fix that gap by itself: it shares the settings document, not the in
 
 The change preserves the existing upload format handling, static URL, favicon version counter, settings sanitization, and logo behavior. It introduces no Redis requirement or new settings key.
 
-The application version in `application\single_app\config.py` advances from **0.261.439** to **0.261.440**.
+The application version in `application\single_app\config.py` advances from **0.261.439** to **0.261.441**. The initial port was implemented in **0.261.440**; **0.261.441** documents the expected missing-file recovery in the exception handler without changing behavior.
 
 Development's shared `functions_branding_urls.py` URL builder, V2 bootstrap branding payload, V2 shell, and upload APIs remain unchanged. Their existing `/static/images/favicon.ico` URLs use the same static-request reconciliation as the classic interface.
 
