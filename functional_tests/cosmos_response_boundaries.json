@@ -32089,10 +32089,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ede4197b34141f5becd0af22b3b9f246028bf45b3e70d9a569dd5efd12c02752"
+        "module_sha256": "9fec9ed3230ce3aa87ab7dcf25247bb7c804ae5f30d3b310379c332a4dae3b0b"
       },
       "classification": "sdk-compatible",
-      "contract": "The admin route still passes its exact scoped CosmosDict point read to the mapping-compatible legacy validator. Added connection-retention validation consumes authorized record fields without a new strict point-document contract. Renewed real-owner SDK cases preserve IDs/ETags and refuse missing or mismatched exact records before writing.",
+      "contract": "The admin route still passes its exact scoped CosmosDict point read to the mapping-compatible legacy validator; IDs, ETags, destination retention checks, and missing/mismatched-record refusal remain intact. Re-reviewed for the 0.261.442 Yamcs-only module/import change: this owner's AST and storage calls are unchanged, and both affected real-owner suites passed all 13 SDK-default cases with network access blocked.",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
@@ -32112,10 +32112,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "ede4197b34141f5becd0af22b3b9f246028bf45b3e70d9a569dd5efd12c02752"
+        "module_sha256": "9fec9ed3230ce3aa87ab7dcf25247bb7c804ae5f30d3b310379c332a4dae3b0b"
       },
       "classification": "sdk-compatible",
-      "contract": "The classic collection save retains its actor-partitioned SDK point mapping and real legacy-update validator. Added name disambiguation and destination checks consume mapping fields, not a strict copied SDK document. Renewed runtime evidence preserves IDs/ETags and refuses foreign or missing exact records before writers.",
+      "contract": "The classic collection save retains its actor-partitioned SDK point mapping and mapping-compatible legacy validator; IDs, ETags, destination checks, and foreign/missing exact-record refusal remain intact. Re-reviewed for the 0.261.442 Yamcs-only module/import change: this owner's AST and storage calls are unchanged, and both affected real-owner suites passed all 13 SDK-default cases with network access blocked.",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_missing_exact_point_read_cannot_fall_back_to_a_name",
         "functional_tests/test_action_route_cosmos_response_contract.py::test_action_route_point_reads_reach_real_legacy_validator_as_sdk_documents",
@@ -32135,10 +32135,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "ede4197b34141f5becd0af22b3b9f246028bf45b3e70d9a569dd5efd12c02752"
+        "module_sha256": "9fec9ed3230ce3aa87ab7dcf25247bb7c804ae5f30d3b310379c332a4dae3b0b"
       },
       "classification": "response-unused",
-      "contract": "The authorized probe drains scalar SELECT TOP 1 VALUE c.id query rows only to verify permission; it never copies them into a document contract. Added authoring/credential checks precede the query and leave this consumer unchanged. Renewed SDK runtime cases verify metadata handling, lazy draining, routing and response-hook headers.",
+      "contract": "The authorized probe drains scalar SELECT TOP 1 VALUE c.id query rows to verify permission; no strict document contract consumes them. Re-reviewed for the 0.261.442 Yamcs-only module/import change: this owner's AST and query consumer are unchanged, and the 13 network-blocked SDK-default owner cases preserve metadata handling, lazy draining, routing, and response-hook headers.",
       "tests": [
         "functional_tests/test_action_route_cosmos_response_contract.py::test_cosmos_connection_drains_query_rows_without_treating_them_as_documents",
         "functional_tests/test_plugin_routes_cosmos_contract.py::test_cosmos_connection_consumes_lazy_query_results"
