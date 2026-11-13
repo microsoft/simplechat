@@ -84,6 +84,7 @@ from functions_orchestration_schema import (
     normalize_plan,
     plan_document_ids,
     validate_plan_document_source_kinds,
+    validate_plan_native_source_schemas,
     validate_plan_requirements,
     plan_contract_version,
 )
@@ -253,9 +254,13 @@ class PlannerError(RuntimeError):
 class PlannerResponseError(PlannerError):
     """A completion was refused, absent, or incomplete rather than malformed JSON."""
 
-    def __init__(self, reason):
+    def __init__(self, reason, *, finish_reason=None):
         super().__init__('The model did not return a complete response.')
         self.reason = reason
+        self.finish_reason = (
+            finish_reason if finish_reason in ('stop', 'length', 'tool_calls', 'function_call', 'content_filter')
+            else 'other' if finish_reason is not None else None
+        )
 
 
 class ConversationResolutionError(PlannerError):
@@ -683,7 +688,9 @@ rows remains part of that knowledge step.
 
 An action whose catalog says document_binding_supported can read selected workspace
 documents directly, including their available native metadata. Bind its exact source IDs
-in arguments.document_ids and bind its prepared output to compose. Do not add a redundant
+in arguments.document_ids and bind its prepared output to compose. Copy action_ref exactly
+from the admitted action catalog; display names and function names are not action references.
+Do not construct a reference or assume an unavailable action exists. Do not add a redundant
 Search or Analyze step just to declare source use. The server confines the action's
 document reads to that binding and current permissions. Other actions cannot declare
 document_ids, and mentioning an ID or filename in task text is not a source binding.
@@ -713,6 +720,11 @@ For keyed cross-file calculations, dated lookups or grouped totals, use tabular_
 with native_operation="relate" and a complete tabular-relate-v1 relational_spec, not a
 Document Search action or model arithmetic in compose. Bind the exact datasets by alias
 and document_id in the same order as arguments.document_ids. Columns are alias.header;
+datasets[].columns, when supplied, must be the complete ordered native header, including
+unused fields such as exercise labels and evidence rules. It is a source-schema assertion,
+not a projection. Copy the exact inspected header or omit that optional assertion when
+unknown; use a project step and output expressions to select the needed fields. Never
+guess a header from sample rows or remove source columns merely because they are not used.
 join how/cardinality/on and effective-date boundaries are explicit. Use a named table or
 an explicit cell_range/header_row when a worksheet contains separate data regions. CSV
 data has neither native accessibility metadata nor worksheet properties. Derived fields
@@ -1104,9 +1116,9 @@ def _call_planner(
     if require_complete_response:
         finish_reason = getattr(choice, 'finish_reason', None)
         if finish_reason == 'content_filter' or getattr(choice.message, 'refusal', None):
-            raise PlannerResponseError('model_refusal')
+            raise PlannerResponseError('model_refusal', finish_reason=finish_reason)
         if finish_reason not in (None, 'stop'):
-            raise PlannerResponseError('incomplete_completion')
+            raise PlannerResponseError('incomplete_completion', finish_reason=finish_reason)
         if not choice.message.content:
             raise PlannerResponseError('empty_completion')
 
@@ -1670,6 +1682,26 @@ def _workflow_planning_for(request_context, available_ids=()):
     return (planning if projection is not None else {}), projection
 
 
+def _can_repair_document_action_reference(error, proposal, actions):
+    """A rejected document Gather reference can be corrected before any action executes."""
+    if error.code != 'capability_unavailable' or error.rule != 'action_unavailable':
+        return False
+    if not any(is_document_search_action(action) for action in actions):
+        return False
+    available = {action.get('action_ref') for action in actions}
+    rejected = [
+        step.get('arguments') or {} for step in proposal.get('steps') or []
+        if isinstance(step, dict) and step.get('enabled', True)
+        and step.get('capability_id') == 'action_invoke'
+        and isinstance(step.get('arguments'), dict)
+        and step['arguments'].get('action_ref') not in available
+    ]
+    return bool(rejected) and all(
+        arguments.get('document_ids') and arguments.get('execution_intent') in (None, 'gather')
+        for arguments in rejected
+    )
+
+
 def _with_analysis_semantics(raw, edit_context=None):
     """New analysis work opts in; an omitted option on an existing draft keeps its meaning."""
     plan = deepcopy(raw)
@@ -1881,6 +1913,7 @@ def plan_request(
                 'attempt': attempt,
                 'error_type': type(error).__name__ if error is not None else None,
                 'response_failure': error.reason if isinstance(error, PlannerResponseError) else None,
+                'response_finish_reason': error.finish_reason if isinstance(error, PlannerResponseError) else None,
                 'validation_code': getattr(error, 'code', None) if isinstance(error, PlanValidationError) else None,
                 'validation_rule': getattr(error, 'rule', None) if isinstance(error, PlanValidationError) else None,
                 **(error.diagnostics if isinstance(error, PlanValidationError) else {}),
@@ -2120,6 +2153,7 @@ def plan_request(
         validate_plan_document_source_kinds(
             normalized, document_source_kinds, document_source_formats=document_source_formats,
         )
+        validate_plan_native_source_schemas(normalized, source_candidates)
         normalized['validation']['repairs'].extend(local_repairs)
         return normalized
 
@@ -2345,6 +2379,7 @@ def plan_request(
             )
             repairable = (
                 exc.code in REPAIRABLE_PLAN_CODES
+                or _can_repair_document_action_reference(exc, current_proposal, actions)
                 or (handoff_offered and exc.code in HANDOFF_REPAIRABLE_PLAN_CODES)
             ) and not context_failed
             if repairable and attempt <= PLAN_REPAIR_ATTEMPTS:

@@ -1,9 +1,10 @@
 # test_orchestration_planner_failure_diagnostics.py
 """
 Functional regressions for planner selection constraints and safe diagnostics.
-Version: 0.261.140
+Version: 0.261.439
 Implemented in: 0.261.115
 Single orchestration contract updated in: 0.261.139
+Real-module diagnostic harness updated in: 0.261.439
 
 The real planner, registry, request context, and validator use controlled provider
 responses. Tests distinguish missing selected work from malformed/provider output,
@@ -12,6 +13,7 @@ without accepting empty plans, switching models, or logging provider secrets.
 
 import hashlib
 import json
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -20,7 +22,12 @@ import pytest
 from openai import APIError, APITimeoutError
 
 from test_orchestration_research_selection import ScriptedClient, model_plan, result_binding, result_input
-from test_support.orchestration_research import case_inputs, load_case_suite, planner_runtime
+from test_orchestration_document_planning_recovery import (
+    modules, planning, real_http_harness, source_runtime,
+)
+
+
+__all__ = ["modules", "planning", "real_http_harness", "source_runtime"]
 
 
 PROMPT = (
@@ -31,16 +38,21 @@ PROMPT = (
 
 
 @pytest.fixture
-def planner_case():
-    with planner_runtime() as runtime:
-        suite = load_case_suite()
-        case = next(item for item in suite["cases"] if item["id"] == "long-simple-drafting")
-        settings, caller, context = case_inputs(runtime, suite, case)
-        logs = []
-        with patch.dict(runtime.planner, {
-            "log_event": lambda message, **kwargs: logs.append((message, kwargs)),
-        }):
-            yield SimpleNamespace(runtime=runtime, settings=settings, caller=caller, context=context, logs=logs)
+def planner_case(planning, monkeypatch):
+    harness = planning.harness
+    runtime = SimpleNamespace(
+        planner=harness.planner.__dict__, schema=harness.schema.__dict__,
+        context=planning.context.__dict__,
+    )
+    settings = deepcopy(harness.settings)
+    caller = harness.services().capability_request_bindings()
+    caller["user_id"] = "owner"
+    context = planning.context.build_planner_context(PROMPT)
+    logs = []
+    monkeypatch.setattr(
+        harness.planner, "log_event", lambda message, **kwargs: logs.append((message, kwargs)),
+    )
+    return SimpleNamespace(runtime=runtime, settings=settings, caller=caller, context=context, logs=logs)
 
 
 def plan(fixture, client, *, seeds=None, context=None, authorized=None):
@@ -91,7 +103,8 @@ def test_three_pinned_documents_allow_analyze_but_explicit_search_stays_required
     assert len(client.calls) == 1 and client.calls[0]["model"] == "gpt-4o"
 
     with pytest.raises(fixture.runtime.planner["PlannerError"]):
-        plan(fixture, ScriptedClient(proposal), seeds={**seeds, "required_capabilities": ["document_search"]},
+        plan(fixture, ScriptedClient(proposal, proposal, proposal),
+             seeds={**seeds, "required_capabilities": ["document_search"]},
              context=context, authorized=ids)
     diagnostic = failure_log(fixture)
     assert diagnostic["reason"] == "invalid_plan_or_missing_requirement"
@@ -153,4 +166,5 @@ def test_incomplete_refused_and_missing_completions_are_identifiable(planner_cas
         plan(fixture, client)
     diagnostic = failure_log(fixture)
     assert diagnostic["response_failure"] == reason
+    assert diagnostic["response_finish_reason"] == (finish if finish != "stop" else None)
     assert diagnostic["error_type"] == "PlannerResponseError"

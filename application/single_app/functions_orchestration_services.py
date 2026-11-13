@@ -11,9 +11,12 @@ superseded attempt's output identity. A merged document's original files are rea
 only through the owner-supplied document reader (0.261.245).
 """
 
+import hashlib
+import logging
 from copy import deepcopy
 
 from content_screening.contracts import DocumentHeldError
+from functions_appinsights import log_event, workflow_log_context
 from functions_document_analysis_checkpoints import AnalysisWorkUnitCheckpoints
 from functions_generated_export_contracts import GeneratedFileExportError
 from functions_generated_export_registry import (
@@ -29,7 +32,7 @@ from functions_orchestration_rendering import OrchestrationRenderingService
 from functions_orchestration_result_contracts import (
     InputBinding, ResultContractError, ResultRef, TaskResult, canonical_digest, narrative_result_ready,
 )
-from functions_orchestration_results import OrchestrationResultAccess, OrchestrationResults
+from functions_orchestration_results import OrchestrationResultAccess, OrchestrationResults, ResultUnavailableError
 from functions_tabular_merge import (
     TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_column_mapping_schema, tabular_mapping_from_profile,
 )
@@ -107,9 +110,32 @@ def admitted_result_aliases(record, results):
         if reference.producer.capability_id == CAPABILITY_WORKFLOW_RESULTS:
             # Discovery never stores one; a stored alias naming a saved workflow result fails closed.
             raise ResultContractError("result_reference_untrusted")
-        results.open_result(
-            reference, require_current_sources=True, allow_partial=narrative_result_ready(reference),
-        ).recheck()
+        try:
+            results.open_result(
+                reference, require_current_sources=True, allow_partial=narrative_result_ready(reference),
+            ).recheck()
+        except (ResultUnavailableError, ResultContractError, PermissionError) as error:
+            log_event(
+                "[ORCHESTRATION_RUNS] A retained result alias could not be admitted.",
+                level=logging.WARNING,
+                extra={
+                    **workflow_log_context(
+                        conversation_id=results.access.conversation_id,
+                        run_id=reference.producer.run_id, step_id=reference.producer.step_id,
+                    ),
+                    "consumer_run_id_hash": workflow_log_context(
+                        run_id=record.get("id"),
+                    ).get("run_id_hash"),
+                    "result_alias_hash": hashlib.sha256(alias.encode("utf-8")).hexdigest(),
+                    "stage": "result_alias_admission", "error_type": type(error).__name__,
+                    "authority_reason": (
+                        error.code if isinstance(error, (ResultUnavailableError, ResultContractError))
+                        else "result_access_denied"
+                    ),
+                    "result_kind": reference.kind,
+                },
+            )
+            raise
         aliases[alias] = reference
     return aliases
 

@@ -99,6 +99,13 @@ boundaries and precise decimal rules. Ambiguous matches, missing formula caches
 and exceeded bounds fail explicitly; no preview is promoted to a complete table.
 Native accessibility/layout inspection remains a separate compatible capability.
 
+From **0.261.439**, the relational `datasets[].columns` selector explicitly means
+the complete ordered source header, not a field projection. A known mismatch is
+corrected during planning; the actual source is still checked at execution.
+Use `project`/`output` to select result fields. Full numerical work still requires
+complete native records, while semantic document/comment review keeps its own
+compatible readers.
+
 See [Calculate across selected files]({{ '/guides/calculate-across-files/' | relative_url }})
 for source selection, relationship rules, inspection coexistence and output limits.
 

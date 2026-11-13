@@ -285,6 +285,9 @@ def _log_failure(message, record, error, *, stage="execution"):
             ),
             "stage": stage, "response_type": response_type,
             "error_type": type(error).__name__, "execution_code": _failure(error)["code"],
+            "authority_reason": (
+                error.code if isinstance(error, (ResultUnavailableError, ResultContractError)) else None
+            ),
         },
     )
 

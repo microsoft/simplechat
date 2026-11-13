@@ -1162,12 +1162,19 @@ def validate_dependency_plan(
                     raise PlanValidationError('A requested web discovery type is disabled.') from exc
             if capability_id == CAPABILITY_TABULAR_ANALYZE:
                 # Native query/transform validators run only for explicitly admitted native work.
-                from functions_orchestration_native_results import validate_native_orchestration_arguments
+                from functions_orchestration_native_results import (
+                    NativeOrchestrationBridgeError, validate_native_orchestration_arguments,
+                )
 
                 try:
                     arguments = validate_native_orchestration_arguments(arguments)
-                except ValueError as exc:
-                    raise PlanValidationError('The native computation arguments are unsupported.') from exc
+                except NativeOrchestrationBridgeError as exc:
+                    raise _step_contract_error(
+                        'The native computation arguments are unsupported. Correct the declared '
+                        'operation and its query, transformation or relationship rules; do not '
+                        'replace the calculation with source previews.',
+                        raw, code='plan_arguments_invalid', rule=exc.rule,
+                    ) from exc
                 if arguments['native_operation'] == 'relate':
                     from functions_orchestration_merge import tabular_merge_limits
 
@@ -1610,6 +1617,45 @@ def validate_plan_document_source_kinds(plan, document_source_kinds, *, document
                 'compose across the prepared results. Keep every selected source.',
                 code='source_kind_invalid', rule='narrative_source_required',
             )
+
+
+def validate_plan_native_source_schemas(plan, selected_sources):
+    """Check known complete headers, never infer a schema from samples or another table."""
+    inspections = {
+        source['document_id']: source.get('inspection') or {}
+        for source in selected_sources or [] if isinstance(source, dict) and source.get('document_id')
+    }
+    for step in plan.get('steps') or []:
+        arguments = step.get('arguments') or {}
+        if (
+            not step.get('enabled', True) or step.get('capability_id') != CAPABILITY_TABULAR_ANALYZE
+            or arguments.get('native_operation') != 'relate'
+        ):
+            continue
+        for dataset in arguments['relational_spec']['datasets']:
+            if not dataset.get('columns') or dataset.get('cell_range') or dataset.get('table_id'):
+                continue
+            inspection = inspections.get(dataset['document_id'], {})
+            if inspection.get('status') != 'inspected':
+                continue
+            tables = [
+                table for table in inspection.get('tables') or []
+                if isinstance(table, dict)
+                and table.get('header_row') == dataset.get('header_row', 1)
+                and (not dataset.get('sheet') or table.get('sheet') == dataset['sheet'])
+            ]
+            if len(tables) != 1 or not isinstance(tables[0].get('columns'), list):
+                continue
+            columns = tables[0]['columns']
+            if columns != dataset['columns']:
+                raise _step_contract_error(
+                    f'Dataset "{dataset["alias"]}" declares a different header from the inspected '
+                    'source. datasets[].columns asserts the complete ordered native header, including '
+                    'unused columns; it is not a projection. Use that exact header or omit the '
+                    'assertion, and use a project step to select calculation fields.',
+                    step, code='plan_arguments_invalid', rule='relational_schema_mismatch',
+                    expected_count=len(columns), actual_count=len(dataset['columns']),
+                )
 
 
 def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
@@ -2179,6 +2225,10 @@ FAILURE_MESSAGES = {
         'saved. Ask again to read the current result.'
     ),
     'result_invalid': 'The operation did not produce the complete named results declared by the plan.',
+    'source_schema_mismatch': (
+        "The calculation's column assertion does not match the complete source header. "
+        'Review the source schema and calculation plan; no result was published.'
+    ),
     STORAGE_FAILURE_CODE: STORAGE_FAILURE_MESSAGE,
     'completeness_incomplete': "The answer still needs an adjustment after checking. Your progress is saved.",
     'completeness_unavailable': "I couldn't finish checking the prepared answer. Your progress is saved.",

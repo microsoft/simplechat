@@ -1,7 +1,7 @@
 # test_native_audit_answer_delivery.py
 """Selected-file native audits through Auto routing, checked correction and delivery.
 
-Version: 0.261.428
+Version: 0.261.439
 Implemented in: 0.261.425
 Multi-source citation authority added in: 0.261.428
 Only external storage/configuration and provider replies are isolated. Real
@@ -29,6 +29,7 @@ from test_orchestration_document_action_end_to_end import LEFT, TURN, action_pro
 from test_native_inspection_request_contract import change_cursor
 from test_orchestration_source_kind_planning import RIGHT
 from test_support.versioning import assert_app_version_at_least
+from test_native_audit_reliability import audit_fact, native_inputs, preparation
 
 
 __all__ = ["inventory_store", "modules", "native_http", "native_source", "real_http_harness", "source_runtime"]
@@ -80,6 +81,42 @@ SOURCES = [
 
 def test_native_audit_delivery_version():
     assert_app_version_at_least("0.261.428")
+
+
+@pytest.mark.parametrize("following", [
+    "# Next: `A | B`",
+    "> Next: `A | B`",
+    "- Next: `A | B`",
+    "1. Next: `A | B`",
+    "    Next: `A | B`",
+    "    | Field | Value |\n    | --- | --- |\n    | Title | `A | B` |",
+    "<div>Next: `A | B`</div>",
+])
+def test_native_answer_preserves_block_interruptions_immediately_after_a_table(following):
+    inputs = native_inputs()
+    report = inputs["inspection"]["value"]["citations"][0]["function_result"]
+    report["native_audit"]["facts"].append(audit_fact("pipe-title", "title", "A | B"))
+    contract = native_audit_contract(inputs)
+    answer = "| Field | Value |\n| --- | --- |\n| Title | `A | B` |\n" + following + "\n"
+    decoded, rendered = importlib.import_module("functions_native_audit").decode_native_audit_answer(
+        json.dumps(preparation(contract, answer)), contract, require_answer=True,
+    )
+    assert decoded["answer"] == answer
+    assert "| Title | `A \\| B` |" in rendered
+    assert following + "\n" in rendered
+
+
+@pytest.mark.parametrize("label", ['<span>Title</span>', '<em>Title</em>', '<img src="x">'])
+def test_inline_html_in_a_valid_table_row_does_not_stop_native_value_serialization(label):
+    inputs = native_inputs()
+    report = inputs["inspection"]["value"]["citations"][0]["function_result"]
+    report["native_audit"]["facts"].append(audit_fact("pipe-title", "title", "A | B"))
+    contract = native_audit_contract(inputs)
+    answer = f"| Field | Value |\n| --- | --- |\n| First | text |\n{label} | `A | B`\n"
+    _decoded, rendered = importlib.import_module("functions_native_audit").decode_native_audit_answer(
+        json.dumps(preparation(contract, answer)), contract, require_answer=True,
+    )
+    assert f"{label} | `A \\| B`\n" in rendered
 
 
 @pytest.fixture
@@ -786,7 +823,7 @@ def test_native_review_corrects_state_and_rendered_coverage_contradictions(deliv
 
 @pytest.mark.parametrize("name", ["SC-C04.pdf"])
 @pytest.mark.parametrize("legacy_checkpoint", [
-    False, True, "native-audit-answer-v2", "native-audit-answer-v3", "invalid_preparation",
+    False, True, "native-audit-answer-v2", "native-audit-answer-v3", "native-audit-answer-v4", "invalid_preparation",
 ])
 def test_explicit_native_check_retry_reuses_gathered_source_without_repeating_reads(delivery, monkeypatch, name, legacy_checkpoint):
     source = configure_supporting_chunks(delivery, monkeypatch) if legacy_checkpoint == "native-audit-answer-v3" else None

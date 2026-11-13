@@ -1,8 +1,9 @@
 # test_native_document_fidelity.py
 """Native source fidelity regression tests.
 
-Version: 0.261.424
+Version: 0.261.439
 Implemented in: 0.261.424
+Source-bound PDF annotation and OBJR text fidelity added in: 0.261.439
 Native field states, content bindings, object identities and audit claims must
 survive the native parser, inventory and answer boundaries without source edits.
 """
@@ -16,7 +17,9 @@ from pathlib import Path
 import pytest
 from xml.etree import ElementTree as ET
 from pypdf import PdfWriter
-from pypdf.generic import ArrayObject, BooleanObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject
+from pypdf.generic import (
+    ArrayObject, BooleanObject, DecodedStreamObject, DictionaryObject, NameObject, NumberObject, TextStringObject,
+)
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
@@ -25,6 +28,9 @@ sys.path.insert(0, str(APP_ROOT))
 from native_document_evidence import drawing_native_fields, native_field  # noqa: E402
 from functions_accessibility import extract_office_accessibility_metadata, extract_pdf_accessibility_metadata  # noqa: E402
 from functions_office_media import extract_docx_comments  # noqa: E402
+from functions_native_document_inspection import inspect_native_document  # noqa: E402
+from functions_native_audit import build_native_audit  # noqa: E402
+from functions_pdf_native_evidence import pdf_content_references  # noqa: E402
 
 
 SOURCE_HASHES = {
@@ -115,6 +121,89 @@ def test_pdf_raw_marked_content_does_not_create_a_logical_tree(native_source):
     assert not metadata["is_tagged"] and not metadata["has_struct_tree"]
     figures = [record for record in pages[1]["native_content"]["records"] if record.get("tag") == "/Figure"]
     assert [record["mcid"] for record in figures] == [10, 11]
+
+
+@pytest.mark.parametrize("tagged", [False, True])
+def test_pdf_annotations_keep_exact_contents_reply_and_absent_state_without_requiring_tags(tmp_path, tagged):
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    text = " Reconcile 240 water kits with CSV availability 210; requested 300. "
+    root = DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Text"),
+        NameObject("/Contents"): TextStringObject(text), NameObject("/T"): TextStringObject("Reviewer"),
+        NameObject("/F"): NumberObject(0),
+    })
+    root_ref = writer._add_object(root)
+    reply_ref = writer._add_object(DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Text"),
+        NameObject("/Contents"): TextStringObject(""), NameObject("/IRT"): root_ref,
+    }))
+    absent_ref = writer._add_object(DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Text"),
+    }))
+    page[NameObject("/Annots")] = ArrayObject([root_ref, reply_ref, absent_ref])
+    if tagged:
+        tree = DictionaryObject({NameObject("/Type"): NameObject("/StructTreeRoot")})
+        tree_ref = writer._add_object(tree)
+        element = writer._add_object(DictionaryObject({
+            NameObject("/Type"): NameObject("/StructElem"), NameObject("/S"): NameObject("/Annot"),
+            NameObject("/P"): tree_ref, NameObject("/Pg"): page.indirect_reference,
+            NameObject("/K"): DictionaryObject({
+                NameObject("/Type"): NameObject("/OBJR"), NameObject("/Obj"): root_ref,
+            }),
+        }))
+        tree[NameObject("/K")] = ArrayObject([element])
+        writer.root_object[NameObject("/StructTreeRoot")] = tree_ref
+        writer.root_object[NameObject("/MarkInfo")] = DictionaryObject({
+            NameObject("/Marked"): BooleanObject(True),
+        })
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    writer.close()
+    original = buffer.getvalue()
+    path = tmp_path / "review.pdf"
+    path.write_bytes(original)
+    metadata, pages = extract_pdf_accessibility_metadata(str(path))
+    annotations = pages[1]["native_annotations"]["records"]
+    assert pages[1]["native_annotations"]["status"] == "complete"
+    assert annotations[0]["native_fields"]["contents"] == {"state": "present_value", "value": text}
+    assert annotations[0]["native_fields"]["state"]["state"] == "absent"
+    assert annotations[0]["native_fields"]["state_model"]["state"] == "absent"
+    assert annotations[0]["native_fields"]["flags"]["value"] == 0
+    assert annotations[1]["native_fields"]["contents"]["state"] == "present_empty"
+    assert annotations[1]["native_fields"]["reply_to"]["value"] == f"xref:{root_ref.idnum}"
+    assert annotations[2]["native_fields"]["contents"]["state"] == "absent"
+    if tagged:
+        node = next(item for item in metadata["semantic_tag_tree"] if item["tag"] == "Annot")
+        assert node["bound_text"] == {"state": "present_value", "value": text}
+        assert node["binding_status"] == "bound"
+    records = []
+    document = {"id": "review", "file_name": "review.pdf", "version": 1}
+    inspected = inspect_native_document(
+        document, original, ".pdf", section="all", page_size=200, max_bytes=65536, _audit_records=records,
+    )
+    audit = build_native_audit({
+        "document": document, "accessibility_metadata": inspected["metadata"],
+        "native_inspection": {"page": inspected["page"]},
+    }, _source_records=records)
+    assert any(fact["field"] == "contents" and fact["value"] == text for fact in audit["facts"])
+    assert sum(record.get("kind") == "annotation" for record in records) == 3
+    assert path.read_bytes() == original
+
+
+def test_repeated_objr_bindings_share_a_text_budget_without_truncating_native_values():
+    annotation = DictionaryObject({NameObject("/Contents"): TextStringObject("verified")})
+    reference = DictionaryObject({
+        NameObject("/Type"): NameObject("/OBJR"), NameObject("/Obj"): annotation,
+    })
+    budget = {"remaining": 8}
+    first = pdf_content_references(reference, 1, {}, annotation_budget=budget)
+    second = pdf_content_references(reference, 1, {}, annotation_budget=budget)
+    assert first[0]["annotation_contents"] == {"state": "present_value", "value": "verified"}
+    assert second[0]["annotation_contents"] == {
+        "state": "inaccessible", "value": None, "reason": "annotation_reference_text_limit",
+    }
+    assert annotation["/Contents"] == "verified"
 
 
 @pytest.mark.parametrize("name", ["SC-C08.xlsx", "SC-C11.xlsx"])

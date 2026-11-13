@@ -10,7 +10,7 @@ from native_document_evidence import NATIVE_FIELD_STATES, inaccessible_field
 
 
 NATIVE_AUDIT_VERSION = "native-audit-v1"
-NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v4"
+NATIVE_AUDIT_ANSWER_VERSION = "native-audit-answer-v5"
 MAX_AUDIT_FACTS = 1000
 MAX_AUDIT_BYTES = 100000
 NATIVE_AUDIT_ANSWER_ERRORS = {
@@ -56,6 +56,9 @@ NATIVE_AUDIT_REVIEW_POLICY = (
     "Other authorized named-input sources support their own claims without becoming native fact "
     "authorities. Their returned content is not unavailable merely because they have no native audit. "
     "An explicit, accurate limitation satisfies an unsupported check alongside useful findings. "
+    "Check current inventory_coverage separately from historical page coverage facts. "
+    "A previously incomplete returned chain and a later verified complete chain for the same "
+    "source/section are progress, not conflicting source statements. "
     "The candidate is customer Markdown, not the preparation JSON. Return the requested assessment "
     "schema, not a native-answer envelope."
 )
@@ -199,6 +202,16 @@ def build_native_audit(payload, *, _source_records=None):
         for record in metadata.get("unmarked_text", []):
             add(record["id"], f"Page {record['page_number']}; {record['id']}", "unmarked_text",
                 record["text"], record["text_state"])
+        page = (payload.get("native_inspection") or {}).get("page") or {}
+        for record in _source_records if _source_records is not None else page.get("records", []):
+            if record.get("kind") != "annotation":
+                continue
+            identity = record["id"]
+            location = f"Page {record['page_number']}; annotation {record['object_ref']}"
+            add(identity, location, "native_annotation", {
+                "page_number": record["page_number"], "object_ref": record["object_ref"],
+            })
+            fields(identity, location, record["native_fields"])
     objects = (metadata.get("objects_summary") or {}).get("items", metadata.get("objects") or [])
     page = (payload.get("native_inspection") or payload.get("excel_inspection") or {}).get("page") or {}
     if _source_records is not None and metadata.get("format") != "pdf":
@@ -560,6 +573,12 @@ def native_audit_policy(contract):
         "do not override native property facts. Authorized supporting documents remain available "
         "answer evidence even when they have no native inspection; do not describe their returned "
         "content as unavailable. "
+        "Use native_audit_contract.inventory_coverage for current returned-chain coverage. "
+        "inventory_complete describes extraction, not whether every page was returned. An earlier "
+        "has_more=true page is historical progress, not a contradiction of a later verified complete "
+        "chain for the same source and section. Do not claim completeness across changed sources. "
+        "Escape literal vertical bars in Markdown table values as \\|, even inside inline code spans, "
+        "so exact native titles remain in one cell. Do not change the native value itself. "
         "The server appends its immutable factual evidence table; do not copy that table into answer. "
         "The checker evaluates the rendered customer answer, not this JSON transport format."
     )
@@ -572,6 +591,60 @@ def _unique_native_object(pairs):
             raise NativeAuditAnswerError("native_answer_duplicate_key")
         value[key] = item
     return value
+
+
+def _escape_native_table_values(answer, contract):
+    """Serialize known native values in tables without altering prose, fences or delimiters."""
+    values = sorted({
+        fact["value"] for fact in contract["facts"]
+        if isinstance(fact.get("value"), str) and "|" in fact["value"]
+        and "\n" not in fact["value"] and "\r" not in fact["value"]
+    }, key=len, reverse=True)
+    if not values:
+        return answer
+    lines = answer.splitlines(keepends=True)
+    fence = None
+    table = False
+    for index, line in enumerate(lines):
+        marker = re.match(r"^ {0,3}(`{3,}|~{3,})", line)
+        if marker:
+            token = marker.group(1)
+            if fence is None:
+                fence = token
+            elif token[0] == fence[0] and len(token) >= len(fence):
+                fence = None
+            table = False
+            continue
+        if fence is not None:
+            continue
+        if re.match(r"^(?: {4}|\t)", line):
+            table = False
+            continue
+        separator = re.match(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", line)
+        if (
+            separator and index and "|" in lines[index - 1]
+            and not re.match(r"^(?: {4}|\t)", lines[index - 1])
+        ):
+            table = True
+            for value in values:
+                lines[index - 1] = lines[index - 1].replace(value, value.replace("|", "\\|"))
+        elif table:
+            block_start = re.match(
+                r"^(?: {4}|\t| {0,3}(?:#{1,6}(?:[ \t]+|$)|>|"
+                r"(?:[-+*]|\d{1,9}[.)])[ \t]+|<(?:"
+                r"!--|\?|![A-Z]|/?(?i:address|article|aside|base|basefont|blockquote|body|caption|"
+                r"center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
+                r"footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
+                r"menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|"
+                r"style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>/]|$))))",
+                line,
+            )
+            if not line.strip() or "|" not in line or block_start:
+                table = False
+                continue
+            for value in values:
+                lines[index] = lines[index].replace(value, value.replace("|", "\\|"))
+    return "".join(lines)
 
 
 def decode_native_audit_answer(response, contract, *, require_answer=False):
@@ -600,7 +673,7 @@ def decode_native_audit_answer(response, contract, *, require_answer=False):
         }
         if set(re.findall(r"\[#[^\]\r\n]+\]", answer)) - allowed:
             raise NativeAuditAnswerError("native_answer_citation_unknown")
-        rendered = f"{answer.rstrip()}\n\n{rendered}"
+        rendered = f"{_escape_native_table_values(answer, contract).rstrip()}\n\n{rendered}"
     return value, rendered
 
 

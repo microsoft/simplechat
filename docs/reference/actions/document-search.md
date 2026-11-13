@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.437"
+version: "0.261.439"
 ---
 
 <!-- action-slug: document-search -->
@@ -75,6 +75,23 @@ From **0.261.399**, workspace Excel files also expose native workbook properties
 
 See [Document accessibility, structure, and comment extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md) for what is extracted for each file type.
 
+### Format-compatible native requests
+
+Fixed/Implemented in version: **0.261.439**
+(`application/single_app/config.py`).
+
+`sections` and `native_section` are different arguments. The report's
+`sections="comments"` option supports modern Word review comments and Excel
+notes/threaded comments; it is not the PDF/PPTX comment reader. Use
+`accessibility`, `style`, or `issues` for their supported native report, and
+content reading for presentation reviewer context.
+
+Bound document actions receive each source's supported report sections. One
+known incompatible comment-section request can be corrected before any source
+read, within the existing function-call limit. Repeated incompatible requests,
+failed source reads, stale cursors and access refusals do not gain automatic
+replay. A rejected request does not establish that the source is missing.
+
 ### Source-backed PDF/PPTX inspection
 
 Fixed/Implemented in version: **0.261.424**
@@ -87,6 +104,22 @@ it does not add a PDF/PPTX native-comment API. Follow
 Page size is 1-200 records with a separate response-byte limit; long records have
 explicit fragments. Cursors are tied to the source bytes, document revision and
 section. A complete returned page is not necessarily a whole-file inventory.
+
+From **0.261.439**, PDF native `content`/`all` inspection includes source-bound
+page annotations, even when the PDF has no semantic tag tree. It preserves
+decoded native annotation contents, author/subject/date fields, reply-object
+references and available State/StateModel values with explicit field states.
+Supported `/OBJR` annotation references also bind their actual contents to the
+logical element. An absent resolution field is not an inferred done state.
+Unresolved objects, malformed fields and inspection limits remain explicit.
+
+Native pagination schema **1.1** includes these annotation records. Cursors from
+the older schema are not silently reused. Continue using the cursor returned by
+the current inspection with the same source and section.
+
+`inventory_complete` describes extraction; `has_more` and the verified returned
+page chain describe delivery. An earlier partial chain can be followed by a
+complete chain for the same source without the source statements conflicting.
 
 `native_properties` and object `native_fields` distinguish `absent`,
 `present_empty`, `present_value` and `inaccessible`. PDF logical elements retain
@@ -104,6 +137,14 @@ alongside useful findings, rather than treated as execution failure. Unsupported
 claims still require correction; exact source values are not rewritten by the
 model. This does not replace mixed research/computed answers or establish
 standards compliance.
+
+From **0.261.439**, native-answer preparation/checking uses
+`native-audit-answer-v5`. Literal native values containing `|` are escaped when
+serialized into customer-answer table cells, including inline code, while the
+stored native value stays unchanged. Prose, fenced examples and table delimiters
+are not globally rewritten. Older checked preparations are revalidated under the
+new contract during an explicitly admitted retry; this does not authorize
+repeating source acquisition or outgoing effects.
 
 Fixed/Implemented in version: **0.261.426**
 (`application/single_app/config.py`).

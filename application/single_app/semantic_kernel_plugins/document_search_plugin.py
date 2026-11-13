@@ -463,8 +463,13 @@ class DocumentSearchPlugin(BasePlugin):
             'every saved cell or execute formulas/macros. '
             'Use sheet_name and cell_range for actual saved values and formula caches; do not infer them '
             'from a schema preview. Existing stored originals are inspected without requiring re-upload. '
-            'PDF/PPTX retained authorized active sources are inspected locally on request. Follow '
-            'native_inspection.page.next_cursor with native_cursor while has_more is true. '
+            'PDF/PPTX retained authorized active sources are inspected locally on request. '
+            'For PDF/PPTX, sections may contain accessibility, style, and issues, never comments. '
+            'Their native annotations or reviewer context must be read through supported native '
+            'content/structure evidence and document content, not the Word/Excel comments section. '
+            'sections and native_section are different arguments: the default native_section=comments '
+            'maps to all only for PDF/PPTX; sections=comments does not. '
+            'Follow native_inspection.page.next_cursor with native_cursor while has_more is true. '
             'Native field states distinguish absent, present_empty, present_value and inaccessible; '
             'an empty normalized alt_text alone does not establish a stored blank. Native logical '
             'bindings are not visual order. native_audit contains the exact source-grounded audit facts. '
@@ -481,7 +486,7 @@ class DocumentSearchPlugin(BasePlugin):
         self,
         document_id: Annotated[str, 'Document id to read accessibility and formatting metadata for.'],
         doc_scope: Annotated[str, 'all, personal, group, or public.'] = '',
-        sections: Annotated[str, 'Optional comma-separated sections: accessibility, style, issues, comments. Defaults to accessibility/style/issues; Word comments are opt-in.'] = '',
+        sections: Annotated[str, 'Comma-separated accessibility, style, issues; comments is supported only for Word .docx/.docm/.dotx and Excel .xlsx/.xlsm/.xls. PDF/PPTX must not request sections=comments. Defaults to accessibility/style/issues.'] = '',
         page_number: Annotated[int, 'Optional 1-based stored page/slide or Excel evidence segment number, not an Excel printed page.'] = 0,
         active_group_ids: Annotated[str, 'Optional comma-separated group ids when resolving group content.'] = '',
         active_public_workspace_id: Annotated[str, 'Optional public workspace id when resolving public content.'] = '',

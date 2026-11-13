@@ -60,7 +60,14 @@ def relational_spec_schema():
         "header_row": {"type": "integer", "minimum": 1, "maximum": 1000},
         "cell_range": {"type": "string", "pattern": r"^[A-Z]{1,3}[1-9][0-9]{0,6}:[A-Z]{1,3}[1-9][0-9]{0,6}$"},
         "table_id": {"type": "string", "minLength": 1, "maxLength": 128},
-        "columns": {"type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True, "items": _COLUMN},
+        "columns": {
+            "type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": True, "items": _COLUMN,
+            "description": (
+                "Optional assertion of the complete ordered native header, including unused columns. "
+                "This is not a projection or a list of columns needed by the calculation. "
+                "Omit it when the complete header is not known; use a project step to select fields."
+            ),
+        },
     }, ["alias", "document_id"])
     join = _object({
         "id": _NAME, "op": {"const": "join"}, "left": _NAME, "right": _NAME,

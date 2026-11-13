@@ -1,9 +1,10 @@
 # test_native_audit_reliability.py
 """Functional regressions for native-answer contracts and canonical field states.
 
-Version: 0.261.428
+Version: 0.261.439
 Implemented in: 0.261.426
 Multi-source citation authority added in: 0.261.428
+Literal native table-value serialization covered in: 0.261.439
 These bootstrap-free cases exercise real contract/projection code. The companion
 answer-delivery suite covers authorized readers, Auto routing, retention and HTTP.
 """
@@ -115,6 +116,28 @@ def preparation(contract, answer="Supported findings and precise inspection limi
 
 def test_native_audit_reliability_version():
     assert_app_version_at_least("0.261.428")
+
+
+def test_native_title_pipe_is_escaped_only_in_table_values_not_prose_or_code_fences():
+    inputs = native_inputs()
+    title = "NASA-16 | Orbit-1 shift handover"
+    report = inputs["inspection"]["value"]["citations"][0]["function_result"]
+    report["native_audit"]["facts"].append(audit_fact(
+        "presentation-title", "title", title, location="handover.pptx; Native file properties",
+    ))
+    contract = native_audit_contract(inputs)
+    answer = (
+        f"Native title: {title}\n\n"
+        "| Property | Finding |\n| --- | --- |\n"
+        f"| Native title | `{title}` |\n\n"
+        f"```text\n| {title} |\n```\n"
+    )
+    response = preparation(contract, answer)
+    decoded, rendered = decode_native_audit_answer(json.dumps(response), contract, require_answer=True)
+    assert decoded["answer"] == answer
+    assert "| Native title | `NASA-16 \\| Orbit-1 shift handover` |" in rendered
+    assert f"Native title: {title}" in rendered
+    assert f"```text\n| {title} |\n```" in rendered
 
 
 def test_native_and_retained_chunk_owner_citations_are_accepted_without_changing_fact_authority():

@@ -62,7 +62,10 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_visuals import gathering_visual_addendum, instruction_memory_messages
 from functions_workflow_document_selection import selected_document_sources
-from native_document_evidence import NATIVE_INSPECTION_ERROR_MESSAGES
+from native_document_evidence import (
+    NATIVE_INSPECTION_ERROR_MESSAGES, NativeInspectionRequestError,
+    native_report_sections, validate_native_report_sections,
+)
 
 
 RETRIEVED_CHARTS_PLUGIN_NAME = 'retrieved_data_charts'
@@ -121,6 +124,7 @@ def _document_read_profile(source, *, document_read_mode):
         'native_inspection_supported': native_supported,
         'document_read_mode': document_read_mode,
         'native_inspection_admitted': native_admitted,
+        'native_report_sections': native_report_sections(source_format) if native_admitted else [],
         'read_functions': sorted(functions),
         'complete_tabular_reader_required': source.get('source_kind') == 'tabular',
     }
@@ -584,6 +588,7 @@ async def invoke_action(
     from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior
     from semantic_kernel.contents import ChatHistory
     from semantic_kernel.filters import FilterTypes
+    from semantic_kernel.functions import FunctionResult
     from semantic_kernel_loader import get_max_auto_invoke_attempts, prepare_action_plugin_manifest
     from semantic_kernel_plugins.logged_plugin_loader import create_logged_plugin_loader
     from agent_delegation_runtime import await_agent_operation
@@ -734,6 +739,7 @@ async def invoke_action(
         model_configuration = None
         calls = 0
         failure = None
+        request_corrections = 0
         call_lock = asyncio.Lock()
         limit = get_max_auto_invoke_attempts(current_settings)
 
@@ -794,7 +800,7 @@ async def invoke_action(
             )
 
         async def guard_function(invocation, next):
-            nonlocal calls, failure
+            nonlocal calls, failure, request_corrections
             # Providers can return a batch despite parallel_tool_calls=False. Serialize it
             # so cancellation, failure and the function-call budget apply between calls.
             async with call_lock:
@@ -839,6 +845,30 @@ async def invoke_action(
                                     DOCUMENT_READ_UNSUPPORTED_MESSAGE,
                                     failure_code='document_action_read_unsupported',
                                 )
+                            if function == DOCUMENT_NATIVE_INSPECTION_FUNCTION:
+                                try:
+                                    validate_native_report_sections(
+                                        profile['source_format'], invocation.arguments.get('sections'),
+                                    )
+                                except NativeInspectionRequestError as error:
+                                    calls += 1
+                                    if request_corrections:
+                                        raise ActionExecutionError(
+                                            error.public_message,
+                                            failure_code='document_action_read_unsupported',
+                                        ) from error
+                                    request_corrections += 1
+                                    correction = {
+                                        'error': error.public_message, 'error_code': error.code,
+                                        'validation_rule': error.validation_rule,
+                                        'supported_sections': profile['native_report_sections'],
+                                        'source_read_performed': False,
+                                    }
+                                    trace_document_read(invocation, 'rejected', call_index, payload=correction)
+                                    invocation.result = FunctionResult(
+                                        function=invocation.function.metadata, value=json.dumps(correction),
+                                    )
+                                    return
                         else:
                             raise ActionExecutionError('This function does not support the document source binding.')
                     calls += 1
@@ -1005,6 +1035,11 @@ async def invoke_action(
                 'native properties, never to obtain CSV rows or calculate tabular results. Task wording '
                 'cannot override document_read_mode: content excludes native tools, '
                 'while native/mixed and omitted legacy modes retain format-compatible native access. '
+                'Each source native_report_sections list declares compatible report sections. '
+                'sections=comments is Word/Excel-only; native_section is a different option. '
+                'A known incompatible request rejected before source reading may be corrected once '
+                'within the existing function-call budget using the reported supported choices. '
+                'That is not permission to retry failed source reads or outside operations. '
                 'Indexed chunks '
                 'and schema previews are not complete tabular records; calculations require a separate '
                 'complete-record tabular step. An unsupported native inspection does not mean the file '

@@ -35,7 +35,9 @@ from pypdf.generic import BooleanObject
 from functions_appinsights import log_event
 from content_screening.extraction import current_extraction
 from native_document_evidence import bound_native_metadata, drawing_native_fields, inaccessible_field, native_field
-from functions_pdf_native_evidence import bind_pdf_node, inspect_pdf_content, pdf_content_references
+from functions_pdf_native_evidence import (
+    MAX_NATIVE_TEXT_CHARACTERS, bind_pdf_node, inspect_pdf_annotations, inspect_pdf_content, pdf_content_references,
+)
 from functions_pptx_native_evidence import inspect_pptx_slide_objects, pptx_core_native_fields
 from functions_excel_accessibility import (
     extract_excel_accessibility_metadata,
@@ -306,6 +308,7 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000, native_conte
                 result['role_map'][c_name] = s_name
 
     visited_ids = set()
+    annotation_budget = {"remaining": MAX_NATIVE_TEXT_CHARACTERS}
 
     def _inspect_table_subtree(table_dict, page_num, depth=0):
         """Summarize rows, TH header cells, TD data cells, and scopes inside a <Table> tag."""
@@ -398,7 +401,9 @@ def _walk_pdf_struct_tree(struct_root, page_map, max_visited=25000, native_conte
                 'raw_tag': raw_tag if raw_tag != mapped_tag else None,
                 'page_number': page_num,
                 'depth': depth,
-                'content_refs': pdf_content_references(deref_node.get('/K'), page_num, page_map),
+                'content_refs': pdf_content_references(
+                    deref_node.get('/K'), page_num, page_map, annotation_budget=annotation_budget,
+                ),
                 'native_fields': {
                     name: native_field(deref_node, key)
                     for name, key in (('alt', '/Alt'), ('actual_text', '/ActualText'), ('title', '/T'))
@@ -783,6 +788,9 @@ def extract_pdf_accessibility_metadata(pdf_path):
             cosmos_meta['native_inspection_status'] = 'partial'
 
         page_map = _build_pdf_page_id_map(reader)
+        native_annotations = inspect_pdf_annotations(reader)
+        if any(page["status"] != "complete" for page in native_annotations.values()):
+            cosmos_meta['native_inspection_status'] = 'partial'
 
         # Inspect per-page /Tabs, /Artifact in content streams, and /Link or /Widget annotations
         structure_order_pages = 0
@@ -841,6 +849,9 @@ def extract_pdf_accessibility_metadata(pdf_path):
                 'form_widgets': page_widgets,
                 'tag_nodes': [],
                 'native_content': native_page,
+                'native_annotations': native_annotations.get(page_idx, {
+                    'status': 'inaccessible', 'records': [], 'limitations': ['annotation_page_unavailable'],
+                }),
                 'artifacts': native_artifacts,
                 'formatting_line': pdf_page_style_lines.get(page_idx, ''),
                 'formatted_accessibility_block': '',

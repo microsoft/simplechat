@@ -8,6 +8,7 @@ from collections.abc import Mapping
 
 NATIVE_EVIDENCE_SCHEMA_VERSION = "1.0"
 NATIVE_FIELD_STATES = frozenset({"absent", "present_empty", "present_value", "inaccessible"})
+NATIVE_REPORT_COMMENT_FORMATS = frozenset({"docx", "docm", "dotx", "xlsx", "xlsm", "xls"})
 NATIVE_INSPECTION_ERROR_MESSAGES = {
     "native_section_invalid": "The requested native inspection section is not supported for this file.",
     "native_page_size_invalid": "The native inspection page size must be between 1 and 200.",
@@ -16,6 +17,11 @@ NATIVE_INSPECTION_ERROR_MESSAGES = {
     "native_cursor_source_changed": "The native inspection cursor belongs to a different source or section.",
     "native_cursor_out_of_range": "The native inspection cursor is outside the inventory.",
     "native_cursor_fragment_invalid": "The native record continuation is invalid.",
+    "native_comments_format_unsupported": (
+        "The comments report section supports Word and Excel, not this file format. "
+        "Use accessibility, style or issues for supported native metadata and a content reader "
+        "for document or presentation reviewer context. This does not mean the source is missing."
+    ),
 }
 
 
@@ -28,6 +34,25 @@ class NativeInspectionRequestError(ValueError):
         self.validation_rule = rule
         self.public_message = NATIVE_INSPECTION_ERROR_MESSAGES[code]
         super().__init__(self.public_message)
+
+
+def native_report_sections(source_format):
+    sections = ["accessibility", "style", "issues"]
+    if source_format in NATIVE_REPORT_COMMENT_FORMATS:
+        sections.append("comments")
+    return sections
+
+
+def validate_native_report_sections(source_format, sections):
+    requested = (
+        [value.strip().lower() for value in sections.split(",")]
+        if isinstance(sections, str) else [str(value or "").strip().lower() for value in sections or []]
+    )
+    if "comments" in requested and source_format not in NATIVE_REPORT_COMMENT_FORMATS:
+        raise NativeInspectionRequestError(
+            "native_comments_format_unsupported", field="sections",
+            rule="native_comments_format_unsupported",
+        )
 
 
 def inaccessible_field(reason):

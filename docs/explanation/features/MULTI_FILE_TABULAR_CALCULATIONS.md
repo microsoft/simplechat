@@ -1,8 +1,10 @@
 # Multi-file tabular calculations
 
-Version: **0.261.437**
+Version: **0.261.439**
 
 Implemented in version: **0.261.437**
+
+Source-aware planning and failure diagnostics updated in version: **0.261.439**.
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -36,7 +38,20 @@ not authorization. Its columns are addressed as `alias.column`. Different
 schemas stay separate until the plan explicitly relates their columns.
 
 CSV identifiers and source values remain text, including leading zeros.
-An optional exact `columns` array detects a changed schema. For workbooks with
+An optional `datasets[].columns` array asserts the **complete ordered native
+header**, including unused fields such as exercise labels and evidence rules.
+It is not a projection or the list of fields needed for a calculation. Copy the
+whole inspected header or omit that optional assertion when it is unknown;
+select fields with a `project` step or `output` expressions.
+
+When a matching header is available in the source's bounded planning inspection,
+the planner rejects an incorrect assertion before execution and receives a
+specific correction. A different worksheet/header row or named-table/range
+selection is not assumed to have that inspected header. The native execution
+check still runs against the actual source; a mismatch returns
+`source_schema_mismatch`, not a claim that named results were lost.
+
+For workbooks with
 multiple visible worksheets, select the intended `sheet` explicitly.
 
 XLSX/XLSM datasets can additionally select a saved named `table_id`, or an
