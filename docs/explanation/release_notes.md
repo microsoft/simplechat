@@ -2,6 +2,15 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.440)**
+
+#### Bug Fixes
+
+*   **Custom Favicon Persistence Across Instances**
+    *   Restores the saved custom favicon when an instance starts and reconciles it before serving the favicon, preventing fresh or scaled-out instances from displaying the bundled icon instead in classic and V2 interfaces.
+    *   Preserves existing favicon versioning and works with Redis-backed settings or direct Cosmos reads. Changed files are replaced atomically; unchanged icons are not rewritten.
+    *   (Ref: `app.py`, `ensure_custom_favicon_file_exists()`, [Custom Favicon Persistence Fix](fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md), [#1932](https://github.com/microsoft/simplechat/issues/1932), main fix [#1935](https://github.com/microsoft/simplechat/pull/1935))
+
 ### **(v0.261.424)**
 
 #### Bug Fixes
