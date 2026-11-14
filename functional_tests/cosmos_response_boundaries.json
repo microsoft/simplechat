@@ -19907,10 +19907,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "123dff84687f91804eda71d7d095ff3b42b7b23869d932b1f6e0879e80da7ab4"
+        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
       },
       "classification": "sdk-compatible",
-      "contract": "Authorized chat-attachment readiness uses partitioned query rows, which remain plain dictionaries; workspace manifests and readiness checks consume field projections without changing strict reference validation. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Authorized chat-attachment readiness uses partitioned query rows, which remain plain dictionaries; workspace manifests and readiness checks consume field projections without changing strict reference validation. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_chat_attachment_reference_readiness_query"
       ],
@@ -19928,10 +19928,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "123dff84687f91804eda71d7d095ff3b42b7b23869d932b1f6e0879e80da7ab4"
+        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned message point mappings are checked for conversation identity, image/file role and supported filename; only a plain candidate DTO is emitted, never the SDK document. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Partitioned message point mappings are checked for conversation identity, image/file role and supported filename; only a plain candidate DTO is emitted, never the SDK document. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_image_reference_candidates_use_partitioned_message_read"
       ],
@@ -19949,10 +19949,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "123dff84687f91804eda71d7d095ff3b42b7b23869d932b1f6e0879e80da7ab4"
+        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping is authorized through user_id and passed to Mapping-compatible scope-lock readers; missing or foreign conversations retain ElicitationContextError rather than an empty fallback. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The conversation point mapping is authorized through user_id and passed to Mapping-compatible scope-lock readers; missing or foreign conversations retain ElicitationContextError rather than an empty fallback. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_owned_elicitation_conversation_authorizes_current_owner"
       ],
@@ -19970,10 +19970,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "123dff84687f91804eda71d7d095ff3b42b7b23869d932b1f6e0879e80da7ab4"
+        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
       },
       "classification": "sdk-compatible",
-      "contract": "Bounded partitioned query rows are plain dictionaries. Current ownership, audience and source authorization are applied before emitting metadata-only plain candidate DTOs; content and SDK point documents are never emitted to the planner. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Bounded partitioned query rows are plain dictionaries. Current ownership, audience and source authorization are applied before emitting metadata-only plain candidate DTOs; content and SDK point documents are never emitted to the planner. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
       "tests": [
         "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
       ],
@@ -19991,10 +19991,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "123dff84687f91804eda71d7d095ff3b42b7b23869d932b1f6e0879e80da7ab4"
+        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
       },
       "classification": "sdk-compatible",
-      "contract": "The real SDK message point mapping is consumed through Mapping-compatible field access for current conversation identity, upload readiness and masking. Authorized saved text is read only after this check and late masking retains the failure path. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The real SDK message point mapping is consumed through Mapping-compatible field access for current conversation identity, upload readiness and masking. Authorized saved text is read only after this check and late masking retains the failure path. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
       "tests": [
         "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
       ],

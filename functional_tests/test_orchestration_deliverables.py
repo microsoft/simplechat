@@ -1,13 +1,14 @@
 # test_orchestration_deliverables.py
 """The deliverables contract and planned image generation in Gather / Reason / Render plans.
 
-Version: 0.261.342
+Version: 0.261.443
 Implemented in: 0.261.138
 Single orchestration contract updated in: 0.261.139
 Planner kind-specific fields and absent answer bindings updated in: 0.261.140
 Row-shaped compose guidance and JSON mode for CSV scenarios updated in: 0.261.141
 Prior-answer visual correction fixture support added in: 0.261.341
 Explicit prior-answer source selection fixture support added in: 0.261.342
+Inline-comparison versus requested-file planner guidance added in: 0.261.443
 
 Uses the initialized headless harness (real bootstrap, planner, schema, executor, result
 store, chat image persistence, rendering service and Office renderers) with the planning
@@ -526,6 +527,14 @@ def test_the_planner_receives_the_server_truth_and_the_deliverables_contract(har
     system = harness.model_calls[0]["messages"][0]["content"]
     assert "List \"deliverables\" before the steps" in system
     assert "never state a limitation only in \"assumptions\"" in system
+    # Showing or comparing a document's content is a chat answer, not a request for a new file or deck.
+    collapsed = " ".join(system.split())
+    assert "Declare a file deliverable only when the user asks to create, save, export, download or receive a file" in collapsed
+    assert (
+        "Showing, listing, comparing, quoting or explaining what a document, slide or deck contains is an "
+        "answer in the chat, not a new file or deck"
+    ) in collapsed
+    assert "Plan an edit or a new document from a reference only when the user asks for one." in collapsed
     assert harness.model_calls[0]["max_tokens"] == harness.planner.PLANNER_MAX_TOKENS == 4000
     context = json.loads(harness.model_calls[0]["messages"][1]["content"])
     truth = context["capability_availability"]["deliverables"]

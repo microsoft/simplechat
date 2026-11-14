@@ -102,9 +102,14 @@ CHART_STEP_INSTRUCTIONS = (
 class ActionExecutionError(RuntimeError):
     """A user-safe failure of the selected action."""
 
-    def __init__(self, message="", *, failure_code=None):
+    def __init__(self, message="", *, failure_code=None, diagnostics=None):
         super().__init__(message)
         self.orchestration_failure_code = failure_code
+        # Counts only, never a function name, argument or result.
+        self.orchestration_diagnostics = {
+            key: value for key, value in (diagnostics or {}).items()
+            if isinstance(value, int) and not isinstance(value, bool)
+        }
 
 
 def _document_read_profile(source, *, document_read_mode):
@@ -1117,6 +1122,11 @@ async def invoke_action(
                 raise ActionExecutionError(
                     'The action did not return any function results.',
                     failure_code='action_results_missing',
+                    diagnostics={
+                        'function_calls_started': calls, 'function_results_captured': len(outputs),
+                        'model_reply_count': len(replies or []), 'request_correction_count': request_corrections,
+                        'bound_document_count': len(bound_ids), 'function_call_limit': limit,
+                    },
                 )
             findings = '\n\n'.join(str(reply) for reply in replies or [] if str(reply).strip())
             if not findings:

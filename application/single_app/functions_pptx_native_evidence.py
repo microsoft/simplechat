@@ -110,7 +110,7 @@ def inspect_pptx_slide_objects(root, slide_number, part):
 
 def pptx_core_native_fields(root):
     fields = {}
-    for name in ("title", "creator", "keywords", "subject"):
+    for name in ("title", "creator", "keywords", "subject", "language"):
         element = _first(root, name)
         fields["author" if name == "creator" else name] = {
             **native_field({name: element.text or ""} if element is not None else {}, name),

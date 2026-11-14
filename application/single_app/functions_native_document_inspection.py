@@ -11,7 +11,7 @@ from functions_accessibility import extract_office_accessibility_metadata, extra
 from native_document_evidence import NativeInspectionRequestError
 
 
-NATIVE_DOCUMENT_INSPECTION_VERSION = "1.1"
+NATIVE_DOCUMENT_INSPECTION_VERSION = "1.2"
 NATIVE_DOCUMENT_MAX_BYTES = 64 * 1024 * 1024
 NATIVE_DOCUMENT_SECTIONS = frozenset({"all", "properties", "structure", "objects", "artifacts", "content", "issues"})
 

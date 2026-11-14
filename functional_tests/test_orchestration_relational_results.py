@@ -1,9 +1,10 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.439
+Version: 0.261.443
 Implemented in: 0.261.437
 Source-header failure classification added in: 0.261.439
+Stable runtime failure codes and locations added in: 0.261.443
 
 Real source authorization, bounded computation and retained records run offline.
 Only documents, blobs and model I/O are doubled by the existing native harness.
@@ -194,6 +195,38 @@ def test_source_schema_assertion_failure_is_not_reported_as_missing_named_output
         assert "complete source header" in result["error"]
         assert commits(runtime) == []
         assert runtime.provider.calls == []
+
+
+@pytest.mark.parametrize("fault,native_code,logged", [
+    ("column", "native_relational_invalid", {
+        "execution_code": "relational_column_missing", "native_check": "column_missing",
+        "native_role": "join_right_key", "native_category": "name_not_in_prefix",
+        "native_step_op": "join", "native_step_index": 0, "native_missing_count": 1,
+    }),
+    ("evaluation", "native_execution_failed", {
+        "execution_code": "division_by_zero_is_not_allowed", "native_check": "step_evaluation",
+        "native_step_op": "derive", "native_step_index": 1,
+    }),
+])
+def test_runtime_failures_log_a_stable_code_and_location_without_source_values(monkeypatch, fault, native_code, logged):
+    with bridge_runtime(monkeypatch) as runtime:
+        prepare(runtime)
+        records = []
+        runtime.native.patcher.setattr(
+            runtime.module, "log_event", lambda message, extra=None, **kwargs: records.append(dict(extra or {})),
+        )
+        spec = runtime.step["arguments"]["relational_spec"]
+        if fault == "column":
+            spec["steps"][0]["on"][0]["right"] = "catalog.private_marker_typo"
+        else:
+            spec["steps"][1]["transform"]["fields"][0]["expression"] = {
+                "op": "divide", "values": [{"source": "sales.quantity"}, 0],
+            }
+        result = execute(runtime)
+        assert result["status"] == "failed" and result["failure"]["native_code"] == native_code
+        assert len(records) == 1 and logged.items() <= records[0].items()
+        assert "private_marker" not in repr(records) and "007" not in repr(records)
+        assert commits(runtime) == [] and runtime.provider.calls == []
 
 
 def test_real_compiler_executor_and_export_consume_computed_not_model_generated_rows(runtime):

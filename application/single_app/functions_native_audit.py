@@ -47,7 +47,8 @@ NATIVE_AUDIT_REVIEW_POLICY = (
     "For this native audit, independently compare the explanation with evidence.native_audit_contract. "
     "A valid digest or an accurate appended table does not verify the prose. Check every object's "
     "property-state claims: absent means the property is not stored; present_empty means it is stored "
-    "as an empty string; inaccessible means the inspection cannot establish it. A normalized alt_text "
+    "but empty (an empty string, or a bookmark outline with no entries); inaccessible means the inspection "
+    "cannot establish it. A normalized alt_text "
     "or title default is not an exact native value. Reject a claim of a native empty string when the "
     "corresponding description/title fact is absent or inaccessible, even if other prose or the table "
     "states the correct absence. Preserve whitespace, false and zero as present values. "
@@ -296,20 +297,24 @@ def build_native_audit(payload, *, _source_records=None):
     }
 
 
-def _native_page_chain_complete(pages):
-    """Prove contiguous returned records, including fragments; a last page alone is insufficient."""
+def _native_page_chain_progress(pages):
+    """Return ``(complete, whole records contiguous from the start)`` for the returned pages.
+
+    A last page alone is insufficient: records and record fragments must continue exactly where the
+    previous page ended. The count states how much was actually returned, not how much exists.
+    """
     if not pages:
-        return False
+        return False, 0
     expected_offset = expected_fragment = 0
     total = pages[0].get("total_records")
     if type(total) is not int or total < 0:
-        return False
+        return False, 0
     if any(
         type(page.get("start_record")) is not int or page["start_record"] < 0
         or type(page.get("fragment_offset", 0)) is not int or page.get("fragment_offset", 0) < 0
         for page in pages
     ):
-        return False
+        return False, 0
     unique = {_encoded(page): page for page in pages}
     ordered = sorted(unique.values(), key=lambda page: (
         page.get("start_record", -1), page.get("fragment_offset", 0),
@@ -321,10 +326,10 @@ def _native_page_chain_complete(pages):
             or page.get("fragment_offset", 0) != expected_fragment
             or type(page.get("records")) is not list
         ):
-            return False
+            return False, expected_offset
         for record in page["records"]:
             if not isinstance(record, dict):
-                return False
+                return False, expected_offset
             if record.get("record_fragment"):
                 piece, length = record.get("record_json_fragment"), record.get("record_characters")
                 if (
@@ -332,17 +337,22 @@ def _native_page_chain_complete(pages):
                     or record.get("fragment_offset") != expected_fragment
                     or expected_fragment + len(piece) > length
                 ):
-                    return False
+                    return False, expected_offset
                 expected_fragment += len(piece)
                 if expected_fragment == length:
                     expected_offset, expected_fragment = expected_offset + 1, 0
             else:
                 if expected_fragment:
-                    return False
+                    return False, expected_offset
                 expected_offset += 1
         if page.get("has_more") is not (expected_offset < total or bool(expected_fragment)):
-            return False
-    return expected_offset == total and expected_fragment == 0
+            return False, expected_offset
+    return expected_offset == total and expected_fragment == 0, expected_offset
+
+
+def _native_page_chain_complete(pages):
+    """Prove contiguous returned records, including fragments; a last page alone is insufficient."""
+    return _native_page_chain_progress(pages)[0]
 
 
 def native_audit_contract(inputs, *, authorized_answer_citations=()):
@@ -422,7 +432,8 @@ def native_audit_contract(inputs, *, authorized_answer_citations=()):
                     facts.append(fact)
     if not facts:
         return None
-    complete_chains = {key: _native_page_chain_complete(pages) for key, pages in inventory_pages.items()}
+    chain_progress = {key: _native_page_chain_progress(pages) for key, pages in inventory_pages.items()}
+    complete_chains = {key: progress[0] for key, progress in chain_progress.items()}
     if any(not complete_chains.get(key, False) for key in unfinished):
         limitations.append("A native inventory page has a continuation; only returned records are represented.")
     if type(authorized_answer_citations) not in (list, tuple) or any(
@@ -462,6 +473,7 @@ def native_audit_contract(inputs, *, authorized_answer_citations=()):
             "returned_chain_complete": complete_chains[key],
             "inventory_complete": all(page.get("inventory_complete") is True for page in pages),
             "total_records": pages[0].get("total_records"),
+            "returned_records_from_start": chain_progress[key][1],
         } for key, pages in inventory_pages.items()],
     }
 
@@ -574,11 +586,14 @@ def native_audit_policy(contract):
         "answer evidence even when they have no native inspection; do not describe their returned "
         "content as unavailable. "
         "Use native_audit_contract.inventory_coverage for current returned-chain coverage. "
-        "inventory_complete describes extraction, not whether every page was returned. An earlier "
+        "inventory_complete describes extraction, not whether every page was returned. When "
+        "returned_chain_complete is false, state that only returned_records_from_start of total_records "
+        "native records were reviewed; an unreturned record is not evidence that a property is absent. An earlier "
         "has_more=true page is historical progress, not a contradiction of a later verified complete "
         "chain for the same source and section. Do not claim completeness across changed sources. "
-        "Escape literal vertical bars in Markdown table values as \\|, even inside inline code spans, "
-        "so exact native titles remain in one cell. Do not change the native value itself. "
+        "Escape a literal vertical bar as \\| only inside a Markdown table row, including inline code in a "
+        "table cell, so an exact native title stays in one cell. Outside a table row, in prose, lists, headings "
+        "and inline code, write the exact native value with no added backslash. Do not change the native value itself. "
         "The server appends its immutable factual evidence table; do not copy that table into answer. "
         "The checker evaluates the rendered customer answer, not this JSON transport format."
     )
@@ -593,16 +608,20 @@ def _unique_native_object(pairs):
     return value
 
 
-def _escape_native_table_values(answer, contract):
-    """Serialize known native values in tables without altering prose, fences or delimiters."""
-    values = sorted({
-        fact["value"] for fact in contract["facts"]
-        if isinstance(fact.get("value"), str) and "|" in fact["value"]
-        and "\n" not in fact["value"] and "\r" not in fact["value"]
-    }, key=len, reverse=True)
-    if not values:
-        return answer
-    lines = answer.splitlines(keepends=True)
+_NATIVE_BLOCK_START = re.compile(
+    r"^(?: {4}|\t| {0,3}(?:#{1,6}(?:[ \t]+|$)|>|"
+    r"(?:[-+*]|\d{1,9}[.)])[ \t]+|<(?:"
+    r"!--|\?|![A-Z]|/?(?i:address|article|aside|base|basefont|blockquote|body|caption|"
+    r"center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
+    r"footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
+    r"menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|"
+    r"style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>/]|$))))",
+)
+
+
+def _native_markdown_line_kinds(lines):
+    """Classify each line as fenced or indented code, a GFM table row, its delimiter row, or prose."""
+    kinds = ["prose"] * len(lines)
     fence = None
     table = False
     for index, line in enumerate(lines):
@@ -613,11 +632,14 @@ def _escape_native_table_values(answer, contract):
                 fence = token
             elif token[0] == fence[0] and len(token) >= len(fence):
                 fence = None
+            kinds[index] = "fence"
             table = False
             continue
         if fence is not None:
+            kinds[index] = "fence"
             continue
         if re.match(r"^(?: {4}|\t)", line):
+            kinds[index] = "indented"
             table = False
             continue
         separator = re.match(r"^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$", line)
@@ -626,24 +648,37 @@ def _escape_native_table_values(answer, contract):
             and not re.match(r"^(?: {4}|\t)", lines[index - 1])
         ):
             table = True
-            for value in values:
-                lines[index - 1] = lines[index - 1].replace(value, value.replace("|", "\\|"))
+            kinds[index - 1] = "table"
+            kinds[index] = "separator"
         elif table:
-            block_start = re.match(
-                r"^(?: {4}|\t| {0,3}(?:#{1,6}(?:[ \t]+|$)|>|"
-                r"(?:[-+*]|\d{1,9}[.)])[ \t]+|<(?:"
-                r"!--|\?|![A-Z]|/?(?i:address|article|aside|base|basefont|blockquote|body|caption|"
-                r"center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
-                r"footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|"
-                r"menu|menuitem|nav|noframes|ol|optgroup|option|p|param|pre|script|search|section|"
-                r"style|summary|table|tbody|td|textarea|tfoot|th|thead|title|tr|track|ul)(?:[ \t>/]|$))))",
-                line,
-            )
-            if not line.strip() or "|" not in line or block_start:
+            if not line.strip() or "|" not in line or _NATIVE_BLOCK_START.match(line):
                 table = False
                 continue
+            kinds[index] = "table"
+    return kinds
+
+
+def _serialize_native_values(answer, contract):
+    """Serialize known native values by Markdown context, never altering fences or delimiters.
+
+    A vertical bar is escaped only inside table rows. Outside a table, an escaped native value
+    is an added backslash rather than a different native value, so the exact value is restored.
+    """
+    values = sorted({
+        fact["value"] for fact in contract["facts"]
+        if isinstance(fact.get("value"), str) and "|" in fact["value"]
+        and "\n" not in fact["value"] and "\r" not in fact["value"]
+    }, key=len, reverse=True)
+    if not values:
+        return answer
+    lines = answer.splitlines(keepends=True)
+    for index, kind in enumerate(_native_markdown_line_kinds(lines)):
+        if kind == "table":
             for value in values:
                 lines[index] = lines[index].replace(value, value.replace("|", "\\|"))
+        elif kind == "prose":
+            for value in values:
+                lines[index] = lines[index].replace(value.replace("|", "\\|"), value)
     return "".join(lines)
 
 
@@ -673,7 +708,7 @@ def decode_native_audit_answer(response, contract, *, require_answer=False):
         }
         if set(re.findall(r"\[#[^\]\r\n]+\]", answer)) - allowed:
             raise NativeAuditAnswerError("native_answer_citation_unknown")
-        rendered = f"{_escape_native_table_values(answer, contract).rstrip()}\n\n{rendered}"
+        rendered = f"{_serialize_native_values(answer, contract).rstrip()}\n\n{rendered}"
     return value, rendered
 
 
