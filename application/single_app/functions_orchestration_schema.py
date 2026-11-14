@@ -59,6 +59,7 @@ from functions_model_catalog import ModelCatalogError
 from functions_document_analysis_results import AnalysisOptionsError, normalize_analysis_options
 from functions_action_manifest import is_document_search_action
 from functions_web_iq import WebIQError, get_web_search_provider, resolve_web_iq_types
+from functions_schema_diagnostics import schema_error_location
 from functions_orchestration_registry import (
     APPROVAL_FLOOR_MANUAL,
     CAPABILITY_ACTION_INVOKE,
@@ -93,8 +94,8 @@ from functions_orchestration_deliverables import DeliverableError, compile_deliv
 from functions_orchestration_workflow_run_wait import compute_workflow_run_waits, stored_workflow_run_waits
 # The merge engine imports only the standard library; plan validation shares its option rules.
 from functions_tabular_merge import (
-    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, tabular_inspect_options_from_arguments,
-    tabular_merge_options_from_arguments,
+    TABULAR_COLUMN_MAPPING_PROFILE, TabularMergeError, display_header_name,
+    tabular_inspect_options_from_arguments, tabular_merge_options_from_arguments,
 )
 
 ORCHESTRATION_ELICITATION_CONTRACT_VERSION = 2
@@ -1008,6 +1009,8 @@ def validate_dependency_plan(
                 'The complete plan exceeds the available step budget. Reduce the plan, or hand the '
                 'work off with one workflow_handoff step.',
                 code=PLAN_BUDGET_EXCEEDED_CODE, rule='plan_step_budget',
+                # The raw list length and effective limit, which a count of dictionary steps cannot show.
+                diagnostics={'plan_step_count': len(raw_steps), 'plan_step_limit': max_steps},
             )
         raise PlanValidationError('The complete plan exceeds the available step budget.', code='result_step_limit')
     # A plan over a budget names hand-off as a way out only when the request offered it.
@@ -1129,6 +1132,7 @@ def validate_dependency_plan(
                 argument_problems.append({
                     'argument_field': field if field in capability['inputs']['properties'] else 'unknown',
                     'schema_keyword': argument_error.validator.lower(),
+                    **schema_error_location(argument_error),
                 })
                 if len(argument_problems) == 8:
                     break
@@ -1139,13 +1143,19 @@ def validate_dependency_plan(
                 ):
                     # These owners have their own correction/drop policy; preserve its boundary.
                     raise PlanValidationError('Step arguments do not match the capability contract.')
-                field = argument_problems[0]['argument_field']
-                keyword = argument_problems[0]['schema_keyword']
+                first = argument_problems[0]
+                field = first['argument_field']
+                keyword = first['schema_keyword']
                 raise _step_contract_error(
                     'Step arguments do not match the capability contract.', raw,
                     code='plan_arguments_invalid',
                     rule='unknown_argument' if keyword == 'additionalproperties' else 'argument_schema_invalid',
                     schema_keyword=keyword, argument_field=field, argument_problems=argument_problems,
+                    **{
+                        name: first[name]
+                        for name in ('argument_keyword', 'argument_path', 'argument_branch', 'expected_type')
+                        if first.get(name)
+                    },
                 )
             arguments = deepcopy(arguments)
             if analysis_options is not None:
@@ -1165,6 +1175,7 @@ def validate_dependency_plan(
                 from functions_orchestration_native_results import (
                     NativeOrchestrationBridgeError, validate_native_orchestration_arguments,
                 )
+                from functions_tabular_relational import native_error_diagnostics
 
                 try:
                     arguments = validate_native_orchestration_arguments(arguments)
@@ -1173,7 +1184,7 @@ def validate_dependency_plan(
                         'The native computation arguments are unsupported. Correct the declared '
                         'operation and its query, transformation or relationship rules; do not '
                         'replace the calculation with source previews.',
-                        raw, code='plan_arguments_invalid', rule=exc.rule,
+                        raw, code='plan_arguments_invalid', rule=exc.rule, **native_error_diagnostics(exc),
                     ) from exc
                 if arguments['native_operation'] == 'relate':
                     from functions_orchestration_merge import tabular_merge_limits
@@ -1620,7 +1631,18 @@ def validate_plan_document_source_kinds(plan, document_source_kinds, *, document
 
 
 def validate_plan_native_source_schemas(plan, selected_sources):
-    """Check known complete headers, never infer a schema from samples or another table."""
+    """Check known complete headers, never infer a schema from samples or another table.
+
+    A column no step can have, judged by the runtime's own propagation rules from a complete
+    inspected header, is corrected at planning time. A dataset whose header is not known exactly,
+    including one whose names the calculation reader spells differently from the planning
+    preview (it collapses repeated spaces and normalizes Unicode), is left to the run, which
+    checks the same references against the real table.
+    """
+    from functions_tabular_relational import (
+        TabularRelationalError, check_relational_columns, native_error_diagnostics,
+    )
+
     inspections = {
         source['document_id']: source.get('inspection') or {}
         for source in selected_sources or [] if isinstance(source, dict) and source.get('document_id')
@@ -1632,8 +1654,9 @@ def validate_plan_native_source_schemas(plan, selected_sources):
             or arguments.get('native_operation') != 'relate'
         ):
             continue
+        headers = {}
         for dataset in arguments['relational_spec']['datasets']:
-            if not dataset.get('columns') or dataset.get('cell_range') or dataset.get('table_id'):
+            if dataset.get('cell_range') or dataset.get('table_id'):
                 continue
             inspection = inspections.get(dataset['document_id'], {})
             if inspection.get('status') != 'inspected':
@@ -1647,7 +1670,7 @@ def validate_plan_native_source_schemas(plan, selected_sources):
             if len(tables) != 1 or not isinstance(tables[0].get('columns'), list):
                 continue
             columns = tables[0]['columns']
-            if columns != dataset['columns']:
+            if dataset.get('columns') and columns != dataset['columns']:
                 raise _step_contract_error(
                     f'Dataset "{dataset["alias"]}" declares a different header from the inspected '
                     'source. datasets[].columns asserts the complete ordered native header, including '
@@ -1656,6 +1679,19 @@ def validate_plan_native_source_schemas(plan, selected_sources):
                     step, code='plan_arguments_invalid', rule='relational_schema_mismatch',
                     expected_count=len(columns), actual_count=len(dataset['columns']),
                 )
+            if all(isinstance(name, str) and name and display_header_name(name) == name for name in columns):
+                headers[dataset['alias']] = columns
+        try:
+            check_relational_columns(arguments['relational_spec'], headers)
+        except TabularRelationalError as exc:
+            raise _step_contract_error(
+                'A join key, aggregate column, expression or output field uses a column that is not '
+                'available at that step. Dataset columns are alias.header; a derive, project or '
+                'aggregate step adds stepid.field or stepid.name, and project and aggregate drop every '
+                'other column. Correct the listed step and role without removing a source or the '
+                'calculation.',
+                step, code='plan_arguments_invalid', rule=exc.code, **native_error_diagnostics(exc),
+            ) from exc
 
 
 def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):

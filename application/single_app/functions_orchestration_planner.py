@@ -887,7 +887,12 @@ produces, and never state a limitation only in "assumptions": every limitation o
 asked for is an unavailable deliverable. Step titles describe the work each step actually does;
 only a render_file step creates or saves a file.
 
-Files. A requested file is delivered only by render_file: prepare its complete content with
+Files. Declare a file deliverable only when the user asks to create, save, export, download or
+receive a file, or names a file format as what they want to receive. Showing, listing, comparing,
+quoting or explaining what a document, slide or deck contains is an answer in the chat, not a new
+file or deck: deliver it in the final_response answer with its source references, and offer a file
+only as an optional suggestion. Plan an edit or a new document from a reference only when the user
+asks for one. A requested file is delivered only by render_file: prepare its complete content with
 compose, then render it, following capability_availability.deliverables.recipes (records-v1 with
 explicit columns for CSV/XLSX; markdown-v1 for DOCX/PDF; the prepared slide deck for PPTX). The
 compose step is told that its output becomes the file, so it writes the finished content.
@@ -1499,11 +1504,18 @@ def plan_repair_message(error, *, handoff_present=False):
             'Return the complete corrected plan as one JSON object.'
         )
     if error.code in DRAFT_CONTRACT_REPAIR_CODES:
+        tabular_guidance = (
+            'For tabular_analyze, correct only the listed location by the relational_spec column rules and '
+            'expression grammar in that capability\'s arguments schema. Do not weaken the calculation or '
+            'replace it with source previews. '
+            if error.diagnostics.get('capability_id') == 'tabular_analyze' else ''
+        )
         return (
             f'The server rejected the step contract ({error.code}, {error.rule}). '
             f'Content-free diagnostics: {json.dumps(error.diagnostics, sort_keys=True)}. '
             'Recheck every step against the supplied capability arguments, required named inputs, '
             'result_outputs, optional_result_outputs and argument-dependent result_output_variants. '
+            f'{tabular_guidance}'
             'Prefer omitted outputs for fixed producers so the server supplies their required outputs. '
             'Analyze defaults to source_observations, whose optional records projection is unavailable. '
             'If the requested work needs records, explicitly choose analysis-options-v2 with '
@@ -2074,6 +2086,7 @@ def plan_request(
             level=logging.INFO, extra={
                 **correlation, 'reason': error.code, 'attempt': attempt, 'revision': revision,
                 'stage': stage, 'validation_code': error.code, 'validation_rule': error.rule,
+                **(error.diagnostics if isinstance(error, PlanValidationError) else {}),
             },
         )
         return [

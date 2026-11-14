@@ -74,9 +74,11 @@ _SOURCE_CHANGED_CODES = frozenset({"native_compute_source_identity_mismatch"})
 
 
 class NativeOrchestrationBridgeError(ValueError):
-    def __init__(self, code, *, rule=None):
+    def __init__(self, code, *, rule=None, detail=None):
         self.code = code
         self.rule = rule or code
+        # Content-free location tokens; they are re-sanitized wherever they are logged or described.
+        self.detail = dict(detail or {})
         super().__init__(_MESSAGES[code])
 
 
@@ -121,6 +123,11 @@ def native_orchestration_output_specs(native_operation, *, task_type=None):
 
 def native_orchestration_arguments_schema():
     """The production v2 argument shape; expression semantics use native validators."""
+    # The relational grammar is pure and must not bootstrap source/storage clients.
+    from functions_tabular_relational import (
+        MAX_RELATIONAL_SOURCES, RELATIONAL_EXPRESSION_POINTER, relational_spec_schema,
+    )
+
     column = {
         "type": "string", "minLength": 1, "maxLength": 128,
         "pattern": r"^(?!__simplechat)(?!source_row_number$)(?!source_row_identity$)\S(?:[\s\S]*\S)?$",
@@ -132,12 +139,10 @@ def native_orchestration_arguments_schema():
             "mode": {"enum": ["deterministic", "semantic", "hybrid"]},
             "type": {"enum": ["string", "number", "integer", "date", "boolean", "object", "array"]},
             "nullable": {"type": "boolean"},
-            "expression": {},
+            "expression": {"description": RELATIONAL_EXPRESSION_POINTER},
             "allowed_values": {"type": "array", "maxItems": 200},
         },
     }
-    # The relational grammar is pure and must not bootstrap source/storage clients.
-    from functions_tabular_relational import MAX_RELATIONAL_SOURCES, relational_spec_schema
 
     schema = {
         "type": "object", "required": ["question", "native_operation", "document_ids"],
@@ -200,7 +205,9 @@ def validate_native_orchestration_arguments(arguments):
     # Native grammar imports are pure and deferred for registry metadata discovery.
     from functions_tabular_csv_query import validate_tabular_csv_query_expression
     from functions_tabular_relational import TabularRelationalError, normalize_relational_spec
-    from functions_tabular_transformations import normalize_tabular_transformation_spec
+    from functions_tabular_transformations import (
+        TabularTransformationSpecError, normalize_tabular_transformation_spec,
+    )
 
     if type(arguments) is not dict or next(
         Draft202012Validator(native_orchestration_arguments_schema()).iter_errors(arguments), None,
@@ -220,9 +227,13 @@ def validate_native_orchestration_arguments(arguments):
             normalized.get("transformation_spec"), public_output_schema=normalized.get("columns"),
         )
     except TabularRelationalError as exc:
-        raise NativeOrchestrationBridgeError("native_arguments_invalid", rule=exc.code) from exc
+        raise NativeOrchestrationBridgeError("native_arguments_invalid", rule=exc.code, detail=exc.detail) from exc
     except NativeOrchestrationBridgeError:
         raise
+    except TabularTransformationSpecError as exc:
+        raise NativeOrchestrationBridgeError(
+            "native_arguments_invalid", detail={"check": "transformation_spec", "transform_code": exc.code},
+        ) from exc
     except (ValueError, TypeError, RecursionError) as exc:
         raise NativeOrchestrationBridgeError("native_arguments_invalid") from exc
     try:
@@ -430,6 +441,7 @@ def raise_native_orchestration_infrastructure_failure(error):
 
 def _failure(step, exc, stage, context=None):
     from functions_orchestration_schema import build_failure
+    from functions_tabular_relational import native_error_diagnostics
 
     raise_native_orchestration_infrastructure_failure(exc)
     service_code = getattr(exc, "code", None)
@@ -480,6 +492,7 @@ def _failure(step, exc, stage, context=None):
             "native_code": code, "stage": stage,
             "error_type": type(exc).__name__, "failure_code": failure_code,
             "execution_code": service_code or code,
+            **native_error_diagnostics(exc),
         },
         level=logging.WARNING,
     )
