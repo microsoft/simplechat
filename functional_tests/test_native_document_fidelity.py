@@ -15,6 +15,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+import fitz
 import pytest
 from xml.etree import ElementTree as ET
 from pypdf import PdfWriter
@@ -213,14 +214,12 @@ def test_pdf_language_and_bookmarks_survive_when_the_audit_reads_only_a_partial_
 
 
 def test_unreadable_pdf_outline_is_inaccessible_not_absent(tmp_path, monkeypatch):
-    import functions_accessibility
-
     path = catalog_pdf(tmp_path, language="en-US", outline=[("Intro", 0, False)])
 
     def unreadable(_path):
         raise RuntimeError("outline reader unavailable")
 
-    monkeypatch.setattr(functions_accessibility.fitz, "open", unreadable)
+    monkeypatch.setattr(fitz, "open", unreadable)
     metadata, _ = extract_pdf_accessibility_metadata(str(path))
     assert metadata["native_properties"]["bookmarks"] == {
         "state": "inaccessible", "value": None, "reason": "outline_unavailable", "source": "/Root/Outlines",
@@ -305,15 +304,13 @@ def test_a_writer_that_keeps_an_emptied_outline_root_is_reported_as_present_but_
 
 @pytest.mark.parametrize("name", ["no_outlines_key", "empty_outline_with_zero_count"])
 def test_an_outline_reader_failure_does_not_change_what_the_catalog_already_establishes(tmp_path, monkeypatch, name):
-    import functions_accessibility
-
     entry, objects, state, expected = OUTLINE_CATALOGS[name]
     path = raw_pdf(tmp_path, entry, objects)
 
     def unreadable(_path):
         raise RuntimeError("outline reader unavailable")
 
-    monkeypatch.setattr(functions_accessibility.fitz, "open", unreadable)
+    monkeypatch.setattr(fitz, "open", unreadable)
     field = extract_pdf_accessibility_metadata(str(path))[0]["native_properties"]["bookmarks"]
     assert (field["state"], field["value"]) == (state, expected)
 
@@ -323,11 +320,9 @@ def test_an_outline_reader_failure_does_not_change_what_the_catalog_already_esta
     ("outline_with_one_item", "outline_unreadable", []),
 ])
 def test_outline_readers_that_disagree_never_publish_absence_or_a_guess(tmp_path, monkeypatch, name, reason, toc):
-    import functions_accessibility
-
     entry, objects, _, _ = OUTLINE_CATALOGS[name]
     path = raw_pdf(tmp_path, entry, objects)
-    monkeypatch.setattr(functions_accessibility.fitz.Document, "get_toc", lambda self, *args, **kwargs: toc)
+    monkeypatch.setattr(fitz.Document, "get_toc", lambda self, *args, **kwargs: toc)
     field = extract_pdf_accessibility_metadata(str(path))[0]["native_properties"]["bookmarks"]
     assert field == {"state": "inaccessible", "value": None, "reason": reason, "source": "/Root/Outlines"}
 
