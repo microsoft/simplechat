@@ -1,18 +1,21 @@
 # test_tabular_transformations_precision.py
 """
 Functional tests for versioned bounded tabular calculation precision.
-Version: 0.261.109
+Version: 0.261.443
 Implemented in: 0.261.109
+Stable, content-free failure codes added in: 0.261.443
 
 Validate Decimal dependencies, explicit rounding, exact thresholds, numeric
 projection limits, bounded work, and saved tabular-transform-v1 compatibility.
 These tests exercise only the trusted interpreter, without model or service calls.
 """
 
+import ast
 from copy import deepcopy
 from decimal import Decimal, Inexact, ROUND_DOWN, localcontext
 import json
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -559,3 +562,46 @@ def test_v1_saved_plans_keep_intermediate_float_behavior():
 def test_v1_invalid_numeric_inputs_raise_the_same_public_error_type(value):
     with pytest.raises(transformations.TabularTransformationEvaluationError):
         _evaluate(_op("add", {"source": "value"}, 0), {"value": value}, version=V1)
+
+
+def _raised_messages():
+    """Every message the two error classes raise, with each code-owned label filled in."""
+    tree = ast.parse(Path(transformations.__file__).read_text(encoding="utf-8"))
+    classes = {"TabularTransformationSpecError", "TabularTransformationEvaluationError"}
+    labels = ("field", "source", "public output field", "source field")
+    messages = set()
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id in classes and node.args
+        ):
+            continue
+        argument = node.args[0]
+        if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+            messages.add(argument.value)
+        elif isinstance(argument, ast.JoinedStr):
+            template = "".join(part.value if isinstance(part, ast.Constant) else "{}" for part in argument.values)
+            messages.update(template.format(label) for label in labels)
+        else:
+            raise AssertionError(f"Review how line {node.lineno} builds its message: only code-owned text may be raised.")
+    return messages
+
+
+def test_every_transformation_message_has_a_unique_log_safe_code():
+    # The bridge routes on these service codes, and a source value must never become a code.
+    service_codes = {
+        "too_many_sources", "row_limit_exceeded", "cell_too_large", "source_too_large", "workbook_too_large",
+        "too_many_sheets", "sheet_required", "formula_cache_missing",
+    }
+    messages = _raised_messages()
+    assert len(messages) > 80
+    seen = {}
+    for kind in (transformations.TabularTransformationSpecError, transformations.TabularTransformationEvaluationError):
+        for message in sorted(messages):
+            error = kind(message)
+            code = error.code
+            assert code == transformations.tabular_transformation_error_code(error)
+            assert re.fullmatch(r"[a-z][a-z0-9_]{0,79}", code), message
+            assert not code.startswith("relational_") and code not in service_codes, message
+            assert seen.setdefault(code, message) == message, f"{message!r} and {seen[code]!r} share {code}"
+    assert transformations.tabular_transformation_error_code(ValueError("Any other error")) is None

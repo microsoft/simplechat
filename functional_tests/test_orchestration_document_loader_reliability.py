@@ -1,9 +1,10 @@
 # test_orchestration_document_loader_reliability.py
 """
 Functional tests for shared document-action loading and safe failure outcomes.
-Version: 0.261.437
+Version: 0.261.443
 Implemented in: 0.261.421
 Source-aware reader admission added in: 0.261.437
+Content-free action result counts added in: 0.261.443
 
 Real authenticated routes, discovery, source checks, SDK-shaped document stores,
 chunk readers, action filters, retention, and final publication run offline.
@@ -556,8 +557,13 @@ def test_owned_action_failure_survives_saved_steps_and_private_logging(
     assert record.sc_conversation_id_hash == hashlib.sha256(b"conversation-1").hexdigest()
     if stage in ("action_initialization", "document_action_read"):
         assert record.sc_function_calls_attempted is (stage == "document_action_read")
+        assert not hasattr(record, "sc_function_calls_started")
     else:
+        # The model answered in prose and never called a function: that is not "calls returned nothing".
         assert not hasattr(record, "sc_function_calls_attempted")
+        assert (record.sc_function_calls_started, record.sc_function_results_captured) == (0, 0)
+        assert record.sc_model_reply_count == 1 and record.sc_bound_document_count == 1
+        assert record.sc_request_correction_count == 0 and record.sc_function_call_limit >= 1
     serialized = json.dumps({
         name: value for name, value in record.__dict__.items() if name.startswith("sc_")
     })

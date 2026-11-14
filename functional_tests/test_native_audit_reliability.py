@@ -5,6 +5,7 @@ Version: 0.261.439
 Implemented in: 0.261.426
 Multi-source citation authority added in: 0.261.428
 Literal native table-value serialization covered in: 0.261.439
+Native values outside table rows restored to their exact form in: 0.261.443
 These bootstrap-free cases exercise real contract/projection code. The companion
 answer-delivery suite covers authorized readers, Auto routing, retention and HTTP.
 """
@@ -139,6 +140,53 @@ def test_native_title_pipe_is_escaped_only_in_table_values_not_prose_or_code_fen
     assert f"Native title: {title}" in rendered
     assert f"```text\n| {title} |\n```" in rendered
 
+
+def test_native_title_with_an_added_backslash_outside_a_table_is_restored_to_the_exact_native_value():
+    inputs = native_inputs()
+    title = "NASA-16 | Orbit-1 shift handover"
+    report = inputs["inspection"]["value"]["citations"][0]["function_result"]
+    report["native_audit"]["facts"].append(audit_fact(
+        "presentation-title", "title", title, location="handover.pptx; Native file properties",
+    ))
+    contract = native_audit_contract(inputs)
+    escaped = title.replace("|", "\\|")
+    answer = (
+        f"Native title: `{escaped}`\n"
+        f"- Checklist item: confirm `{escaped}` matches the cover slide.\n"
+        f"## Title `{escaped}`\n\n"
+        "| Property | Finding |\n| --- | --- |\n"
+        f"| Native title | `{title}` |\n\n"
+        f"```text\n{escaped}\n```\n"
+        "Use `\\|` only to escape a delimiter inside a table cell.\n"
+    )
+    _, rendered = decode_native_audit_answer(
+        json.dumps(preparation(contract, answer)), contract, require_answer=True,
+    )
+    assert f"Native title: `{title}`" in rendered
+    assert f"- Checklist item: confirm `{title}` matches the cover slide." in rendered
+    assert f"## Title `{title}`" in rendered
+    # The table cell keeps its required escape and the immutable evidence table is unchanged.
+    assert f"| Native title | `{escaped}` |" in rendered
+    # Fenced text and an unrelated escape sequence are not native-value serialization.
+    assert f"```text\n{escaped}\n```" in rendered
+    assert "Use `\\|` only to escape a delimiter inside a table cell." in rendered
+    assert rendered.count(f"{escaped}") == 3
+
+
+def test_native_value_that_contains_a_backslash_is_not_double_escaped_or_stripped_in_prose():
+    inputs = native_inputs()
+    value = "path\\| name"
+    report = inputs["inspection"]["value"]["citations"][0]["function_result"]
+    report["native_audit"]["facts"].append(audit_fact(
+        "literal-backslash", "title", value, location="handover.pptx; Native file properties",
+    ))
+    contract = native_audit_contract(inputs)
+    answer = f"Exact value: `{value}`\n\n| Property | Finding |\n| --- | --- |\n| Native title | `{value}` |\n"
+    _, rendered = decode_native_audit_answer(
+        json.dumps(preparation(contract, answer)), contract, require_answer=True,
+    )
+    assert f"Exact value: `{value}`" in rendered
+    assert "| Native title | `path\\\\| name` |" in rendered
 
 def test_native_and_retained_chunk_owner_citations_are_accepted_without_changing_fact_authority():
     inputs = native_inputs()

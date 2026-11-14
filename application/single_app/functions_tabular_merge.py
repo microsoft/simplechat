@@ -666,6 +666,11 @@ def normalize_header_name(value):
     return _display_header(value).casefold()
 
 
+def display_header_name(value):
+    """The name a header is read under: NFC with whitespace collapsed, case kept."""
+    return _display_header(value)
+
+
 def squash_header_name(value):
     """A looser key that also ignores spaces, punctuation and underscores, for near matches."""
     return _NOT_WORD.sub("", normalize_header_name(value))
@@ -2531,6 +2536,7 @@ __all__ = [
     "TabularMergeResult",
     "TabularMergeSort",
     "TabularMergeSource",
+    "display_header_name",
     "inspect_tabular_sources",
     "iter_csv_rows",
     "merge_tabular_sources",

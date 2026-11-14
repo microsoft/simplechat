@@ -2419,6 +2419,7 @@ def run_action_invoke(step, context, *, settings, user_id, emit, cancel_requeste
                 'error_type': type(exc).__name__,
                 **({'function_calls_attempted': failure_stage == 'document_action_read'}
                    if failure_stage in ('action_initialization', 'document_action_read') else {}),
+                **(getattr(exc, 'orchestration_diagnostics', None) or {}),
             },
         )
         return failed_result

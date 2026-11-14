@@ -1,10 +1,11 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.437
+Version: 0.261.443
 Implemented in: 0.261.355
 Shared two-correction allowance updated in: 0.261.422
 Referenced failed-turn source continuation added in: 0.261.437
+Order-independent source-set identity and conflict diagnostics added in: 0.261.443
 
 Uses real source projection, parsers, resolution and HTTP planning with external
 storage/model I/O replaced. Previews must never become complete export records.
@@ -493,6 +494,65 @@ def test_identical_ids_with_different_source_constraints_are_not_an_unambiguous_
             user_id="owner", conversation_id="conversation-1",
         )
     assert error.value.code == "source_continuation_ambiguous"
+
+
+def test_the_same_source_set_listed_in_a_different_order_is_one_continuation(source_runtime):
+    context = source_runtime.context
+    identifiers = ["document-0", "document-1", "document-2"]
+    ledger = context.build_run_ledger([{
+        "id": f"previous-{index}", "status": "failed", "user_message_id": f"user-{index}",
+        "seeds": {
+            "document_ids": list(reversed(identifiers)) if index else list(identifiers),
+            "doc_scope": "group", "tags": ["final", "approved"] if index else ["approved", "final"],
+            "active_group_ids": ["group-b", "group-a"] if index else ["group-a", "group-b"],
+        },
+    } for index in range(2)])
+    restored = context.continue_requested_sources(
+        {}, {"relationship": "follow_up", "message_ids": ["user-0", "user-1"]}, ledger,
+        user_id="owner", conversation_id="conversation-1",
+    )
+    # Nothing is added, dropped or widened: the same members and the same filters are restored.
+    assert sorted(restored["document_ids"]) == identifiers and len(restored["document_ids"]) == 3
+    assert set(restored["tags"]) == {"approved", "final"} and set(restored["active_group_ids"]) == {"group-a", "group-b"}
+    assert restored["doc_scope"] == "group" and restored["continued_source_run_id"] in {"previous-0", "previous-1"}
+
+
+@pytest.mark.parametrize("difference,differs", [
+    ("members", {"document_ids_differ": True, "selection_differ": False}),
+    ("scope", {"document_ids_differ": False, "selection_differ": True}),
+    ("filters", {"document_ids_differ": False, "selection_differ": True}),
+])
+def test_genuinely_different_source_sets_stay_ambiguous_and_are_logged_by_dimension_only(
+    source_runtime, monkeypatch, difference, differs,
+):
+    context = source_runtime.context
+    records = []
+    monkeypatch.setattr(context, "log_event", lambda message, **kwargs: records.append((message, kwargs.get("extra"))))
+    seeds = [
+        {"document_ids": ["private-document-a", "private-document-b"], "doc_scope": "group", "tags": ["approved"]},
+        {"document_ids": ["private-document-a", "private-document-b"], "doc_scope": "group", "tags": ["approved"]},
+    ]
+    if difference == "members":
+        seeds[1]["document_ids"] = ["private-document-a", "private-document-c"]
+    elif difference == "scope":
+        seeds[1]["doc_scope"] = "personal"
+    else:
+        seeds[1]["tags"] = ["rejected"]
+    ledger = context.build_run_ledger([{
+        "id": f"previous-{index}", "status": "failed", "user_message_id": f"user-{index}", "seeds": item,
+    } for index, item in enumerate(seeds)])
+    with pytest.raises(context.CatalogResolutionError) as error:
+        context.continue_requested_sources(
+            {}, {"relationship": "follow_up", "message_ids": ["user-0", "user-1"]}, ledger,
+            user_id="owner", conversation_id="conversation-1",
+        )
+    assert error.value.code == "source_continuation_ambiguous"
+    (message, extra), = records
+    assert message == "[ORCHESTRATION_CONTEXT] A follow-up matches more than one previous source selection."
+    assert differs.items() <= extra.items()
+    assert (extra["match_count"], extra["distinct_set_count"]) == (2, 2)
+    assert extra["references_differ"] is False and extra["attachments_differ"] is False
+    assert "private-document" not in repr(records)
 
 
 def test_conversation_only_transformation_does_not_inherit_failed_turn_files(source_runtime):

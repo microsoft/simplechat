@@ -1842,6 +1842,47 @@ def _requested_source_context(run):
     return result
 
 
+def _unordered(items):
+    """Members of an unordered selection in one canonical order, whatever JSON was stored."""
+    return sorted(json.dumps(item, sort_keys=True) for item in (items if isinstance(items, list) else []))
+
+
+def _source_set_parts(requested):
+    """One requested source set's identity, per dimension.
+
+    Only the order in which the same members were listed is ignored. A different member, workspace
+    scope, filter, reference or attachment message remains a different set.
+    """
+    selection = requested.get('selection') if isinstance(requested.get('selection'), dict) else {}
+    return {
+        'document_ids': _unordered(requested.get('document_ids')),
+        'selection': {
+            key: _unordered(value) if isinstance(value, list) else value for key, value in selection.items()
+        },
+        'references': _unordered(requested.get('references')),
+        'attachments': _unordered(requested.get('attachments')),
+    }
+
+
+def _log_source_continuation_conflict(matches, parts, distinct_sets):
+    """Say how competing source selections differ, never which documents they name."""
+    requested = [entry['requested_sources'] for entry in matches]
+    sets = [set(_string_list(item.get('document_ids'))) for item in requested]
+    log_event(
+        '[ORCHESTRATION_CONTEXT] A follow-up matches more than one previous source selection.',
+        level=logging.WARNING, extra={
+            'reason': 'source_continuation_ambiguous',
+            'match_count': len(matches), 'distinct_set_count': distinct_sets,
+            'shared_document_count': len(set.intersection(*sets)),
+            'smallest_set_size': min(len(item) for item in sets), 'largest_set_size': max(len(item) for item in sets),
+            **{
+                f'{name}_differ': len({json.dumps(part[name], sort_keys=True) for part in parts}) > 1
+                for name in ('document_ids', 'selection', 'references', 'attachments')
+            },
+        },
+    )
+
+
 def continue_requested_sources(seeds, resolution, ledger, *, user_id, conversation_id, settings=None):
     """Restore one clearly referenced source set, never historical access or arbitrary context.
 
@@ -1872,14 +1913,10 @@ def continue_requested_sources(seeds, resolution, ledger, *, user_id, conversati
             'Select the complete intended set again; no sources were silently omitted.',
             code='source_continuation_limited',
         )
-    source_sets = {
-        json.dumps({
-            key: entry['requested_sources'].get(key)
-            for key in ('document_ids', 'selection', 'references', 'attachments')
-        }, sort_keys=True)
-        for entry in matches
-    }
+    parts = [_source_set_parts(entry['requested_sources']) for entry in matches]
+    source_sets = {json.dumps(part, sort_keys=True) for part in parts}
     if len(source_sets) != 1:
+        _log_source_continuation_conflict(matches, parts, len(source_sets))
         raise CatalogResolutionError(
             'More than one previous source selection matches this follow-up. '
             'Select the intended documents before continuing.',

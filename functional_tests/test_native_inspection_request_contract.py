@@ -222,6 +222,12 @@ def test_native_audit_coverage_requires_a_contiguous_completed_page_chain(native
     assert any("continuation" in text for text in gap["limitations"])
     assert complete["inventory_coverage"][0]["returned_chain_complete"] is True
     assert gap["inventory_coverage"][0]["returned_chain_complete"] is False
+    # The partial boundary is explicit: how many whole records were actually returned from the start.
+    total = complete["inventory_coverage"][0]["total_records"]
+    assert complete["inventory_coverage"][0]["returned_records_from_start"] == total
+    assert duplicate["inventory_coverage"][0]["returned_records_from_start"] == total
+    assert gap["inventory_coverage"][0]["returned_records_from_start"] == 1 < total
+    assert contract_for([citations[2]])["inventory_coverage"][0]["returned_records_from_start"] == 0
 
 
 def test_native_object_facts_use_owned_records_before_preview_or_fragment_transport(native_source):

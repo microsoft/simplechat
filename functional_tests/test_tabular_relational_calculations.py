@@ -1,8 +1,9 @@
 # test_tabular_relational_calculations.py
 """
 Functional tests for complete multi-file calculations and per-row lineage.
-Version: 0.261.438
+Version: 0.261.443
 Implemented in: 0.261.437
+Planner-visible grammar, column rules and content-free failure locations added in: 0.261.443
 
 These offline cases use unrelated schemas, precise source values and the real
 CSV/Excel readers. They do not invoke a model or change source documents.
@@ -13,12 +14,22 @@ from dataclasses import replace
 import io
 
 import pytest
+from jsonschema import Draft202012Validator
 from openpyxl import Workbook
 from openpyxl.worksheet.table import Table
 
-from functions_tabular_merge import TabularMergeError, TabularMergeLimits, TabularMergeSource, read_tabular_source_records
+from functions_schema_diagnostics import schema_error_location
+from functions_tabular_merge import (
+    TabularMergeError, TabularMergeLimits, TabularMergeSource, display_header_name, read_tabular_source_records,
+)
 from functions_tabular_relational import (
-    TabularRelationalError, calculate_relational_sources, normalize_relational_spec,
+    RELATIONAL_COLUMN_RULES, RELATIONAL_EXPRESSION_GRAMMAR, TabularRelationalError, calculate_relational_sources,
+    check_relational_columns, native_error_diagnostics, normalize_relational_spec, relational_spec_schema,
+    safe_native_detail,
+)
+from functions_tabular_transformations import (
+    TABULAR_TRANSFORMATION_ALLOWED_OPS, TabularTransformationEvaluationError, TabularTransformationSpecError,
+    normalize_tabular_transformation_spec,
 )
 
 
@@ -327,6 +338,351 @@ def test_source_loaders_are_closed_before_the_next_file_is_opened():
     }, limits=TabularMergeLimits())
     assert result["records"] == [{"code": "007", "amount": "0.30"}]
     assert events == ["open:sales", "close:sales", "open:catalog", "close:catalog"]
+
+
+# The planner is told this grammar and these column rules; each claim below is pinned to the runtime.
+GRAMMAR_EXAMPLES = {
+    "copy": {"op": "copy", "source": "sales.code"},
+    "round": {"op": "round", "value": {"source": "sales.quantity"}, "scale": 2, "mode": "half_even"},
+    "case": {"op": "case", "branches": [{"when": {"value": True}, "then": "a"}], "else": "b"},
+    "coalesce": {"op": "coalesce", "values": [{"source": "sales.code"}, ""]},
+    "all": {"op": "all", "values": [{"value": True}]},
+    "any": {"op": "any", "values": [{"value": False}]},
+    "not": {"op": "not", "value": {"value": True}},
+    "is_null": {"op": "is_null", "value": {"source": "sales.code"}},
+    "in": {"op": "in", "value": {"source": "sales.code"}, "values": ["007"], "case_sensitive": False},
+    **{
+        name: {
+            "op": name, "left": {"source": "sales.quantity"}, "right": 1, "value_type": "number",
+            "case_sensitive": True,
+        } for name in ("eq", "ne", "lt", "lte", "gt", "gte")
+    },
+    **{
+        name: {"op": name, "values": [{"source": "sales.quantity"}, 2]}
+        for name in ("add", "subtract", "multiply", "divide")
+    },
+}
+
+
+def test_documented_expression_grammar_covers_every_runtime_operation():
+    assert set(GRAMMAR_EXAMPLES) == TABULAR_TRANSFORMATION_ALLOWED_OPS | {"round"}
+    assert all(name in RELATIONAL_EXPRESSION_GRAMMAR for name in GRAMMAR_EXAMPLES)
+    description = relational_spec_schema()["description"]
+    assert RELATIONAL_COLUMN_RULES in description and RELATIONAL_EXPRESSION_GRAMMAR in description
+
+
+@pytest.mark.parametrize("name", sorted(GRAMMAR_EXAMPLES))
+def test_every_documented_expression_shape_is_accepted(name):
+    normalized = normalize_tabular_transformation_spec(
+        transform(field("x", expression=GRAMMAR_EXAMPLES[name])),
+    )
+    assert normalized["fields"][0]["expression"]["op"] == name
+
+
+def test_documented_reference_and_literal_forms_are_accepted():
+    for expression in ({"source": "sales.code"}, {"value": 5}, 5, "text"):
+        assert normalize_tabular_transformation_spec(transform(field("x", expression=expression)))
+    chained = normalize_tabular_transformation_spec(transform(
+        field("a", "sales.code"), field("b", expression={"field": "a"}),
+    ))
+    assert chained["deterministic_field_order"] == ["a", "b"]
+
+
+@pytest.mark.parametrize("expression", [
+    {"op": "round", "value": 1, "scale": 2},
+    {"op": "add", "values": [1], "left": 1, "right": 2},
+    {"op": "merge", "values": [1]},
+    {"python": "__import__('os')"},
+])
+def test_expression_shapes_outside_the_documented_grammar_are_rejected(expression):
+    with pytest.raises(TabularTransformationSpecError):
+        normalize_tabular_transformation_spec(transform(field("x", expression=expression)))
+
+
+def test_documented_division_and_empty_value_rules_match_the_runtime():
+    sources = {"sales": b"code,quantity,note\n007,1,\n", "catalog": b"sku,price\n007,0.10\n"}
+
+    def calculate(expression, value_type="number"):
+        spec = join_spec()
+        spec["steps"][1]["transform"] = transform(field("amount", expression=expression, value_type=value_type))
+        spec["output"] = transform(field("amount", "priced.amount", value_type=value_type))
+        return run(spec, sources)["records"]
+
+    quotient = {"op": "divide", "values": [{"source": "sales.quantity"}, 3]}
+    with pytest.raises(TabularTransformationEvaluationError) as error:
+        calculate(quotient)
+    assert error.value.code.startswith("numeric_operation_is_not_exact")
+    assert calculate({"op": "round", "value": quotient, "scale": 2, "mode": "half_up"}) == [{"amount": 0.33}]
+    empty = {"op": "add", "values": [{"source": "sales.note"}, 1]}
+    with pytest.raises(TabularTransformationEvaluationError) as error:
+        calculate(empty)
+    assert error.value.code == "numeric_value_is_empty_or_boolean"
+    guarded = {"op": "add", "values": [{"op": "coalesce", "values": [{"source": "sales.note"}, 0]}, 1]}
+    assert calculate(guarded) == [{"amount": 1}]
+
+
+HEADERS = {"sales": ["code", "quantity"], "catalog": ["sku", "price"]}
+PIPELINE_SOURCES = {
+    "sales": b"code,quantity\n007,3\n008,2\n", "catalog": b"sku,price\n007,0.10\n008,0.20\n",
+}
+
+
+def pipeline():
+    return {
+        "version": "tabular-relate-v1",
+        "datasets": [{"alias": "sales", "document_id": "sales"}, {"alias": "catalog", "document_id": "catalog"}],
+        "steps": [{
+            "id": "keys", "op": "project", "input": "sales",
+            "transform": transform(field("code", "sales.code"), field("units", "sales.quantity")),
+        }, {
+            "id": "matched", "op": "join", "left": "keys", "right": "catalog", "how": "left",
+            "cardinality": "many_to_one", "on": [{"left": "keys.code", "right": "catalog.sku"}],
+        }, {
+            "id": "priced", "op": "derive", "input": "matched",
+            "transform": transform(field("amount", expression={
+                "op": "multiply", "values": [{"source": "keys.units"}, {"source": "catalog.price"}],
+            })),
+        }, {
+            "id": "totals", "op": "aggregate", "input": "priced",
+            "by": [{"name": "code", "column": "keys.code"}],
+            "measures": [{"name": "amount", "operation": "sum", "column": "priced.amount"}],
+        }],
+        "result": "totals",
+        "output": transform(field("code", "totals.code"), field("amount", "totals.amount")),
+    }
+
+
+def mutate(change):
+    spec = pipeline()
+    change(spec)
+    return spec
+
+
+COLUMN_FAULTS = {
+    "join_right_typo": (
+        lambda spec: spec["steps"][1]["on"][0].update(right="catalog.skuu"),
+        {"role": "join_right_key", "category": "name_not_in_prefix", "step_index": 1, "step_op": "join"},
+    ),
+    "join_left_unqualified": (
+        lambda spec: spec["steps"][1]["on"][0].update(left="code"),
+        {"role": "join_left_key", "category": "unqualified_name", "step_index": 1, "step_op": "join"},
+    ),
+    "join_left_dropped_by_project": (
+        lambda spec: spec["steps"][1]["on"][0].update(left="sales.code"),
+        {"role": "join_left_key", "category": "prefix_not_in_input", "step_index": 1, "step_op": "join"},
+    ),
+    "join_right_names_a_left_column": (
+        lambda spec: spec["steps"][1]["on"][0].update(right="keys.units"),
+        {"role": "join_right_key", "category": "prefix_not_in_input", "step_index": 1, "step_op": "join"},
+    ),
+    "derive_unknown_column": (
+        lambda spec: spec["steps"][2]["transform"]["fields"][0]["expression"]["values"].append({"source": "catalog.cost"}),
+        {"role": "derive_expression", "category": "name_not_in_prefix", "step_index": 2, "step_op": "derive"},
+    ),
+    "aggregate_by_unknown_prefix": (
+        lambda spec: spec["steps"][3]["by"][0].update(column="ghost.code"),
+        {"role": "aggregate_by", "category": "unknown_prefix", "step_index": 3, "step_op": "aggregate"},
+    ),
+    "aggregate_measure_unqualified": (
+        lambda spec: spec["steps"][3]["measures"][0].update(column="amount"),
+        {"role": "aggregate_measure", "category": "unqualified_name", "step_index": 3, "step_op": "aggregate"},
+    ),
+    "output_uses_a_column_aggregate_dropped": (
+        lambda spec: spec["output"]["fields"][1].update(expression={"source": "priced.amount"}),
+        {"role": "output_expression", "category": "prefix_not_in_input", "step_op": "output"},
+    ),
+}
+
+
+def test_the_documented_pipeline_passes_the_column_preflight_and_the_runtime():
+    spec = normalize_relational_spec(pipeline())
+    check_relational_columns(spec, HEADERS)
+    assert run(pipeline(), PIPELINE_SOURCES)["records"] == [
+        {"code": "007", "amount": "0.30"}, {"code": "008", "amount": "0.40"},
+    ]
+
+
+@pytest.mark.parametrize("name", sorted(COLUMN_FAULTS))
+def test_column_preflight_and_runtime_reject_the_same_references_with_the_same_location(name):
+    change, location = COLUMN_FAULTS[name]
+    faulty = mutate(change)
+    spec = normalize_relational_spec(faulty)
+    expected = {"check": "column_missing", "missing_count": 1, **location}
+    with pytest.raises(TabularRelationalError) as preflight:
+        check_relational_columns(spec, HEADERS)
+    assert preflight.value.code == "relational_column_missing" and preflight.value.detail == expected
+    with pytest.raises((TabularRelationalError, TabularTransformationSpecError)) as runtime:
+        run(faulty, PIPELINE_SOURCES)
+    if isinstance(runtime.value, TabularRelationalError):
+        assert runtime.value.code == "relational_column_missing" and runtime.value.detail == expected
+    else:
+        assert runtime.value.code == "tabular_transformation_spec_references_an_unknown_source_field"
+    # An unknown header is never guessed: the same plan is left to the runtime check.
+    check_relational_columns(spec, {})
+
+
+def test_column_preflight_checks_only_sides_whose_complete_header_is_known():
+    spec = normalize_relational_spec(mutate(COLUMN_FAULTS["join_right_typo"][0]))
+    with pytest.raises(TabularRelationalError):
+        check_relational_columns(spec, {"catalog": HEADERS["catalog"]})
+    spec = normalize_relational_spec(mutate(COLUMN_FAULTS["join_left_unqualified"][0]))
+    check_relational_columns(spec, {"catalog": HEADERS["catalog"]})
+
+
+def duplicate_step_id(spec):
+    spec["steps"][2]["id"] = "matched"
+
+
+def add_filter(predicate):
+    def change(spec):
+        spec["steps"].append({"id": "kept", "op": "filter", "input": "priced", "predicate": predicate})
+        spec["result"] = "kept"
+        spec["output"] = transform(field("code", "keys.code"))
+    return change
+
+
+SEMANTIC_FAULTS = {
+    "forward_reference": (lambda spec: spec["steps"][0].update(input="priced"), "relational_spec_invalid",
+                          {"check": "unknown_input", "step_index": 0, "step_op": "project"}),
+    "unused_source": (lambda spec: spec["datasets"].append({"alias": "extra", "document_id": "extra"}),
+                      "relational_source_unused", {"check": "result_sources"}),
+    "duplicate_alias": (lambda spec: spec["datasets"][1].update(alias="sales"), "relational_spec_invalid",
+                        {"check": "duplicate_dataset"}),
+    "duplicate_step_id": (duplicate_step_id, "relational_spec_invalid",
+                          {"check": "duplicate_step_id", "step_index": 2, "step_op": "derive"}),
+    "unknown_expression_operation": (
+        lambda spec: spec["steps"][2]["transform"]["fields"][0].update(expression={"python": "x"}),
+        "relational_spec_invalid",
+        {"check": "transform", "step_index": 2, "step_op": "derive",
+         "transform_code": "tabular_transformation_expression_operation_is_unsupported"},
+    ),
+    "invalid_predicate": (
+        add_filter({"op": "nope"}), "relational_spec_invalid",
+        {"check": "predicate", "step_index": 4, "step_op": "filter",
+         "transform_code": "tabular_transformation_expression_operation_is_unsupported"},
+    ),
+    "invalid_output": (
+        lambda spec: spec["output"]["fields"][0].update(expression={"op": "round", "value": 1}),
+        "relational_spec_invalid",
+        {"check": "output", "transform_code": "tabular_transformation_round_expression_has_invalid_properties"},
+    ),
+    "measure_without_column": (
+        lambda spec: spec["steps"][3]["measures"][0].pop("column"), "relational_spec_invalid",
+        {"check": "measure_column_required", "step_index": 3, "step_op": "aggregate"},
+    ),
+    "schema_violation": (lambda spec: spec.pop("output"), "relational_spec_invalid", {"check": "schema"}),
+}
+
+
+@pytest.mark.parametrize("name", sorted(SEMANTIC_FAULTS))
+def test_rejected_relational_specs_name_the_failed_check(name):
+    change, code, detail = SEMANTIC_FAULTS[name]
+    with pytest.raises(TabularRelationalError) as error:
+        normalize_relational_spec(mutate(change))
+    assert (error.value.code, error.value.detail) == (code, detail)
+
+
+def test_relational_failure_detail_never_contains_model_supplied_names():
+    spec = pipeline()
+    spec["steps"][2]["id"] = "private_marker_step"
+    spec["steps"][2]["transform"]["fields"][0]["expression"] = {"private_marker_operation": "x"}
+    with pytest.raises(TabularRelationalError) as error:
+        normalize_relational_spec(spec)
+    assert error.value.detail["check"] == "transform"
+    text = repr(error.value.detail) + repr(native_error_diagnostics(error.value)) + str(error.value)
+    assert "private_marker" not in text
+
+
+def test_document_selection_mismatch_is_distinguished_from_other_invalid_specs():
+    with pytest.raises(TabularRelationalError) as error:
+        normalize_relational_spec(pipeline(), ["catalog", "sales"])
+    assert error.value.code == "relational_selection_invalid"
+    assert error.value.detail == {"check": "document_ids_mismatch"}
+
+
+def test_failure_detail_keeps_only_closed_tokens_and_counts():
+    assert safe_native_detail({
+        "check": "column_missing", "role": "Join Left Key", "category": "unqualified_name", "step_index": 2,
+        "step_op": "join", "transform_code": "x" * 81, "missing_count": True, "free_text": "token", "extra": 7,
+    }) == {"check": "column_missing", "category": "unqualified_name", "step_index": 2, "step_op": "join"}
+    assert native_error_diagnostics(TabularRelationalError("relational_column_missing", detail={
+        "check": "column_missing", "role": "join_left_key", "missing_count": 2, "step_index": 1,
+    })) == {
+        "native_check": "column_missing", "native_role": "join_left_key",
+        "native_missing_count": 2, "native_step_index": 1,
+    }
+    assert native_error_diagnostics(ValueError("PRIVATE")) == {}
+
+
+BAD_TRANSFORM = {"version": "unsupported", "fields": [], "private_marker": True}
+# Each step keeps the operation that names its branch and breaks that branch in several ways at once,
+# so that an alternative for another operation fails no more often than the intended one.
+SEVERAL_FAULTS = {
+    "derive": (2, lambda step: step.update(transform=dict(BAD_TRANSFORM))),
+    "derive_with_a_step_property_too": (
+        2, lambda step: step.update(transform=dict(BAD_TRANSFORM), private_marker_step=True),
+    ),
+    "project": (0, lambda step: step.update(transform=dict(BAD_TRANSFORM))),
+    "aggregate": (3, lambda step: step.update(
+        by=[{"name": "code", "private_marker": 1}],
+        measures=[{"name": "amount", "operation": "private_marker_operation"}],
+    )),
+}
+
+
+def located(spec):
+    (error,) = Draft202012Validator(relational_spec_schema()).iter_errors(spec)
+    return schema_error_location(error)
+
+
+@pytest.mark.parametrize("stored", ["price", " price ", "Unit  Price", "Unit\u00a0Price", "cafe\u0301"])
+def test_the_reader_names_a_column_the_way_the_planning_preflight_expects(stored):
+    source = TabularMergeSource("d", "d.csv", lambda: f"code,{stored}\n1,2\n".encode("utf-8"))
+    with read_tabular_source_records(source) as (columns, _records, _selected):
+        assert list(columns) == ["code", display_header_name(stored)]
+
+
+@pytest.mark.parametrize("name", sorted(SEVERAL_FAULTS))
+def test_a_step_with_several_faults_is_located_in_the_operation_it_names(name):
+    index, damage = SEVERAL_FAULTS[name]
+    spec = pipeline()
+    operation = spec["steps"][index]["op"]
+    damage(spec["steps"][index])
+    location = located(spec)
+    assert location["argument_branch"] == operation
+    # Another operation's fields must never be offered as the correction.
+    assert "predicate" not in location.get("allowed_properties", []) + location.get("missing_properties", [])
+    assert "private_marker" not in repr(location)
+
+
+def test_a_step_that_does_not_name_a_known_operation_is_located_by_how_close_it_is():
+    spec = pipeline()
+    spec["steps"][2]["op"] = "private_marker_operation"
+    location = located(spec)
+    assert "argument_branch" not in location and location["argument_keyword"] == "const"
+    assert location["allowed_values"] == ["join", "filter", "derive", "project", "aggregate"]
+    del spec["steps"][2]["op"]
+    location = located(spec)
+    assert "argument_branch" not in location
+    assert (location["argument_keyword"], location["missing_properties"]) == ("required", ["op"])
+
+
+def test_runtime_transformation_failures_have_a_stable_code_and_a_step_location():
+    with pytest.raises(TabularTransformationEvaluationError) as error:
+        run(join_spec(), {"sales": b"code,quantity\n007,\n", "catalog": b"sku,price\n007,0.10\n"})
+    assert error.value.code == "numeric_value_is_empty_or_boolean"
+    assert error.value.detail == {"check": "step_evaluation", "step_op": "derive", "step_index": 1}
+    assert native_error_diagnostics(error.value) == {
+        "native_check": "step_evaluation", "native_step_op": "derive", "native_step_index": 1,
+    }
+    spec = join_spec()
+    spec["output"] = transform(field("rate", expression={
+        "op": "divide", "values": [1, {"source": "priced.amount"}],
+    }, value_type="number"))
+    with pytest.raises(TabularTransformationEvaluationError) as error:
+        run(spec, {"sales": b"code,quantity\n007,0\n", "catalog": b"sku,price\n007,0.10\n"})
+    assert error.value.code == "division_by_zero_is_not_allowed"
+    assert error.value.detail == {"check": "output_evaluation", "step_op": "output"}
 
 
 if __name__ == "__main__":

@@ -88,9 +88,30 @@ _DECIMAL_TEXT_PATTERN = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE
 class TabularTransformationSpecError(ValueError):
     """Raised when a tabular transformation spec is unsupported or unsafe."""
 
+    @property
+    def code(self):
+        return tabular_transformation_error_code(self)
+
 
 class TabularTransformationEvaluationError(ValueError):
     """Raised when a valid transformation spec cannot evaluate one row."""
+
+    @property
+    def code(self):
+        return tabular_transformation_error_code(self)
+
+
+def tabular_transformation_error_code(error):
+    """A stable, content-free identifier for a transformation failure, or None for other errors.
+
+    Every message these two classes raise is a fixed phrase; the only interpolated words are
+    code-owned labels. A source value, header or model-supplied name is never part of one, so the
+    lowercase snake_case form is safe to log and to describe to a planner.
+    """
+    if not isinstance(error, (TabularTransformationSpecError, TabularTransformationEvaluationError)):
+        return None
+    code = re.sub(r"[^a-z0-9]+", "_", str(error).lower()).strip("_")[:80].strip("_")
+    return code if code and code[0].isalpha() else "transformation_error"
 
 
 class _SpecValidationBudget:
@@ -550,6 +571,15 @@ def get_tabular_transformation_deterministic_fields(transformation_spec):
     """Return deterministic output field names in evaluation order."""
     normalized_spec = normalize_tabular_transformation_spec(transformation_spec)
     return list(normalized_spec.get("deterministic_field_order") or [])
+
+
+def get_tabular_transformation_source_references(transformation_spec):
+    """Every source column a deterministic spec reads, sorted, without needing the table."""
+    normalized_spec = normalize_tabular_transformation_spec(transformation_spec)
+    references = set()
+    for field in normalized_spec.get("fields") or ():
+        _collect_expression_references(field.get("expression"), references, set())
+    return sorted(references)
 
 
 def get_tabular_transformation_model_fields(transformation_spec, public_output_schema=None):

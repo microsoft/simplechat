@@ -1,9 +1,10 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.439
+Version: 0.261.443
 Implemented in: 0.261.419; 0.261.422
 Source-schema preflight and native semantic correction added in: 0.261.439
+Column preflight and content-free schema locations added in: 0.261.443
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
@@ -439,3 +440,137 @@ def test_model_owned_step_and_graph_declarations_are_corrected_once(planning, sh
     assert kind == "plan" and len(planning.harness.model_calls) == 2
     assert plan["steps"][0]["arguments"]["document_ids"] == [LEFT]
     assert [step["capability_id"] for step in plan["steps"]] == ["document_search", "compose"]
+
+
+def relate_case(*, inspected=True):
+    """A valid native calculation over two sources, and what the planner knows of their headers."""
+    columns = {LEFT: ["exercise", "code", "quantity"], RIGHT: ["exercise", "sku", "price"]}
+    sources = [{
+        "document_id": identifier, "file_name": f"{identifier}.csv", "source_kind": "tabular",
+        "availability": "available",
+        "inspection": {
+            "status": "inspected",
+            "tables": [{"sheet": None, "header_row": 1, "columns": header, "sample_rows": []}],
+        } if inspected else {"status": "limited"},
+    } for identifier, header in columns.items()]
+    spec = join_spec()
+    spec["datasets"][0]["document_id"] = LEFT
+    spec["datasets"][1]["document_id"] = RIGHT
+    corrected = proposal([LEFT, RIGHT])
+    corrected["steps"][0] = {
+        "step_id": "read", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Compute complete order amounts from both original sources.",
+            "native_operation": "relate", "document_ids": [LEFT, RIGHT], "relational_spec": spec,
+        },
+    }
+    corrected["steps"][1]["inputs"] = {
+        name: {"binding": input_binding("read", name), "allow_partial": False}
+        for name in ("records", "lineage", "coverage")
+    }
+    return sources, corrected
+
+
+def logged_text(caplog):
+    return json.dumps([
+        {name: value for name, value in record.__dict__.items() if name.startswith("sc_")}
+        for record in caplog.records
+    ])
+
+
+def test_an_unavailable_column_is_corrected_with_its_role_before_approval(planning, caplog):
+    sources, corrected = relate_case()
+    invalid = deepcopy(corrected)
+    invalid["steps"][0]["arguments"]["relational_spec"]["steps"][0]["on"][0]["right"] = "catalog.private_marker_typo"
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [invalid, corrected], identifiers=(LEFT, RIGHT),
+            context_updates={"selected_sources": sources},
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    record = correction_records(caplog)[0]
+    assert record.sc_validation_rule == "relational_column_missing"
+    assert (record.sc_native_check, record.sc_native_role, record.sc_native_category, record.sc_native_step_op) == (
+        "column_missing", "join_right_key", "name_not_in_prefix", "join",
+    )
+    assert record.sc_native_step_index == 0
+    repair = planning.harness.model_calls[1]["messages"][-1]["content"]
+    assert '"native_role": "join_right_key"' in repair and "column rules and expression grammar" in repair
+    assert "private_marker" not in repair and "private_marker" not in logged_text(caplog)
+    assert plan["steps"][0]["capability_id"] == "tabular_analyze"
+
+
+def test_the_column_preflight_never_guesses_a_header_the_planner_does_not_know(planning):
+    sources, corrected = relate_case(inspected=False)
+    unverifiable = deepcopy(corrected)
+    unverifiable["steps"][0]["arguments"]["relational_spec"]["steps"][0]["on"][0]["right"] = "catalog.skuu"
+    kind, plan = run_plan(
+        planning, [unverifiable], identifiers=(LEFT, RIGHT), context_updates={"selected_sources": sources},
+    )
+    assert kind == "plan" and len(planning.harness.model_calls) == 1
+    assert plan["steps"][0]["arguments"]["relational_spec"]["steps"][0]["on"][0]["right"] == "catalog.skuu"
+
+
+def test_a_header_the_reader_spells_differently_is_left_to_the_run(planning):
+    sources, proposed = relate_case()
+    # Discovery shows the stored text; the calculation reader collapses repeated spaces, so the spelling
+    # the planner used may be the one the reader accepts and the preflight must not call it unavailable.
+    sources[1]["inspection"]["tables"][0]["columns"][2] = "unit  price"
+    spec = proposed["steps"][0]["arguments"]["relational_spec"]
+    spec["steps"][1]["transform"]["fields"][0]["expression"]["right"] = {"source": "catalog.unit price"}
+    kind, _plan = run_plan(
+        planning, [proposed], identifiers=(LEFT, RIGHT), context_updates={"selected_sources": sources},
+    )
+    assert kind == "plan" and len(planning.harness.model_calls) == 1
+
+
+@pytest.mark.parametrize("fault,expected", [
+    ("unsupported_property", {
+        "argument_keyword": "additionalproperties", "argument_path": "relational_spec_steps_1",
+        "argument_branch": "derive",
+    }),
+    ("unknown_operation", {"argument_keyword": "const", "argument_path": "relational_spec_steps_1_op"}),
+    ("missing_property", {
+        "argument_keyword": "required", "argument_path": "relational_spec_steps_0", "argument_branch": "join",
+    }),
+    ("derive_with_several_faults", {
+        "argument_keyword": "additionalproperties", "argument_path": "relational_spec_steps_1_transform",
+        "argument_branch": "derive",
+    }),
+])
+def test_a_relational_schema_rejection_names_the_step_and_what_is_allowed(planning, caplog, fault, expected):
+    sources, corrected = relate_case()
+    invalid = deepcopy(corrected)
+    steps = invalid["steps"][0]["arguments"]["relational_spec"]["steps"]
+    if fault == "unsupported_property":
+        steps[1]["private_marker_property"] = "private_marker_value"
+    elif fault == "unknown_operation":
+        steps[1]["op"] = "private_marker_operation"
+    elif fault == "derive_with_several_faults":
+        steps[1]["transform"] = {"version": "unsupported", "fields": [], "private_marker": True}
+    else:
+        del steps[0]["how"]
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, _plan = run_plan(
+            planning, [invalid, corrected], identifiers=(LEFT, RIGHT),
+            context_updates={"selected_sources": sources},
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    record = correction_records(caplog)[0]
+    assert record.sc_validation_code == "plan_arguments_invalid" and record.sc_argument_field == "relational_spec"
+    for name, value in expected.items():
+        assert getattr(record, f"sc_{name}") == value
+    repair = planning.harness.model_calls[1]["messages"][-1]["content"]
+    assert "private_marker" not in repair and "private_marker" not in logged_text(caplog)
+    if fault == "unsupported_property":
+        assert '"allowed_properties": ["id", "input", "op", "transform"]' in repair
+    elif fault == "unknown_operation":
+        assert '"allowed_values": ["join", "filter", "derive", "project", "aggregate"]' in repair
+    elif fault == "derive_with_several_faults":
+        marker = "Content-free diagnostics: "
+        diagnostics, _end = json.JSONDecoder().raw_decode(repair[repair.index(marker) + len(marker):])
+        located = diagnostics["argument_problems"][0]
+        assert located["argument_branch"] == "derive" and located["allowed_properties"] == ["fields", "version"]
+        assert "predicate" not in json.dumps(diagnostics)
+    else:
+        assert '"missing_properties": ["how"]' in repair

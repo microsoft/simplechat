@@ -1,10 +1,13 @@
 # Multi-file tabular calculations
 
-Version: **0.261.439**
+Version: **0.261.443**
 
 Implemented in version: **0.261.437**
 
 Source-aware planning and failure diagnostics updated in version: **0.261.439**.
+
+Planner-visible grammar, column rules, column preflight and content-free failure
+locations added in version: **0.261.443**.
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -172,6 +175,64 @@ Ask in ordinary language and select the intended files. For example:
 A genuinely ambiguous key, worksheet, date rule or match cardinality requires
 clarification. The application does not supply business rules or expected totals
 from an answer key.
+
+## Planner-visible grammar, column rules and failure locations
+
+Fixed/Implemented in version: **0.261.443**
+(`application/single_app/config.py`).
+
+The planner sees this contract as the `relational_spec` argument schema. Before
+0.261.443 every expression and predicate was left open in that schema, so a
+planner could not tell which expression shapes the calculation accepts or which
+columns a step still has, and valid-looking plans were rejected or failed at
+run time. The schema description now states both, and functional tests pin each
+statement to the runtime.
+
+**Columns by step.** Dataset columns are `alias.header`. A join outputs the left
+columns followed by the right columns (`anti` outputs only the left) and its two
+inputs must share no column name. `filter` keeps its input columns. `derive`
+keeps them and adds `stepid.field`. `project` replaces every column with
+`stepid.field`. `aggregate` outputs only `stepid.name`. A step can use only the
+columns its input has, and `output` can use only the `result` step's columns, so
+a column dropped by `project` or `aggregate` cannot be used later.
+
+**Expressions.** A filter predicate, transform field or output field is a
+literal, `{"source": "alias.header"}`, `{"field": "earlier_field"}`,
+`{"value": literal}`, or an object with exactly the keys of one operation:
+`copy`, `round` (`value`, `scale` 0-12, `mode` `half_up` or `half_even`), `case`
+(`branches` of `when`/`then`, and `else`), `coalesce`, `all`, `any`, `not`,
+`is_null`, `in`, the comparisons `eq`, `ne`, `lt`, `lte`, `gt` and `gte`, and the
+arithmetic operations `add`, `subtract`, `multiply` and `divide` (`values`, or
+`left` and `right`). Arithmetic on an empty or Boolean operand fails, so guard it
+with `coalesce` or `case` and `is_null`. A division whose exact quotient does not
+terminate must be the direct value of a `round` expression. A numeric output must
+be exactly representable as a JSON number; otherwise round it or declare type
+`string`.
+
+**Correction before approval.** When the planner knows a source's complete
+inspected header, it applies the same column rules before the plan is approved.
+An unavailable join key, effective-date field, aggregate column, expression
+reference or output reference is returned to the planner once, with the step, the
+reference role and why the column is unavailable, instead of failing after
+approval. A source whose header is not known exactly (a different worksheet or
+header row, a named table or cell range, a limited inspection, or a header the
+calculation reader spells differently from the planning preview, such as one with
+repeated spaces) is never guessed. The run checks the same references against the
+real table.
+
+**Failure locations.** Planning rejections and run failures now identify which
+check failed, the step operation and position, the reference role, and why a
+column was unavailable (`unqualified_name`, `unknown_prefix`,
+`name_not_in_prefix` or `prefix_not_in_input`). A transformation failure carries a
+stable code such as `numeric_value_is_empty_or_boolean` or
+`division_by_zero_is_not_allowed`. Schema rejections name the innermost failed
+keyword and the schema-defined property path, which previously appeared only as
+`oneof`. When a step names its operation, the failure is located in that
+operation's own schema even if the step has several faults, so the correction
+never offers another operation's fields. No column name, source value or
+model-supplied text is recorded; see the
+[logging reference](../../reference/logging-tags.md). These additions do not
+change what a valid plan can calculate, and no limit is raised.
 
 ## Retention, exports and limits
 

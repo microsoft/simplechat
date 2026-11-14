@@ -6,7 +6,7 @@ Python or SQL. Source authorization and result persistence belong to the caller.
 """
 
 from collections import defaultdict
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
@@ -17,9 +17,12 @@ import re
 from jsonschema import Draft202012Validator
 
 from functions_tabular_transformations import (
+    TabularTransformationEvaluationError,
+    TabularTransformationSpecError,
     aggregate_precise_tabular_values,
     evaluate_tabular_transformation_row,
     get_tabular_transformation_model_fields,
+    get_tabular_transformation_source_references,
     normalize_tabular_transformation_spec,
 )
 
@@ -27,6 +30,32 @@ from functions_tabular_transformations import (
 RELATIONAL_VERSION = "tabular-relate-v1"
 MAX_RELATIONAL_STEPS = 32
 MAX_RELATIONAL_SOURCES = 100
+# What the planner is told about columns and expressions. Both mirror the runtime below and are
+# pinned to it by functional tests, so they must change with it.
+RELATIONAL_COLUMN_RULES = (
+    "Every dataset column is named alias.header. A join outputs the left columns then the right "
+    "columns (how=anti outputs only the left) and its two inputs must share no column name; on[].left "
+    "and effective.value name left columns, on[].right and effective.start/end name right columns. "
+    "filter keeps its input columns. derive keeps its input columns and adds stepid.field for every "
+    "transform field. project replaces all columns with stepid.field. aggregate outputs only "
+    "stepid.name for each by/measures name. A step may use only the columns its input has, and output "
+    "may use only the result step's columns, so a column dropped by project or aggregate cannot be "
+    "used later. Aggregated sum/min/max values are decimal strings."
+)
+RELATIONAL_EXPRESSION_GRAMMAR = (
+    "Expressions (filter predicate, transform and output fields) are deterministic "
+    "tabular-transform-v2: a literal, {\"source\":\"alias.header\"} for a column of the step input, "
+    "{\"field\":\"name\"} for an earlier field of the same transform, {\"value\":literal}, or an object "
+    "with exactly these keys: copy{op,source}; round{op,value,scale 0-12,mode half_up|half_even}; "
+    "case{op,branches:[{when,then}],else}; coalesce{op,values}; all|any{op,values}; not|is_null{op,value}; "
+    "in{op,value,values,case_sensitive?}; eq|ne|lt|lte|gt|gte{op,left,right,value_type?,case_sensitive?}; "
+    "add|subtract|multiply|divide{op,values} or {op,left,right}. Operands nest with the same grammar. "
+    "Arithmetic on an empty or boolean operand fails, so guard it with coalesce or case with is_null. "
+    "A division whose exact quotient does not terminate must be the direct value of a round expression. "
+    "A numeric output must be exactly representable as a JSON number; otherwise round it or declare "
+    "type string."
+)
+RELATIONAL_EXPRESSION_POINTER = "A deterministic expression; its grammar is in the relational_spec description."
 _NAME = {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_]{0,47}$"}
 _COLUMN = {"type": "string", "minLength": 1, "maxLength": 128}
 _TRANSFORM = {
@@ -38,7 +67,8 @@ _TRANSFORM = {
             "required": ["name", "type", "expression"],
             "properties": {
                 "name": _COLUMN, "type": {"enum": ["string", "number", "integer", "date", "boolean", "object", "array"]},
-                "mode": {"const": "deterministic"}, "nullable": {"type": "boolean"}, "expression": {},
+                "mode": {"const": "deterministic"}, "nullable": {"type": "boolean"},
+                "expression": {"description": RELATIONAL_EXPRESSION_POINTER},
             },
         }},
     },
@@ -84,7 +114,8 @@ def relational_spec_schema():
         }, ["value", "start", "end", "end_inclusive"]),
     }, ["id", "op", "left", "right", "how", "cardinality", "on"])
     filtering = _object({
-        "id": _NAME, "op": {"const": "filter"}, "input": _NAME, "predicate": {},
+        "id": _NAME, "op": {"const": "filter"}, "input": _NAME,
+        "predicate": {"description": RELATIONAL_EXPRESSION_POINTER},
     }, ["id", "op", "input", "predicate"])
     deriving = _object({
         "id": _NAME, "op": {"const": "derive"}, "input": _NAME, "transform": _TRANSFORM,
@@ -106,7 +137,7 @@ def relational_spec_schema():
             }, ["name", "operation"]),
         },
     }, ["id", "op", "input", "by", "measures"])
-    return _object({
+    schema = _object({
         "version": {"const": RELATIONAL_VERSION},
         "datasets": {"type": "array", "minItems": 1, "maxItems": MAX_RELATIONAL_SOURCES, "items": selector},
         "steps": {
@@ -115,27 +146,80 @@ def relational_spec_schema():
         },
         "result": _NAME, "output": _TRANSFORM,
     }, ["version", "datasets", "steps", "result", "output"])
+    schema["description"] = f"{RELATIONAL_COLUMN_RULES} {RELATIONAL_EXPRESSION_GRAMMAR}"
+    return schema
+
+
+_DETAIL_TOKEN = re.compile(r"[a-z][a-z0-9_]{0,79}")
+# Detail is limited to code-owned names: a check, a role, a category, an operation and positions.
+_DETAIL_KEYS = frozenset({
+    "check", "role", "category", "step_index", "step_op", "transform_code", "missing_count",
+})
+NATIVE_DIAGNOSTIC_KEYS = {
+    "check": "native_check", "role": "native_role", "category": "native_category",
+    "step_index": "native_step_index", "step_op": "native_step_op",
+    "transform_code": "native_transform_code", "missing_count": "native_missing_count",
+}
+
+
+def safe_native_detail(detail):
+    """Keep only closed tokens and counts, so a source value or model-supplied name never rides along."""
+    safe = {}
+    for key, value in (detail or {}).items():
+        if key not in _DETAIL_KEYS or isinstance(value, bool):
+            continue
+        if isinstance(value, int) and 0 <= value <= 1_000_000:
+            safe[key] = value
+        elif isinstance(value, str) and _DETAIL_TOKEN.fullmatch(value):
+            safe[key] = value
+    return safe
 
 
 class TabularRelationalError(ValueError):
-    """A stable failure code, without source values or storage locations."""
+    """A stable failure code and content-free location, without source values or storage locations."""
 
-    def __init__(self, code):
+    def __init__(self, code, *, detail=None):
         self.code = code
+        self.detail = safe_native_detail(detail)
         super().__init__("The complete cross-file calculation could not be completed.")
 
 
-def _require(condition, code="relational_spec_invalid"):
+def native_error_diagnostics(error):
+    """Loggable keys for a failure's detail, or nothing when it has none."""
+    detail = getattr(error, "detail", None)
+    safe = safe_native_detail(detail) if isinstance(detail, dict) else {}
+    return {NATIVE_DIAGNOSTIC_KEYS[key]: value for key, value in safe.items()}
+
+
+@contextmanager
+def _locating(check, operation, position=None):
+    """Say which step a transformation error came from; the error's own code already says why."""
+    try:
+        yield
+    except (TabularTransformationSpecError, TabularTransformationEvaluationError) as exc:
+        exc.detail = safe_native_detail({"check": check, "step_op": operation, "step_index": position})
+        raise
+
+
+def _require(condition, code="relational_spec_invalid", **detail):
     if not condition:
-        raise TabularRelationalError(code)
+        raise TabularRelationalError(code, detail=detail)
 
 
-def _precise_spec(value, columns=None):
-    normalized = normalize_tabular_transformation_spec(value, source_schema=columns)
+def _precise_spec(value, columns=None, **detail):
+    """Normalize a deterministic spec. With ``detail`` (planning time) a grammar failure names its rule."""
+    try:
+        normalized = normalize_tabular_transformation_spec(value, source_schema=columns)
+    except TabularTransformationSpecError as exc:
+        if not detail:
+            raise
+        raise TabularRelationalError(
+            "relational_spec_invalid", detail={**detail, "transform_code": exc.code},
+        ) from exc
     _require(
         normalized.get("version") == "tabular-transform-v2"
         and not get_tabular_transformation_model_fields(normalized),
-        "relational_expression_invalid",
+        "relational_expression_invalid", **detail,
     )
     return normalized
 
@@ -146,46 +230,53 @@ def normalize_relational_spec(value, document_ids=None):
         valid = isinstance(value, dict) and next(
             Draft202012Validator(relational_spec_schema()).iter_errors(value), None,
         ) is None
-        _require(valid)
-        _require(len(json.dumps(value, allow_nan=False).encode("utf-8")) <= 65536)
+        _require(valid, check="schema")
+        _require(len(json.dumps(value, allow_nan=False).encode("utf-8")) <= 65536, check="size_limit")
         spec = deepcopy(value)
         datasets = spec["datasets"]
         identifiers = [item["document_id"] for item in datasets]
         aliases = [item["alias"] for item in datasets]
-        _require(len(set(identifiers)) == len(identifiers) and len(set(aliases)) == len(aliases))
+        _require(
+            len(set(identifiers)) == len(identifiers) and len(set(aliases)) == len(aliases),
+            check="duplicate_dataset",
+        )
         _require(all(
             not ("cell_range" in item and ("header_row" not in item or "table_id" in item))
             for item in datasets
-        ))
+        ), check="cell_range_selector")
         if document_ids is not None:
-            _require(identifiers == document_ids, "relational_selection_invalid")
+            _require(identifiers == document_ids, "relational_selection_invalid", check="document_ids_mismatch")
         origins = {alias: {alias} for alias in aliases}
-        for step in spec["steps"]:
+        for position, step in enumerate(spec["steps"]):
+            where = {"step_index": position, "step_op": step["op"]}
             name = step["id"]
-            _require(name not in origins)
+            _require(name not in origins, check="duplicate_step_id", **where)
             inputs = [step["left"], step["right"]] if step["op"] == "join" else [step["input"]]
-            _require(all(item in origins for item in inputs))
+            _require(all(item in origins for item in inputs), check="unknown_input", **where)
             if step["op"] == "join":
-                _require(not (origins[inputs[0]] & origins[inputs[1]]))
+                _require(not (origins[inputs[0]] & origins[inputs[1]]), check="join_inputs_overlap", **where)
             elif step["op"] in ("derive", "project"):
-                _precise_spec(step["transform"])
+                _precise_spec(step["transform"], check="transform", **where)
             elif step["op"] == "filter":
-                _precise_spec(_predicate_spec(step["predicate"]))
+                _precise_spec(_predicate_spec(step["predicate"]), check="predicate", **where)
             else:
                 names = [item["name"] for item in step["by"] + step["measures"]]
-                _require(len(names) == len(set(names)))
+                _require(len(names) == len(set(names)), check="duplicate_output_name", **where)
                 _require(all(
                     item["operation"] == "count" or "column" in item
                     for item in step["measures"]
-                ))
+                ), check="measure_column_required", **where)
             origins[name] = set().union(*(origins[item] for item in inputs))
-        _require(spec["result"] in origins and origins[spec["result"]] == set(aliases), "relational_source_unused")
-        _precise_spec(spec["output"])
+        _require(
+            spec["result"] in origins and origins[spec["result"]] == set(aliases), "relational_source_unused",
+            check="result_sources",
+        )
+        _precise_spec(spec["output"], check="output")
         return spec
     except (TypeError, ValueError, RecursionError) as exc:
         if isinstance(exc, TabularRelationalError):
             raise
-        raise TabularRelationalError("relational_spec_invalid") from exc
+        raise TabularRelationalError("relational_spec_invalid", detail={"check": "unexpected"}) from exc
 
 
 def _predicate_spec(expression):
@@ -212,6 +303,9 @@ class _Budget:
         self.cancel_requested = cancel_requested
         self.work = 0
         self.bytes = 0
+        # Aliases and step ids, and the running step's position, only to describe a missing column.
+        self.prefixes = frozenset()
+        self.position = None
 
     def check(self, amount=1):
         self.work += amount
@@ -236,8 +330,35 @@ class _Budget:
         return RelationalTable(tuple(columns), tuple(rows))
 
 
-def _require_columns(columns, requested):
-    _require(set(requested) <= set(columns), "relational_column_missing")
+def _column_category(name, columns, prefixes):
+    """Why a requested column is absent, judged only from names the plan itself declared."""
+    if "." not in name:
+        return "unqualified_name"
+    prefix = name.split(".", 1)[0]
+    if prefix not in prefixes:
+        return "unknown_prefix"
+    if any(column.startswith(f"{prefix}.") for column in columns):
+        return "name_not_in_prefix"
+    return "prefix_not_in_input"
+
+
+def _missing_columns_error(columns, requested, role, prefixes, where):
+    """The failure for requested names a table does not have, or None when it has them all."""
+    available = set(columns)
+    missing = [name for name in requested if name not in available]
+    if not missing:
+        return None
+    return TabularRelationalError("relational_column_missing", detail={
+        "check": "column_missing", "role": role, "missing_count": len(missing),
+        "category": _column_category(missing[0], columns, prefixes), **where,
+    })
+
+
+def _require_columns(columns, requested, role, budget, step):
+    where = {"step_op": step["op"], **({} if budget.position is None else {"step_index": budget.position})}
+    error = _missing_columns_error(columns, requested, role, budget.prefixes, where)
+    if error is not None:
+        raise error
 
 
 def _key(row, columns, normalization):
@@ -266,8 +387,8 @@ def _date(value, *, optional=False):
 def _join(step, left, right, budget):
     left_keys = [item["left"] for item in step["on"]]
     right_keys = [item["right"] for item in step["on"]]
-    _require_columns(left.columns, left_keys)
-    _require_columns(right.columns, right_keys)
+    _require_columns(left.columns, left_keys, "join_left_key", budget, step)
+    _require_columns(right.columns, right_keys, "join_right_key", budget, step)
     _require(not (set(left.columns) & set(right.columns)), "relational_columns_ambiguous")
     _require(step["how"] == "anti" or len(left.columns) + len(right.columns) <= budget.limits.max_columns,
              "relational_column_limit")
@@ -275,8 +396,9 @@ def _join(step, left, right, budget):
     index = defaultdict(list)
     effective = step.get("effective")
     if effective:
-        _require_columns(left.columns, [effective["value"]])
-        _require_columns(right.columns, [effective["start"], effective["end"]])
+        _require_columns(left.columns, [effective["value"]], "effective_value", budget, step)
+        _require_columns(right.columns, [effective["start"]], "effective_start", budget, step)
+        _require_columns(right.columns, [effective["end"]], "effective_end", budget, step)
     intervals = {}
     for position, row in enumerate(right.rows):
         budget.check()
@@ -351,9 +473,10 @@ def _join(step, left, right, budget):
 
 def _aggregate(step, table, budget):
     names = [item["column"] for item in step["by"]]
-    _require_columns(table.columns, names + [
+    _require_columns(table.columns, names, "aggregate_by", budget, step)
+    _require_columns(table.columns, [
         item["column"] for item in step["measures"] if "column" in item
-    ])
+    ], "aggregate_measure", budget, step)
     groups = defaultdict(list)
     for row in table.rows:
         budget.check()
@@ -405,6 +528,73 @@ def _lineage(ranges):
     return result
 
 
+def check_relational_columns(spec, headers):
+    """Reject a column reference no run can satisfy, from complete headers already known.
+
+    ``spec`` is a normalized relational spec. ``headers`` maps a dataset alias to its complete
+    ordered native header; a dataset without one, and every table derived from it, is left to the
+    runtime check. References are judged by the same propagation the runtime applies, so a plan the
+    runtime would accept is never rejected here.
+    """
+    tables = {
+        alias: tuple(f"{alias}.{name}" for name in names)
+        for alias, names in headers.items() if isinstance(names, (list, tuple))
+    }
+    prefixes = (
+        frozenset(item["alias"] for item in spec["datasets"]) | frozenset(step["id"] for step in spec["steps"])
+    )
+
+    def require(columns, requested, role, where):
+        error = _missing_columns_error(columns, requested, role, prefixes, where)
+        if error is not None:
+            raise error
+
+    def require_references(columns, expression, role, where):
+        # The runtime applies no source-column check to a table without columns.
+        if columns:
+            require(columns, get_tabular_transformation_source_references(expression), role, where)
+
+    for position, step in enumerate(spec["steps"]):
+        operation = step["op"]
+        where = {"step_index": position, "step_op": operation}
+        if operation == "join":
+            left, right = tables.get(step["left"]), tables.get(step["right"])
+            effective = step.get("effective")
+            if left is not None:
+                require(left, [item["left"] for item in step["on"]], "join_left_key", where)
+                if effective:
+                    require(left, [effective["value"]], "effective_value", where)
+            if right is not None:
+                require(right, [item["right"] for item in step["on"]], "join_right_key", where)
+                if effective:
+                    require(right, [effective["start"]], "effective_start", where)
+                    require(right, [effective["end"]], "effective_end", where)
+            if left is not None and right is not None:
+                tables[step["id"]] = left if step["how"] == "anti" else left + right
+            continue
+        table = tables.get(step["input"])
+        if table is None:
+            continue
+        if operation == "aggregate":
+            require(table, [item["column"] for item in step["by"]], "aggregate_by", where)
+            require(
+                table, [item["column"] for item in step["measures"] if "column" in item],
+                "aggregate_measure", where,
+            )
+            tables[step["id"]] = tuple(f'{step["id"]}.{item["name"]}' for item in step["by"] + step["measures"])
+            continue
+        expression = step["transform"] if operation in ("derive", "project") else _predicate_spec(step["predicate"])
+        require_references(
+            table, expression, "filter_predicate" if operation == "filter" else f"{operation}_expression", where,
+        )
+        if operation == "filter":
+            tables[step["id"]] = table
+        else:
+            added = tuple(f'{step["id"]}.{field["name"]}' for field in _precise_spec(expression)["fields"])
+            tables[step["id"]] = table + added if operation == "derive" else added
+    require_references(tables.get(spec["result"]), spec["output"], "output_expression", {"step_op": "output"})
+
+
 def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=None):
     """Compute from complete authorized tables without models or persistent effects.
 
@@ -416,6 +606,9 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
     _require(set(datasets) == {item["alias"] for item in spec["datasets"]}, "relational_selection_invalid")
     _require(len(datasets) <= limits.max_sources, "relational_source_limit")
     budget = _Budget(limits, cancel_requested)
+    budget.prefixes = (
+        frozenset(item["alias"] for item in spec["datasets"]) | frozenset(step["id"] for step in spec["steps"])
+    )
     tables = {}
     sources = []
     total_rows = 0
@@ -447,50 +640,53 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
             "schema_sha256": hashlib.sha256(json.dumps(list(columns)).encode()).hexdigest(),
         })
     diagnostics = []
-    for step in spec["steps"]:
+    for position, step in enumerate(spec["steps"]):
         budget.check()
-        if step["op"] == "join":
-            result, details = _join(step, tables[step["left"]], tables[step["right"]], budget)
-        else:
-            table = tables[step["input"]]
-            details = {}
-            if step["op"] == "aggregate":
-                result = _aggregate(step, table, budget)
+        budget.position = position
+        with _locating("step_evaluation", step["op"], position):
+            if step["op"] == "join":
+                result, details = _join(step, tables[step["left"]], tables[step["right"]], budget)
             else:
-                expression = (
-                    step["transform"] if step["op"] in ("derive", "project")
-                    else _predicate_spec(step["predicate"])
-                )
-                normalized = _precise_spec(expression, table.columns)
-                columns = [] if step["op"] == "project" else list(table.columns)
-                if step["op"] in ("derive", "project"):
-                    columns.extend(f'{step["id"]}.{field["name"]}' for field in normalized["fields"])
-                _require(len(columns) <= limits.max_columns, "relational_column_limit")
-                rows = []
-                for row in table.rows:
-                    budget.check()
-                    calculated = evaluate_tabular_transformation_row(normalized, row.values)
+                table = tables[step["input"]]
+                details = {}
+                if step["op"] == "aggregate":
+                    result = _aggregate(step, table, budget)
+                else:
+                    expression = (
+                        step["transform"] if step["op"] in ("derive", "project")
+                        else _predicate_spec(step["predicate"])
+                    )
+                    normalized = _precise_spec(expression, table.columns)
+                    columns = [] if step["op"] == "project" else list(table.columns)
                     if step["op"] in ("derive", "project"):
-                        budget.append(rows, RelationalRow({
-                            **({} if step["op"] == "project" else row.values),
-                            **{f'{step["id"]}.{name}': value for name, value in calculated.items()},
-                        }, row.lineage))
-                    elif calculated["keep"]:
-                        budget.append(rows, row)
-                result = budget.table(columns, rows)
+                        columns.extend(f'{step["id"]}.{field["name"]}' for field in normalized["fields"])
+                    _require(len(columns) <= limits.max_columns, "relational_column_limit")
+                    rows = []
+                    for row in table.rows:
+                        budget.check()
+                        calculated = evaluate_tabular_transformation_row(normalized, row.values)
+                        if step["op"] in ("derive", "project"):
+                            budget.append(rows, RelationalRow({
+                                **({} if step["op"] == "project" else row.values),
+                                **{f'{step["id"]}.{name}': value for name, value in calculated.items()},
+                            }, row.lineage))
+                        elif calculated["keep"]:
+                            budget.append(rows, row)
+                    result = budget.table(columns, rows)
         tables[step["id"]] = result
         diagnostics.append({"step_id": step["id"], "operation": step["op"], "row_count": len(result.rows), **details})
     final = tables[spec["result"]]
-    projection = _precise_spec(spec["output"], final.columns)
     records, lineage = [], []
-    for index, row in enumerate(final.rows, 1):
-        budget.check()
-        record = evaluate_tabular_transformation_row(projection, row.values)
-        source_rows = {"result_row": index, "sources": _lineage(row.lineage)}
-        budget.account(record)
-        budget.account(source_rows)
-        records.append(record)
-        lineage.append(source_rows)
+    with _locating("output_evaluation", "output"):
+        projection = _precise_spec(spec["output"], final.columns)
+        for index, row in enumerate(final.rows, 1):
+            budget.check()
+            record = evaluate_tabular_transformation_row(projection, row.values)
+            source_rows = {"result_row": index, "sources": _lineage(row.lineage)}
+            budget.account(record)
+            budget.account(source_rows)
+            records.append(record)
+            lineage.append(source_rows)
     return {
         "records": records, "lineage": lineage,
         "columns": [
