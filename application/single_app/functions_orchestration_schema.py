@@ -509,9 +509,12 @@ def available_information_plan(raw, *, step_ids=None):
         if step_ids is not None and step.get('step_id') not in step_ids:
             continue
         outputs = step.get('outputs')
+        requirement = step['arguments'].get('tabular_requirement') or {}
+        complete_tabular = requirement.get('mode') in ('complete_records', 'calculation')
         if (
             step.get('capability_id') == CAPABILITY_COMPOSE
             and type(outputs) is list and outputs and all(is_narrative_output(item) for item in outputs)
+            and not complete_tabular
         ):
             step['arguments'].setdefault('response_policy', AVAILABLE_INFORMATION_POLICY)
         narrative = uses_available_information(step) or (
@@ -523,6 +526,7 @@ def available_information_plan(raw, *, step_ids=None):
                 if (
                     type(value) is dict and 'binding' in value
                     and type(value.get('allow_partial', False)) is bool
+                    and not complete_tabular
                 ):
                     value['allow_partial'] = True
     return plan
@@ -564,6 +568,36 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
                                        code='plan_outputs_invalid', rule='fixed_output_missing')
         return deepcopy(outputs)
     supported = capability['result_output_kinds']
+    tabular_requirement = arguments.get('tabular_requirement') or {}
+    if (
+        tabular_requirement.get('mode') == 'overview'
+        and type(outputs) is list
+        and not all(
+            isinstance(output, dict) and is_narrative_output(output)
+            for output in outputs
+        )
+    ):
+        raise _step_contract_error(
+            'Tabular overview work may prepare narrative outputs, not records or structured datasets.',
+            raw, code='plan_outputs_invalid', rule='tabular_overview_output_invalid',
+        )
+    if (
+        tabular_requirement.get('mode') in ('complete_records', 'calculation')
+        and arguments.get('response_policy') == AVAILABLE_INFORMATION_POLICY
+    ):
+        raise _step_contract_error(
+            'Complete tabular work cannot use an available-information response policy.',
+            raw, code='plan_arguments_invalid', rule='tabular_complete_policy_required',
+        )
+    annotation_provenance = arguments.get('annotation_provenance_input')
+    if annotation_provenance and (
+        type(outputs) is not list or len(outputs) != 1
+        or not isinstance(outputs[0], dict) or outputs[0].get('kind') != 'records-v1'
+    ):
+        raise _step_contract_error(
+            'Native Word comment provenance requires exactly one records-v1 composition output.',
+            raw, code='plan_outputs_invalid', rule='annotation_provenance_records_required',
+        )
     for item in outputs:
         if (
             type(item) is not dict or set(item) - {'name', 'kind', 'columns', 'schema', 'profile'}
@@ -587,6 +621,15 @@ def _dependency_outputs(raw, capability, composition_profiles, arguments):
             parsed = tuple(RecordColumn.from_dict(column) for column in columns)
             if len(parsed) > 256 or len({column.name for column in parsed}) != len(parsed):
                 raise PlanValidationError('The record column schema is invalid.')
+            if annotation_provenance:
+                from functions_orchestration_excel import WORD_COMMENT_PROVENANCE_COLUMNS
+
+                required = set(WORD_COMMENT_PROVENANCE_COLUMNS)
+                if not required <= {column.name for column in parsed}:
+                    raise _step_contract_error(
+                        'The disposition records do not declare every native Word provenance column.',
+                        raw, code='plan_outputs_invalid', rule='annotation_provenance_columns_required',
+                    )
         elif 'columns' in item:
             raise PlanValidationError('Only records may declare columns.')
         if 'schema' in item:
@@ -1560,11 +1603,36 @@ def effective_plan_document_ids(plan, seeds=None):
     return list(dict.fromkeys(document_ids))
 
 
-def validate_plan_document_source_kinds(plan, document_source_kinds, *, document_source_formats=None):
+def validate_plan_document_source_kinds(
+    plan, document_source_kinds, *, document_source_formats=None,
+    selected_document_ids=None, required_capabilities=None,
+):
     """Check known source kinds without treating model-supplied labels as authority."""
     if not isinstance(document_source_kinds, dict):
         raise PlanValidationError('Document type metadata is unavailable.', code='source_metadata_invalid')
+    _validate_tabular_composition_requirements(
+        plan, document_source_kinds, selected_document_ids=selected_document_ids,
+        required_capabilities=required_capabilities,
+    )
+    steps_by_id = {
+        step['step_id']: step for step in (plan.get('steps') or ())
+        if isinstance(step, dict) and step.get('enabled', True)
+    }
     for step in plan.get('steps') or []:
+        provenance_input = (step.get('arguments') or {}).get('annotation_provenance_input')
+        if step.get('enabled', True) and step.get('capability_id') == CAPABILITY_COMPOSE and provenance_input:
+            named_input = (step.get('inputs') or {}).get(provenance_input) or {}
+            binding = named_input.get('binding') or {}
+            producer = steps_by_id.get(binding.get('step_id'))
+            formats = [
+                (document_source_formats or {}).get(document_id)
+                for document_id in plan_document_ids({'steps': [producer]}) if producer
+            ]
+            if not formats or any(item not in ('docx', 'docm', 'dotx') for item in formats):
+                raise _step_contract_error(
+                    'Native annotation provenance requires an authorized Word comment inventory.',
+                    step, code='source_kind_invalid', rule='word_annotation_provenance_required',
+                )
         if (
             step.get('enabled', True) and step.get('capability_id') == 'document_search'
             and (step.get('arguments') or {}).get('native_section') == 'comments'
@@ -1727,7 +1795,179 @@ def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
             warning = f'{message} Review this change before running.'
             if warning not in repairs:
                 repairs.append(warning)
+    _validate_tabular_composition_requirements(
+        plan, required_capabilities=required_capability_ids(seeds),
+    )
     return plan
+
+
+def _input_producer_steps(step, steps_by_id):
+    result = []
+    for value in (step.get('inputs') or {}).values():
+        binding = value.get('binding') if isinstance(value, dict) else None
+        producer = steps_by_id.get(binding.get('step_id')) if isinstance(binding, dict) else None
+        if producer is not None:
+            result.append((producer, binding.get('output_name')))
+    return result
+
+
+def _tabular_upstream_producers(step, steps_by_id, visited=None):
+    visited = set() if visited is None else visited
+    producers = []
+    for producer, output_name in _input_producer_steps(step, steps_by_id):
+        if producer['step_id'] in visited:
+            continue
+        visited.add(producer['step_id'])
+        producers.append((producer, output_name))
+        producers.extend(_tabular_upstream_producers(producer, steps_by_id, visited))
+    return producers
+
+
+def _validate_tabular_composition_requirements(
+    plan, document_source_kinds=None, *, selected_document_ids=None, required_capabilities=None,
+):
+    source_kind_validation = document_source_kinds is not None
+    document_source_kinds = document_source_kinds or {}
+    selected_document_ids = set(_string_list(selected_document_ids))
+    required_capabilities = set(required_capabilities or ())
+    steps_by_id = {
+        step['step_id']: step for step in (plan.get('steps') or ())
+        if isinstance(step, dict) and step.get('enabled', True)
+    }
+    for step in steps_by_id.values():
+        if step.get('capability_id') != CAPABILITY_COMPOSE:
+            continue
+        provenance_input = (step.get('arguments') or {}).get('annotation_provenance_input')
+        if provenance_input:
+            binding = (step.get('inputs') or {}).get(provenance_input)
+            producer = None
+            if isinstance(binding, dict) and isinstance(binding.get('binding'), dict):
+                producer = steps_by_id.get(binding['binding'].get('step_id'))
+            if (
+                producer is None
+                or producer.get('capability_id') != CAPABILITY_DOCUMENT_SEARCH
+                or (producer.get('arguments') or {}).get('native_section') != 'comments'
+                or binding.get('allow_partial') is not False
+                or binding['binding'].get('output_name') != 'prepared'
+            ):
+                raise _step_contract_error(
+                    'Word provenance must name the complete prepared output of one native comments reader.',
+                    step, code='plan_arguments_invalid', rule='annotation_provenance_binding_invalid',
+                )
+        upstream = _tabular_upstream_producers(step, steps_by_id)
+        native_tabular = [
+            (producer, output_name) for producer, output_name in upstream
+            if producer.get('capability_id') in {
+                CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_INSPECT, CAPABILITY_TABULAR_MERGE,
+            }
+        ]
+        upstream_ids = {
+            document_id for producer, _output in upstream
+            for document_id in plan_document_ids({'steps': [producer]})
+        }
+        for producer, _output in upstream:
+            if (
+                producer.get('capability_id') == 'document_search'
+                and not plan_document_ids({'steps': [producer]})
+            ):
+                upstream_ids.update(selected_document_ids)
+        search_source_ids = {
+            document_id
+            for producer, _output in upstream
+            if producer.get('capability_id') == 'document_search'
+            for document_id in plan_document_ids({'steps': [producer]})
+        }
+        for producer, _output in upstream:
+            if (
+                producer.get('capability_id') == 'document_search'
+                and not plan_document_ids({'steps': [producer]})
+            ):
+                search_source_ids.update(selected_document_ids)
+        selected_tabular_ids = {
+            document_id for document_id in search_source_ids
+            if document_source_kinds.get(document_id) == 'tabular'
+        }
+        has_tabular_evidence = bool(native_tabular or selected_tabular_ids)
+        if not source_kind_validation and not native_tabular:
+            # Source-kind admission runs earlier in new-plan normalization; the later
+            # generic requirements pass still protects native producer contracts.
+            continue
+        requirement = (step.get('arguments') or {}).get('tabular_requirement')
+        if requirement is None:
+            if has_tabular_evidence:
+                raise _step_contract_error(
+                    'Composed tabular content must declare how complete rows or calculations are used.',
+                    step, code='plan_arguments_invalid', rule='tabular_requirement_required',
+                )
+            continue
+        required_ids = set(requirement['document_ids'])
+        if not required_ids <= upstream_ids:
+            raise _step_contract_error(
+                'A tabular requirement may name only sources bound to this compose step.',
+                step, code='plan_arguments_invalid', rule='tabular_requirement_sources_invalid',
+            )
+        if not selected_tabular_ids <= required_ids:
+            raise _step_contract_error(
+                'A tabular requirement must declare every selected tabular source used by this compose step.',
+                step, code='plan_arguments_invalid', rule='tabular_requirement_sources_incomplete',
+            )
+        direct = _input_producer_steps(step, steps_by_id)
+        if requirement['mode'] == 'overview':
+            if not has_tabular_evidence:
+                raise _step_contract_error(
+                    'Tabular overview work requires a named tabular reader input.',
+                    step, code='plan_arguments_invalid', rule='tabular_requirement_producer_invalid',
+                )
+            if (
+                required_capabilities
+                & {CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_MERGE}
+                and not native_tabular
+            ):
+                raise _step_contract_error(
+                    'An explicitly selected complete tabular operation cannot be satisfied by Search previews.',
+                    step, code='plan_arguments_invalid', rule='tabular_complete_operation_required',
+                )
+            continue
+        complete_producers = {
+            producer['step_id'] for producer, output_name in direct
+            if output_name == 'records' and producer.get('capability_id') in {
+                CAPABILITY_TABULAR_ANALYZE, CAPABILITY_TABULAR_MERGE,
+            }
+            and (next((
+                value for value in (step.get('inputs') or {}).values()
+                if isinstance(value, dict)
+                and isinstance(value.get('binding'), dict)
+                and value['binding'].get('step_id') == producer['step_id']
+                and value['binding'].get('output_name') == 'records'
+            ), {}) or {}).get('allow_partial') is False
+        }
+        record_coverage = {
+            document_id for producer, _output in direct
+            if producer['step_id'] in complete_producers
+            for document_id in plan_document_ids({'steps': [producer]})
+        }
+        if not required_ids <= record_coverage:
+            raise _step_contract_error(
+                'Complete tabular work must bind complete records from every declared source.',
+                step, code='plan_arguments_invalid', rule='tabular_complete_records_required',
+            )
+        if requirement['mode'] == 'calculation':
+            calculations = {
+                producer['step_id'] for producer, output_name in direct
+                if producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                and (producer.get('arguments') or {}).get('native_operation') == 'relate'
+                and output_name in {'records', 'lineage', 'coverage'}
+            }
+            outputs = {
+                output_name for producer, output_name in direct
+                if producer['step_id'] in calculations
+            }
+            if len(calculations) != 1 or not {'records', 'lineage', 'coverage'} <= outputs:
+                raise _step_contract_error(
+                    'A complete calculation must bind records, lineage and coverage from one '
+                    'native tabular relate producer.',
+                    step, code='plan_arguments_invalid', rule='tabular_calculation_required',
+                )
 
 
 def workflow_run_catalog_entry(workflow_planning, handle):

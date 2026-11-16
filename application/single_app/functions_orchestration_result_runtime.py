@@ -107,6 +107,82 @@ def resolve_step_inputs(step, context):
     return readers
 
 
+def validate_tabular_requirement_readers(step, readers, service):
+    requirement = (step.get('arguments') or {}).get('tabular_requirement')
+    if requirement is None:
+        return
+    required_ids = set(requirement['document_ids'])
+    covered_ids = set()
+    complete_record_ids = set()
+    calculation_records = []
+    calculation_outputs = {}
+    for reader in readers.values():
+        source_ids = {
+            source.get('document_id') for source in reader.lineage_sources()
+            if isinstance(source, dict) and source.get('document_id')
+        }
+        covered_ids.update(source_ids)
+        producer = reader.reference.producer
+        if (
+            reader.result_kind == 'records-v1'
+            and reader.reference.output_name == 'records'
+            and reader.completeness.status == 'complete'
+            and producer.capability_id in ('tabular_analyze', 'tabular_merge')
+        ):
+            complete_record_ids.update(source_ids)
+            if producer.capability_id == 'tabular_analyze':
+                calculation_records.append((reader, source_ids))
+        if producer.capability_id == 'tabular_analyze':
+            calculation_outputs.setdefault(producer.step_id, set()).add(reader.reference.output_name)
+    if not required_ids <= covered_ids:
+        raise ResultContractError('result_tabular_sources_incomplete')
+    if requirement['mode'] == 'overview':
+        return
+    if not required_ids <= complete_record_ids:
+        raise ResultContractError('result_tabular_records_incomplete')
+    if requirement['mode'] == 'complete_records':
+        return
+    qualifying = [
+        (reader, source_ids) for reader, source_ids in calculation_records
+        if required_ids <= source_ids
+    ]
+    if len(qualifying) != 1:
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    reader = qualifying[0][0]
+    if not {'records', 'lineage', 'coverage'} <= calculation_outputs.get(reader.reference.producer.step_id, set()):
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    manifest = service._load_manifest(reader.reference)
+    outputs = manifest.get('outputs') or {}
+    if any(
+        not isinstance(outputs.get(name), dict)
+        or outputs[name].get('kind') != kind
+        or (outputs[name].get('completeness') or {}).get('status') != 'complete'
+        for name, kind in (
+            ('records', 'records-v1'), ('lineage', 'records-v1'), ('coverage', 'structured-v1'),
+        )
+    ):
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    coverage_reader = next((
+        candidate for candidate in readers.values()
+        if candidate.reference.producer == reader.reference.producer
+        and candidate.reference.output_name == 'coverage'
+    ), None)
+    if coverage_reader is None:
+        raise ResultContractError('result_tabular_calculation_incomplete')
+    coverage = read_complete_input(coverage_reader)
+    if (
+        type(coverage) is not dict
+        or coverage.get('complete') is not True
+        or (coverage.get('operation_spec') or {}).get('version') != 'tabular-relate-v1'
+        or {
+            snapshot.get('document_id')
+            for snapshot in coverage.get('source_snapshots') or []
+            if isinstance(snapshot, dict) and snapshot.get('document_id')
+        } != required_ids
+    ):
+        raise ResultContractError('result_tabular_calculation_incomplete')
+
+
 def read_complete_input(reader, *, max_bytes=MAX_VALUE_BYTES):
     """Exhaust the authoritative reader, including its final integrity/access checks."""
     if reader.reference.size_bytes > max_bytes:

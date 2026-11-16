@@ -54,6 +54,7 @@ from functions_orchestration_result_contracts import (
 from functions_orchestration_result_runtime import (
     raise_source_service_failure, read_complete_input, read_result_document_citations,
     read_result_source_coverage, require_result_service, resolve_step_inputs,
+    validate_tabular_requirement_readers,
 )
 from functions_orchestration_results import MAX_VALUE_BYTES, NamedOutput, ResultUnavailableError
 from functions_orchestration_schema import (
@@ -620,6 +621,7 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
     try:
         with service.read_operation():
             readers = resolve_step_inputs(step, context)
+            validate_tabular_requirement_readers(step, readers, service)
             recheck()
             if sum(reader.reference.size_bytes for reader in readers.values()) > MAX_VALUE_BYTES:
                 raise ResultContractError('result_requires_streaming')
@@ -844,6 +846,25 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                     values[specification['name']] = place_image_tokens(value, titles)
                 elif specification.get('profile') == PREPARED_SLIDE_DECK_VERSION:
                     values[specification['name']] = place_deck_images(value, titles)
+            provenance_input = step['arguments'].get('annotation_provenance_input')
+            if provenance_input:
+                from functions_orchestration_excel import project_word_comment_provenance
+
+                provenance = inputs[provenance_input]
+                if provenance['kind'] != 'structured-v1':
+                    raise ResultContractError('result_annotation_provenance_invalid')
+                try:
+                    values[outputs[0]['name']] = project_word_comment_provenance(
+                        values[outputs[0]['name']],
+                        provenance['value'],
+                        {
+                            source.get('document_id')
+                            for source in readers[provenance_input].lineage_sources()
+                            if isinstance(source, dict) and source.get('document_id')
+                        },
+                    )
+                except ValueError as exc:
+                    raise ResultContractError('result_annotation_provenance_invalid') from exc
             for specification in outputs:
                 try:
                     validate_prepared_output(

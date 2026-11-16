@@ -19672,14 +19672,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
+        "module_sha256": "f38abba9dc328d0699c577a0363b2738a71c57e0846337bcb88780d8bb9ed896"
       },
       "classification": "sdk-compatible",
-      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_checkpoints.py::CheckpointStore._write": {
       "boundary": {
@@ -19693,12 +19693,12 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
+        "module_sha256": "f38abba9dc328d0699c577a0363b2738a71c57e0846337bcb88780d8bb9ed896"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore._write: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "CheckpointStore._write: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/functions_orchestration_checkpoints.py::CheckpointStore.adopt_claim": {
       "boundary": {
@@ -19712,12 +19712,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
+        "module_sha256": "f38abba9dc328d0699c577a0363b2738a71c57e0846337bcb88780d8bb9ed896"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.adopt_claim: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "CheckpointStore.adopt_claim: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/functions_orchestration_checkpoints.py::CheckpointStore.delete_payloads": {
       "boundary": {
@@ -19737,12 +19737,12 @@
           }
         ],
         "batches": [],
-        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
+        "module_sha256": "f38abba9dc328d0699c577a0363b2738a71c57e0846337bcb88780d8bb9ed896"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.delete_payloads: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "CheckpointStore.delete_payloads: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/functions_orchestration_checkpoints.py::CheckpointStore.fence": {
       "boundary": {
@@ -19766,14 +19766,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
+        "module_sha256": "f38abba9dc328d0699c577a0363b2738a71c57e0846337bcb88780d8bb9ed896"
       },
       "classification": "sdk-compatible",
-      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Checkpoint _verify accepts dict subclasses; nested manifests/state are plain SDK JSON and publication/control values use mapping fields. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_checkpoints.py::CheckpointStore.has_manifest": {
       "boundary": {
@@ -19787,12 +19787,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
+        "module_sha256": "f38abba9dc328d0699c577a0363b2738a71c57e0846337bcb88780d8bb9ed896"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.has_manifest: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "CheckpointStore.has_manifest: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/functions_orchestration_checkpoints.py::CheckpointStore.initialize": {
       "boundary": {
@@ -19806,12 +19806,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "5b04fc802c5c09e74ad7fd14428f3f2257847295d3b2635d01ae069dcb995d19"
+        "module_sha256": "f38abba9dc328d0699c577a0363b2738a71c57e0846337bcb88780d8bb9ed896"
       },
       "classification": "response-unused",
-      "contract": "CheckpointStore.initialize: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged.",
-      "evidence_scope": "source-review",
-      "tests": []
+      "contract": "CheckpointStore.initialize: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review 0.261.380: Module-only addition of completeness helpers using existing chunked, lifecycle-fenced payload methods; this storage owner AST and response consumer are unchanged. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
+      "tests": [],
+      "evidence_scope": "source-review"
     },
     "application/single_app/functions_orchestration_collaboration.py::_refresh_mirrored_answer": {
       "boundary": {
@@ -19907,10 +19907,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
+        "module_sha256": "d4e21cec2847a579e7d2d8ece3988b637337ccdffc7eadd24a5386dc10c67244"
       },
       "classification": "sdk-compatible",
-      "contract": "Authorized chat-attachment readiness uses partitioned query rows, which remain plain dictionaries; workspace manifests and readiness checks consume field projections without changing strict reference validation. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
+      "contract": "Authorized chat-attachment readiness uses partitioned query rows, which remain plain dictionaries; workspace manifests and readiness checks consume field projections without changing strict reference validation. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_chat_attachment_reference_readiness_query"
       ],
@@ -19928,10 +19928,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
+        "module_sha256": "d4e21cec2847a579e7d2d8ece3988b637337ccdffc7eadd24a5386dc10c67244"
       },
       "classification": "sdk-compatible",
-      "contract": "Partitioned message point mappings are checked for conversation identity, image/file role and supported filename; only a plain candidate DTO is emitted, never the SDK document. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
+      "contract": "Partitioned message point mappings are checked for conversation identity, image/file role and supported filename; only a plain candidate DTO is emitted, never the SDK document. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_image_reference_candidates_use_partitioned_message_read"
       ],
@@ -19949,10 +19949,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
+        "module_sha256": "d4e21cec2847a579e7d2d8ece3988b637337ccdffc7eadd24a5386dc10c67244"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping is authorized through user_id and passed to Mapping-compatible scope-lock readers; missing or foreign conversations retain ElicitationContextError rather than an empty fallback. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
+      "contract": "The conversation point mapping is authorized through user_id and passed to Mapping-compatible scope-lock readers; missing or foreign conversations retain ElicitationContextError rather than an empty fallback. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_sources.py::test_sdk_owned_elicitation_conversation_authorizes_current_owner"
       ],
@@ -19970,10 +19970,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
+        "module_sha256": "d4e21cec2847a579e7d2d8ece3988b637337ccdffc7eadd24a5386dc10c67244"
       },
       "classification": "sdk-compatible",
-      "contract": "Bounded partitioned query rows are plain dictionaries. Current ownership, audience and source authorization are applied before emitting metadata-only plain candidate DTOs; content and SDK point documents are never emitted to the planner. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
+      "contract": "Bounded partitioned query rows are plain dictionaries. Current ownership, audience and source authorization are applied before emitting metadata-only plain candidate DTOs; content and SDK point documents are never emitted to the planner. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
       ],
@@ -19991,10 +19991,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "a211e0f56f5ddcc52bed1eb98eb1257d5f8e9b4795a441b1282231233977a8f9"
+        "module_sha256": "d4e21cec2847a579e7d2d8ece3988b637337ccdffc7eadd24a5386dc10c67244"
       },
       "classification": "sdk-compatible",
-      "contract": "The real SDK message point mapping is consumed through Mapping-compatible field access for current conversation identity, upload readiness and masking. Authorized saved text is read only after this check and late masking retains the failure path. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked.",
+      "contract": "The real SDK message point mapping is consumed through Mapping-compatible field access for current conversation identity, upload readiness and masking. Authorized saved text is read only after this check and late masking retains the failure path. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Version-only re-review for 0.261.443 order-independent source-set comparison: this owner's AST and storage calls are unchanged and only its enclosing module fingerprint changed; its SDK-default owner-runtime evidence was re-executed offline with network access blocked. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text"
       ],
@@ -20076,11 +20076,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
+        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner's AST or SDK response consumers. The published point mapping is projected with items() into plain message JSON and compared with publication_documents_match; conditional publication fields, all domain values and Mapping-compatible mirroring remain unchanged. Renewed SDK-default runtime coverage exercises publication, result citations, failure finalization and ownership fences.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner's AST or SDK response consumers. The published point mapping is projected with items() into plain message JSON and compared with publication_documents_match; conditional publication fields, all domain values and Mapping-compatible mirroring remain unchanged. Renewed SDK-default runtime coverage exercises publication, result citations, failure finalization and ownership fences. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_analysis_citation_delivery.py",
@@ -20091,7 +20090,8 @@
         "functional_tests/test_orchestration_harness_execution.py::test_publication_numeric_roundtrip_still_rejects_durable_damage",
         "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery",
         "functional_tests/test_orchestration_retained_analysis_publication.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._read_delivery_metadata": {
       "boundary": {
@@ -20105,16 +20105,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
+        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.439: only failure diagnostics changed in this module; this owner and its SDK point consumers are unchanged. The previous assistant mapping is checked for conversation/run ownership and projected into plain model/reasoning dictionaries. No SDK wrapper reaches an exact-dictionary contract, and metadata reads stay outside retained-result operation reuse. Renewed SDK-default runtime evidence verifies delivery metadata and recovery.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.439: only failure diagnostics changed in this module; this owner and its SDK point consumers are unchanged. The previous assistant mapping is checked for conversation/run ownership and projected into plain model/reasoning dictionaries. No SDK wrapper reaches an exact-dictionary contract, and metadata reads stay outside retained-result operation reuse. Renewed SDK-default runtime evidence verifies delivery metadata and recovery. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_delivery_refresh_reuses_real_saved_results_without_any_execution"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._regeneration_thread": {
       "boundary": {
@@ -20128,16 +20128,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
+        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner. The SDK question mapping supplies role and nested plain thread metadata; only the validated nested thread dictionary is copied. Regeneration metadata remains outside result-read caching. Renewed SDK-default runtime evidence verifies original identity and forced review.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner. The SDK question mapping supplies role and nested plain thread metadata; only the validated nested thread dictionary is copied. Regeneration metadata remains outside result-read caching. Renewed SDK-default runtime evidence verifies original identity and forced review. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_message_regeneration.py::test_regeneration_forces_review_despite_auto_and_disabled_approval_override"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::HarnessExecution._touch_conversation": {
       "boundary": {
@@ -20151,16 +20151,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
+        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.439: only failure diagnostics changed; this owner's response boundary is unchanged. The normalized owned conversation retains its ETag for IfNotModified replacement, and the returned SDK mapping is consumed by the Mapping-compatible cache invalidator. Lost-CAS retries preserve current ownership and do not reuse result-read snapshots. Renewed SDK-default runtime coverage verifies conditional updates and delivery.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.439: only failure diagnostics changed; this owner's response boundary is unchanged. The normalized owned conversation retains its ETag for IfNotModified replacement, and the returned SDK mapping is consumed by the Mapping-compatible cache invalidator. Lost-CAS retries preserve current ownership and do not reuse result-read snapshots. Renewed SDK-default runtime coverage verifies conditional updates and delivery. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_selected_result_citations_reach_headless_message_cache_and_delivery"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_execution.py::_conversation_context": {
       "boundary": {
@@ -20179,16 +20179,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "1dc7915d553b0f13a2394cd2a24c7b1d137003413303dde2887920d8b9fe540c"
+        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.439: failure diagnostic changes do not alter this owner or its SDK response consumers. Partitioned message mappings are reauthorized, visibility-checked and converted with normalize_history_message before strict saved-snapshot validation. Fingerprint and shared-access checks still precede full source reads; result-operation snapshots cannot replace them. Renewed SDK-default runtime tests cover contextual messages and ownership.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.439: failure diagnostic changes do not alter this owner or its SDK response consumers. Partitioned message mappings are reauthorized, visibility-checked and converted with normalize_history_message before strict saved-snapshot validation. Fingerprint and shared-access checks still precede full source reads; result-operation snapshots cannot replace them. Renewed SDK-default runtime tests cover contextual messages and ownership. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_action_credentials_orchestration_continuation.py",
         "functional_tests/test_orchestration_conversation_sources.py",
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_operations.py::OperationJournal._change": {
       "boundary": {
@@ -20514,16 +20514,16 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.416: publication matching owner AST is unchanged. SDK guard/message mappings supply ownership and digest fields; metadata-stripped plain projections reach publication_documents_match, with lease checks before and after the probe.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: publication matching owner AST is unchanged. SDK guard/message mappings supply ownership and digest fields; metadata-stripped plain projections reach publication_documents_match, with lease checks before and after the probe. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_harness_execution.py::test_publication_numeric_roundtrip_completes_without_reexecution",
         "functional_tests/test_orchestration_harness_execution.py::test_publication_numeric_roundtrip_still_rejects_durable_damage"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_recovery.py::ExecutionLease.ensure_publication_guard": {
       "boundary": {
@@ -20547,14 +20547,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.416: guard admission owner AST is unchanged. Returned writes are unused; conflicting SDK guard mappings supply owner/token/claim fields and original _etag for conditional replacement. Metadata stripping constructs a plain replacement.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: guard admission owner AST is unchanged. Returned writes are unused; conflicting SDK guard mappings supply owner/token/claim fields and original _etag for conditional replacement. Metadata stripping constructs a plain replacement. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_recovery.py::ExecutionLease.publish_message": {
       "boundary": {
@@ -20584,14 +20584,14 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.416: message publication owner AST is unchanged. SDK point mappings feed ownership/retraction checks; metadata-stripped plain bodies and original ETags fence atomic publication. Batch responses are unused.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: message publication owner AST is unchanged. SDK point mappings feed ownership/retraction checks; metadata-stripped plain bodies and original ETags fence atomic publication. Batch responses are unused. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_recovery.py::_replace": {
       "boundary": {
@@ -20605,18 +20605,18 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "normalized-strict",
-      "contract": "Review 0.261.416: run replacement owner AST is unchanged. Input ETags fence IfNotModified; normalize_cosmos_document returns a plain document before downstream lease/checkpoint contracts. Non-document responses take CheckpointError.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: run replacement owner AST is unchanged. Input ETags fence IfNotModified; normalize_cosmos_document returns a plain document before downstream lease/checkpoint contracts. Non-document responses take CheckpointError. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_recovery.py::claim_waiting_continuation": {
       "boundary": {
-        "sha256": "715768032cef5aebcaa27948a57244fd7604957d8a9daf0c81d8ea16991bd2ef",
+        "sha256": "4ecaed1fae496dca5f082f6f391e98e8be266581a08d585da70c45dd9ee3d8fb",
         "points": [
           {
             "method": "read_item",
@@ -20626,14 +20626,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.416: waiting-continuation owner AST is unchanged. SDK publication-guard mappings are checked for actor/conversation/run identity before constructing a plain claim descriptor; run claims use the normalized replacement owner and conditional ETags.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: waiting-continuation owner AST is unchanged. SDK publication-guard mappings are checked for actor/conversation/run identity before constructing a plain claim descriptor; run claims use the normalized replacement owner and conditional ETags. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_recovery.py::cleanup_conversation_checkpoints": {
       "boundary": {
@@ -20658,14 +20658,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.416: cleanup owner AST is unchanged. Conversation SDK mappings supply owner/_etag; metadata-stripped plain replacements fence deletion and write responses are unused. Partitioned query rows remain plain.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: cleanup owner AST is unchanged. Conversation SDK mappings supply owner/_etag; metadata-stripped plain replacements fence deletion and write responses are unused. Partitioned query rows remain plain. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_recovery.py::fence_publication": {
       "boundary": {
@@ -20689,14 +20689,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.416: publication-fence owner AST is unchanged. SDK guard mappings supply owner/_etag; metadata-stripped plain tombstones use conditional replacement. Write responses are unused and conflicts cannot borrow another owner.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: publication-fence owner AST is unchanged. SDK guard mappings supply owner/_etag; metadata-stripped plain tombstones use conditional replacement. Write responses are unused and conflicts cannot borrow another owner. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_recovery.py::prepare_retry": {
       "boundary": {
@@ -20710,17 +20710,17 @@
             "response": "unused"
           }
         ],
-        "module_sha256": "939dc16879dce246c6b7e4b0678c6637903aa9aeec2a0b382a5cd78e219b7fe9"
+        "module_sha256": "fa400e70cd599d40eb336785f50b645ee7b2e442736e692a7cc354222e513e6c"
       },
       "classification": "response-unused",
-      "contract": "Review 0.261.416: retry batch response bodies remain unused. Owned rereads normalize SDK documents before strict binding/checkpoint validation and plain child publication. Check-only retry scope is server-derived; retained candidate reuse preserves correction allowance and refuses missing checkpoints instead of regenerating.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.416: retry batch response bodies remain unused. Owned rereads normalize SDK documents before strict binding/checkpoint validation and plain child publication. Check-only retry scope is server-derived; retained candidate reuse preserves correction allowance and refuses missing checkpoints instead of regenerating. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls.",
       "tests": [
         "functional_tests/test_orchestration_cosmos_response_contract.py",
         "functional_tests/test_orchestration_available_information.py::test_saved_complete_only_failure_can_continue_without_reanalyzing",
         "functional_tests/test_orchestration_search_result_integrity.py",
         "functional_tests/test_task_completeness_runtime.py::test_explicit_retry_rechecks_retained_candidate_without_regeneration"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_orchestration_runs.py::_publish_replanned_run": {
       "boundary": {
@@ -23542,14 +23542,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "b58a48e4c98625c660da02e8a8629d3e58ce24d187dcc612345017501b326e0e"
+        "module_sha256": "332ea36a3308864007634d3605d155ae0a79f39c1ae3f58499ae4e18b014ef98"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.439: native report-section validation changed the module fingerprint, not this owner's point read or ownership checks. It consumes CosmosDict with Mapping access and validates conversation/user identity. Renewed real-owner SDK-default tests verify authorized and denied responses without casts or ETag loss.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.439: native report-section validation changed the module fingerprint, not this owner's point read or ownership checks. It consumes CosmosDict with Mapping access and validates conversation/user identity. Renewed real-owner SDK-default tests verify authorized and denied responses without casts or ETag loss. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_search_service.py::_resolve_chat_upload_context": {
       "boundary": {
@@ -23569,14 +23569,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "b58a48e4c98625c660da02e8a8629d3e58ce24d187dcc612345017501b326e0e"
+        "module_sha256": "332ea36a3308864007634d3605d155ae0a79f39c1ae3f58499ae4e18b014ef98"
       },
       "classification": "sdk-compatible",
-      "contract": "Review 0.261.439: native report compatibility validation is independent of this unchanged upload owner. SDK-default point documents are consumed through Mapping getters and metadata-query rows stay plain; the resolved document descriptor is plain JSON. Renewed real-owner SDK tests verify conversation authorization and preserved source identity.",
-      "evidence_scope": "owner-runtime",
+      "contract": "Review 0.261.439: native report compatibility validation is independent of this unchanged upload owner. SDK-default point documents are consumed through Mapping getters and metadata-query rows stay plain; the resolved document descriptor is plain JSON. Renewed real-owner SDK tests verify conversation authorization and preserved source identity. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_workflow_authoring_sdk_boundaries.py::test_search_upload_owners_consume_real_sdk_point_documents"
-      ]
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::_clear_stale_active_group": {
       "boundary": {
@@ -31669,10 +31669,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The conversation point mapping proves owner/nondeleted state through field access and now rechecks shared-source membership before dependent reads; missing or unauthorized records retain ConversationContextError. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
@@ -31691,10 +31691,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Artifact point mappings are JSON-encoded by the existing checkpoint fingerprint helper; SDK dictionary subclasses are supported and nested artifact validation is unchanged. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31712,10 +31712,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The saved turn point mapping is normalized by normalize_history_message before role/conversation/fingerprint validation; history-disabled snapshots fail before reuse and source authorization is rechecked. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_conversation_sources.py"
@@ -31744,10 +31744,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Requested conversation point mappings supply owner/scope/deletion fields; constructed create/upsert bodies are plain and write responses are discarded. Shared ownership is established separately, not inferred from wrapper type. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31765,10 +31765,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Point answer mappings supply conversation/visibility and nested thread fields; metadata patching retains its existing owner and stale or missing answers are not silently restored. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31792,10 +31792,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "A cutoff point mapping supplies authorized conversation/role/timestamp; plain bounded query rows pass through screening and saved-analysis sanitization before plain snapshot construction. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31813,10 +31813,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Ledger revalidation consumes plain projected query rows through current conversation ownership, masking, soft-deletion and active-thread checks. Requested source identity DTOs are projected separately from successful reads, not used as prior permission. Hidden turns cannot restore sources; current manifest authorization is required. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Ledger revalidation consumes plain projected query rows through current conversation ownership, masking, soft-deletion and active-thread checks. Requested source identity DTOs are projected separately from successful reads, not used as prior permission. Hidden turns cannot restore sources; current manifest authorization is required. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_selected_source_planning.py::test_hidden_source_turn_cannot_restore_its_requested_documents"
@@ -31835,10 +31835,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Historical context discovery consumes plain partitioned query rows, applies retry-prefix/screening rules and builds a bounded plain conversation snapshot. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31861,10 +31861,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Conversation SDK mappings feed existing mapping-compatible shared authorization. The saved question is normalized by public_planning_message before projection/mirroring; private claims are not shared, and required admission mirror failures are explicit. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Conversation SDK mappings feed existing mapping-compatible shared authorization. The saved question is normalized by public_planning_message before projection/mirroring; private claims are not shared, and required admission mirror failures are explicit. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_shared_conversations.py"
       ],
@@ -31882,10 +31882,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "The review-required question point mapping uses nested metadata mapping updates and the existing conditional metadata writer. Planning ownership is checked before run publication; no raw SDK question reaches an exact-dictionary JSON contract. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The review-required question point mapping uses nested metadata mapping updates and the existing conditional metadata writer. Planning ownership is checked before run publication; no raw SDK question reaches an exact-dictionary JSON contract. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_explicit_retry_uses_saved_inputs_and_one_question",
         "functional_tests/test_orchestration_message_regeneration.py"
@@ -31904,10 +31904,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The assistant point mapping supplies role/deletion/mask metadata to reply_is_retracted; absence is treated as removed, never as an empty valid response. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -31925,10 +31925,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "response-unused",
-      "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The message upsert response is discarded; screening and source-availability checks occur before publication, and persistence errors retain the existing failure path. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [],
       "evidence_scope": "owner-runtime"
     },
@@ -31949,10 +31949,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Question SDK point mappings are consumed by normalize_history_message and metadata mapping operations. The projected history dictionary, not the SDK wrapper, is fingerprinted. Create-only admission and conditional lifecycle writes preserve the original question. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Question SDK point mappings are consumed by normalize_history_message and metadata mapping operations. The projected history dictionary, not the SDK wrapper, is fingerprinted. Create-only admission and conditional lifecycle writes preserve the original question. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py"
       ],
@@ -31975,10 +31975,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "The question create response is discarded. A racing 409 rereads an SDK point and validates the existing question instead of upserting over it; mismatched content fails without a save acknowledgement. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The question create response is discarded. A racing 409 rereads an SDK point and validates the existing question instead of upserting over it; mismatched content fails without a save acknowledgement. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_planning_persistence.py::test_concurrent_question_creation_never_upserts_over_the_winner"
       ],
@@ -32001,10 +32001,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "The conversation point mapping supplies owner/deletion and mutable index fields; replace response is discarded and the Mapping-compatible cache invalidator consumes the authorized input. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32022,10 +32022,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Artifact point mappings are checked by field access for conversation/user/visibility and nested content metadata; no top-level exact-dictionary result contract consumes them. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py"
       ],
@@ -32043,10 +32043,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Source revalidation consumes plain bounded query rows through screening and strict saved-snapshot checks; no point wrapper is repaired into a domain context. Selected-history projection uses plain SDK query rows, existing visibility/fingerprint checks and admitted typed result references; new full-text projection and assistant-only result selection are exercised through real planning, execution and editor routes with SDK-default containers. Renewed for source-continuation and typed-read planning: this owner's body and storage calls are unchanged; its SDK-default owner-runtime evidence was re-executed. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_conversation_context_routes.py",
         "functional_tests/test_orchestration_followup_citation_provenance.py"
@@ -32055,7 +32055,7 @@
     },
     "application/single_app/route_backend_orchestration.py::register_route_backend_orchestration.orchestration_plan": {
       "boundary": {
-        "sha256": "5f028ae8a402b55c669c79536deb8b4cd0f3f57df78bf60edeb370592f836f62",
+        "sha256": "edd9a45e4e8b882026d91835143a1165b58d4a7bdd0a1f59025bd3d68daded93",
         "points": [
           {
             "method": "read_item",
@@ -32065,10 +32065,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "fbdf2d1dac5cce2ed229fefc079bdca99a17716b2fc32d239df2b761b831798d"
+        "module_sha256": "ad2abf790fb7c2918b995be727880c31e63f2bc4a870cf00d8d0c7181e893634"
       },
       "classification": "sdk-compatible",
-      "contract": "Clarification conversation point mappings remain Mapping-compatible and owner-checked. Referenced visible failed-turn source IDs retain original scope/filter constraints and all nine inputs are resolved through current authorized plain manifest DTOs before planning. Revocation fails before a new plan; no SDK point document enters strict planner source/result contracts. Existing conditional planning owners still publish. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests.",
+      "contract": "Clarification conversation point mappings remain Mapping-compatible and owner-checked. Referenced visible failed-turn source IDs retain original scope/filter constraints and all nine inputs are resolved through current authorized plain manifest DTOs before planning. Revocation fails before a new plan; no SDK point document enters strict planner source/result contracts. Existing conditional planning owners still publish. Version-only re-review after merging Development 0.261.436 and assigning 0.261.437: owner and storage-call ASTs are unchanged; post-merge SDK-default owner suites passed 197 tests and the feature suites passed 138 tests. Re-reviewed 0.261.444: module AST changes are limited to source-choice, safe diagnostics, recovery guard metadata, PPTX focus and complete-row handoff; reviewed Cosmos response consumers and storage calls remain unchanged.",
       "tests": [
         "functional_tests/test_orchestration_attachment_native_evidence.py::test_http_existing_image_repairs_redundant_choice_then_reads_authorized_text",
         "functional_tests/test_orchestration_planning_persistence.py::test_typed_contract_failure_survives_reload_and_clears_on_explicit_retry",

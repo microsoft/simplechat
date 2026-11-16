@@ -17,6 +17,9 @@ NATIVE_INSPECTION_ERROR_MESSAGES = {
     "native_cursor_source_changed": "The native inspection cursor belongs to a different source or section.",
     "native_cursor_out_of_range": "The native inspection cursor is outside the inventory.",
     "native_cursor_fragment_invalid": "The native record continuation is invalid.",
+    "native_slide_number_invalid": "The native slide number must be a positive integer.",
+    "native_slide_number_unsupported": "Native slide filtering applies only to PowerPoint object inspection.",
+    "native_slide_number_out_of_range": "The native slide number is outside the presentation.",
     "native_comments_format_unsupported": (
         "The comments report section supports Word and Excel, not this file format. "
         "Use accessibility, style or issues for supported native metadata and a content reader "

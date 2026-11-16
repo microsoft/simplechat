@@ -1233,6 +1233,7 @@ def get_document_accessibility_payload(
     native_section="comments",
     native_cursor=None,
     native_page_size=100,
+    native_slide_number=None,
     sheet_name=None,
     cell_range=None,
     _native_max_bytes=14000,
@@ -1289,6 +1290,7 @@ def get_document_accessibility_payload(
         native_inspection = inspect_native_document(
             current_document, source_bytes, extension, section=native_section,
             cursor=native_cursor, page_size=native_page_size, max_bytes=_native_max_bytes,
+            native_slide_number=native_slide_number,
             _audit_records=native_source_records,
         )
         stored_metadata = native_inspection["metadata"]

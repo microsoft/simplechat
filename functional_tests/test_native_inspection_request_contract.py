@@ -1,8 +1,9 @@
 # test_native_inspection_request_contract.py
 """Native inspection requests, bounded all-section paging and safe diagnostics.
 
-Version: 0.261.425
+Version: 0.261.444
 Implemented in: 0.261.425
+Focused PPTX slide inspection added in: 0.261.444
 Real native readers and the existing private artifact store run offline. Missing
 data remains evidence; invalid requests and stale sources remain genuine errors.
 """
@@ -24,6 +25,7 @@ from functions_native_audit import (
 )
 from functions_native_document_inspection import inspect_native_document
 from native_document_evidence import NativeInspectionRequestError
+from functions_pptx_native_evidence import inspect_pptx_slide_objects
 from test_excel_inventory_persistence import inventory_store
 from test_native_document_fidelity import native_source
 
@@ -192,6 +194,100 @@ def test_native_request_errors_are_not_empty_successes(native_source, arguments,
     with pytest.raises(NativeInspectionRequestError) as failure:
         inspect_native_document({"id": "source"}, data, ".pdf", **arguments)
     assert failure.value.code == code
+
+
+def test_native_pptx_slide_filter_paginates_only_that_slide_and_fences_cursors(monkeypatch):
+    source = b"synthetic native presentation bytes"
+    digest = hashlib.sha256(source).hexdigest()
+    metadata = {
+        "format": "pptx", "source_sha256": digest, "schema_version": "1.0",
+        "native_inspection_status": "complete", "native_package_verified": True,
+        "native_parent_truncated": False, "slide_count": 2,
+    }
+    details = {
+        1: {"native_objects": {"records": [
+            {"id": "slide-1-object", "slide_number": 1, "object_id": "1",
+             "xml_ordinal": 1, "text": "First slide", "text_complete": True},
+        ]}},
+        2: {"native_objects": {"records": [
+            {"id": "slide-2-a", "slide_number": 2, "object_id": "2",
+             "xml_ordinal": 1, "text": "Second", "text_complete": True},
+            {"id": "slide-2-b", "slide_number": 2, "object_id": "3",
+             "xml_ordinal": 2, "text": "slide", "text_complete": True},
+        ]}},
+    }
+    monkeypatch.setitem(
+        inspect_native_document.__globals__, "extract_office_accessibility_metadata",
+        lambda *_args, **_kwargs: (metadata, details),
+    )
+    document = {"id": "deck", "version": 1, "_etag": "revision-1"}
+    first = inspect_native_document(
+        document, source, ".pptx", section="objects", page_size=1,
+        max_bytes=65536, native_slide_number=2,
+    )
+    assert [record["object_id"] for record in first["page"]["records"]] == ["2"]
+    assert first["page"]["schema_version"] == "1.3"
+    with pytest.raises(NativeInspectionRequestError) as changed:
+        inspect_native_document(
+            document, source, ".pptx", section="objects", cursor=first["page"]["next_cursor"],
+            native_slide_number=1,
+        )
+    assert changed.value.code == "native_cursor_source_changed"
+    assert changed.value.validation_rule == "native_cursor_native_slide_number_changed"
+    second = inspect_native_document(
+        document, source, ".pptx", section="objects", cursor=first["page"]["next_cursor"],
+        page_size=1, native_slide_number=2,
+    )
+    assert [record["object_id"] for record in second["page"]["records"]] == ["3"]
+    assert second["page"]["has_more"] is False
+
+
+def test_pptx_native_objects_keep_xml_ordinal_and_direct_text():
+    from xml.etree import ElementTree
+
+    root = ElementTree.fromstring("""
+        <p:sld xmlns:p="urn:presentation" xmlns:a="urn:drawing">
+          <p:cSld><p:spTree>
+            <p:sp>
+              <p:nvSpPr><p:cNvPr id="7" name="First"/><p:nvPr/></p:nvSpPr>
+              <p:spPr><a:noFill/></p:spPr>
+              <p:txBody><a:p><a:r><a:t>First text</a:t></a:r></a:p></p:txBody>
+            </p:sp>
+            <p:sp>
+              <p:nvSpPr><p:cNvPr id="11" name="Second"/><p:nvPr/></p:nvSpPr>
+              <p:spPr><a:noFill/></p:spPr>
+              <p:txBody><a:p><a:r><a:t>Second text</a:t></a:r></a:p></p:txBody>
+            </p:sp>
+          </p:spTree></p:cSld>
+        </p:sld>
+    """)
+    inspected = inspect_pptx_slide_objects(root, 6, "ppt/slides/slide6.xml")
+    assert [
+        (item["xml_ordinal"], item["object_id"], item["text"]) for item in inspected["records"]
+    ] == [(1, "7", "First text"), (2, "11", "Second text")]
+
+
+def test_native_pptx_slide_filter_validates_exact_contract(monkeypatch):
+    source = b"bounded native presentation"
+    metadata = {
+        "source_sha256": hashlib.sha256(source).hexdigest(),
+        "native_inspection_status": "complete", "native_package_verified": True,
+        "native_parent_truncated": False, "slide_count": 1,
+    }
+    monkeypatch.setitem(
+        inspect_native_document.__globals__, "extract_office_accessibility_metadata",
+        lambda *_args, **_kwargs: (metadata, {1: {"native_objects": {"records": []}}}),
+    )
+    with pytest.raises(NativeInspectionRequestError) as unsupported:
+        inspect_native_document(
+            {"id": "deck"}, source, ".pptx", section="all", native_slide_number=1,
+        )
+    assert unsupported.value.code == "native_slide_number_unsupported"
+    with pytest.raises(NativeInspectionRequestError) as out_of_range:
+        inspect_native_document(
+            {"id": "deck"}, source, ".pptx", section="objects", native_slide_number=2,
+        )
+    assert out_of_range.value.code == "native_slide_number_out_of_range"
 
 
 def test_native_audit_coverage_requires_a_contiguous_completed_page_chain(native_source):

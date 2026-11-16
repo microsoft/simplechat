@@ -1,8 +1,9 @@
 # test_orchestration_waiting_continuation.py
 """Same-attempt wait continuation uses real leases, checkpoints and retained results.
 
-Version: 0.261.127
+Version: 0.261.444
 Implemented in: 0.261.127
+Waiting-claim guard diagnostics added in: 0.261.444
 Only storage transport and producer/model I/O are isolated.
 """
 
@@ -111,6 +112,8 @@ def test_duplicate_submission_cannot_dispatch_another_worker(waiting):
     with pytest.raises(waiting.recovery.RecoveryError) as failure:
         claim(waiting, submission='another-refresh')
     assert failure.value.code == 'execution_live'
+    assert failure.value.validation_rule == 'continuation_worker_live'
+    assert failure.value.stage == 'continuation_claim'
 
 
 def test_expired_claim_is_replaced_without_reviving_old_writers(waiting):

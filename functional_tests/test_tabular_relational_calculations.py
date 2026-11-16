@@ -1,9 +1,10 @@
 # test_tabular_relational_calculations.py
 """
 Functional tests for complete multi-file calculations and per-row lineage.
-Version: 0.261.443
+Version: 0.261.444
 Implemented in: 0.261.437
 Planner-visible grammar, column rules and content-free failure locations added in: 0.261.443
+Namespace-separated derived rejoins and evaluator diagnostics added in: 0.261.444
 
 These offline cases use unrelated schemas, precise source values and the real
 CSV/Excel readers. They do not invoke a model or change source documents.
@@ -171,6 +172,54 @@ def test_projection_and_filter_preserve_original_source_rows_before_a_join():
     })
     assert result["records"] == [{"code": "007", "amount": "0.30"}]
     assert result["lineage"][0]["sources"][1]["row_ranges"] == [[2, 2]]
+
+
+def test_shared_ancestor_rejoin_requires_explicit_disjoint_output_namespaces():
+    spec = {
+        "version": "tabular-relate-v1",
+        "datasets": [{"alias": "sales", "document_id": "sales"}],
+        "steps": [{
+            "id": "detail", "op": "project", "input": "sales",
+            "transform": transform(field("code", "sales.code"), field("units", "sales.units")),
+        }, {
+            "id": "totals", "op": "aggregate", "input": "sales",
+            "by": [{"name": "code", "column": "sales.code"}],
+            "measures": [{"name": "units", "operation": "sum", "column": "sales.units"}],
+        }, {
+            "id": "joined", "op": "join", "left": "detail", "right": "totals",
+            "how": "left", "cardinality": "many_to_one",
+            "on": [{"left": "detail.code", "right": "totals.code"}],
+        }],
+        "result": "joined",
+        "output": transform(
+            field("detail_units", "detail.units"),
+            field("total_units", "totals.units"),
+        ),
+    }
+    normalized = normalize_relational_spec(spec)
+    check_relational_columns(normalized, {"sales": ["code", "units"]})
+    result = run(spec, {"sales": b"code,units\nA,2\nA,3\nB,4\n"})
+    assert result["records"] == [
+        {"detail_units": "2", "total_units": "5"},
+        {"detail_units": "3", "total_units": "5"},
+        {"detail_units": "4", "total_units": "4"},
+    ]
+
+    spec["steps"][0] = {
+        "id": "detail", "op": "derive", "input": "sales",
+        "transform": transform(field("units_copy", "sales.units")),
+    }
+    spec["steps"][1] = {
+        "id": "totals", "op": "filter", "input": "sales",
+        "predicate": {"op": "gte", "left": {"source": "sales.units"}, "right": 0, "value_type": "number"},
+    }
+    spec["steps"][2]["on"] = [{"left": "sales.code", "right": "sales.code"}]
+    with pytest.raises(TabularRelationalError) as error:
+        normalize_relational_spec(spec)
+    assert error.value.code == "relational_spec_invalid"
+    assert error.value.detail == {
+        "check": "join_inputs_overlap", "step_index": 2, "step_op": "join",
+    }
 
 
 def source_chain(count):
@@ -671,9 +720,18 @@ def test_runtime_transformation_failures_have_a_stable_code_and_a_step_location(
     with pytest.raises(TabularTransformationEvaluationError) as error:
         run(join_spec(), {"sales": b"code,quantity\n007,\n", "catalog": b"sku,price\n007,0.10\n"})
     assert error.value.code == "numeric_value_is_empty_or_boolean"
-    assert error.value.detail == {"check": "step_evaluation", "step_op": "derive", "step_index": 1}
+    assert error.value.detail == {
+        "check": "step_evaluation", "step_op": "derive", "step_index": 1,
+        "category": "numeric_operand", "role": "arithmetic_operand",
+        "expected_type": "number", "field_index": 0, "expression_index": 2,
+        "value_index": 0, "left_category": "empty_text",
+    }
     assert native_error_diagnostics(error.value) == {
         "native_check": "step_evaluation", "native_step_op": "derive", "native_step_index": 1,
+        "native_category": "numeric_operand", "native_role": "arithmetic_operand",
+        "expected_type": "number", "native_field_index": 0,
+        "native_expression_index": 2, "native_value_index": 0,
+        "native_left_category": "empty_text",
     }
     spec = join_spec()
     spec["output"] = transform(field("rate", expression={

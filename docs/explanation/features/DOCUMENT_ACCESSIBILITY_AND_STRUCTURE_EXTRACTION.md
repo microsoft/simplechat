@@ -7,7 +7,8 @@
 **Native fidelity fixed/implemented in version: 0.261.424**
 **Native audit answer delivery fixed/implemented in version: 0.261.425**
 **Native language and bookmark facts, partial-page disclosure and exact prose values fixed in version: 0.261.443**
-**Related config.py version: `0.261.443`**
+**Focused PPTX native object inspection fixed in version: 0.261.444**
+**Related config.py version: `0.261.444`**
 
 ## 1. Overview and Purpose
 
@@ -42,6 +43,14 @@ decorative shapes, with object-linked run formatting and placeholder origins.
 Slide-local footer text is not master-derived content just because formatting
 can be inherited. Contrast is checked only for supported native solid colors
 with known foreground/background and text size; this is not rendered validation.
+
+Version **0.261.444** retains an explicit XML traversal ordinal, source part,
+object identity, direct native text and text-completeness state. For a focused
+PowerPoint object question, `native_slide_number` may be used only with
+`native_section="objects"`. Filtering happens before pagination and the slide
+number joins source identity, revision, section and schema version in the
+opaque cursor. A cursor cannot move to another slide or the old unfiltered
+sequence. This remains native metadata inspection, not rendered slide reading.
 
 For retained, authorized active PDF/PPTX sources, Document Search can inspect
 native evidence locally on request. `native_inspection.page` has bounded records

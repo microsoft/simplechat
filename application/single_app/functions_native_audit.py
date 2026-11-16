@@ -236,6 +236,7 @@ def build_native_audit(payload, *, _source_records=None):
                 "placeholder", "is_decorative", "control_representation", "control_type_state", "checked", "checked_state",
                 "transform", "parent_id",
                 "drawing_part", "object_id", "style_id", "feature_property_bag_part", "feature_bag_path",
+                "xml_ordinal", "text", "text_complete",
             ) if key in obj
         })
         fields(identity, location, obj.get("native_fields") or {

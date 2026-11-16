@@ -4,7 +4,7 @@ title: "Document Search"
 description: "Reference for the Document Search SimpleChat action."
 section: "Reference"
 audience: user
-version: "0.261.439"
+version: "0.261.444"
 ---
 
 <!-- action-slug: document-search -->
@@ -104,6 +104,17 @@ it does not add a PDF/PPTX native-comment API. Follow
 Page size is 1-200 records with a separate response-byte limit; long records have
 explicit fragments. Cursors are tied to the source bytes, document revision and
 section. A complete returned page is not necessarily a whole-file inventory.
+
+For PowerPoint object inspection, pass `native_slide_number` with
+`native_section="objects"` to page only that exact slide's native objects. Native
+object records retain XML ordinal and direct text/completeness. Focused cursors
+use their own schema revision and cannot be reused for another slide, a different
+section or an unfiltered inventory. `page_number` remains the separate option
+for stored page/slide chunk text.
+
+Omit `native_slide_number` for the normal unfiltered request. A supplied value
+must be a positive integer; explicit zero, negative, Boolean or otherwise
+invalid values are refused by the native owner rather than treated as omission.
 
 From **0.261.439**, PDF native `content`/`all` inspection includes source-bound
 page annotations, even when the PDF has no semantic tag tree. It preserves

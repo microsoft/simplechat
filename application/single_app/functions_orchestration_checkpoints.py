@@ -57,9 +57,14 @@ INPUT_FIELDS = (
 
 
 class CheckpointError(OrchestrationInvocationControlError):
-    def __init__(self, code='checkpoint_unavailable'):
+    def __init__(
+        self, code='checkpoint_unavailable', *, rule=None, stage=None, producer_capability_id=None,
+    ):
         self.failure = build_failure(code)
         self.code = self.failure['code']
+        self.validation_rule = rule
+        self.stage = stage
+        self.producer_capability_id = producer_capability_id
         super().__init__(self.failure['message'])
 
 
@@ -337,14 +342,25 @@ def restore_context(context, payload):
                         field != 'task_results' or previous.producer != value.producer
                         or previous.role != value.role
                     ):
-                        raise CheckpointError('recovery_changed')
+                        raise CheckpointError(
+                            'recovery_changed', rule='task_result_producer_changed',
+                            stage='checkpoint_result_restore',
+                            producer_capability_id=(
+                                previous.producer.capability_id
+                                if field == 'task_results' else value.producer.capability_id
+                            ),
+                        )
                     if value.status == 'pending' and not value.outputs and previous.status in ('complete', 'partial'):
                         continue
                     if not (
                         previous.status == 'pending' and not previous.outputs
                         and value.status in ('complete', 'partial')
                     ):
-                        raise CheckpointError('recovery_changed')
+                        raise CheckpointError(
+                            'recovery_changed', rule='task_result_state_transition_changed',
+                            stage='checkpoint_result_restore',
+                            producer_capability_id=value.producer.capability_id,
+                        )
                 current[name] = value
         if type(state.get('pending_results')) is not dict:
             raise CheckpointError('checkpoint_invalid')
@@ -370,7 +386,13 @@ def restore_context(context, payload):
                     )
                 ):
                     continue
-                raise CheckpointError('recovery_changed')
+                raise CheckpointError(
+                    'recovery_changed', rule='pending_result_reference_changed',
+                    stage='checkpoint_wait_restore',
+                    producer_capability_id=(
+                        task.producer.capability_id if task is not None else None
+                    ),
+                )
             context.pending_results[step_id] = deepcopy(wait)
         for step_id, task in context.task_results.items():
             if task.status in ('complete', 'partial'):
@@ -380,6 +402,8 @@ def restore_context(context, payload):
             raise CheckpointError('checkpoint_invalid')
         if context.execution_deadline_at is None:
             context.execution_deadline_at = saved_deadline
+    except CheckpointError:
+        raise
     except ResultContractError as exc:
         raise CheckpointError('checkpoint_invalid') from exc
     except ValueError as exc:

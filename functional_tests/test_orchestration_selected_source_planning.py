@@ -1,11 +1,12 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.443
+Version: 0.261.444
 Implemented in: 0.261.355
 Shared two-correction allowance updated in: 0.261.422
 Referenced failed-turn source continuation added in: 0.261.437
 Order-independent source-set identity and conflict diagnostics added in: 0.261.443
+Selected-tabular purpose validation added in: 0.261.444
 
 Uses real source projection, parsers, resolution and HTTP planning with external
 storage/model I/O replaced. Previews must never become complete export records.
@@ -451,7 +452,7 @@ def test_ambiguous_source_history_requires_a_choice_instead_of_a_relevance_probe
     with pytest.raises(context.CatalogResolutionError) as failure:
         context.continue_requested_sources(
             {}, {"relationship": "follow_up", "message_ids": ["user-0", "user-1"]}, ledger,
-            user_id="owner", conversation_id="conversation-1",
+            user_id="owner", conversation_id="conversation-1", turn_id="turn-1",
         )
     assert failure.value.code == "source_continuation_ambiguous"
     assert source_runtime.source_state.reads == []
@@ -544,13 +545,14 @@ def test_genuinely_different_source_sets_stay_ambiguous_and_are_logged_by_dimens
     with pytest.raises(context.CatalogResolutionError) as error:
         context.continue_requested_sources(
             {}, {"relationship": "follow_up", "message_ids": ["user-0", "user-1"]}, ledger,
-            user_id="owner", conversation_id="conversation-1",
+            user_id="owner", conversation_id="conversation-1", turn_id="turn-1",
         )
     assert error.value.code == "source_continuation_ambiguous"
     (message, extra), = records
     assert message == "[ORCHESTRATION_CONTEXT] A follow-up matches more than one previous source selection."
     assert differs.items() <= extra.items()
     assert (extra["match_count"], extra["distinct_set_count"]) == (2, 2)
+    assert extra["conversation_id_hash"] and extra["turn_id_hash"]
     assert extra["references_differ"] is False and extra["attachments_differ"] is False
     assert "private-document" not in repr(records)
 
@@ -848,10 +850,14 @@ def test_real_editor_rebuilds_selected_schema_and_keeps_the_original_turn(source
 
     runtime, harness = source_runtime, source_runtime.harness
     message = "Compare the selected files."
+    proposed = proposal(narrative_comparison=False)
+    proposed["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": ["tabular-doc"],
+    }
     harness.replies = [json.dumps({
         "relationship": "new_topic", "resolved_message": message,
         "message_ids": [], "requires_retrieval": True, "clarification": "",
-    }), json.dumps(proposal(narrative_comparison=False))]
+    }), json.dumps(proposed)]
     planned = frames(runtime.client.post("/api/v2/orchestration/plan", json={
         "conversation_id": "conversation-1", "turn_id": "editor-source-turn",
         "message": message, "selected_document_ids": ["narrative-doc", "tabular-doc"],
@@ -865,6 +871,9 @@ def test_real_editor_rebuilds_selected_schema_and_keeps_the_original_turn(source
     assert editor_response.status_code == 200, editor_response.get_json()
     editor = editor_response.get_json()["editor"]
     revised = proposal(narrative_comparison=False)
+    revised["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": ["tabular-doc"],
+    }
     revised["revised_request"] = message + " Include a short summary."
     harness.replies = [json.dumps(revised)]
     response = runtime.client.post(f"/api/v2/orchestration/runs/{plan['run_id']}/revisions", json={

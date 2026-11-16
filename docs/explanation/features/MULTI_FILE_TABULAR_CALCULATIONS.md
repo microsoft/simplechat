@@ -1,6 +1,6 @@
 # Multi-file tabular calculations
 
-Version: **0.261.443**
+Version: **0.261.444**
 
 Implemented in version: **0.261.437**
 
@@ -8,6 +8,9 @@ Source-aware planning and failure diagnostics updated in version: **0.261.439**.
 
 Planner-visible grammar, column rules, column preflight and content-free failure
 locations added in version: **0.261.443**.
+
+Namespace-separated derived rejoins, complete-row purpose contracts and richer
+safe diagnostics were added in version: **0.261.444**.
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -196,6 +199,12 @@ keeps them and adds `stepid.field`. `project` replaces every column with
 columns its input has, and `output` can use only the `result` step's columns, so
 a column dropped by `project` or `aggregate` cannot be used later.
 
+Two branches of one source can be rejoined only after `project` or `aggregate`
+replaces their original columns with distinct `stepid` namespaces. The runtime
+still rejects overlapping direct columns, duplicate keys, date ambiguity and
+incompatible cardinality. The normalizer does not relax those checks; it now
+recognizes the isolated shape the runtime can safely execute.
+
 **Expressions.** A filter predicate, transform field or output field is a
 literal, `{"source": "alias.header"}`, `{"field": "earlier_field"}`,
 `{"value": literal}`, or an object with exactly the keys of one operation:
@@ -251,6 +260,20 @@ result access, citation authority and recovery contracts remain in effect.
 Compose explains the computed records rather than manufacturing them. Bind
 `records` directly to an exact-tabular CSV/XLSX renderer for a download. Append
 or union requests still use `tabular_merge`; a union is not a keyed calculation.
+
+Compose declares `tabular_requirement` with `overview`, `complete_records`, or
+`calculation` and the relevant selected document IDs. Complete-row work cannot
+use Search previews or `tabular_inspect` schema evidence. A calculation requires
+the one native `relate` producer's records, lineage and coverage. At runtime the
+retained evidence is rechecked before composition; old saved plans without this
+optional argument keep their existing contract.
+
+The requirement is admitted from the server-resolved source kind, not only from
+the producer capability ID. A `document_search` step that reads selected CSV or
+Excel sources must therefore declare the purpose too. `overview` can prepare
+narrative content from bounded excerpts, but it cannot emit records or structured
+datasets, and it cannot stand in for an explicitly selected complete native
+tabular operation.
 
 The operation uses the administrator's existing chat Merge file/row limits,
 with a maximum of 100 distinct source bindings in this contract. The reader
