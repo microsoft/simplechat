@@ -1,7 +1,9 @@
-# Model-assisted answer completeness (v0.261.418)
+# Model-assisted answer completeness (v0.261.445)
 
 Implemented in version: **0.261.382** (`application/single_app/config.py`).
 Fixed/Implemented in version: **0.261.418** (`application/single_app/config.py`).
+Completion-boundary hardening implemented in version: **0.261.445**
+(`application/single_app/config.py`).
 
 ## Purpose
 
@@ -217,3 +219,10 @@ deliverables as if they were prepared text, or verify unlimited source collectio
 within one model context. Existing specialized document/tabular validators remain
 in place. Ordinary non-orchestrated chat and historical-run backfilling are not
 part of this feature.
+
+Provider completion metadata is an additional boundary: a checker, initial
+composition, or corrective generation that ends with a known non-final reason
+such as `length` is rejected and cannot certify or replace a retained candidate.
+Ordinary complete calls remain compatible with both `stop` and the legacy
+missing/`None` marker. This check adds no generation retry, token increase, tool
+replay, or automatic plan revision.

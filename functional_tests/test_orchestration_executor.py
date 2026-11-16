@@ -1,8 +1,9 @@
 # test_orchestration_executor.py
 """
 Functional test for the chat orchestration step executor.
-Version: 0.261.139
+Version: 0.261.445
 Implemented in: 0.261.085
+Runtime hint metadata coverage added in: 0.261.445
 Single orchestration contract updated in: 0.261.139
 
 The executor turns a validated Gather / Reason / Render plan into retained results and a
@@ -167,6 +168,34 @@ def test_optional_input_producer_failure_does_not_block_general_knowledge_answer
     assert statuses['source'] == case.schema.STEP_STATUS_FAILED
     assert statuses['answer'] == case.schema.STEP_STATUS_COMPLETED
     assert result['status'] == case.schema.PLAN_STATUS_COMPLETED
+
+
+@pytest.mark.parametrize("cap,expected", [(0, 0), (1, 1), (5, 5), (None, 2), (-1, 2), (6, 2)])
+def test_failed_step_hints_are_inert_and_summary_cap_preserves_zero(cap, expected):
+    steps = [_compose(f'draft-{index}') for index in range(6)]
+    case = _runtime(steps, final_response=_binding('draft-0'))
+    case.settings = dict(case.settings)
+    if cap is None:
+        case.settings.pop('chat_orchestration_max_replans', None)
+    else:
+        case.settings = {
+            **case.settings, 'chat_orchestration_max_replans': cap,
+        }
+
+    def adapter(step, context, **kwargs):
+        return case.schema.build_step_result(
+            status=case.schema.STEP_STATUS_FAILED,
+            failure=case.schema.build_failure('step_failed'),
+            replan_hint=f"Hint for {step['step_id']}.",
+        )
+
+    result = case.executor.execute_plan(
+        case.plan, case.context, settings=case.settings, user_id='owner',
+        get_adapter=lambda capability: adapter,
+    )
+    assert len(result['replan_hints']) == expected
+    assert all(step['replan_hint'].startswith('Hint for ') for step in result['steps'])
+    assert case.order == []
 
 
 def test_cancellation_stops_before_work_and_missing_adapter_fails_closed():

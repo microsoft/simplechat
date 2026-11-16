@@ -71,7 +71,6 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_schema import (
     PLAN_BUDGET_EXCEEDED_CODE,
-    PLAN_HARD_MAX_STEPS,
     WORKFLOW_BLUEPRINT_INVALID_CODE,
     WORKFLOW_HANDOFF_INVALID_CODE,
     WORKFLOW_PROPOSAL_NOT_CONSUMABLE_CODE,
@@ -79,6 +78,7 @@ from functions_orchestration_schema import (
     WORKFLOW_RUN_INVALID_CODE,
     PlanValidationError,
     available_information_plan,
+    effective_plan_step_limit,
     effective_plan_document_ids,
     normalize_elicitation,
     normalize_plan,
@@ -133,7 +133,7 @@ DRAFT_CONTRACT_REPAIR_CODES = frozenset({
 REPAIRABLE_PLAN_CODES = frozenset({
     'deliverables_invalid', 'source_kind_invalid', 'source_binding_required',
     'analysis_options_invalid', 'selected_requirements_missing',
-    'conversation_retrieval_conflict', *WORKFLOW_REPAIR_CODES,
+    'conversation_retrieval_conflict', 'result_step_limit', *WORKFLOW_REPAIR_CODES,
     *WORKFLOW_RUN_REPAIR_CODES, *WORKFLOW_RESULTS_REPAIR_CODES,
     *DRAFT_CONTRACT_REPAIR_CODES,
 })
@@ -975,8 +975,7 @@ def build_planner_messages(
     The context is passed as JSON rather than prose because it is data the model has to
     read precisely -- document ids especially. A prose rendering invites paraphrase, and a
     paraphrased document id is a plan step that fails validation. ``plan_limits`` is the
-    rendered Plan limits section, passed only when the request may hand work off; without it the
-    system prompt is exactly what it always was.
+    rendered Plan limits section, including the effective bounds for this request.
     """
     payload = dict(planner_context or {})
     if edit_context is not None:
@@ -1489,6 +1488,23 @@ def plan_repair_message(error, *, handoff_present=False):
             'Preserve every selected document, requested operation and deliverable, and bind the actual '
             'findings to the answer. Return the complete corrected plan as one JSON object.'
         )
+    if error.code == 'result_step_limit':
+        count = error.diagnostics.get('plan_step_count')
+        limit = error.diagnostics.get('plan_step_limit')
+        measured = (
+            f' The draft has {count} steps, but the effective limit is {limit}.'
+            if isinstance(count, int) and isinstance(limit, int) else ''
+        )
+        return (
+            f'The server rejected the plan because it exceeds the step budget.{measured} '
+            'Reduce the plan without dropping required selected work or deliverables. '
+            'Return the complete corrected plan as one JSON object.'
+            + (
+                ' When the work cannot fit, use one offered workflow_handoff step instead of '
+                'the steps that do not fit.'
+                if handoff_present else ' Hand-off is not available for this request.'
+            )
+        )
     if error.code == 'selected_requirements_missing':
         return (
             f'The plan omitted selected work ({error.rule}). Recheck required_capabilities and every '
@@ -1617,29 +1633,29 @@ def _plan_duration_text(seconds):
 
 
 def _plan_limits_section(settings, capabilities, handoff):
-    """The "Plan limits" prompt section for a request that may hand work off.
+    """The effective Plan limits prompt section.
 
     It states what one chat plan may do, the same budgets the validator enforces, so the planner can
-    tell when a request needs a workflow_handoff step instead: the step budget, the total run time,
-    each offered document action's per-step document limit, the hand-off's own bounds, and which
-    agents can run hand-off tasks. Called only when hand-off is offered. Never raises; a limit that
-    cannot be read is left out.
+    stay within the step budget, total run time and each offered document action's per-step limit.
+    Hand-off bounds and agents are included only when hand-off is actually offered. Never raises; a
+    limit that cannot be read is left out.
     """
     settings = settings if isinstance(settings, dict) else {}
     handoff = handoff if isinstance(handoff, dict) else {}
-    try:
-        max_steps = min(PLAN_HARD_MAX_STEPS, max(1, int(settings.get('chat_orchestration_max_steps') or 8)))
-    except (TypeError, ValueError):
-        max_steps = 8
-    # The timing policy is pure; it is loaded only when hand-off is offered.
+    max_steps = effective_plan_step_limit(settings)
+    handoff_offered = isinstance(handoff, dict) and bool(handoff)
+    # The timing policy is pure and stays independent of application bootstrap.
     from functions_orchestration_timing import execution_timeout_seconds
 
     lines = [
-        'Plan limits. One chat plan must fit all of these; a request that needs more is what a '
-        'workflow_handoff step is for.',
+        'Plan limits. One chat plan must fit all of these.',
         f'- At most {_count_text(max_steps, "step")} in one plan.',
         f'- At most {_plan_duration_text(execution_timeout_seconds(settings))} for the whole plan to run.',
     ]
+    if not handoff_offered:
+        lines.append(
+            '- If the requested work cannot fit these limits, report the precise limit instead of adding steps.'
+        )
     for capability in capabilities or ():
         if not isinstance(capability, dict) or not capability.get('document_action_type'):
             continue
@@ -1649,6 +1665,8 @@ def _plan_limits_section(settings, capabilities, handoff):
             continue
         if limit > 0:
             lines.append(f'- At most {_count_text(limit, "document")} in one {capability.get("id")} step.')
+    if not handoff_offered:
+        return '\n'.join(lines)
     documents_max, max_loop_items = handoff.get('documents_max'), handoff.get('max_loop_items')
     if type(documents_max) is int and type(max_loop_items) is int:
         lines.append(
@@ -2105,6 +2123,22 @@ def plan_request(
             {'role': 'user', 'content': plan_repair_message(error, handoff_present=handoff_present)},
         ]
 
+    def _protocol_correction_messages(reason, guidance, stage, attempt, reply):
+        _diagnose(stage, current_proposal, attempt=attempt)
+        log_event(
+            '[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan.',
+            level=logging.INFO, extra={
+                **correlation, 'reason': reason, 'attempt': attempt, 'revision': revision,
+                'stage': stage, 'validation_code': 'plan_structure_invalid',
+                'validation_rule': reason,
+            },
+        )
+        return [
+            *messages,
+            {'role': 'assistant', 'content': reply},
+            {'role': 'user', 'content': guidance},
+        ]
+
     def _normalize(raw, capability_ids, availability, selected_image, **options):
         raw = _with_analysis_semantics(raw, edit_context)
         _diagnose('analysis_defaults', raw, attempt=attempt)
@@ -2214,9 +2248,10 @@ def plan_request(
     messages = build_planner_messages(
         context, replan_hint=replan_hint, edit_context=edit_context,
         contract_version=contract_version,
-        **({'plan_limits': _plan_limits_section(
-            settings, capabilities, context['workflow_planning']['handoff'],
-        )} if handoff_offered else {}),
+        plan_limits=_plan_limits_section(
+            settings, capabilities,
+            context.get('workflow_planning', {}).get('handoff') if handoff_offered else None,
+        ),
     )
     if context.get('selected_sources'):
         messages[0] = {
@@ -2243,7 +2278,15 @@ def plan_request(
                     token_usage[field] = token_usage.get(field, 0) + value
 
         parsed = extract_planner_json(reply)
-        if not parsed:
+        if not isinstance(parsed, dict) or not parsed:
+            if attempt <= PLAN_REPAIR_ATTEMPTS:
+                messages = _protocol_correction_messages(
+                    'unparseable_plan', (
+                        'The previous response was not a complete planner JSON object. '
+                        'Return exactly one complete corrected JSON plan for the unchanged request.'
+                    ), 'plan_parsing', attempt, reply,
+                )
+                continue
             return _failure('unparseable_plan', stage='plan_parsing', attempt=attempt)
         current_proposal = parsed
         _diagnose('plan_proposal', parsed, attempt=attempt)
@@ -2256,6 +2299,14 @@ def plan_request(
 
         kind = str(parsed.get('kind') or ('plan' if isinstance(parsed.get('steps'), list) else '')).strip().lower()
         if kind not in ('plan', 'elicitation') and not (edit_context is not None and kind == 'message'):
+            if attempt <= PLAN_REPAIR_ATTEMPTS:
+                messages = _protocol_correction_messages(
+                    'invalid_planner_response_kind', (
+                        'The response kind is unsupported. Return one complete JSON plan, or an '
+                        'allowed elicitation, for the unchanged request and authorized selections.'
+                    ), 'plan_protocol', attempt, reply,
+                )
+                continue
             return _failure('invalid_planner_response_kind')
 
         if edit_context is not None:
@@ -2375,6 +2426,14 @@ def plan_request(
 
         raw_steps = parsed.get('steps')
         if not isinstance(raw_steps, list) or not raw_steps:
+            if attempt <= PLAN_REPAIR_ATTEMPTS:
+                messages = _protocol_correction_messages(
+                    'invalid_plan_work', (
+                        'The response must contain a nonempty steps array. Return the complete '
+                        'corrected JSON plan for the unchanged request and authorized selections.'
+                    ), 'plan_protocol', attempt, reply,
+                )
+                continue
             return _failure('invalid_plan_work')
 
         if edit_context is not None and authorized_document_ids is not None:
