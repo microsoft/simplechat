@@ -197,8 +197,6 @@ def test_native_request_errors_are_not_empty_successes(native_source, arguments,
 
 
 def test_native_pptx_slide_filter_paginates_only_that_slide_and_fences_cursors(monkeypatch):
-    import functions_native_document_inspection as inspection
-
     source = b"synthetic native presentation bytes"
     digest = hashlib.sha256(source).hexdigest()
     metadata = {
@@ -218,8 +216,8 @@ def test_native_pptx_slide_filter_paginates_only_that_slide_and_fences_cursors(m
              "xml_ordinal": 2, "text": "slide", "text_complete": True},
         ]}},
     }
-    monkeypatch.setattr(
-        inspection, "extract_office_accessibility_metadata",
+    monkeypatch.setitem(
+        inspect_native_document.__globals__, "extract_office_accessibility_metadata",
         lambda *_args, **_kwargs: (metadata, details),
     )
     document = {"id": "deck", "version": 1, "_etag": "revision-1"}
@@ -270,16 +268,14 @@ def test_pptx_native_objects_keep_xml_ordinal_and_direct_text():
 
 
 def test_native_pptx_slide_filter_validates_exact_contract(monkeypatch):
-    import functions_native_document_inspection as inspection
-
     source = b"bounded native presentation"
     metadata = {
         "source_sha256": hashlib.sha256(source).hexdigest(),
         "native_inspection_status": "complete", "native_package_verified": True,
         "native_parent_truncated": False, "slide_count": 1,
     }
-    monkeypatch.setattr(
-        inspection, "extract_office_accessibility_metadata",
+    monkeypatch.setitem(
+        inspect_native_document.__globals__, "extract_office_accessibility_metadata",
         lambda *_args, **_kwargs: (metadata, {1: {"native_objects": {"records": []}}}),
     )
     with pytest.raises(NativeInspectionRequestError) as unsupported:
