@@ -44,6 +44,25 @@ replaying a cached response does not record another execution.
 
 ## Retest contract diagnostics
 
+Implemented in version **0.261.444**.
+
+`[ORCHESTRATION_ADAPTERS] Native result bridge did not complete.` now includes a
+turn hash alongside run/conversation/step hashes. Native failure detail may
+include only closed check/role/category/operation/type tokens and bounded field,
+expression, measure and value ordinals. Relational date/cardinality failures
+retain this detail when `_locating` adds the step position.
+
+`[ORCHESTRATION_CONTEXT] A follow-up matches more than one previous source
+selection.` includes explicit conversation/turn correlation and dimension-only
+difference booleans. The route's narrow source-choice form emits no source set
+through logs.
+
+`[ORCHESTRATION_RUNS] Execution resume refused changed recovery state.` records
+`validation_rule`, stage and producer capability for a reachable recovery guard.
+It does not log settings, memory, fingerprints, source contents or raw IDs.
+These observations do not authorize replay when a source, policy, model, plan,
+producer or input fingerprint changed.
+
 Implemented in version **0.261.439**, tracked in
 `application/single_app/config.py`.
 

@@ -12,6 +12,7 @@ from native_document_evidence import NativeInspectionRequestError
 
 
 NATIVE_DOCUMENT_INSPECTION_VERSION = "1.2"
+NATIVE_DOCUMENT_FOCUSED_INSPECTION_VERSION = "1.3"
 NATIVE_DOCUMENT_MAX_BYTES = 64 * 1024 * 1024
 NATIVE_DOCUMENT_SECTIONS = frozenset({"all", "properties", "structure", "objects", "artifacts", "content", "issues"})
 
@@ -63,7 +64,8 @@ def _native_records(metadata, details):
 
 
 def inspect_native_document(document, source_bytes, extension, *, section="all", cursor=None,
-                            page_size=100, max_bytes=14000, _audit_records=None):
+                            page_size=100, max_bytes=14000, native_slide_number=None,
+                            _audit_records=None):
     """The owner must authorize the active bytes before and after this pure local read."""
     if extension not in (".pdf", ".pptx") or not isinstance(source_bytes, bytes):
         raise ValueError("A supported native document and its source bytes are required.")
@@ -76,11 +78,26 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
         raise NativeInspectionRequestError("native_page_size_invalid", field="native_page_size")
     if type(max_bytes) is not int or not 2048 <= max_bytes <= 65536:
         raise NativeInspectionRequestError("native_response_budget_invalid", field="max_bytes")
+    if native_slide_number is not None and (
+        type(native_slide_number) is not int or native_slide_number <= 0
+    ):
+        raise NativeInspectionRequestError(
+            "native_slide_number_invalid", field="native_slide_number",
+        )
+    if native_slide_number is not None and (extension != ".pptx" or section != "objects"):
+        raise NativeInspectionRequestError(
+            "native_slide_number_unsupported", field="native_slide_number",
+        )
     digest = hashlib.sha256(source_bytes).hexdigest()
+    schema_version = (
+        NATIVE_DOCUMENT_FOCUSED_INSPECTION_VERSION
+        if native_slide_number is not None else NATIVE_DOCUMENT_INSPECTION_VERSION
+    )
     identity = {
         "document_id": document["id"], "version": document.get("version"),
         "revision": document.get("_etag"), "source_sha256": digest,
-        "schema_version": NATIVE_DOCUMENT_INSPECTION_VERSION, "section": section,
+        "schema_version": schema_version, "section": section,
+        **({"native_slide_number": native_slide_number} if native_slide_number is not None else {}),
     }
     offset = fragment = 0
     if cursor:
@@ -118,6 +135,15 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
         record for record in _native_records(metadata, details)
         if section == "all" or record["section"] == section
     ]
+    if native_slide_number is not None:
+        if native_slide_number > int(metadata.get("slide_count") or 0):
+            raise NativeInspectionRequestError(
+                "native_slide_number_out_of_range", field="native_slide_number",
+            )
+        records = [
+            record for record in records
+            if record.get("slide_number") == native_slide_number
+        ]
     total = len(records)
     start_record, start_fragment = offset, fragment
     if offset > total or offset == total and fragment:
@@ -170,6 +196,8 @@ def inspect_native_document(document, source_bytes, extension, *, section="all",
             "section": section, "records": returned, "total_records": total,
             "start_record": start_record, "fragment_offset": start_fragment,
             "source_sha256": digest, "schema_version": NATIVE_DOCUMENT_INSPECTION_VERSION,
+            **({"native_slide_number": native_slide_number,
+                "schema_version": schema_version} if native_slide_number is not None else {}),
             "inventory_complete": complete, "has_more": more, "next_cursor": next_cursor,
             "coverage": "supported native records only; not a rendered or conformance audit",
         },

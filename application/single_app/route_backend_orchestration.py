@@ -778,7 +778,11 @@ def _prepare_execution_stream(record, data, user_id, settings, snapshot, identit
             '[ORCHESTRATION_RUNS] This execution could not be prepared.',
             level=logging.ERROR, extra={
                 **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
-                'stage': 'execution_prepare', 'error_type': type(exc).__name__,
+                'stage': getattr(exc, 'stage', None) or 'execution_prepare',
+                'validation_code': getattr(exc, 'code', None),
+                'validation_rule': getattr(exc, 'validation_rule', None),
+                'producer_capability_id': getattr(exc, 'producer_capability_id', None),
+                'error_type': type(exc).__name__,
             },
         )
         return jsonify({
@@ -3340,10 +3344,51 @@ def register_route_backend_orchestration(bp):
                 effective_message = resolution['resolved_message']
                 turn_context['request_resolution'] = resolution
                 turn_context['resolved_message'] = effective_message
-                continued_seeds = continue_requested_sources(
-                    seeds, resolution, ledger, user_id=user_id,
-                    conversation_id=resolved_conversation_id, settings=settings,
-                )
+                try:
+                    continued_seeds = continue_requested_sources(
+                        seeds, resolution, ledger, user_id=user_id,
+                        conversation_id=resolved_conversation_id, settings=settings,
+                        turn_id=turn_id,
+                    )
+                except CatalogResolutionError as exc:
+                    if exc.code not in ('source_continuation_ambiguous', 'source_continuation_limited'):
+                        raise
+                    elicitation = normalize_elicitation({
+                        'message': exc.message,
+                        'requested_schema': {
+                            'type': 'object',
+                            'properties': {
+                                'source_documents': {
+                                    'type': 'array',
+                                    'title': 'Source documents',
+                                    'items': {'type': 'string'},
+                                    'minItems': 1,
+                                },
+                            },
+                            'required': ['source_documents'],
+                        },
+                        'ui_hints': {
+                            'fields': {
+                                'source_documents': {
+                                    'input': 'files',
+                                    'candidate_ids': [
+                                        reference['id']
+                                        for reference in exc.continuation_candidates
+                                    ],
+                                },
+                            },
+                        },
+                    }, run_id=None, revision=current_revision,
+                        candidate_references=exc.continuation_candidates)
+                    _require_planning_owner(planning_holder)
+                    outcome = _save_pending_elicitation(
+                        elicitation, turn_context, user_id, resolved_conversation_id, turn_id,
+                        submission=submission, expected_pending=observed_pending,
+                    )
+                    yield from _elicitation_outcome_events(
+                        outcome, turn_context, user_id, resolved_conversation_id,
+                    )
+                    return
                 if continued_seeds.get('document_ids') != seeds.get('document_ids'):
                     seeds = continued_seeds
                     selected_candidates, _probed = resolve_candidate_documents(
@@ -3601,7 +3646,14 @@ def register_route_backend_orchestration(bp):
             except (CatalogResolutionError, CapabilityResolutionError) as exc:
                 log_event(
                     '[ORCHESTRATION] Capability context could not be loaded.',
-                    level=logging.WARNING, extra={'reason': 'capability_context_failed', 'error_type': type(exc).__name__},
+                    level=logging.WARNING, extra={
+                        **workflow_log_context(
+                            conversation_id=resolved_conversation_id,
+                            turn_id=turn_id,
+                        ),
+                        'reason': 'capability_context_failed', 'validation_code': getattr(exc, 'code', None),
+                        'error_type': type(exc).__name__,
+                    },
                 )
                 yield build_error_event(exc.message, resolved_conversation_id)
             except SharedOrchestrationError as exc:
@@ -3858,7 +3910,19 @@ def register_route_backend_orchestration(bp):
                 if data.get('edits'):
                     raise CheckpointError('recovery_changed')
                 _validate_retry_context(record, user_id, settings)
-        except CheckpointError:
+        except CheckpointError as exc:
+            log_event(
+                '[ORCHESTRATION_RUNS] Execution resume refused changed recovery state.',
+                level=logging.WARNING, extra={
+                    **workflow_log_context(
+                        run_id=run_id, conversation_id=conversation_id,
+                        turn_id=record.get('turn_id'),
+                    ),
+                    'stage': exc.stage or 'execution_resume',
+                    'validation_code': exc.code, 'validation_rule': exc.validation_rule,
+                    'producer_capability_id': exc.producer_capability_id,
+                },
+            )
             return jsonify({'error': 'Saved progress or access changed. Create a new plan.', 'code': 'recovery_unavailable'}), 409
         except ConversationContextError:
             return jsonify({

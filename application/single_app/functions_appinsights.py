@@ -153,6 +153,7 @@ LOGGER_WORKFLOW_CODE_KEYS = frozenset({
     # Where a rejected or failed native calculation went wrong; closed code tokens only.
     "argumentkeyword", "argumentpath", "argumentbranch", "expectedtype",
     "nativecheck", "nativerole", "nativecategory", "nativestepop", "nativetransformcode",
+    "nativeleftcategory", "nativerightcategory",
 })
 
 

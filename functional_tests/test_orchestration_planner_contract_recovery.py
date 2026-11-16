@@ -1,10 +1,11 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.443
+Version: 0.261.444
 Implemented in: 0.261.419; 0.261.422
 Source-schema preflight and native semantic correction added in: 0.261.439
 Column preflight and content-free schema locations added in: 0.261.443
+Complete tabular purpose handoff added in: 0.261.444
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
@@ -120,6 +121,9 @@ def test_native_calculation_drafts_get_precise_correction_without_becoming_previ
         name: {"binding": input_binding("read", name), "allow_partial": False}
         for name in ("records", "lineage", "coverage")
     }
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "calculation", "document_ids": [LEFT, RIGHT],
+    }
     invalid = deepcopy(corrected)
     if fault == "header_subset":
         invalid["steps"][0]["arguments"]["relational_spec"]["datasets"][0]["columns"] = ["code", "quantity"]
@@ -208,6 +212,45 @@ def test_requested_records_are_corrected_by_explicit_semantics_not_dropped(plann
     assert plan["steps"][0]["arguments"]["analysis_options"]["required_fields"] == ["amount"]
     assert correction_records(caplog)[0].sc_validation_rule == "fixed_output_not_supported"
     assert {call["model"] for call in planning.harness.model_calls} == {"gpt-4o"}
+
+
+def test_selected_tabular_search_preview_requires_an_explicit_compose_purpose(planning, caplog):
+    preview_only = proposal([RIGHT])
+    corrected = deepcopy(preview_only)
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [preview_only, corrected], identifiers=(RIGHT,),
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == "tabular_requirement_required"
+    assert plan["steps"][1]["arguments"]["tabular_requirement"] == {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+
+
+def test_model_labelled_tabular_overview_cannot_prepare_preview_records(planning, caplog):
+    invalid = proposal([RIGHT])
+    invalid["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+    invalid["steps"][1]["outputs"] = [{
+        "name": "answer", "kind": "records-v1",
+        "columns": [{"name": "total", "value_type": "number", "nullable": False}],
+    }]
+    corrected = proposal([RIGHT])
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "overview", "document_ids": [RIGHT],
+    }
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(
+            planning, [invalid, corrected], identifiers=(RIGHT,),
+        )
+    assert kind == "plan" and len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == "tabular_overview_output_invalid"
+    assert plan["steps"][1]["outputs"] == [{"name": "answer", "kind": "markdown-v1"}]
 
 
 @pytest.mark.parametrize("invalid", ["kind", "missing", "shape", "input"])
@@ -467,6 +510,9 @@ def relate_case(*, inspected=True):
     corrected["steps"][1]["inputs"] = {
         name: {"binding": input_binding("read", name), "allow_partial": False}
         for name in ("records", "lineage", "coverage")
+    }
+    corrected["steps"][1]["arguments"]["tabular_requirement"] = {
+        "mode": "calculation", "document_ids": [LEFT, RIGHT],
     }
     return sources, corrected
 

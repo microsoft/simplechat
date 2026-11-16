@@ -6,6 +6,116 @@ import json
 from functions_orchestration_results import MAX_VALUE_BYTES
 
 
+WORD_COMMENT_PROVENANCE_COLUMNS = (
+    "comment_thread_id", "comment_author", "comment_date", "reply_ids", "comment_replies",
+)
+
+
+def project_word_comment_provenance(records, prepared, source_ids):
+    """Project authorized native Word thread metadata onto exact disposition rows."""
+    if (
+        type(records) is not list
+        or type(prepared) is not dict
+        or prepared.get("version") != "orchestration-gathered-content-v1"
+        or prepared.get("capability_id") != "document_search"
+        or prepared.get("content_scope") != "native_document_annotations"
+    ):
+        raise ValueError("The native Word comment provenance input is invalid.")
+    coverage = (prepared.get("coverage") or {}).get("native_inspection")
+    if (
+        type(coverage) is not list or not coverage
+        or any(
+            type(item) is not dict
+            or item.get("format") not in ("docx", "docm", "dotx")
+            or item.get("section") != "comments"
+            or item.get("execution_mode") != "native_inspection"
+            or item.get("inventory_complete") is not True
+            or item.get("partial") is True
+            for item in coverage
+        )
+    ):
+        raise ValueError("The native Word comment inventory is incomplete.")
+    authorized = set(source_ids or ())
+    covered = {item.get("document_id") for item in coverage}
+    if not authorized or covered != authorized:
+        raise ValueError("The native Word comment source set does not match its authorized lineage.")
+    counts = [item.get("total_records") for item in coverage]
+    if any(
+        type(value) is not int or value < 0
+        for value in counts
+    ):
+        raise ValueError("The native Word comment inventory has an invalid root count.")
+    inventory = {}
+    duplicates = set()
+    for hit in prepared.get("search_results") or []:
+        if not isinstance(hit, dict) or hit.get("document_id") not in authorized:
+            continue
+        try:
+            payload = json.loads(hit.get("chunk_text") or "{}")
+        except (TypeError, ValueError, json.JSONDecodeError):
+            raise ValueError("The native Word comment evidence is invalid.") from None
+        comment = payload.get("word_annotation") if isinstance(payload, dict) else None
+        if comment is None:
+            continue
+        if not isinstance(comment, dict) or not isinstance(comment.get("id"), str):
+            raise ValueError("The native Word comment evidence is invalid.")
+        key = (hit["document_id"], comment["id"])
+        if key in inventory:
+            duplicates.add(key)
+        inventory[key] = comment
+    expected_root_count = sum(counts)
+    if duplicates or expected_root_count != len(inventory):
+        raise ValueError("The native Word comment identity inventory is invalid.")
+    expected = set(inventory)
+    seen = set()
+    projected = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("A disposition row is invalid.")
+        thread_id = record.get("comment_thread_id")
+        if not isinstance(thread_id, str):
+            raise ValueError("A disposition row has no exact native comment identity.")
+        declared_source = record.get("comment_document_id")
+        if isinstance(declared_source, str) and declared_source:
+            key = (declared_source, thread_id)
+        else:
+            matches = [candidate for candidate in inventory if candidate[1] == thread_id]
+            if len(matches) != 1:
+                raise ValueError("A disposition row cannot be matched to one authorized Word source.")
+            key = matches[0]
+        comment = inventory.get(key)
+        if comment is None or key in seen:
+            raise ValueError("A disposition row names an unknown or duplicate native comment.")
+        seen.add(key)
+        replies = comment.get("replies")
+        if not isinstance(replies, list) or any(not isinstance(reply, dict) for reply in replies):
+            raise ValueError("The native Word reply inventory is invalid.")
+        reply_ids = json.dumps([reply.get("id") for reply in replies], separators=(",", ":"), ensure_ascii=False)
+        reply_metadata = json.dumps([
+            {
+                name: reply.get(name)
+                for name in ("id", "author", "initials", "date", "text", "done", "resolution_available")
+                if name in reply
+            }
+            for reply in replies
+        ], sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        values = {
+            "comment_thread_id": comment["id"],
+            "comment_author": comment.get("author"),
+            "comment_date": comment.get("date"),
+            "reply_ids": reply_ids,
+            "comment_replies": reply_metadata,
+        }
+        for name, value in values.items():
+            supplied = record.get(name)
+            if supplied not in (None, "") and supplied != value:
+                raise ValueError("A disposition row contains invented comment metadata.")
+        projected.append({**record, **values})
+    if seen != expected:
+        raise ValueError("The disposition records do not cover every native Word root comment.")
+    return projected
+
+
 def collect_word_comments(document_id, user_id, *, read_page, cancel_check, source_count=1, **scope):
     cancel_check()
     report = read_page(document_id, user_id, sections="comments", **scope)

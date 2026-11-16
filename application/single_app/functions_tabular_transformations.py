@@ -101,6 +101,30 @@ class TabularTransformationEvaluationError(ValueError):
         return tabular_transformation_error_code(self)
 
 
+def _native_value_category(value):
+    if value is None:
+        return "null"
+    if value == "":
+        return "empty_text"
+    if isinstance(value, bool):
+        return "boolean"
+    if isinstance(value, (int, float, Decimal)):
+        return "number"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, list):
+        return "array"
+    if isinstance(value, dict):
+        return "object"
+    return "unsupported"
+
+
+def _attach_evaluation_detail(error, **detail):
+    existing = getattr(error, "detail", {}) if isinstance(getattr(error, "detail", None), dict) else {}
+    error.detail = {**detail, **existing}
+    return error
+
+
 def tabular_transformation_error_code(error):
     """A stable, content-free identifier for a transformation failure, or None for other errors.
 
@@ -692,9 +716,22 @@ def _decimal_to_json_value(value, precise=False):
     return projected_value
 
 
-def _compare_values(left_value, right_value, op_name, value_type="", case_sensitive=True, precise=False):
-    coerced_left = _coerce_comparison_value(left_value, value_type, precise=precise)
-    coerced_right = _coerce_comparison_value(right_value, value_type, precise=precise)
+def _compare_values(
+    left_value, right_value, op_name, value_type="", case_sensitive=True, precise=False,
+    diagnostic_detail=None,
+):
+    detail = {
+        "category": "comparison",
+        "left_category": _native_value_category(left_value),
+        "right_category": _native_value_category(right_value),
+        "expected_type": value_type or "unspecified",
+        **(diagnostic_detail or {}),
+    }
+    try:
+        coerced_left = _coerce_comparison_value(left_value, value_type, precise=precise)
+        coerced_right = _coerce_comparison_value(right_value, value_type, precise=precise)
+    except TabularTransformationEvaluationError as exc:
+        raise _attach_evaluation_detail(exc, **detail) from exc
     if precise and not value_type:
         numeric_types = (int, float, Decimal)
         if (
@@ -722,7 +759,9 @@ def _compare_values(left_value, right_value, op_name, value_type="", case_sensit
         if op_name == "gte":
             return coerced_left >= coerced_right
     except TypeError as exc:
-        raise TabularTransformationEvaluationError("Comparison operands have incompatible types") from exc
+        raise _attach_evaluation_detail(
+            TabularTransformationEvaluationError("Comparison operands have incompatible types"), **detail,
+        ) from exc
     raise TabularTransformationEvaluationError("Comparison operation is unsupported")
 
 
@@ -736,6 +775,7 @@ class _EvaluationContext:
         self.derived_values = derived_values
         self.precise = version == TABULAR_TRANSFORMATION_PRECISE_SPEC_VERSION
         self.step_count = 0
+        self.field_index = None
 
     def prepare_value(self, value):
         if self.precise and isinstance(value, (int, float, Decimal)) and not isinstance(value, bool):
@@ -754,10 +794,23 @@ def _evaluate_numeric_operands(expression, context):
         if "values" in expression
         else [expression.get("left"), expression.get("right")]
     )
-    return [
-        _parse_decimal_value(_evaluate_expression(value, context), precise=context.precise)
-        for value in operands
-    ]
+    result = []
+    for value_index, value_expression in enumerate(operands):
+        value = _evaluate_expression(value_expression, context)
+        try:
+            result.append(_parse_decimal_value(value, precise=context.precise))
+        except TabularTransformationEvaluationError as exc:
+            raise _attach_evaluation_detail(
+                exc,
+                category="numeric_operand",
+                role="arithmetic_operand",
+                expected_type="number",
+                field_index=context.field_index,
+                expression_index=context.step_count,
+                value_index=value_index,
+                left_category=_native_value_category(value),
+            ) from exc
+    return result
 
 
 def _evaluate_precise_arithmetic(op_name, numeric_values):
@@ -864,13 +917,19 @@ def _evaluate_expression(expression, context):
             return any(_compare_values(member_value, value, "eq", precise=True) for value in expected_values)
         return member_value in expected_values
     if op_name in TABULAR_TRANSFORMATION_COMPARISON_OPS:
+        left = _evaluate_expression(expression.get("left"), context)
+        right = _evaluate_expression(expression.get("right"), context)
         return _compare_values(
-            _evaluate_expression(expression.get("left"), context),
-            _evaluate_expression(expression.get("right"), context),
+            left,
+            right,
             op_name,
             value_type=expression.get("value_type") or "",
             case_sensitive=expression.get("case_sensitive", True),
             precise=context.precise,
+            diagnostic_detail={
+                "field_index": context.field_index,
+                "expression_index": context.step_count,
+            },
         )
     if op_name in TABULAR_TRANSFORMATION_ARITHMETIC_OPS:
         numeric_values = _evaluate_numeric_operands(expression, context)
@@ -992,6 +1051,7 @@ def evaluate_tabular_transformation_row(transformation_spec, source_row):
         with localcontext(_PRECISE_DECIMAL_CONTEXT) if context.precise else nullcontext():
             for field_name in normalized_spec.get("deterministic_field_order") or []:
                 field_descriptor = fields_by_name[field_name]
+                context.field_index = normalized_spec["fields"].index(field_descriptor)
                 derived_values[field_name] = _validate_evaluated_field_value(
                     field_descriptor,
                     _evaluate_expression(field_descriptor.get("expression"), context),
@@ -1022,19 +1082,30 @@ def evaluate_tabular_transformation_rows(transformation_spec, source_rows):
     ]
 
 
-def aggregate_precise_tabular_values(values, operation):
+def aggregate_precise_tabular_values(values, operation, *, diagnostic_detail=None):
     """Aggregate decimal text exactly, returning decimal text without float loss."""
     if operation not in {"sum", "min", "max"}:
         raise TabularTransformationEvaluationError("Numeric aggregation is unsupported")
     result = Decimal(0) if operation == "sum" else None
     try:
         with localcontext(_PRECISE_DECIMAL_CONTEXT):
-            for raw in values:
-                value = _parse_decimal_value(raw, precise=True)
-                if operation == "sum":
-                    result = _validate_precise_decimal(result + value)
-                elif result is None or (value < result if operation == "min" else value > result):
-                    result = value
+            for value_index, raw in enumerate(values):
+                try:
+                    value = _parse_decimal_value(raw, precise=True)
+                    if operation == "sum":
+                        result = _validate_precise_decimal(result + value)
+                    elif result is None or (value < result if operation == "min" else value > result):
+                        result = value
+                except TabularTransformationEvaluationError as exc:
+                    raise _attach_evaluation_detail(
+                        exc,
+                        category="aggregate_value",
+                        role="aggregate_measure",
+                        expected_type="number",
+                        value_index=value_index,
+                        left_category=_native_value_category(raw),
+                        **(diagnostic_detail or {}),
+                    ) from exc
             return None if result is None else format(result, "f")
     except DecimalException as exc:
         raise TabularTransformationEvaluationError("Numeric aggregation exceeds bounded decimal limits") from exc

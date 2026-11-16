@@ -40,7 +40,9 @@ RELATIONAL_COLUMN_RULES = (
     "transform field. project replaces all columns with stepid.field. aggregate outputs only "
     "stepid.name for each by/measures name. A step may use only the columns its input has, and output "
     "may use only the result step's columns, so a column dropped by project or aggregate cannot be "
-    "used later. Aggregated sum/min/max values are decimal strings."
+    "used later. Shared-ancestor branches may rejoin only after their output column namespaces are "
+    "provably disjoint, usually through project or aggregate. Aggregated sum/min/max values are "
+    "decimal strings."
 )
 RELATIONAL_EXPRESSION_GRAMMAR = (
     "Expressions (filter predicate, transform and output fields) are deterministic "
@@ -154,11 +156,17 @@ _DETAIL_TOKEN = re.compile(r"[a-z][a-z0-9_]{0,79}")
 # Detail is limited to code-owned names: a check, a role, a category, an operation and positions.
 _DETAIL_KEYS = frozenset({
     "check", "role", "category", "step_index", "step_op", "transform_code", "missing_count",
+    "field_index", "expression_index", "value_index", "measure_index",
+    "left_category", "right_category", "expected_type",
 })
 NATIVE_DIAGNOSTIC_KEYS = {
     "check": "native_check", "role": "native_role", "category": "native_category",
     "step_index": "native_step_index", "step_op": "native_step_op",
     "transform_code": "native_transform_code", "missing_count": "native_missing_count",
+    "field_index": "native_field_index", "expression_index": "native_expression_index",
+    "value_index": "native_value_index", "measure_index": "native_measure_index",
+    "left_category": "native_left_category", "right_category": "native_right_category",
+    "expected_type": "expected_type",
 }
 
 
@@ -193,11 +201,17 @@ def native_error_diagnostics(error):
 
 @contextmanager
 def _locating(check, operation, position=None):
-    """Say which step a transformation error came from; the error's own code already says why."""
+    """Merge a step location into a transformation or relational failure."""
     try:
         yield
-    except (TabularTransformationSpecError, TabularTransformationEvaluationError) as exc:
-        exc.detail = safe_native_detail({"check": check, "step_op": operation, "step_index": position})
+    except (
+        TabularTransformationSpecError,
+        TabularTransformationEvaluationError,
+        TabularRelationalError,
+    ) as exc:
+        detail = {"check": check, "step_op": operation, "step_index": position}
+        detail.update(getattr(exc, "detail", {}) if isinstance(getattr(exc, "detail", None), dict) else {})
+        exc.detail = safe_native_detail(detail)
         raise
 
 
@@ -247,6 +261,7 @@ def normalize_relational_spec(value, document_ids=None):
         if document_ids is not None:
             _require(identifiers == document_ids, "relational_selection_invalid", check="document_ids_mismatch")
         origins = {alias: {alias} for alias in aliases}
+        namespaces = {alias: {alias} for alias in aliases}
         for position, step in enumerate(spec["steps"]):
             where = {"step_index": position, "step_op": step["op"]}
             name = step["id"]
@@ -254,11 +269,23 @@ def normalize_relational_spec(value, document_ids=None):
             inputs = [step["left"], step["right"]] if step["op"] == "join" else [step["input"]]
             _require(all(item in origins for item in inputs), check="unknown_input", **where)
             if step["op"] == "join":
-                _require(not (origins[inputs[0]] & origins[inputs[1]]), check="join_inputs_overlap", **where)
+                overlap = origins[inputs[0]] & origins[inputs[1]]
+                if overlap:
+                    _require(
+                        not (namespaces[inputs[0]] & namespaces[inputs[1]]),
+                        check="join_inputs_overlap",
+                        **where,
+                    )
+                next_namespaces = namespaces[inputs[0]] if step["how"] == "anti" else (
+                    namespaces[inputs[0]] | namespaces[inputs[1]]
+                )
             elif step["op"] in ("derive", "project"):
                 _precise_spec(step["transform"], check="transform", **where)
+                next_namespaces = ({name} if step["op"] == "project"
+                                   else namespaces[inputs[0]] | {name})
             elif step["op"] == "filter":
                 _precise_spec(_predicate_spec(step["predicate"]), check="predicate", **where)
+                next_namespaces = namespaces[inputs[0]]
             else:
                 names = [item["name"] for item in step["by"] + step["measures"]]
                 _require(len(names) == len(set(names)), check="duplicate_output_name", **where)
@@ -266,7 +293,9 @@ def normalize_relational_spec(value, document_ids=None):
                     item["operation"] == "count" or "column" in item
                     for item in step["measures"]
                 ), check="measure_column_required", **where)
+                next_namespaces = {name}
             origins[name] = set().union(*(origins[item] for item in inputs))
+            namespaces[name] = next_namespaces
         _require(
             spec["result"] in origins and origins[spec["result"]] == set(aliases), "relational_source_unused",
             check="result_sources",
@@ -373,15 +402,15 @@ def _key(row, columns, normalization):
     return tuple((type(value).__name__, value) for value in values)
 
 
-def _date(value, *, optional=False):
+def _date(value, *, optional=False, detail=None):
     if optional and value in (None, ""):
         return None
     _require(isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) is not None,
-             "relational_date_invalid")
+             "relational_date_invalid", **(detail or {}))
     try:
         return date.fromisoformat(value)
     except ValueError as exc:
-        raise TabularRelationalError("relational_date_invalid") from exc
+        raise TabularRelationalError("relational_date_invalid", detail=detail) from exc
 
 
 def _join(step, left, right, budget):
@@ -406,14 +435,26 @@ def _join(step, left, right, budget):
         if key is not None:
             index[key].append((position, row))
         if effective:
-            start = _date(row.values[effective["start"]])
-            end = _date(row.values[effective["end"]], optional=True)
-            _require(end is None or start <= end, "relational_date_invalid")
+            start = _date(
+                row.values[effective["start"]],
+                detail={"check": "effective_start", "role": "effective_interval", "value_index": position},
+            )
+            end = _date(
+                row.values[effective["end"]], optional=True,
+                detail={"check": "effective_end", "role": "effective_interval", "value_index": position},
+            )
+            _require(
+                end is None or start <= end, "relational_date_invalid",
+                check="effective_interval", role="effective_interval", value_index=position,
+            )
             intervals[position] = (start, end)
     right_unique = step["cardinality"] in ("one_to_one", "many_to_one")
     left_unique = step["cardinality"] in ("one_to_one", "one_to_many")
     if not effective and right_unique:
-        _require(all(len(rows) == 1 for rows in index.values()), "relational_match_ambiguous")
+        _require(
+            all(len(rows) == 1 for rows in index.values()), "relational_match_ambiguous",
+            check="right_cardinality", role="join_right_cardinality",
+        )
     if effective and right_unique:
         for group in index.values():
             ordered = sorted((intervals[position] for position, _row in group), key=lambda item: item[0])
@@ -422,16 +463,20 @@ def _join(step, left, right, budget):
                     previous[1] is not None and (
                         previous[1] < current[0] if effective["end_inclusive"] else previous[1] <= current[0]
                     ), "relational_match_ambiguous",
+                    check="effective_interval_overlap", role="join_right_interval",
                 )
     used = defaultdict(int)
     rows = []
     matched = unmatched = 0
-    for row in left.rows:
+    for left_position, row in enumerate(left.rows):
         budget.check()
         key = _key(row, left_keys, normalization)
         matches = list(index.get(key, ())) if key is not None else []
         if effective:
-            point = _date(row.values[effective["value"]])
+            point = _date(
+                row.values[effective["value"]],
+                detail={"check": "effective_value", "role": "effective_point", "value_index": left_position},
+            )
             filtered = []
             for position, candidate in matches:
                 budget.check()
@@ -439,7 +484,10 @@ def _join(step, left, right, budget):
                 if point >= start and (end is None or (point <= end if effective["end_inclusive"] else point < end)):
                     filtered.append((position, candidate))
             matches = filtered
-        _require(not right_unique or len(matches) <= 1, "relational_match_ambiguous")
+        _require(
+            not right_unique or len(matches) <= 1, "relational_match_ambiguous",
+            check="right_match_cardinality", role="join_right_cardinality",
+        )
         if not matches:
             unmatched += 1
             _require(step.get("unmatched", "allow") != "error", "relational_match_missing")
@@ -453,7 +501,10 @@ def _join(step, left, right, budget):
             for position, candidate in matches:
                 budget.check()
                 used[position] += 1
-                _require(not left_unique or used[position] == 1, "relational_match_ambiguous")
+                _require(
+                    not left_unique or used[position] == 1, "relational_match_ambiguous",
+                    check="left_reuse", role="join_left_cardinality",
+                )
                 if step["how"] != "anti":
                     budget.append(rows, RelationalRow(
                         {**row.values, **candidate.values}, tuple(sorted(set(row.lineage + candidate.lineage))),
@@ -496,7 +547,7 @@ def _aggregate(step, table, budget):
 
     for key, group in groups.items():
         values = {f'{step["id"]}.{item["name"]}': value for item, value in zip(step["by"], key)}
-        for measure in step["measures"]:
+        for measure_index, measure in enumerate(step["measures"]):
             operation = measure["operation"]
             if operation == "count":
                 value = len(group)
@@ -505,6 +556,7 @@ def _aggregate(step, table, budget):
             else:
                 value = aggregate_precise_tabular_values(
                     measure_values(group, measure["column"]), operation,
+                    diagnostic_detail={"measure_index": measure_index},
                 )
             values[f'{step["id"]}.{measure["name"]}'] = value
         lineage = tuple(sorted({source for row in group for source in row.lineage}))
@@ -570,6 +622,11 @@ def check_relational_columns(spec, headers):
                     require(right, [effective["start"]], "effective_start", where)
                     require(right, [effective["end"]], "effective_end", where)
             if left is not None and right is not None:
+                _require(
+                    step["how"] == "anti" or not set(left) & set(right),
+                    "relational_columns_ambiguous",
+                    check="join_columns_ambiguous", step_index=position, step_op=operation,
+                )
                 tables[step["id"]] = left if step["how"] == "anti" else left + right
             continue
         table = tables.get(step["input"])

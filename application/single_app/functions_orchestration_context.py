@@ -1524,10 +1524,11 @@ def resolve_candidate_documents(
 class CatalogResolutionError(RuntimeError):
     """A user-safe catalog failure, distinct from an empty authorized catalog."""
 
-    def __init__(self, message, *, code='catalog_unavailable'):
+    def __init__(self, message, *, code='catalog_unavailable', continuation_candidates=None):
         super().__init__(message)
         self.message = message
         self.code = code
+        self.continuation_candidates = list(continuation_candidates or [])
 
 
 def enrich_planner_candidates(
@@ -1864,13 +1865,16 @@ def _source_set_parts(requested):
     }
 
 
-def _log_source_continuation_conflict(matches, parts, distinct_sets):
+def _log_source_continuation_conflict(
+    matches, parts, distinct_sets, *, conversation_id=None, turn_id=None,
+):
     """Say how competing source selections differ, never which documents they name."""
     requested = [entry['requested_sources'] for entry in matches]
     sets = [set(_string_list(item.get('document_ids'))) for item in requested]
     log_event(
         '[ORCHESTRATION_CONTEXT] A follow-up matches more than one previous source selection.',
         level=logging.WARNING, extra={
+            **workflow_log_context(conversation_id=conversation_id, turn_id=turn_id),
             'reason': 'source_continuation_ambiguous',
             'match_count': len(matches), 'distinct_set_count': distinct_sets,
             'shared_document_count': len(set.intersection(*sets)),
@@ -1883,7 +1887,9 @@ def _log_source_continuation_conflict(matches, parts, distinct_sets):
     )
 
 
-def continue_requested_sources(seeds, resolution, ledger, *, user_id, conversation_id, settings=None):
+def continue_requested_sources(
+    seeds, resolution, ledger, *, user_id, conversation_id, settings=None, turn_id=None,
+):
     """Restore one clearly referenced source set, never historical access or arbitrary context.
 
     The ledger owner must already have checked conversation ownership and source-message
@@ -1916,11 +1922,30 @@ def continue_requested_sources(seeds, resolution, ledger, *, user_id, conversati
     parts = [_source_set_parts(entry['requested_sources']) for entry in matches]
     source_sets = {json.dumps(part, sort_keys=True) for part in parts}
     if len(source_sets) != 1:
-        _log_source_continuation_conflict(matches, parts, len(source_sets))
+        _log_source_continuation_conflict(
+            matches, parts, len(source_sets),
+            conversation_id=conversation_id, turn_id=turn_id,
+        )
+        candidates = []
+        seen = set()
+        for match in matches:
+            references = resolve_elicitation_references(
+                (match.get('requested_sources') or {}).get('references') or [],
+                user_id, conversation_id, settings=settings,
+            )
+            for reference in references:
+                key = (
+                    reference['kind'], reference['id'],
+                    reference['scope']['kind'], reference['scope']['id'],
+                )
+                if key not in seen:
+                    candidates.append(reference)
+                    seen.add(key)
         raise CatalogResolutionError(
             'More than one previous source selection matches this follow-up. '
             'Select the intended documents before continuing.',
             code='source_continuation_ambiguous',
+            continuation_candidates=candidates,
         )
     previous = matches[-1]
     requested = previous['requested_sources']

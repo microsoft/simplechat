@@ -487,6 +487,7 @@ def _failure(step, exc, stage, context=None):
             **workflow_log_context(
                 run_id=getattr(context, "run_id", None),
                 conversation_id=getattr(context, "conversation_id", None),
+                turn_id=getattr(context, "turn_id", None),
                 step_id=step_id,
             ),
             "native_code": code, "stage": stage,

@@ -729,9 +729,19 @@ join how/cardinality/on and effective-date boundaries are explicit. Use a named 
 an explicit cell_range/header_row when a worksheet contains separate data regions. CSV
 data has neither native accessibility metadata nor worksheet properties. Derived fields
 and output projection use deterministic tabular-transform-v2 expressions. Declare records,
-lineage and coverage outputs. Compose explains those computed records; render_file can
-export records with an exact-tabular profile. Never present an append/union as a keyed
-reconciliation. Mixed native-layout and data work needs separately compatible steps.
+lineage and coverage outputs. Every compose step consuming tabular results must declare
+tabular_requirement with mode overview, complete_records or calculation and the exact
+selected document IDs. complete_records binds retained rows; calculation binds records,
+lineage and coverage from one tabular_analyze relate producer. Search previews and
+tabular_inspect schema results never satisfy those complete modes. Compose explains those
+computed records; render_file can export records with an exact-tabular profile. Never
+present an append/union as a keyed reconciliation. Mixed native-layout and data work needs
+separately compatible steps.
+For a Word comment-disposition export, bind the complete prepared output from one
+document_search native_section=comments reader as annotation_provenance_input. Declare
+one records-v1 output with comment_thread_id, comment_author, comment_date, reply_ids
+and comment_replies. The server matches exact authorized root IDs and projects native
+author/date/reply metadata; never recreate or infer it in prose.
 For mixed narrative/tabular comparisons, prepare each
 source with compatible offered capabilities and compose their named results. Ask each
 preparation step only for its own sources' contribution, such as values, periods, units and
@@ -2165,6 +2175,8 @@ def plan_request(
         )
         validate_plan_document_source_kinds(
             normalized, document_source_kinds, document_source_formats=document_source_formats,
+            selected_document_ids=(seeds or {}).get('document_ids'),
+            required_capabilities=required_capability_ids(seeds),
         )
         validate_plan_native_source_schemas(normalized, source_candidates)
         normalized['validation']['repairs'].extend(local_repairs)

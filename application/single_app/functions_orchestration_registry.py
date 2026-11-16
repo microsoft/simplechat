@@ -1661,6 +1661,33 @@ CAPABILITY_REGISTRY = (
                 'response_policy': {
                     'type': 'string', 'enum': ['available_information', 'complete_inputs'],
                 },
+                'tabular_requirement': {
+                    'type': 'object',
+                    'additionalProperties': False,
+                    'required': ['mode', 'document_ids'],
+                    'properties': {
+                        'mode': {'type': 'string', 'enum': ['overview', 'complete_records', 'calculation']},
+                        'document_ids': {
+                            'type': 'array', 'minItems': 1, 'maxItems': 100,
+                            'uniqueItems': True,
+                            'items': {'type': 'string', 'minLength': 1, 'maxLength': 256},
+                        },
+                    },
+                    'description': (
+                        'Declare how named tabular evidence is used. complete_records requires '
+                        'complete retained rows; calculation requires complete native records, '
+                        'lineage and coverage from tabular_analyze relate.'
+                    ),
+                },
+                'annotation_provenance_input': {
+                    'type': 'string',
+                    'minLength': 1,
+                    'maxLength': 128,
+                    'description': (
+                        'Name the bound native Word comments input that authorizes deterministic '
+                        'author, date, root and reply metadata for a single records-v1 output.'
+                    ),
+                },
                 'semantic_review': {
                     'type': 'string', 'enum': ['auto', 'on', 'off'],
                     'description': 'Optional semantic review; required output validation always runs.',

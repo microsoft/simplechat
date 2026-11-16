@@ -262,12 +262,18 @@ def _retry_repeats_refusal(record, steps, retry):
 
 
 class RecoveryError(RuntimeError):
-    def __init__(self, message=None, *, code='recovery_unavailable', status_code=409, recovery=None, current_run_id=None):
+    def __init__(
+        self, message=None, *, code='recovery_unavailable', status_code=409, recovery=None,
+        current_run_id=None, rule=None, stage=None, producer_capability_id=None,
+    ):
         self.code = code
         self.status_code = status_code
         self.message = message or 'Saved progress is unavailable. Review the request and create a new plan.'
         self.recovery = recovery
         self.current_run_id = current_run_id
+        self.validation_rule = rule
+        self.stage = stage
+        self.producer_capability_id = producer_capability_id
         super().__init__(self.message)
 
 
@@ -417,7 +423,10 @@ def _validate_inherited_parent(record, parent, *, available_information=False):
             'user_message_id', 'user_message', 'resolved_message', 'request_resolution',
         ))
     ):
-        raise CheckpointError('recovery_changed')
+        raise CheckpointError(
+            'recovery_changed', rule='inherited_parent_binding_mismatch',
+            stage='continuation_binding',
+        )
     return expected_plan
 
 
@@ -428,7 +437,10 @@ def _receipt_checkpoint(record, step_id, authorize, result_service):
     store = checkpoint_store(record, authorize)
     original = store.load(step_id, input_only=True)
     if original.get('binding') != record.get('execution_binding'):
-        raise CheckpointError('recovery_changed')
+        raise CheckpointError(
+            'recovery_changed', rule='checkpoint_execution_binding_changed',
+            stage='producer_receipt_binding',
+        )
     try:
         producer = ProducerIdentity.from_dict(original['result_producer'])
         planned = next(step for step in record['plan']['steps'] if step['step_id'] == step_id)
@@ -437,7 +449,10 @@ def _receipt_checkpoint(record, step_id, authorize, result_service):
             or producer.capability_id != planned['capability_id']
             or planned.get('enabled') is not True
         ):
-            raise CheckpointError('recovery_changed')
+            raise CheckpointError(
+                'recovery_changed', rule='producer_identity_changed',
+                stage='producer_receipt_binding', producer_capability_id=planned['capability_id'],
+            )
         task = result_service.recover_task_result(
             producer=producer, input_fingerprint=original['input_fingerprint'],
         )
@@ -516,7 +531,10 @@ def _completed_checkpoint(record, step_id, authorize, visited=None, *, result_se
     else:
         raise CheckpointError('checkpoint_unavailable')
     if payload.get('binding') != record.get('execution_binding'):
-        raise CheckpointError('recovery_changed')
+        raise CheckpointError(
+            'recovery_changed', rule='completed_checkpoint_binding_changed',
+            stage='checkpoint_binding',
+        )
     if not reference and payload.get('provenance') != {'run_id': record['id'], 'step_id': step_id}:
         copied = (
             (record.get('continuation_source_checkpoints') or {}).get(step_id)
@@ -543,7 +561,10 @@ def _completed_checkpoint(record, step_id, authorize, visited=None, *, result_se
         payload.get(key) != inherited.get(key)
         for key in ('schema_version', 'binding', 'input_fingerprint', 'step_id', 'result', 'provenance', 'artifact_versions')
     ):
-        raise CheckpointError('recovery_changed')
+        raise CheckpointError(
+            'recovery_changed', rule='local_inherited_checkpoint_mismatch',
+            stage='checkpoint_binding',
+        )
     return payload
 
 
@@ -1063,7 +1084,10 @@ def claim_waiting_continuation(run_id, user_id, data, *, authorize, message_cont
     previous = record.get('continuation_submission') or {}
     if previous.get('submission_id') == data['submission_id']:
         if previous.get('fingerprint') != request_digest:
-            raise RecoveryError(code='recovery_changed')
+            raise RecoveryError(
+                code='recovery_changed', rule='continuation_submission_fingerprint_changed',
+                stage='continuation_claim',
+            )
         return {'acquired': False, 'record': record}
     if record.get('checkpoint_version') != CHECKPOINT_VERSION or not record.get('execution_binding'):
         raise RecoveryError(code='legacy_no_checkpoints')
@@ -1075,13 +1099,19 @@ def claim_waiting_continuation(run_id, user_id, data, *, authorize, message_cont
         or record.get('cancellation_requested_at')
         or record.get('status') not in {'waiting', 'running'}
     ):
-        raise RecoveryError(code='recovery_changed')
+        raise RecoveryError(
+            code='recovery_changed', rule='continuation_run_binding_changed',
+            stage='continuation_claim',
+        )
     try:
         deadline = datetime.fromisoformat(record['execution_deadline_at'])
         if deadline.tzinfo is None:
             raise ValueError('A persisted timezone is required.')
     except (KeyError, TypeError, ValueError) as exc:
-        raise RecoveryError(code='recovery_changed') from exc
+        raise RecoveryError(
+            code='recovery_changed', rule='continuation_deadline_invalid',
+            stage='continuation_claim',
+        ) from exc
     if deadline <= _now():
         failure = build_failure('run_timeout')
         try:
@@ -1091,11 +1121,17 @@ def claim_waiting_continuation(run_id, user_id, data, *, authorize, message_cont
                 'recovery_version': uuid.uuid4().hex,
             })
         except exceptions.CosmosAccessConditionFailedError as exc:
-            raise RecoveryError(code='recovery_changed') from exc
+            raise RecoveryError(
+                code='recovery_changed', rule='continuation_timeout_commit_changed',
+                stage='continuation_claim',
+            ) from exc
         fence_publication(stopped, message_container)
         raise RecoveryError(failure['message'], code='run_timeout')
     if _live(record):
-        raise RecoveryError('Another worker owns this continuation.', code='execution_live')
+        raise RecoveryError(
+            'Another worker owns this continuation.', code='execution_live',
+            rule='continuation_worker_live', stage='continuation_claim',
+        )
     store = checkpoint_store(record, authorize)
     lifecycle = store._read(LIFECYCLE_ID)
     token = lifecycle.get('token')
@@ -1103,35 +1139,56 @@ def claim_waiting_continuation(run_id, user_id, data, *, authorize, message_cont
         lifecycle.get('deleted') or not _valid_id(token)
         or ((record.get('execution_lease') or {}).get('token') not in (None, token))
     ):
-        raise RecoveryError(code='ownership_lost')
+        raise RecoveryError(
+            code='ownership_lost', rule='continuation_lifecycle_guard_changed',
+            stage='continuation_claim',
+        )
     waiting = []
     planned = {step['step_id']: step for step in record['plan']['steps']}
     for step in _execution_steps(record):
         if step.get('status') == 'running':
-            raise RecoveryError(code='result_commit_unconfirmed')
+            raise RecoveryError(
+                code='result_commit_unconfirmed', rule='continuation_producer_commit_unconfirmed',
+                stage='continuation_claim', producer_capability_id=step.get('capability_id'),
+            )
         if step.get('status') != 'waiting' or not store.has_manifest(step['step_id'], waiting=True):
             continue
         payload = store.load(step['step_id'], waiting=True)
+        declared = planned.get(step['step_id'])
         if (
             payload.get('binding') != record['execution_binding']
             or type(payload.get('result', {}).get('wait')) is not dict
             or not payload['result']['wait']
         ):
-            raise RecoveryError(code='checkpoint_invalid')
-        declared = planned.get(step['step_id'])
+            raise RecoveryError(
+                code='checkpoint_invalid', rule='continuation_checkpoint_binding_invalid',
+                stage='waiting_checkpoint_binding', producer_capability_id=declared['capability_id']
+                if declared is not None else None,
+            )
         if declared is None or declared.get('enabled') is not True:
-            raise RecoveryError(code='checkpoint_invalid')
+            raise RecoveryError(
+                code='checkpoint_invalid', rule='continuation_wait_step_missing',
+                stage='waiting_checkpoint_binding',
+                producer_capability_id=(declared or {}).get('capability_id'),
+            )
         capability = get_capability(declared['capability_id'], contract_version=2)
         if payload['result'].get('task_result') is not None:
             pending = TaskResult.from_dict(payload['result']['task_result'])
             if pending.status != 'pending' or pending.outputs:
-                raise RecoveryError(code='checkpoint_invalid')
+                raise RecoveryError(
+                    code='checkpoint_invalid', rule='continuation_pending_result_invalid',
+                    stage='waiting_checkpoint_binding',
+                    producer_capability_id=declared['capability_id'],
+                )
             producer = pending.producer
         else:
             original = store.load(step['step_id'], input_only=True)
             producer = ProducerIdentity.from_dict(original['result_producer'])
             if declared.get('role') != 'render':
-                raise RecoveryError(code='checkpoint_invalid')
+                raise RecoveryError(
+                    code='checkpoint_invalid', rule='continuation_input_only_producer_invalid',
+                    stage='waiting_checkpoint_binding', producer_capability_id=declared['capability_id'],
+                )
         if (
             capability is None
             or producer != ProducerIdentity(
@@ -1139,7 +1196,10 @@ def claim_waiting_continuation(run_id, user_id, data, *, authorize, message_cont
                 step['step_id'], declared['capability_id'], capability['result_contract_version'],
             )
         ):
-            raise RecoveryError(code='recovery_changed')
+            raise RecoveryError(
+                code='recovery_changed', rule='continuation_producer_identity_changed',
+                stage='waiting_checkpoint_binding', producer_capability_id=declared['capability_id'],
+            )
         waiting.append(step['step_id'])
     if not waiting:
         raise RecoveryError(code='result_not_ready')
@@ -1297,7 +1357,10 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
             )
         )
     ):
-        raise CheckpointError('recovery_changed')
+        raise CheckpointError(
+            'recovery_changed', rule='saved_plan_or_turn_changed',
+            stage='resume_identity',
+        )
     if getattr(context, 'export_catalog', None) is not None:
         admitted_pairs = admitted_export_pairs(context.export_catalog)
         for step in record['plan'].get('steps') or []:
@@ -1320,7 +1383,10 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
         parent_binding if narrative_continuation and source_id == continuation_parent['id'] else binding
     )
     if source.get('execution_binding') != source_binding:
-        raise CheckpointError('recovery_changed')
+        raise CheckpointError(
+            'recovery_changed', rule='execution_binding_changed',
+            stage='resume_binding',
+        )
     if narrative_continuation and (
         record.get('continuation_source_binding') != parent_binding
         or continuation_parent.get('execution_binding') != parent_binding
@@ -1378,7 +1444,11 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
                         step, context, binding, settings=settings,
                     )
                 ):
-                    raise CheckpointError('recovery_changed')
+                    raise CheckpointError(
+                        'recovery_changed', rule='waiting_input_or_binding_changed',
+                        stage='waiting_checkpoint_binding',
+                        producer_capability_id=step.get('capability_id'),
+                    )
                 _validate_payload_sources(payload, context, settings, record['user_id'])
                 restore_context(context, payload)
                 payloads[step['step_id']] = payload
@@ -1397,7 +1467,10 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
                 item for item in checkpoint_source['plan']['steps'] if item['step_id'] == step['step_id']
             ) if from_parent else step
             if narrative_continuation and effective_plan({'steps': [source_step]}) != effective_plan({'steps': [step]}):
-                raise CheckpointError('recovery_changed')
+                raise CheckpointError(
+                    'recovery_changed', rule='continuation_producer_step_changed',
+                    stage='producer_step_binding', producer_capability_id=step.get('capability_id'),
+                )
             if from_parent:
                 captured = record['continuation_source_checkpoints'][step['step_id']]
                 if (
@@ -1412,7 +1485,11 @@ def validate_resume(record, context, settings, authorize, *, source_run_id=None,
                     source_step, context, expected_binding, settings=settings,
                 )
             ):
-                raise CheckpointError('recovery_changed')
+                raise CheckpointError(
+                    'recovery_changed', rule='completed_input_fingerprint_changed',
+                    stage='completed_checkpoint_binding',
+                    producer_capability_id=step.get('capability_id'),
+                )
             _validate_payload_sources(payload, context, settings, record['user_id'])
             restore_context(context, payload)
             if from_parent:

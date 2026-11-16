@@ -210,6 +210,7 @@ class HarnessExecutionError(OrchestrationInvocationControlError):
 
     def __init__(
         self, code="execution_interrupted", *, final_frames=(), durable_status=None, retryable=False,
+        rule=None, stage=None, producer_capability_id=None,
     ):
         self.failure = build_failure(code)
         self.code = self.failure["code"]
@@ -217,6 +218,9 @@ class HarnessExecutionError(OrchestrationInvocationControlError):
         self.final_frames = list(final_frames)
         self.durable_status = durable_status
         self.retryable = retryable
+        self.validation_rule = rule
+        self.stage = stage
+        self.producer_capability_id = producer_capability_id
         super().__init__(self.message)
 
 
@@ -275,6 +279,11 @@ def _failure(error):
 def _log_failure(message, record, error, *, stage="execution"):
     response_type = type(record).__name__
     record = record if isinstance(record, dict) else {}
+    diagnostic = next((
+        item for item in _known_failure_chain(error)
+        if getattr(item, "validation_rule", None)
+        or getattr(item, "producer_capability_id", None)
+    ), error)
     log_event(
         f"[ORCHESTRATION_RUNS] {message}",
         level=logging.WARNING,
@@ -283,8 +292,10 @@ def _log_failure(message, record, error, *, stage="execution"):
                 run_id=record.get("id"), conversation_id=record.get("conversation_id"),
                 turn_id=record.get("turn_id"),
             ),
-            "stage": stage, "response_type": response_type,
+            "stage": getattr(diagnostic, "stage", None) or stage, "response_type": response_type,
             "error_type": type(error).__name__, "execution_code": _failure(error)["code"],
+            "validation_rule": getattr(diagnostic, "validation_rule", None),
+            "producer_capability_id": getattr(diagnostic, "producer_capability_id", None),
             "authority_reason": (
                 error.code if isinstance(error, (ResultUnavailableError, ResultContractError)) else None
             ),
@@ -1085,6 +1096,7 @@ class HarnessExecution:
         self._bind_public_chat_scope(self.context, conversation_id)
         self.context.pending_results = deepcopy(pending)
         response = None
+        response_producer_capability_id = None
         if self.record["plan"].get("final_response"):
             binding = InputBinding.from_dict(self.record["plan"]["final_response"])
             if binding.existing_result is not None:
@@ -1095,10 +1107,16 @@ class HarnessExecution:
                 task = self.context.task_results.get(binding.step_id)
                 if task is not None and task.status in {"complete", "partial"}:
                     response = task.output(binding.output_name)
+            if response is not None:
+                response_producer_capability_id = response.producer.capability_id
         if self.record.get("final_response") and (
             response is None or response.to_dict() != self.record["final_response"]
         ):
-            raise HarnessExecutionError("recovery_changed")
+            raise HarnessExecutionError(
+                "recovery_changed", rule="final_response_reference_changed",
+                stage="final_response_binding",
+                producer_capability_id=response_producer_capability_id,
+            )
         return {
             **deepcopy(self.record),
             "final_response": response.to_dict() if response is not None else None,
@@ -1995,6 +2013,9 @@ class HarnessExecution:
             return HarnessExecutionError(
                 _failure(error)["code"], final_frames=frames,
                 durable_status=(self._final_record or {}).get("status"),
+                rule=getattr(error, "validation_rule", None),
+                stage=getattr(error, "stage", None),
+                producer_capability_id=getattr(error, "producer_capability_id", None),
             )
         finally:
             self.close()
