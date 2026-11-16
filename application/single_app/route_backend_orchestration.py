@@ -3403,6 +3403,50 @@ def register_route_backend_orchestration(bp):
                     selected_sources = [
                         item['planning_source'] for item in selected_candidates if item.get('planning_source')
                     ]
+                    previous_revisions = deepcopy(
+                        (seeds.get('planning_source_revisions') or {})
+                    )
+                    changed_revisions = [
+                        item['document_id'] for item in selected_sources
+                        if previous_revisions.get(item['document_id'])
+                        and previous_revisions[item['document_id']] != item['revision']
+                    ]
+                    if changed_revisions:
+                        elicitation = normalize_elicitation({
+                            'message': (
+                                'The original source selection has changed since that turn. '
+                                'Review and select the current complete set before continuing.'
+                            ),
+                            'requested_schema': {
+                                'type': 'object',
+                                'properties': {
+                                    'source_documents': {
+                                        'type': 'array', 'title': 'Current source documents',
+                                        'items': {'type': 'string'}, 'minItems': 1,
+                                    },
+                                },
+                                'required': ['source_documents'],
+                            },
+                            'ui_hints': {
+                                'fields': {
+                                    'source_documents': {
+                                        'input': 'files', 'candidate_ids': [
+                                            item['document_id'] for item in selected_sources
+                                        ],
+                                    },
+                                },
+                            },
+                        }, run_id=None, revision=current_revision)
+                        _require_planning_owner(planning_holder)
+                        outcome = _save_pending_elicitation(
+                            elicitation, turn_context, user_id, resolved_conversation_id,
+                            turn_id, submission=submission,
+                            expected_pending=observed_pending,
+                        )
+                        yield from _elicitation_outcome_events(
+                            outcome, turn_context, user_id, resolved_conversation_id,
+                        )
+                        return
                     seeds['planning_source_revisions'] = {
                         **(seeds.get('planning_source_revisions') or {}),
                         **{item['document_id']: item['revision'] for item in selected_sources},

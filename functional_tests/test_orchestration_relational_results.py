@@ -1,19 +1,22 @@
 # test_orchestration_relational_results.py
 """
 Functional tests for authorized, retained multi-file calculation results.
-Version: 0.261.443
-Implemented in: 0.261.437
+Version: 0.261.446
+Implemented in: 0.261.437; 0.261.446
 Source-header failure classification added in: 0.261.439
 Stable runtime failure codes and locations added in: 0.261.443
+Complete preparation and owner-bound prepared lowering added in: 0.261.446
 
 Real source authorization, bounded computation and retained records run offline.
 Only documents, blobs and model I/O are doubled by the existing native harness.
 """
 
 from copy import deepcopy
+from dataclasses import replace
 import csv
 import importlib
 import io
+import json
 import sys
 
 import pytest
@@ -23,6 +26,7 @@ from test_orchestration_native_results import USER, bridge_runtime, commits, exe
 from test_orchestration_dependency_runtime import execute as execute_compiled, runtime  # noqa: F401
 from test_tabular_relational_calculations import join_spec
 from test_support.orchestration_research import document_action_policy_module
+from test_support.orchestration_results import ResultContainer
 
 
 def prepare(runtime):
@@ -184,6 +188,136 @@ def test_relational_arguments_and_legacy_single_source_contracts_are_distinct():
         })
 
 
+def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(monkeypatch):
+    with bridge_runtime(monkeypatch) as runtime:
+        prepare(runtime)
+        module = importlib.import_module("functions_orchestration_native_results")
+        checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+        contracts = importlib.import_module("functions_orchestration_result_contracts")
+        analysis_access = importlib.import_module("functions_analysis_access")
+        snapshots = analysis_access.analysis_source_snapshot(runtime.context.source_manifest)
+        prep_step = {
+            "step_id": "prepare", "capability_id": "tabular_analyze",
+            "arguments": {"native_operation": "prepare"},
+        }
+        parent = runtime.native.parents.read_item("parent-run", runtime.context.conversation_id)
+        parent["plan"]["steps"] = [deepcopy(prep_step), deepcopy(runtime.step)]
+        runtime.native.parents.replace_item(parent["id"], parent)
+        producer = runtime.context.result_producer(prep_step)
+        context_value = {
+            "version": "tabular-calculation-context-v1", "complete": True,
+            "source_snapshots": snapshots,
+            "profile_sha256": "a" * 64, "analytical_request_sha256": "b" * 64,
+            "datasets": [{
+                "alias": "sales", "document_id": "source-1", "sheet": "",
+                "selection": {}, "headers": ["code", "quantity"],
+                "physical_row_count": 2, "context_columns": [], "key_profiles": [],
+            }, {
+                "alias": "catalog", "document_id": "source-2", "sheet": "",
+                "selection": {}, "headers": ["sku", "price"],
+                "physical_row_count": 2, "context_columns": [], "key_profiles": [],
+            }],
+            "limitations": [],
+        }
+        complete = contracts.Completeness(
+            "complete", 1, 1, contracts.Coverage(2, 2, "sources"), "valid",
+            ("complete_preparation",), (),
+        )
+        preparation = runtime.service.persist_task_result(
+            producer=producer, role="reason", status="complete",
+            outputs=[runtime.module.NamedOutput(
+                "context", "structured-v1", context_value, complete,
+            ), runtime.module.NamedOutput(
+                "coverage", "structured-v1", {
+                    "complete": True, "source_snapshots": snapshots,
+                    "profile_sha256": context_value["profile_sha256"],
+                    "analytical_request_sha256": context_value["analytical_request_sha256"],
+                    "datasets": [
+                        {"document_id": item["document_id"]} for item in context_value["datasets"]
+                    ],
+                }, complete,
+            )],
+            sources=snapshots, origin="grounded",
+            source_policy="current", guard_token="preparation-token",
+        )
+        runtime.context.task_results = {"prepare": preparation}
+        runtime.step["capability_id"] = "tabular_analyze"
+        runtime.step["arguments"] = {
+            "question": "Calculate exact order amounts from complete context.",
+            "native_operation": "relate", "document_ids": ["source-1", "source-2"],
+            "calculation_mode": "prepared-v1",
+        }
+        runtime.step["inputs"] = {
+            "preparation": {
+                "binding": {
+                    "version": "orchestration-input-binding-v1", "step_id": "prepare",
+                    "output_name": "context", "existing_result": None,
+                },
+                "allow_partial": False,
+            },
+        }
+        runtime.step["outputs"] = [
+            {"name": name, "kind": kind}
+            for name, kind in (
+                ("records", "records-v1"), ("lineage", "records-v1"),
+                ("coverage", "structured-v1"),
+            )
+        ]
+        parent["plan"]["steps"][1] = deepcopy(runtime.step)
+        runtime.native.parents.replace_item(parent["id"], parent)
+        spec = join_spec()
+        spec["datasets"][0]["document_id"] = "source-1"
+        spec["datasets"][1]["document_id"] = "source-2"
+        calls = []
+
+        def invoke(_prompt, *, stage, metadata):
+            calls.append((stage, metadata))
+            return json.dumps(spec)
+
+        invoke.enforces_complete_generation = True
+        runtime.context.invoke_prompt = invoke
+        binding = "lowering-binding"
+        checkpoint_container = ResultContainer()
+        checkpoint_store = checkpoints.CheckpointStore(
+            checkpoint_container, run_id="parent-run", user_id=USER,
+            conversation_id="conversation-1", turn_id="turn-1",
+            authorize=lambda: True, token="execution-token", claim_id="claim-1",
+        )
+        checkpoint_store.initialize()
+        runtime.context.completeness_store = checkpoint_store
+        runtime.context.completeness_binding = binding
+
+        def fingerprint(step, context):
+            value = checkpoints.step_input_fingerprint(
+                step, context, binding, settings=runtime.native.settings,
+            )
+            return value
+
+        fingerprint(runtime.step, runtime.context)
+        runtime.bound = replace(
+            module.build_native_orchestration_bridge(native_operation="relate"),
+            input_fingerprint_for_step=fingerprint,
+        )
+        failures = []
+        runtime.native.patcher.setattr(
+            module, "log_event", lambda _message, extra=None, **_kwargs: failures.append(extra),
+        )
+        result = execute(runtime)
+        assert result["status"] == "completed", json.dumps(
+            {"result": result, "diagnostics": failures}, default=str, indent=2,
+        )
+        assert len(calls) == 1
+        assert calls[0][1]["require_complete_generation"] is True
+        state = checkpoint_store.load_lowering_state(
+            "compute", binding=binding, input_fingerprint=fingerprint(
+                runtime.step, runtime.context,
+            ),
+        )
+        assert state["phase"] == "retained"
+        assert state["calls_used"] == 1 and state["completion_confirmed"] is True
+        assert state["program_sha256"]
+
+
 def test_source_schema_assertion_failure_is_not_reported_as_missing_named_outputs(monkeypatch):
     with bridge_runtime(monkeypatch) as runtime:
         prepare(runtime)
@@ -195,6 +329,68 @@ def test_source_schema_assertion_failure_is_not_reported_as_missing_named_output
         assert "complete source header" in result["error"]
         assert commits(runtime) == []
         assert runtime.provider.calls == []
+
+
+def test_native_prepare_retains_complete_context_and_exact_profiles(monkeypatch):
+    with bridge_runtime(monkeypatch) as runtime:
+        prepare(runtime)
+        runtime.bound = runtime.module.build_native_orchestration_bridge(native_operation="prepare")
+        runtime.step["arguments"] = {
+            "question": "Prepare the complete order and price context.",
+            "native_operation": "prepare", "document_ids": ["source-1", "source-2"],
+            "preparation_request": {
+                "version": "tabular-context-request-v1",
+                "datasets": [{
+                    "alias": "orders", "document_id": "source-1",
+                    "context_columns": ["code"], "key_profiles": [
+                        {"name": "order_keys", "columns": ["code", "quantity"]},
+                    ],
+                }, {
+                    "alias": "prices", "document_id": "source-2",
+                    "context_columns": ["sku"], "key_profiles": [
+                        {"name": "price_keys", "columns": ["sku"]},
+                    ],
+                }],
+            },
+        }
+        runtime.step["outputs"] = [
+            {"name": output.name, "kind": output.kind} for output in runtime.bound.output_specs
+        ]
+        result = execute(runtime)
+        assert result["status"] == "completed", result
+        task = result["task_result"]
+        context = runtime.service.open_result(task.output("context")).read_value()
+        coverage = runtime.service.open_result(task.output("coverage")).read_value()
+        assert context["version"] == "tabular-calculation-context-v1"
+        assert context["datasets"][0]["headers"] == ["code", "quantity"]
+        assert context["datasets"][0]["context_columns"][0]["distinct_values"] == [
+            {"value": "007", "rows": [2]}, {"value": "008", "rows": [3]},
+        ]
+        assert context["datasets"][0]["key_profiles"][0]["distinct_count"] == 2
+        assert coverage["input_rows"] == 4 and coverage["complete"] is True
+        assert runtime.provider.calls == [] and runtime.native.jobs.created == 0
+
+
+def test_preparation_argument_rejects_duplicate_profile_names(monkeypatch):
+    with bridge_runtime(monkeypatch) as runtime:
+        module = runtime.module
+        arguments = {
+            "question": "Prepare keys.",
+            "native_operation": "prepare", "document_ids": ["source-1"],
+            "preparation_request": {
+                "version": "tabular-context-request-v1",
+                "datasets": [{
+                    "alias": "source", "document_id": "source-1", "context_columns": [],
+                    "key_profiles": [
+                        {"name": "same", "columns": ["left"]},
+                        {"name": "same", "columns": ["right"]},
+                    ],
+                }],
+            },
+        }
+        with pytest.raises(module.NativeOrchestrationBridgeError) as error:
+            module.validate_native_orchestration_arguments(arguments)
+        assert error.value.code == "native_arguments_invalid"
 
 
 @pytest.mark.parametrize("fault,native_code,logged", [
@@ -229,7 +425,7 @@ def test_runtime_failures_log_a_stable_code_and_location_without_source_values(m
         assert commits(runtime) == [] and runtime.provider.calls == []
 
 
-def test_real_compiler_executor_and_export_consume_computed_not_model_generated_rows(runtime):
+def test_real_compiler_executor_and_export_consume_trusted_legacy_manual_rows(runtime, monkeypatch):
     module = importlib.import_module("functions_orchestration_native_results")
     spec = join_spec()
     step = {
@@ -239,6 +435,9 @@ def test_real_compiler_executor_and_export_consume_computed_not_model_generated_
             "native_operation": "relate", "document_ids": ["sales", "catalog"], "relational_spec": spec,
         },
     }
+    monkeypatch.setattr(
+        runtime.schema, "validate_generated_plan_tabular_admission", lambda _plan: None,
+    )
     case = runtime.make([step], available=["tabular_analyze"])
     data = {"sales": b"code,quantity\n007,3\n008,2\n", "catalog": b"sku,price\n008,0.20\n007,0.10\n"}
     for identifier in data:

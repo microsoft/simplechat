@@ -521,10 +521,11 @@ def available_information_plan(raw, *, step_ids=None):
         outputs = step.get('outputs')
         requirement = step['arguments'].get('tabular_requirement') or {}
         complete_tabular = requirement.get('mode') in ('complete_records', 'calculation')
+        calculation_answer = requirement.get('mode') == 'calculation_answer'
         if (
             step.get('capability_id') == CAPABILITY_COMPOSE
             and type(outputs) is list and outputs and all(is_narrative_output(item) for item in outputs)
-            and not complete_tabular
+            and (calculation_answer or not complete_tabular)
         ):
             step['arguments'].setdefault('response_policy', AVAILABLE_INFORMATION_POLICY)
         narrative = uses_available_information(step) or (
@@ -536,7 +537,12 @@ def available_information_plan(raw, *, step_ids=None):
                 if (
                     type(value) is dict and 'binding' in value
                     and type(value.get('allow_partial', False)) is bool
-                    and not complete_tabular
+                    and (calculation_answer or not complete_tabular)
+                    and not (
+                        calculation_answer
+                        and (value.get('binding') or {}).get('output_name')
+                        in {'context', 'records', 'lineage', 'coverage'}
+                    )
                 ):
                     value['allow_partial'] = True
     return plan
@@ -735,9 +741,15 @@ def _apply_image_input_policy(steps, existing_results):
             if spec.optional and _optional_input_kind(spec, produced, existing_results) != IMAGE_ASSET_KIND
         ]
         if knowledge_optional and step['arguments'].get('knowledge_basis') not in GENERAL_KNOWLEDGE_BASES:
-            raise PlanValidationError(
-                'An optional input requires an answer basis that allows general knowledge.',
+            calculation_answer = (
+                (step['arguments'].get('tabular_requirement') or {}).get('mode')
+                == 'calculation_answer'
+                and step['arguments'].get('knowledge_basis') == 'sources'
             )
+            if not calculation_answer:
+                raise PlanValidationError(
+                    'An optional input requires an answer basis that allows general knowledge.',
+                )
 
 
 def _require_merge_mapping_producers(steps):
@@ -1503,13 +1515,24 @@ def validate_dependency_plan(
         # any required binding keep it required.
         final_producer = final_binding.step_id if final_binding is not None else None
         consumers = {}
+        required_optional_calculations = set()
         for step in accepted:
             for spec in step_input_specs(step):
                 if spec.binding.step_id is not None:
                     consumers.setdefault(spec.binding.step_id, []).append(spec.optional)
+                    if (
+                        spec.optional
+                        and (step.get('arguments') or {}).get('tabular_requirement', {}).get('mode')
+                        == 'calculation_answer'
+                        and spec.binding.output_name in {'records', 'lineage', 'coverage'}
+                    ):
+                        required_optional_calculations.add(spec.binding.step_id)
         for step in accepted:
             uses = consumers.get(step['step_id'])
-            if uses and all(uses) and step['step_id'] != final_producer:
+            if (
+                uses and all(uses) and step['step_id'] != final_producer
+                and step['step_id'] not in required_optional_calculations
+            ):
                 step['optional'] = True
         deliverables = compile_deliverables(
             plan.get('deliverables'), accepted, final_response=plan.get('final_response'),
@@ -1925,6 +1948,63 @@ def _validate_tabular_composition_requirements(
                 step, code='plan_arguments_invalid', rule='tabular_requirement_sources_incomplete',
             )
         direct = _input_producer_steps(step, steps_by_id)
+        if requirement['mode'] == 'calculation_answer':
+            if (
+                requirement.get('version') != 'tabular-calculation-answer-v1'
+                or not any(
+                    producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                    and (producer.get('arguments') or {}).get('native_operation') == 'prepare'
+                    and output_name == 'context'
+                    and (step.get('inputs') or {}).get(input_name, {}).get('optional', False) is False
+                    and (step.get('inputs') or {}).get(input_name, {}).get('allow_partial', False) is False
+                    for input_name, producer, output_name in (
+                        (
+                            name,
+                            steps_by_id.get((value.get('binding') or {}).get('step_id')),
+                            (value.get('binding') or {}).get('output_name'),
+                        )
+                        for name, value in (step.get('inputs') or {}).items()
+                        if isinstance(value, dict)
+                    )
+                    if isinstance(producer, dict)
+                )
+            ):
+                raise _step_contract_error(
+                    'A calculation answer requires one complete native preparation input.',
+                    step, code='plan_arguments_invalid', rule='tabular_preparation_required',
+                )
+            calculation = {
+                producer['step_id'] for producer, output_name in direct
+                if producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                and (producer.get('arguments') or {}).get('native_operation') == 'relate'
+                and output_name in {'records', 'lineage', 'coverage'}
+            }
+            calculation_outputs = {
+                output_name for producer, output_name in direct
+                if producer['step_id'] in calculation
+            }
+            invalid_calculation_inputs = [
+                value for value in (step.get('inputs') or {}).values()
+                if isinstance(value, dict)
+                and (value.get('binding') or {}).get('step_id') in calculation
+                and (value.get('binding') or {}).get('output_name') in {
+                    'records', 'lineage', 'coverage',
+                }
+                and (
+                    value.get('optional') is not True
+                    or value.get('allow_partial') is not False
+                )
+            ]
+            if calculation and (
+                len(calculation) != 1
+                or not {'records', 'lineage', 'coverage'} <= calculation_outputs
+                or invalid_calculation_inputs
+            ):
+                raise _step_contract_error(
+                    'A calculation answer must bind all calculation members from one producer or none.',
+                    step, code='plan_arguments_invalid', rule='tabular_calculation_bundle_invalid',
+                )
+            continue
         if requirement['mode'] == 'overview':
             if not has_tabular_evidence:
                 raise _step_contract_error(
@@ -2147,6 +2227,38 @@ def build_plan_outputs(plan):
     ]
 
 
+def generated_plan_admission_stamp(plan):
+    """Server-owned admission facts for generated multi-file calculation plans."""
+    prepared = []
+    for step in (plan or {}).get('steps') or []:
+        if not isinstance(step, dict) or step.get('capability_id') != CAPABILITY_TABULAR_ANALYZE:
+            continue
+        arguments = step.get('arguments') or {}
+        if arguments.get('native_operation') == 'relate' and len(arguments.get('document_ids') or []) > 1:
+            prepared.append({
+                'step_id': step.get('step_id'),
+                'policy': (
+                    'prepared-v1'
+                    if arguments.get('calculation_mode') == 'prepared-v1'
+                    else 'legacy-explicit-v1'
+                ),
+            })
+    return {
+        'version': 'generated-tabular-admission-v1',
+        'steps': sorted(prepared, key=lambda item: str(item.get('step_id'))),
+    }
+
+
+def validate_generated_plan_tabular_admission(plan):
+    """Newly model-authored multi-source calculations require complete preparation."""
+    for step in generated_plan_admission_stamp(plan)['steps']:
+        if step['policy'] != 'prepared-v1':
+            raise PlanValidationError(
+                'Multi-file calculation must bind complete preparation before authoring a program.',
+                code='plan_arguments_invalid', rule='prepared_calculation_required',
+            )
+
+
 def normalize_plan(
     plan,
     conversation_id,
@@ -2189,6 +2301,7 @@ def normalize_plan(
     for step in plan.get('steps') or []:
         if isinstance(step, dict):
             step.pop('model_binding', None)
+    validate_generated_plan_tabular_admission(plan)
 
     intent = plan.get('intent') if isinstance(plan.get('intent'), dict) else {}
     complexity = _text(intent.get('complexity')).lower()
@@ -2533,6 +2646,17 @@ FAILURE_MESSAGES = {
     'result_not_ready': 'Required computation is still pending. Its result is not ready to consume.',
     'result_commit_unconfirmed': 'The producer stopped before its retained completion checkpoint was confirmed. Its work will not be repeated automatically.',
     'result_partial': 'Required work produced only an explicitly limited partial result.',
+    'calculation_program_invalid': (
+        'The complete calculation could not be expressed by a valid deterministic program. '
+        'No financial result was published.'
+    ),
+    'generation_incomplete': (
+        'The calculation program generation did not complete, so no unverified calculation was used.'
+    ),
+    'relationship_grain_invalid': (
+        'The declared relationship did not match the complete source grains. Valid split or '
+        'multi-line records were not treated as duplicate or fraudulent activity.'
+    ),
     'visual_not_delivered': (
         'A chart or diagram you asked for could not be created or shown. Retry runs the steps that '
         'make it again.'
@@ -2657,7 +2781,7 @@ def _m365_approval_id(value):
 
 def build_failure(
     code='step_failed', *, step_id=None, capability_id=None, provider_status=None, m365_sources=None,
-    approval_id=None,
+    approval_id=None, calculation_cause=None,
 ):
     """Only application-owned text may cross a failure boundary."""
     code = code if code in FAILURE_MESSAGES else 'step_failed'
@@ -2681,17 +2805,27 @@ def build_failure(
         approval = _m365_approval_id(approval_id)
         if approval:
             result['approval_id'] = approval
+    if calculation_cause in {
+        'generation_incomplete', 'relationship_grain_invalid', 'calculation_program_invalid',
+    }:
+        result['calculation_cause'] = calculation_cause
     return result
 
 
 def safe_failure(value, *, step_id=None, capability_id=None):
     value = value if isinstance(value, dict) else {}
+    calculation_cause = value.get('calculation_cause')
+    public_code = calculation_cause if calculation_cause in {
+        'generation_incomplete', 'relationship_grain_invalid',
+        'calculation_program_invalid',
+    } else value.get('code')
     return build_failure(
-        value.get('code'), step_id=step_id or value.get('step_id'),
+        public_code, step_id=step_id or value.get('step_id'),
         capability_id=capability_id or value.get('capability_id'),
         provider_status=value.get('provider_status'),
         m365_sources=value.get('m365_sources'),
         approval_id=value.get('approval_id'),
+        calculation_cause=calculation_cause,
     )
 
 
@@ -2767,7 +2901,13 @@ REQUEST_REFUSAL_FAILURE_CODES = frozenset({
 def failure_repeats_on_retry(failure):
     """Whether resending the same planned request would reproduce this failure."""
     failure = failure if isinstance(failure, dict) else {}
-    return failure.get('code') in REQUEST_REFUSAL_FAILURE_CODES
+    return (
+        failure.get('code') in REQUEST_REFUSAL_FAILURE_CODES
+        or failure.get('calculation_cause') in {
+            'generation_incomplete', 'relationship_grain_invalid',
+            'calculation_program_invalid',
+        }
+    )
 
 
 def failure_explanation(failures, *, partial=False, cancelled=False):

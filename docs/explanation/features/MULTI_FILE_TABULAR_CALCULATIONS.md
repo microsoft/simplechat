@@ -1,6 +1,6 @@
 # Multi-file tabular calculations
 
-Version: **0.261.444**
+Version: **0.261.446**
 
 Implemented in version: **0.261.437**
 
@@ -11,6 +11,9 @@ locations added in version: **0.261.443**.
 
 Namespace-separated derived rejoins, complete-row purpose contracts and richer
 safe diagnostics were added in version: **0.261.444**.
+
+Complete evidence preparation, bounded prepared program lowering and checked
+allocation/cumulative operations were added in version: **0.261.446**.
 
 Application version tracking remains in `application/single_app/config.py`.
 
@@ -33,9 +36,12 @@ with authorized replayable workspace CSV, XLSX, XLSM or XLS sources. There is no
 new setting or external service. Each source passes the existing ownership,
 workspace, content-screening and source-revision checks.
 
-The deterministic calculation does not call an AI provider or create a file.
-Planning and answer composition still use their configured models. A separate
-Render step delivers a file from the retained result.
+Legacy trusted explicit specifications execute without calling an AI provider.
+New multi-source plans first retain complete native preparation, then the
+native owner calls its already bound model once, or once more for one closed
+correction, to author a deterministic program. The calculation itself remains
+tool-free and deterministic. A separate Render step delivers a file from the
+retained result.
 
 ## Reading the complete selected data
 
@@ -73,9 +79,18 @@ cell values; named-table and range selection require XLSX/XLSM.
 
 ## Executable relationship contract
 
-The native operation is `relate`, with a `tabular-relate-v1` `relational_spec`.
-Other native `query`, `transform` and `analysis` operations retain their existing
-single-source contracts. Merely adding more IDs to an old operation is invalid.
+New multi-source plans use `native_operation=prepare` for complete context and
+then `native_operation=relate` with `calculation_mode=prepared-v1` and exactly
+one named preparation input. The preparation contract retains complete
+requested rule cells, headers, row counts, distinct values/provenance and key
+profiles before program authoring. A newly authored prepared calculation omits
+`relational_spec`; the native owner produces the internal v1 or v2 program.
+
+Trusted legacy direct-spec calculations may still use `tabular-relate-v1`.
+That compatibility syntax is not the planner path for a new multi-source plan.
+Other native `query`, `transform` and `analysis` operations retain their
+existing single-source contracts. Merely adding more IDs to an old operation is
+invalid.
 
 The new specification declares:
 
@@ -95,6 +110,8 @@ Supported operations are:
 | `derive` | Additional fields computed with deterministic precise expressions |
 | `project` | A new table containing only the explicitly projected fields, preserving source row lineage |
 | `aggregate` | Grouped count, distinct count, exact decimal sum, minimum or maximum |
+| `allocate` | V2 checked signed allocation over exact event/detail identities, absolute weights, stable detail-ID order and a conserved cent residual |
+| `cumulative_sum` | V2 signed cumulative sum by partition and date, with same-date peers receiving the full date total |
 
 Keys match exactly by default. `normalization="trim_casefold"` is an explicit
 alternative for text keys; it is not fuzzy entity matching. Empty keys never

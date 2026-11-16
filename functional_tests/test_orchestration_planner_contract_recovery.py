@@ -1,12 +1,13 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.445
+Version: 0.261.446
 Implemented in: 0.261.419; 0.261.422
 Source-schema preflight and native semantic correction added in: 0.261.439
 Column preflight and content-free schema locations added in: 0.261.443
 Complete tabular purpose handoff added in: 0.261.444
 Effective-limit and protocol recovery added in: 0.261.445
+Prepared multi-source admission added in: 0.261.446
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
@@ -34,6 +35,15 @@ ACTION = {
     "scope_type": "personal", "scope_id": "owner", "scope_label": "Personal",
 }
 PRIVATE = "PRIVATE_PROMPT_OR_DOCUMENT_CONTENT"
+
+
+@pytest.fixture(autouse=True)
+def trusted_legacy_relational_planner_contract(monkeypatch):
+    """Keep the old explicit-spec validator tests on the separate compatibility path."""
+    schema = importlib.import_module("functions_orchestration_schema")
+    monkeypatch.setattr(
+        schema, "validate_generated_plan_tabular_admission", lambda _plan: None,
+    )
 
 
 def action_proposal(document_ids=(LEFT,), *, action=ACTION):
@@ -659,7 +669,10 @@ def test_a_relational_schema_rejection_names_the_step_and_what_is_allowed(planni
     if fault == "unsupported_property":
         assert '"allowed_properties": ["id", "input", "op", "transform"]' in repair
     elif fault == "unknown_operation":
-        assert '"allowed_values": ["join", "filter", "derive", "project", "aggregate"]' in repair
+        assert (
+            '"allowed_values": ["join", "filter", "derive", "project", "aggregate", '
+            '"allocate", "cumulative_sum"]'
+        ) in repair
     elif fault == "derive_with_several_faults":
         marker = "Content-free diagnostics: "
         diagnostics, _end = json.JSONDecoder().raw_decode(repair[repair.index(marker) + len(marker):])

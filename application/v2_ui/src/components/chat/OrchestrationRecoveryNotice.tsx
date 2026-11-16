@@ -133,7 +133,11 @@ export function OrchestrationRecoveryNotice({
         return () => { mounted = false; };
     }, [conversationId, runId, saved?.detailLoaded, legacy, Boolean(relevant), outcome]);
 
-    if (!runId || !relevant) return null;
+    if (
+        !runId || !relevant
+        || (attempt.answer_qualified === true && outcome === 'partial'
+            && !waiting && !saved?.transportUnknown && !saved?.error)
+    ) return null;
     const active = Object.values(inFlight).some((run) => run.conversationId === conversationId);
     const retryAllowed = failed && planRetryOffered && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
         && (!newer || newer === runId) && !saved?.transportUnknown;

@@ -1,12 +1,13 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.444
+Version: 0.261.446
 Implemented in: 0.261.355
 Shared two-correction allowance updated in: 0.261.422
 Referenced failed-turn source continuation added in: 0.261.437
 Order-independent source-set identity and conflict diagnostics added in: 0.261.443
 Selected-tabular purpose validation added in: 0.261.444
+Contradictory retrieval-flag exact-set continuation added in: 0.261.446
 
 Uses real source projection, parsers, resolution and HTTP planning with external
 storage/model I/O replaced. Previews must never become complete export records.
@@ -571,6 +572,29 @@ def test_conversation_only_transformation_does_not_inherit_failed_turn_files(sou
     )
     assert restored.get("document_ids", []) == []
     assert source_runtime.source_state.reads == []
+
+
+@pytest.mark.parametrize("resolved_message,restores", [
+    ("Use the amendment in force on the settlement date for these selected sources.", True),
+    ("Translate the prior answer into French.", False),
+])
+def test_source_required_follow_up_overrides_only_a_false_contradictory_retrieval_hint(
+    source_runtime, resolved_message, restores,
+):
+    context = source_runtime.context
+    identifiers = [f"document-{index}" for index in range(5)]
+    ledger = context.build_run_ledger([{
+        "id": "previous", "status": "failed", "user_message_id": "previous-user",
+        "seeds": {"document_ids": identifiers},
+    }])
+    restored = context.continue_requested_sources(
+        {}, {
+            "relationship": "follow_up", "message_ids": ["previous-user"],
+            "resolved_message": resolved_message, "requires_retrieval": False,
+        },
+        ledger, user_id="owner", conversation_id="conversation-1",
+    )
+    assert restored.get("document_ids") == (identifiers if restores else None)
 
 
 @pytest.mark.parametrize("input_format", ["csv", "xlsx"])

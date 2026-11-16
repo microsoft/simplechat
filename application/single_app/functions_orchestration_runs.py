@@ -46,6 +46,7 @@ from functions_orchestration_context import ConversationContextError, LEDGER_MAX
 from functions_orchestration_schema import (
     PLAN_STATUS_DRAFT,
     PlanValidationError,
+    generated_plan_admission_stamp,
     is_legacy_plan,
     new_run_id,
     new_step_id,
@@ -305,6 +306,7 @@ def create_orchestration_run(
         # before it finishes does not look malformed to the ledger builder.
         'unresolved': [],
         'answered_questions': [],
+        'generated_plan_admission': generated_plan_admission_stamp(plan),
     }
     for key in (
         'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id', 'seeds',
@@ -318,7 +320,7 @@ def create_orchestration_run(
             record[key] = deepcopy(turn_context[key])
     protected = {
         'id', 'record_type', 'run_id', 'conversation_id', 'user_id', 'created_at',
-        'planner_contract_version', 'result_aliases',
+        'planner_contract_version', 'result_aliases', 'generated_plan_admission',
     }
     record.update({
         key: value for key, value in (initial_updates or {}).items()

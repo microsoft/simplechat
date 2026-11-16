@@ -210,13 +210,22 @@ Fixed/Implemented in version: **0.261.416**
 (`application/single_app/config.py`).
 
 While work runs, Quiet activity keeps the conversation focused on your request.
-Since **0.261.417**, the activity headline names the confirmed task and phase,
-for example **Gathering: Read workbook comments** or **Reasoning: Prepare audit**.
+Since **0.261.446**, activity uses purpose-based phases: **Gather evidence**,
+**Prepare answer**, and **Deliver file**. Read, search, compare and calculate
+work remains visible inside Gather evidence, and the saved execution order
+does not change. The detail disclosure retains the exact step name.
 A successful running-status check restores this progress; it is not an unknown
 execution outcome. **Reconnecting to progress…** appears only when updates
 cannot be confirmed and qualifies displayed tasks as last known. Reconnection
 reads saved state without replaying tasks. **Saving final response** remains
 distinct from a successfully published answer.
+
+For a calculation, SimpleChat prepares the complete authorized rule and source
+context before it authors the deterministic program. The activity card does
+not call a preview complete. If a calculation cannot be verified after
+bounded attempts, a qualified answer can still explain the exact retained
+scope, counts and rules and state which determination remains unavailable.
+The generic recovery wall is not repeated underneath that explanation.
 
 Expand the activity or open plan details to distinguish preparing an answer from
 checking it. **Stop** remains in the composer. Technical failure details stay in

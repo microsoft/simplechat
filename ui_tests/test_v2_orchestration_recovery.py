@@ -544,7 +544,7 @@ def test_successful_running_poll_restores_confirmed_task_without_replay(recovery
         api.status_reads_fail = False
         page.evaluate("""({conversation, run}) => window.OrchHarness.controller
             .reconcileOrchestrationRun(conversation, run)""", {"conversation": CONVERSATION, "run": run_id})
-    expect(activity.get_by_role("status")).to_have_text("Gathering: Read quarterly reports")
+    expect(activity.get_by_role("status")).to_have_text("Reading evidence: Read quarterly reports")
     assert page.evaluate("""(id) => window.OrchHarness.stores.orchestration.useOrchestrationStore
         .getState().runRecovery[id].transportUnknown""", run_id) is False
     expect(page.get_by_text("Execution status not confirmed")).to_have_count(0)
@@ -580,11 +580,11 @@ def test_fresh_scoped_step_clears_disconnect_and_fences_delayed_running_poll(rec
         S.updateRunRecovery(run, { transportUnknown: true });
         S.applyStepEvent(conversation, turn, {run_id: run, step_id: 'answer', status: 'running'});
     }""", {"conversation": CONVERSATION, "turn": TURN, "run": run_id})
-    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Preparing answer: Write the comparison")
     for route in held:
         route.fulfill(json={"steps": [{"step_id": "read", "status": "running"}]})
     page.wait_for_function("() => window.pollFinished")
-    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Reasoning: Write the comparison")
+    expect(page.get_by_test_id("quiet-activity").get_by_role("status")).to_have_text("Preparing answer: Write the comparison")
     assert len(api.calls("/run")) == 1
 
 

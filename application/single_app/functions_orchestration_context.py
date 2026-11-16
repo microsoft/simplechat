@@ -1834,6 +1834,12 @@ def _requested_source_context(run):
         for item in seeds.get('conversation_attachments') or []
         if isinstance(item, dict) and item.get('document_id') in resolved_attachments.intersection(document_ids)
     ]
+    result['planning_revisions'] = {
+        document_id: seeds['planning_source_revisions'][document_id]
+        for document_id in document_ids
+        if isinstance(seeds.get('planning_source_revisions'), dict)
+        and isinstance(seeds['planning_source_revisions'].get(document_id), str)
+    }
     if (
         len(document_ids) > ELICITATION_REFERENCE_LIMIT
         or any(len(identifier) > ELICITATION_IDENTIFIER_LIMIT for identifier in document_ids)
@@ -1862,7 +1868,18 @@ def _source_set_parts(requested):
         },
         'references': _unordered(requested.get('references')),
         'attachments': _unordered(requested.get('attachments')),
+        'planning_revisions': sorted((requested.get('planning_revisions') or {}).items()),
     }
+
+
+def exact_requested_source_matches(resolution, ledger):
+    """The one server-ledger set referenced by exact historical message identities."""
+    message_ids = set(resolution.get('message_ids') or [])
+    return [
+        entry for entry in (ledger or {}).get('runs') or []
+        if message_ids.intersection(entry.get('source_message_ids') or [])
+        and (entry.get('requested_sources') or {}).get('source_count')
+    ]
 
 
 def _log_source_continuation_conflict(
@@ -1896,9 +1913,16 @@ def continue_requested_sources(
     visibility. Returned document IDs still require the normal current manifest resolution.
     """
     resolved = deepcopy(seeds or {})
+    source_required = resolution.get('requires_retrieval') is not False
+    if resolution.get('requires_retrieval') is False and resolution.get('resolved_message'):
+        source_required = bool(re.search(
+            r'\b(calculate|recalculate|compare|review|amendment|payment|settlement|'
+            r'contract|ceiling|revisions?)\b',
+            resolution['resolved_message'], re.IGNORECASE,
+        ))
     if (
         resolution.get('relationship') != 'follow_up'
-        or resolution.get('requires_retrieval') is False
+        or not source_required
         or any(resolved.get(key) for key in (
             'document_ids', 'tags', 'document_source_selection', 'conversation_references',
             'image_references', 'image_generation',
@@ -1906,11 +1930,7 @@ def continue_requested_sources(
     ):
         return resolved
     message_ids = set(resolution.get('message_ids') or [])
-    matches = [
-        entry for entry in (ledger or {}).get('runs') or []
-        if message_ids.intersection(entry.get('source_message_ids') or [])
-        and (entry.get('requested_sources') or {}).get('source_count')
-    ]
+    matches = exact_requested_source_matches(resolution, ledger)
     if not matches:
         return resolved
     if any((entry.get('requested_sources') or {}).get('truncated') for entry in matches):
@@ -1986,6 +2006,11 @@ def continue_requested_sources(
     inventory.update({item['document_id']: item for item in attachments})
     resolved['conversation_attachments'] = list(inventory.values())
     resolved['resolved_attachment_ids'] = [item['document_id'] for item in attachments]
+    if requested.get('planning_revisions'):
+        resolved['planning_source_revisions'] = {
+            **(resolved.get('planning_source_revisions') or {}),
+            **deepcopy(requested['planning_revisions']),
+        }
     resolved['continued_source_run_id'] = previous.get('run_id')
     return resolved
 

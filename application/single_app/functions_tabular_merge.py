@@ -1,7 +1,7 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.437
+Version: 0.261.446
 Implemented in: 0.261.239
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.240
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.241
@@ -9,6 +9,7 @@ Workbooks with unsafe or unreadable XML refused in: 0.261.245
 Spooled rows written to the container's scratch directory in: 0.261.247
 CodeQL cleanup for intentionally ignored reader cleanup failures added in: 0.261.248
 Complete calculation readers, selectors and formula-cache refusal added in: 0.261.437
+Complete bounded calculation-context preparation added in: 0.261.446
 
 The engine is pure: it receives already-authorized byte loaders, never resolves
 documents, settings, storage, routes, or models, and performs no model work.
@@ -33,6 +34,7 @@ import codecs
 import csv
 from array import array
 from contextlib import contextmanager
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 import hashlib
@@ -874,6 +876,150 @@ def read_tabular_source_records(
         if table is not None:
             table.close()
         reader.close()
+
+
+def prepare_tabular_source_context(
+    source, request, *, limits=None, cancel_requested=None,
+):
+    """Extract exact, bounded context from one completely read authorized table."""
+    limits = limits or TabularMergeLimits()
+    if not isinstance(request, dict):
+        raise TabularMergeError("invalid_options", "The calculation context request is invalid.")
+    context_columns = request.get("context_columns") or []
+    key_profiles = request.get("key_profiles") or []
+    if (
+        type(context_columns) is not list
+        or len(context_columns) > len(set(context_columns)) or len(context_columns) > 256
+        or any(type(column) is not str or not column for column in context_columns)
+        or type(key_profiles) is not list or len(key_profiles) > 8
+    ):
+        raise TabularMergeError("invalid_options", "The calculation context request is invalid.")
+    with read_tabular_source_records(
+        source, sheet=request.get("sheet"), header_row=request.get("header_row"),
+        cell_range=request.get("cell_range"), table_id=request.get("table_id"),
+        limits=limits, cancel_requested=cancel_requested,
+    ) as (columns, rows, sheet):
+        requested = set(context_columns)
+        for profile in key_profiles:
+            if (
+                type(profile) is not dict or set(profile) != {"name", "columns"}
+                or not isinstance(profile.get("name"), str) or not profile["name"]
+                or type(profile.get("columns")) is not list or not 1 <= len(profile["columns"]) <= 8
+                or len(profile["columns"]) != len(set(profile["columns"]))
+                or any(type(column) is not str for column in profile["columns"])
+            ):
+                raise TabularMergeError(
+                    "invalid_options", "The calculation context profile request is invalid.",
+                )
+            requested.update(profile["columns"])
+        if not requested.issubset(set(columns)):
+            raise TabularMergeError("column_not_found", "A requested calculation context column is unavailable.")
+        values = {column: {} for column in context_columns}
+        profile_names = [profile["name"] for profile in key_profiles]
+        if len(profile_names) != len(set(profile_names)):
+            raise TabularMergeError(
+                "invalid_options", "Key-profile names must be unique within one calculation context request.",
+            )
+        profile_state = {
+            name: {
+                "rows": 0, "null_count": 0, "counts": {}, "primitive_types": [
+                    set() for _column in key_profiles[index]["columns"]
+                ],
+            }
+            for index, name in enumerate(profile_names)
+        }
+        row_count = 0
+        retained_bytes = 0
+        for row_number, row in rows:
+            _check_cancel(cancel_requested)
+            row_count += 1
+            for column in context_columns:
+                cell = row[column]
+                key = json.dumps(cell, ensure_ascii=False, sort_keys=True, allow_nan=False)
+                is_new = key not in values[column]
+                entry = values[column].setdefault(key, {"value": deepcopy(cell), "rows": []})
+                entry["rows"].append(row_number)
+                retained_bytes += (
+                    len(json.dumps(
+                        {"value": entry["value"], "rows": [row_number]},
+                        ensure_ascii=False, allow_nan=False,
+                    ).encode("utf-8")) + 16
+                    if is_new else len(str(row_number).encode()) + 1
+                )
+            for profile in key_profiles:
+                observation = [
+                    row[column] for column in profile["columns"]
+                ]
+                encoded = json.dumps(
+                    observation, ensure_ascii=False, allow_nan=False,
+                ).encode("utf-8")
+                state = profile_state[profile["name"]]
+                state["rows"] += 1
+                state["null_count"] += int(any(
+                    value is None for value in observation
+                ))
+                digest = hashlib.sha256(encoded).hexdigest()
+                is_new = digest not in state["counts"]
+                state["counts"][digest] = state["counts"].get(digest, 0) + 1
+                for index, value in enumerate(observation):
+                    state["primitive_types"][index].add(
+                        "null" if value is None
+                        else "blank" if value == ""
+                        else "boolean" if type(value) is bool
+                        else "number" if type(value) in (int, float)
+                        else "string"
+                    )
+                if is_new:
+                    retained_bytes += len(str(state["counts"][digest]).encode()) + 1
+                working_bytes = sum(
+                    len(digest_value) + 16
+                    for profile_value in profile_state.values()
+                    for digest_value in profile_value["counts"]
+                )
+                if working_bytes > limits.max_source_bytes:
+                    raise TabularMergeError(
+                        "calculation_context_work_limit",
+                        "The complete profile statistics exceed the tabular working limit.",
+                    )
+            if retained_bytes > 96 * 1024:
+                raise TabularMergeError(
+                    "calculation_context_too_large",
+                    "The complete calculation context exceeds its retained-value limit.",
+                )
+        profiles = []
+        for profile in key_profiles:
+            state = profile_state[profile["name"]]
+            profiles.append({
+                "name": profile["name"], "columns": deepcopy(profile["columns"]),
+                "null_count": state["null_count"], "distinct_count": len(state["counts"]),
+                "multiplicity_counts": sorted(state["counts"].values()),
+                "primitive_types": [
+                    sorted(observed) for observed in state["primitive_types"]
+                ],
+                "row_count": state["rows"],
+            })
+        result = {
+            "alias": request["alias"], "document_id": request["document_id"],
+            "sheet": sheet, "selection": {
+                key: request[key]
+                for key in ("header_row", "cell_range", "table_id") if key in request
+            },
+            "headers": list(columns), "physical_row_count": row_count,
+            "context_columns": [
+                {
+                    "column": column,
+                    "distinct_values": list(values[column].values()),
+                }
+                for column in context_columns
+            ],
+            "key_profiles": profiles,
+        }
+        if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")) > 96 * 1024:
+            raise TabularMergeError(
+                "calculation_context_too_large",
+                "The complete calculation context exceeds its retained-value limit.",
+            )
+        return result
 
 
 def _named_workbook_table_range(content, sheet, table_id, limits):

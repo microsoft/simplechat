@@ -116,6 +116,7 @@ def validate_tabular_requirement_readers(step, readers, service):
     complete_record_ids = set()
     calculation_records = []
     calculation_outputs = {}
+    preparation_readers = []
     for reader in readers.values():
         source_ids = {
             source.get('document_id') for source in reader.lineage_sources()
@@ -134,9 +135,38 @@ def validate_tabular_requirement_readers(step, readers, service):
                 calculation_records.append((reader, source_ids))
         if producer.capability_id == 'tabular_analyze':
             calculation_outputs.setdefault(producer.step_id, set()).add(reader.reference.output_name)
+            if (
+                reader.reference.output_name == 'context'
+                and reader.result_kind == 'structured-v1'
+                and reader.completeness.status == 'complete'
+            ):
+                preparation_readers.append((reader, source_ids))
     if not required_ids <= covered_ids:
         raise ResultContractError('result_tabular_sources_incomplete')
     if requirement['mode'] == 'overview':
+        return
+    if requirement['mode'] == 'calculation_answer':
+        if (
+            requirement.get('version') != 'tabular-calculation-answer-v1'
+            or len(preparation_readers) != 1
+            or not required_ids <= preparation_readers[0][1]
+        ):
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        calculation_sets = [
+            (step_id, outputs) for step_id, outputs in calculation_outputs.items()
+            if outputs & {'records', 'lineage', 'coverage'}
+        ]
+        if not calculation_sets:
+            return
+        required = {'records', 'lineage', 'coverage'}
+        if len(calculation_sets) != 1 or not required <= calculation_sets[0][1]:
+            raise ResultContractError('result_tabular_calculation_incomplete')
+        if len([
+            reader for reader, source_ids in calculation_records
+            if reader.reference.producer.step_id == calculation_sets[0][0]
+            and required_ids <= source_ids
+        ]) != 1:
+            raise ResultContractError('result_tabular_calculation_incomplete')
         return
     if not required_ids <= complete_record_ids:
         raise ResultContractError('result_tabular_records_incomplete')
@@ -173,7 +203,8 @@ def validate_tabular_requirement_readers(step, readers, service):
     if (
         type(coverage) is not dict
         or coverage.get('complete') is not True
-        or (coverage.get('operation_spec') or {}).get('version') != 'tabular-relate-v1'
+        or (coverage.get('operation_spec') or {}).get('version')
+        not in {'tabular-relate-v1', 'tabular-relate-v2'}
         or {
             snapshot.get('document_id')
             for snapshot in coverage.get('source_snapshots') or []

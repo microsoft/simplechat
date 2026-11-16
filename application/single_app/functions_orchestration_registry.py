@@ -988,15 +988,18 @@ CAPABILITY_REGISTRY = (
             'an executable transformation_spec or explicit schema. Analysis-only returns analysis, '
             'not implicit source rows. Declare exactly the selected result_output_variants outputs. '
             'query/transform/analysis accept one file. For precise multi-file calculations or grouped '
-            'totals, native_operation=relate requires a tabular-relate-v1 relational_spec: datasets '
-            'bind aliases to document_ids in the same order, steps perform explicit keyed/date-effective '
-            'joins, filters, precise derives and aggregates, result names the final step, and output '
-            'projects exact fields with tabular-transform-v2. Each dataset column is alias.header. '
+            'totals, use native_operation=prepare first to retain complete rule/context columns and '
+            'declared key profiles. A newly authored multi-file native_operation=relate must set '
+            'calculation_mode=prepared-v1, bind exactly that preparation context input, and omit '
+            'relational_spec; its native owner authors and executes the bounded deterministic program. '
+            'Direct trusted explicit-spec plans are a legacy compatibility path, not a new planner choice. '
+            'Each dataset column is alias.header. '
             'datasets[].columns is an optional assertion of the complete ordered native header, '
             'including unused fields, not a projection. Copy the inspected header or omit that '
             'assertion; a project step selects fields. Never infer complete rows from schema samples. '
             'Join how/cardinality/on are explicit; null keys never match. Aggregated sum/min/max are '
-            'decimal strings, not floats. The records, lineage and coverage outputs must all be declared. '
+            'decimal strings, not floats. Preparation declares context and coverage; calculation '
+            'declares records, lineage and coverage. '
             'All bound datasets must contribute to the result. No prose-only calculation or narrative source is admitted.'
         ),
         'settings_gates': (),
@@ -1014,7 +1017,7 @@ CAPABILITY_REGISTRY = (
         'result_contract_version': 'native-tabular-result-v1',
         'result_outputs': {'coverage': 'structured-v1'},
         'optional_result_outputs': {'records': 'records-v1', 'analysis': 'structured-v1'},
-        'result_input_kinds': {},
+        'result_input_kinds': {'preparation': ('structured-v1',)},
         'partial_inputs_supported': False,
         'produces': (PRODUCES_RETAINED_RESULTS,),
         'cost_class': COST_CLASS_MEDIUM,
@@ -1666,7 +1669,10 @@ CAPABILITY_REGISTRY = (
                     'additionalProperties': False,
                     'required': ['mode', 'document_ids'],
                     'properties': {
-                        'mode': {'type': 'string', 'enum': ['overview', 'complete_records', 'calculation']},
+                        'mode': {'type': 'string', 'enum': [
+                            'overview', 'complete_records', 'calculation', 'calculation_answer',
+                        ]},
+                        'version': {'type': 'string', 'const': 'tabular-calculation-answer-v1'},
                         'document_ids': {
                             'type': 'array', 'minItems': 1, 'maxItems': 100,
                             'uniqueItems': True,
@@ -2080,7 +2086,7 @@ def _resolve_descriptor(descriptor):
             for operation, task_type in (
                 ('query', 'structured_export'), ('transform', 'structured_export'),
                 ('analysis', 'hierarchical_analysis'), ('transform', 'combined'),
-                ('relate', 'structured_export'),
+                ('prepare', 'structured_export'), ('relate', 'structured_export'),
             )
         ]
     return capability

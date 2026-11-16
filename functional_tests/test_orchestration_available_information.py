@@ -1,8 +1,8 @@
 # test_orchestration_available_information.py
 """Normal answers and narrative files from accepted findings with honest information gaps.
 
-Version: 0.261.418
-Implemented in: 0.261.399; 0.261.418
+Version: 0.261.446
+Implemented in: 0.261.399; 0.261.418; 0.261.446
 
 Real contracts, preparation, lineage, execution and file publication run offline.
 Scripted model assessments exercise control flow, not factual-accuracy calibration.
@@ -32,6 +32,7 @@ from test_orchestration_harness_execution import harness, initialized_applicatio
 from test_orchestration_deliverables import _claim_retry
 from test_orchestration_reason_render_pipeline import download_outputs, narrative_io  # noqa: F401
 from test_support.orchestration_harness_execution import compose_step, input_binding, render_step
+from test_tabular_relational_calculations import join_spec
 
 
 ANSWER = (
@@ -199,6 +200,97 @@ def test_available_information_policy_cannot_be_used_to_complete_a_dataset(runti
     step["arguments"]["response_policy"] = "available_information"
     with pytest.raises(runtime.schema.PlanValidationError, match="narrative outputs"):
         runtime.make([step])
+
+
+def test_calculation_answer_requires_preparation_and_keeps_optional_bundle_producer_required(runtime):
+    preparation = {
+        "step_id": "prepare", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Prepare complete calculation context.",
+            "native_operation": "prepare", "document_ids": ["orders", "prices"],
+            "preparation_request": {
+                "version": "tabular-context-request-v1",
+                "datasets": [
+                    {"alias": "orders", "document_id": "orders", "context_columns": [],
+                     "key_profiles": []},
+                    {"alias": "prices", "document_id": "prices", "context_columns": [],
+                     "key_profiles": []},
+                ],
+            },
+        },
+        "outputs": [
+            {"name": "context", "kind": "structured-v1"},
+            {"name": "coverage", "kind": "structured-v1"},
+        ],
+    }
+    calculation = {
+        "step_id": "calculate", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Calculate the requested exceptions.",
+            "native_operation": "relate", "document_ids": ["orders", "prices"],
+            "calculation_mode": "prepared-v1",
+        },
+        "inputs": {
+            "preparation": {
+                "binding": input_binding("prepare", "context"), "allow_partial": False,
+            },
+        },
+        "outputs": [
+            {"name": "records", "kind": "records-v1"},
+            {"name": "lineage", "kind": "records-v1"},
+            {"name": "coverage", "kind": "structured-v1"},
+        ],
+    }
+    answer = compose("answer")
+    answer["arguments"].update({
+        "knowledge_basis": "sources",
+        "tabular_requirement": {
+            "mode": "calculation_answer", "version": "tabular-calculation-answer-v1",
+            "document_ids": ["orders", "prices"],
+        },
+    })
+    answer["inputs"] = {
+        "preparation": {
+            "binding": input_binding("prepare", "context"), "allow_partial": False,
+        },
+        **{
+            name: {
+                "binding": input_binding("calculate", name),
+                "allow_partial": False, "optional": True,
+            }
+            for name in ("records", "lineage", "coverage")
+        },
+    }
+    planned = runtime.schema.available_information_plan({
+        "steps": [preparation, calculation, answer],
+    })
+    case = runtime.make(planned["steps"], available=["tabular_analyze", "compose"])
+    by_id = {step["step_id"]: step for step in case.plan["steps"]}
+    assert by_id["calculate"]["optional"] is False
+    assert by_id["answer"]["arguments"]["response_policy"] == "available_information"
+    assert by_id["answer"]["inputs"]["preparation"]["allow_partial"] is False
+    assert all(
+        by_id["answer"]["inputs"][name]["optional"] is True
+        for name in ("records", "lineage", "coverage")
+    )
+
+
+def test_new_model_plan_rejects_frozen_multisource_relational_spec(runtime):
+    step = {
+        "step_id": "calculate", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Calculate from both sources.", "native_operation": "relate",
+            "document_ids": ["orders", "prices"], "relational_spec": join_spec(),
+        },
+        "outputs": [
+            {"name": "records", "kind": "records-v1"},
+            {"name": "lineage", "kind": "records-v1"},
+            {"name": "coverage", "kind": "structured-v1"},
+        ],
+    }
+    with pytest.raises(runtime.schema.PlanValidationError) as error:
+        runtime.make([step], available=["tabular_analyze"])
+    assert error.value.rule == "prepared_calculation_required"
 
 
 def test_an_earlier_answer_alias_cannot_fulfill_unrelated_current_work_with_the_same_step_id(runtime):

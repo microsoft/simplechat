@@ -1,9 +1,10 @@
 # functions_orchestration_checkpoints.py
 """Private, immutable step-boundary checkpoints in the run-steps partition.
 
-Version: 0.261.380
+Version: 0.261.446
 Settings fingerprints ignore storage metadata and runtime state in: 0.261.303
 Publication comparisons tolerate lossless Cosmos numeric round trips in: 0.261.380
+Prepared program call reservation state added in: 0.261.446
 The lifecycle row fences every batch, including uncommitted chunks. It survives
 cleanup, so an old worker cannot recreate payloads after conversation deletion.
 Checkpoints record Gather / Reason / Render state only. A checkpoint written by the
@@ -14,6 +15,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 import uuid
 from copy import deepcopy
 from datetime import datetime
@@ -245,6 +247,26 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
     capability_binding = {
         **build_planner_capability_projection([capability])[0], 'adapter': capability['adapter'],
     }
+    if (
+        step['capability_id'] == 'tabular_analyze'
+        and arguments.get('native_operation') != 'prepare'
+        and arguments.get('calculation_mode') != 'prepared-v1'
+    ):
+        capability_binding['result_input_kinds'] = {}
+    native_variants = capability_binding.get('result_output_variants')
+    if native_variants is not None:
+        operation = arguments.get('native_operation')
+        if operation == 'prepare' or arguments.get('calculation_mode') == 'prepared-v1':
+            native_variants = [
+                value for value in native_variants
+                if value.get('native_operation') == operation
+            ]
+        else:
+            # Legacy steps retain the exact projection captured before preparation existed.
+            native_variants = [
+                value for value in native_variants
+                if value.get('native_operation') != 'prepare'
+            ]
     return fingerprint({
         'plan_contract_version': 2,
         'step': effective_plan({'planner_contract_version': 2, 'steps': [step]})[0],
@@ -258,8 +280,7 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
             'result_input_kinds', 'result_outputs', 'optional_result_outputs',
             'result_output_kinds', 'partial_inputs_supported', 'max_per_plan',
         )},
-        **({'native_output_variants': capability_binding['result_output_variants']}
-           if 'result_output_variants' in capability_binding else {}),
+        **({'native_output_variants': native_variants} if native_variants is not None else {}),
         'output_profiles': {
             output['profile']: context.composition_profiles.get(output['profile'])
             for output in step['outputs'] if 'profile' in output
@@ -552,6 +573,75 @@ class CheckpointStore:
             raise CheckpointError('recovery_changed')
         return payload['completeness']
 
+    def save_lowering_state(self, step_id, state, *, binding, input_fingerprint):
+        """Persist bounded prepared-calculation call state under the current claim."""
+        if (
+            type(step_id) is not str or not step_id
+            or type(state) is not dict or type(binding) is not str
+            or not isinstance(state.get('calls_used'), int)
+            or not 0 <= state['calls_used'] <= 2
+            or state.get('version') != 'tabular-program-lowering-v1'
+            or state.get('phase') not in {
+                'context_checked', 'call_reserved', 'program_saved',
+                'evaluating', 'failure_saved', 'retained',
+            }
+        ):
+            raise CheckpointError('checkpoint_invalid')
+        if state.get('phase') in {'program_saved', 'evaluating', 'retained'} and (
+            state.get('completion_confirmed') is not True
+            or not isinstance(state.get('program'), dict)
+            or not re.fullmatch(r'[a-f0-9]{64}', state.get('program_sha256') or '')
+        ):
+            raise CheckpointError('checkpoint_invalid')
+        validate_result_digest(input_fingerprint)
+        json_bytes(state)
+        self._write({
+            'id': f'lowering:{fingerprint(step_id)}',
+            'record_type': 'lowering_state',
+            'step_id': step_id,
+            'binding': binding,
+            'input_fingerprint': input_fingerprint,
+            'state': deepcopy(state),
+        }, immutable=False)
+        return deepcopy(state)
+
+    def load_lowering_state(self, step_id, *, binding, input_fingerprint):
+        """Restore only state owned by this exact step, claim binding and inputs."""
+        if type(step_id) is not str:
+            raise CheckpointError('checkpoint_invalid')
+        document = self._read(f'lowering:{fingerprint(step_id)}')
+        if (
+            document.get('record_type') != 'lowering_state'
+            or document.get('step_id') != step_id
+            or document.get('binding') != binding
+            or document.get('input_fingerprint') != input_fingerprint
+            or type(document.get('state')) is not dict
+        ):
+            raise CheckpointError('recovery_changed')
+        json_bytes(document['state'])
+        self._validate_lowering_state(document['state'])
+        return deepcopy(document['state'])
+
+    def _validate_lowering_state(self, state):
+        if (
+            type(state) is not dict
+            or state.get('version') != 'tabular-program-lowering-v1'
+            or state.get('phase') not in {
+                'context_checked', 'call_reserved', 'program_saved',
+                'evaluating', 'failure_saved', 'retained',
+            }
+            or type(state.get('calls_used')) is not int
+            or isinstance(state.get('calls_used'), bool)
+            or not 0 <= state['calls_used'] <= 2
+        ):
+            raise CheckpointError('checkpoint_invalid')
+        if state['phase'] in {'program_saved', 'evaluating', 'retained'} and (
+            state.get('completion_confirmed') is not True
+            or not isinstance(state.get('program'), dict)
+            or not re.fullmatch(r'[a-f0-9]{64}', state.get('program_sha256') or '')
+        ):
+            raise CheckpointError('checkpoint_invalid')
+
     def commit(self, step, result, context, *, input_fingerprint, binding, provenance=None, artifact_versions=None):
         if (
             getattr(context, 'plan_contract_version', None) != 2
@@ -741,7 +831,7 @@ class CheckpointStore:
             # own cleanup owner and must survive a checkpoint payload sweep.
             if row.get('id') == LIFECYCLE_ID or row.get('record_type') not in {
                 'step', 'checkpoint_chunk', 'checkpoint_manifest',
-                'checkpoint_wait_manifest', 'checkpoint_input_manifest',
+                'checkpoint_wait_manifest', 'checkpoint_input_manifest', 'lowering_state',
             }:
                 continue
             self._verify(row)

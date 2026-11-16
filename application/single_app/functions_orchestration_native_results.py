@@ -1,9 +1,10 @@
 # functions_orchestration_native_results.py
 """Native computation to retained orchestration results, without publication.
 
-Version: 0.261.437
+Version: 0.261.446
 Implemented in: 0.261.127
 Typed, bounded cross-file computation added in: 0.261.437
+Complete preparation and bounded prepared lowering added in: 0.261.446
 
 The owner binds the native mode; the default production builder validates
 explicit query/schema/transformation arguments. Runtime/schema/native execution
@@ -13,9 +14,11 @@ imports are deferred so metadata discovery remains safe before bootstrap.
 from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 import logging
 import os
 import re
+import hashlib
 
 from jsonschema import Draft202012Validator
 
@@ -91,7 +94,7 @@ class NativeOrchestrationRequest:
 
 
 def _task_type(native_operation, task_type):
-    if native_operation not in ("query", "transform", "analysis", "relate"):
+    if native_operation not in ("query", "transform", "analysis", "prepare", "relate"):
         raise NativeOrchestrationBridgeError("native_request_invalid")
     selected = task_type if task_type is not None else (
         "hierarchical_analysis" if native_operation == "analysis" else "structured_export"
@@ -100,6 +103,7 @@ def _task_type(native_operation, task_type):
         "query": ("structured_export",),
         "transform": ("structured_export", "combined"),
         "analysis": ("hierarchical_analysis",),
+        "prepare": ("structured_export",),
         "relate": ("structured_export",),
     }
     if selected not in allowed[native_operation]:
@@ -111,7 +115,9 @@ def native_orchestration_output_specs(native_operation, *, task_type=None):
     """Exact required OutputSpecs; analysis-only never advertises records."""
     selected = _task_type(native_operation, task_type)
     outputs = []
-    if selected in ("structured_export", "combined"):
+    if native_operation == "prepare":
+        outputs.append(OutputSpec("context", "structured-v1"))
+    elif selected in ("structured_export", "combined"):
         outputs.append(OutputSpec("records", "records-v1"))
     if native_operation == "relate":
         outputs.append(OutputSpec("lineage", "records-v1"))
@@ -143,6 +149,37 @@ def native_orchestration_arguments_schema():
             "allowed_values": {"type": "array", "maxItems": 200},
         },
     }
+    context_dataset = {
+        "type": "object", "additionalProperties": False,
+        "required": ["alias", "document_id", "context_columns", "key_profiles"],
+        "properties": {
+            "alias": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_]{0,47}$"},
+            "document_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            "sheet": {"type": "string", "minLength": 1, "maxLength": 128},
+            "header_row": {"type": "integer", "minimum": 1, "maximum": 1000},
+            "cell_range": {
+                "type": "string",
+                "pattern": r"^[A-Z]{1,3}[1-9][0-9]{0,6}:[A-Z]{1,3}[1-9][0-9]{0,6}$",
+            },
+            "table_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "context_columns": {
+                "type": "array", "maxItems": 256, "uniqueItems": True, "items": deepcopy(column),
+            },
+            "key_profiles": {
+                "type": "array", "maxItems": 8, "items": {
+                    "type": "object", "additionalProperties": False,
+                    "required": ["name", "columns"],
+                    "properties": {
+                        "name": {"type": "string", "pattern": r"^[A-Za-z][A-Za-z0-9_]{0,47}$"},
+                        "columns": {
+                            "type": "array", "minItems": 1, "maxItems": 8,
+                            "uniqueItems": True, "items": deepcopy(column),
+                        },
+                    },
+                },
+            },
+        },
+    }
 
     schema = {
         "type": "object", "required": ["question", "native_operation", "document_ids"],
@@ -153,8 +190,20 @@ def native_orchestration_arguments_schema():
                 "type": "array", "minItems": 1, "maxItems": MAX_RELATIONAL_SOURCES, "uniqueItems": True,
                 "items": {"type": "string", "minLength": 1, "maxLength": 256, "pattern": r"^\S+$"},
             },
-            "native_operation": {"enum": ["query", "transform", "analysis", "relate"]},
+            "native_operation": {"enum": ["query", "transform", "analysis", "prepare", "relate"]},
             "relational_spec": relational_spec_schema(),
+            "calculation_mode": {"const": "prepared-v1"},
+            "preparation_request": {
+                "type": "object", "additionalProperties": False,
+                "required": ["version", "datasets"],
+                "properties": {
+                    "version": {"const": "tabular-context-request-v1"},
+                    "datasets": {
+                        "type": "array", "minItems": 1, "maxItems": MAX_RELATIONAL_SOURCES,
+                        "items": context_dataset,
+                    },
+                },
+            },
             "task_type": {"enum": ["structured_export", "hierarchical_analysis", "combined"]},
             "query_expression": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": r"\S"},
             "columns": {"type": "array", "minItems": 1, "maxItems": 50, "uniqueItems": True, "items": column},
@@ -190,11 +239,41 @@ def native_orchestration_arguments_schema():
         variant["properties"]["document_ids"] = {"maxItems": 1}
         variant["allOf"] = [{"not": {"required": ["relational_spec"]}}]
     schema["oneOf"].append({
-        "properties": {"native_operation": {"const": "relate"}, "task_type": {"const": "structured_export"}},
+        "properties": {"native_operation": {"const": "prepare"}, "task_type": {"const": "structured_export"}},
+        "required": ["preparation_request"],
+        "not": {"anyOf": [
+            {"required": [name]}
+            for name in (
+                "columns", "query_expression", "selected_sheet", "transformation_spec",
+                "relational_spec", "calculation_mode",
+            )
+        ]},
+    })
+    schema["oneOf"].append({
+        "properties": {
+            "native_operation": {"const": "relate"}, "task_type": {"const": "structured_export"},
+        },
         "required": ["relational_spec"],
         "not": {"anyOf": [
             {"required": [name]}
-            for name in ("columns", "query_expression", "selected_sheet", "transformation_spec")
+            for name in (
+                "columns", "query_expression", "selected_sheet", "transformation_spec",
+                "preparation_request", "calculation_mode",
+            )
+        ]},
+    })
+    schema["oneOf"].append({
+        "properties": {
+            "native_operation": {"const": "relate"}, "task_type": {"const": "structured_export"},
+            "calculation_mode": {"const": "prepared-v1"},
+        },
+        "required": ["calculation_mode"],
+        "not": {"anyOf": [
+            {"required": [name]}
+            for name in (
+                "columns", "query_expression", "selected_sheet", "transformation_spec",
+                "preparation_request", "relational_spec",
+            )
         ]},
     })
     return schema
@@ -218,10 +297,26 @@ def validate_native_orchestration_arguments(arguments):
             raise NativeOrchestrationBridgeError("native_arguments_invalid")
         normalized = deepcopy(arguments)
         normalized["task_type"] = _task_type(normalized["native_operation"], normalized.get("task_type"))
-        if normalized["native_operation"] == "relate":
+        if normalized["native_operation"] == "prepare":
+            datasets = normalized["preparation_request"]["datasets"]
+            identifiers = [item["document_id"] for item in datasets]
+            if (
+                identifiers != normalized["document_ids"]
+                or len({item["alias"] for item in datasets}) != len(datasets)
+                or any(
+                    len([profile["name"] for profile in item["key_profiles"]])
+                    != len({profile["name"] for profile in item["key_profiles"]})
+                    for item in datasets
+                )
+            ):
+                raise NativeOrchestrationBridgeError("native_arguments_invalid")
+            return normalized
+        if normalized["native_operation"] == "relate" and "relational_spec" in normalized:
             normalized["relational_spec"] = normalize_relational_spec(
                 normalized["relational_spec"], normalized["document_ids"],
             )
+            return normalized
+        if normalized["native_operation"] == "relate":
             return normalized
         normalize_tabular_transformation_spec(
             normalized.get("transformation_spec"), public_output_schema=normalized.get("columns"),
@@ -458,7 +553,8 @@ def _failure(step, exc, stage, context=None):
         code = "native_relational_limit" if service_code.endswith("_limit") else "native_relational_invalid"
     elif service_code in {
         "too_many_sources", "row_limit_exceeded", "cell_too_large", "source_too_large",
-        "workbook_too_large", "too_many_sheets",
+        "workbook_too_large", "too_many_sheets", "calculation_context_too_large",
+        "calculation_context_work_limit",
     }:
         code = "native_relational_limit"
     elif service_code == "sheet_required":
@@ -502,6 +598,20 @@ def _failure(step, exc, stage, context=None):
         summary=_MESSAGES[code], error=_MESSAGES[code], failure=build_failure(failure_code),
     )
     result["failure"].update({"native_code": code, "retryable": code == "native_storage_unavailable"})
+    calculation_cause = None
+    if getattr(exc, "rule", None) in {"generation_incomplete", "lowering_call_limit",
+                                       "lowering_call_uncertain"}:
+        calculation_cause = "generation_incomplete"
+    elif service_code == "relational_match_ambiguous":
+        calculation_cause = "relationship_grain_invalid"
+    elif service_code == "relational_schema_changed":
+        calculation_cause = None
+    elif service_code and service_code.startswith("relational_"):
+        calculation_cause = "calculation_program_invalid"
+    if calculation_cause is not None:
+        result["failure"]["calculation_cause"] = calculation_cause
+        result["summary"] = build_failure(calculation_cause)["message"]
+        result["error"] = result["summary"]
     return result
 
 
@@ -516,7 +626,11 @@ def _runtime(step, context, user_id, binding):
         or type(step.get("inputs", {})) is not dict
     ):
         raise NativeOrchestrationBridgeError("native_runtime_invalid")
-    if step.get("inputs"):
+    prepared = (
+        binding.native_operation == "relate"
+        and step.get("arguments", {}).get("calculation_mode") == "prepared-v1"
+    )
+    if step.get("inputs") and not (prepared and set(step["inputs"]) == {"preparation"}):
         raise NativeOrchestrationBridgeError("native_inputs_unsupported")
     if binding.request_builder is build_native_orchestration_request:
         arguments = validate_native_orchestration_arguments(step.get("arguments"))
@@ -803,6 +917,420 @@ def _execute_relational(step, context, service, producer, manifest, snapshots, b
                         task_result=task)
 
 
+def _prepared_program_prompt(question, context_value, schema, *, correction=None):
+    instructions = (
+        "Author one closed deterministic tabular relational program for the approved question. "
+        "Use only the exact preparation below and the supplied schema. Return JSON only, with no "
+        "prose or additional wrapper. Do not hardcode fixture outcomes, document IDs outside the "
+        "selection, new sources, SQL, Python, tools, or an external action. Keep every declared "
+        "source, preserve exact identifiers and signed decimal values, and declare complete records, "
+        "lineage and coverage through the relational result/output contract. Classify the complete "
+        "relevant population before filtering: retain explicit unknown and excluded dispositions, "
+        "including prior-period, status and horizon exclusions, instead of turning an excluded "
+        "record into a missing chain or dropping it."
+    )
+    if correction is not None:
+        instructions += (
+            f" Correct the prior authored program. The closed validation category is "
+            f"{correction.get('category')}, check {correction.get('check')}, "
+            f"step index {correction.get('step_index')}. Do not change the approved sources, "
+            "question, horizon, output fields, token budget or requested effects."
+        )
+    return json.dumps({
+        "instructions": instructions, "question": question,
+        "program_schema": schema, "complete_preparation": context_value,
+    }, sort_keys=True, ensure_ascii=False)
+
+
+def _prepared_state(store, step_id, binding, fingerprint):
+    from functions_orchestration_checkpoints import CheckpointError
+
+    try:
+        return store.load_lowering_state(
+            step_id, binding=binding, input_fingerprint=fingerprint,
+        )
+    except CheckpointError as exc:
+        if exc.code == "checkpoint_unavailable":
+            return {
+                "version": "tabular-program-lowering-v1",
+                "phase": "context_checked", "calls_used": 0,
+                "completion_contract_version": "harness-stop-v1",
+            }
+        raise
+
+
+def _safe_program_correction(error):
+    from functions_tabular_relational import TabularRelationalError
+
+    if not isinstance(error, TabularRelationalError):
+        return None
+    category = error.code
+    if not (
+        category.startswith("relational_column_")
+        or category in {
+            "relational_spec_invalid", "relational_expression_invalid",
+            "relational_source_unused", "relational_match_ambiguous",
+            "relational_numeric_invalid", "relational_numeric_scale_invalid",
+            "relational_date_invalid", "relational_key_invalid",
+        }
+    ):
+        return None
+    detail = error.detail or {}
+    return {
+        "category": category,
+        "check": detail.get("check") or "closed_validation",
+        "step_index": detail.get("step_index", 0),
+    }
+
+
+def _execute_prepared_relational(
+    step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
+):
+    """Lower one prepared calculation, with a durable two-call ceiling and no tools."""
+    from functions_orchestration_checkpoints import CheckpointStore
+    from functions_orchestration_merge import build_tabular_merge_sources, tabular_merge_limits
+    from functions_orchestration_result_runtime import read_complete_input, resolve_step_inputs
+    from functions_tabular_merge import read_tabular_source_records
+    from functions_tabular_relational import (
+        TabularRelationalError, calculate_relational_sources, check_relational_columns,
+        normalize_relational_spec, relational_spec_schema,
+    )
+
+    invoke = getattr(context, "invoke_prompt", None)
+    store = getattr(context, "completeness_store", None)
+    checkpoint_binding = getattr(context, "completeness_binding", None)
+    if (
+        not callable(invoke) or getattr(invoke, "enforces_complete_generation", False) is not True
+        or not isinstance(store, CheckpointStore) or not isinstance(checkpoint_binding, str)
+    ):
+        raise NativeOrchestrationBridgeError("native_runtime_invalid")
+    readers = resolve_step_inputs(step, context)
+    if set(readers) != {"preparation"}:
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    reader = readers["preparation"]
+    if reader.reference.output_name != "context" or reader.reference.producer.capability_id != "tabular_analyze":
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    context_value = read_complete_input(reader, max_bytes=96 * 1024)
+    if (
+        type(context_value) is not dict
+        or context_value.get("version") != "tabular-calculation-context-v1"
+        or context_value.get("complete") is not True
+        or context_value.get("source_snapshots") != snapshots
+    ):
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    preparation_binding = step["inputs"]["preparation"]["binding"]
+    preparation_task = context.task_results.get(preparation_binding["step_id"])
+    if (
+        preparation_task is None
+        or [output.output_name for output in preparation_task.outputs] != ["context", "coverage"]
+    ):
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    coverage_reader = service.open_result(
+        preparation_task.output("coverage"), require_current_sources=True,
+    )
+    coverage_reader.recheck()
+    preparation_coverage = read_complete_input(coverage_reader)
+    if (
+        type(preparation_coverage) is not dict
+        or preparation_coverage.get("complete") is not True
+        or preparation_coverage.get("source_snapshots") != snapshots
+        or preparation_coverage.get("profile_sha256") != context_value.get("profile_sha256")
+        or preparation_coverage.get("analytical_request_sha256")
+        != context_value.get("analytical_request_sha256")
+    ):
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    prepared_sources = context_value.get("datasets")
+    if (
+        type(prepared_sources) is not list
+        or [item.get("document_id") for item in prepared_sources] != [
+            item.get("document_id") for item in manifest
+        ]
+        or [item.get("document_id") for item in preparation_coverage.get("datasets") or []]
+        != [item.get("document_id") for item in manifest]
+    ):
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    arguments = validate_native_orchestration_arguments(step["arguments"])
+    fingerprint = _input_fingerprint(step, context, binding)
+    state = _prepared_state(store, step["step_id"], checkpoint_binding, fingerprint)
+    limits = tabular_merge_limits(settings)
+    if fingerprint is None:
+        raise NativeOrchestrationBridgeError("native_runtime_invalid")
+    source_headers = {
+        item["alias"]: item["headers"] for item in prepared_sources if isinstance(item, dict)
+    }
+    sources = build_tabular_merge_sources(
+        manifest, producer.user_id, byte_reader=getattr(context, "merge_source_reader", None),
+    )
+    with orchestration_file_policy(allow_generated_files=False):
+        datasets = {}
+        for source, prepared in zip(sources, prepared_sources):
+            def open_table(source=source, prepared=prepared):
+                return read_tabular_source_records(
+                    source, sheet=prepared.get("sheet") or None,
+                    header_row=prepared["selection"].get("header_row"),
+                    cell_range=prepared["selection"].get("cell_range"),
+                    table_id=prepared["selection"].get("table_id"),
+                    limits=limits, cancel_requested=cancel_requested,
+                )
+
+            datasets[prepared["alias"]] = open_table
+
+        correction = None
+        while True:
+            if state["phase"] == "call_reserved":
+                raise NativeOrchestrationBridgeError(
+                    "native_execution_failed", rule="lowering_call_uncertain",
+                )
+            if state["phase"] in ("program_saved", "evaluating") and (
+                isinstance(state.get("program"), dict)
+                and state.get("completion_confirmed") is True
+            ):
+                program = deepcopy(state["program"])
+            else:
+                if state["calls_used"] >= 2:
+                    raise NativeOrchestrationBridgeError(
+                        "native_execution_failed", rule="lowering_call_limit",
+                    )
+                state = store.save_lowering_state(
+                    step["step_id"], {
+                        **state, "phase": "call_reserved", "calls_used": state["calls_used"] + 1,
+                    }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                )
+
+                def reserve_response_format_retry():
+                    nonlocal state
+                    if state["calls_used"] >= 2:
+                        raise NativeOrchestrationBridgeError(
+                            "native_execution_failed", rule="lowering_call_limit",
+                        )
+                    state = store.save_lowering_state(
+                        step["step_id"], {
+                            **state, "phase": "call_reserved",
+                            "calls_used": state["calls_used"] + 1,
+                        }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                    )
+
+                try:
+                    response = invoke(
+                        _prepared_program_prompt(
+                            arguments["question"], context_value, relational_spec_schema(),
+                            correction=correction,
+                        ),
+                        stage="tabular_program_lowering",
+                        metadata={
+                            "json_output": True, "complete_saved_analysis_input": True,
+                            "require_complete_generation": True,
+                            "before_response_format_retry": reserve_response_format_retry,
+                        },
+                    )
+                    program = json.loads(response)
+                    if not isinstance(program, dict):
+                        raise TabularRelationalError("relational_spec_invalid", detail={"check": "json_object"})
+                    program = normalize_relational_spec(program, arguments["document_ids"])
+                    check_relational_columns(program, source_headers)
+                    state = store.save_lowering_state(
+                        step["step_id"], {
+                            **state, "phase": "program_saved",
+                            "program": deepcopy(program),
+                            "program_sha256": hashlib.sha256(canonical_bytes(program)).hexdigest(),
+                            "completion_confirmed": True,
+                            "token_usage": deepcopy(getattr(context, "prompt_token_usage", {}) or {}),
+                        }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                    )
+                except Exception as exc:
+                    from functions_orchestration_execution import HarnessExecutionError
+
+                    if not isinstance(exc, (json.JSONDecodeError, TabularRelationalError, HarnessExecutionError)):
+                        raise
+                    if isinstance(exc, HarnessExecutionError) and (
+                        getattr(exc, "rule", None) != "generation_incomplete"
+                    ):
+                        raise
+                    if isinstance(exc, json.JSONDecodeError):
+                        exc = TabularRelationalError(
+                            "relational_spec_invalid", detail={"check": "json_parse"},
+                        )
+                    elif isinstance(exc, HarnessExecutionError):
+                        correction = {
+                            "category": "generation_incomplete",
+                            "check": "complete_generation", "step_index": 0,
+                        }
+                        state = store.save_lowering_state(
+                            step["step_id"], {
+                                **state, "phase": "failure_saved",
+                                "last_failure": correction,
+                                "completion_confirmed": False,
+                                "token_usage": deepcopy(
+                                    getattr(context, "prompt_token_usage", {}) or {}
+                                ),
+                            }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                        )
+                        if state["calls_used"] >= 2:
+                            raise
+                        continue
+                    correction = _safe_program_correction(exc)
+                    state = store.save_lowering_state(
+                        step["step_id"], {
+                            **state, "phase": "failure_saved",
+                            "last_failure": correction or {"category": exc.code},
+                            "completion_confirmed": False,
+                            "token_usage": deepcopy(
+                                getattr(context, "prompt_token_usage", {}) or {}
+                            ),
+                        }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                    )
+                    if correction is None or state["calls_used"] >= 2:
+                        raise
+                    continue
+            state = store.save_lowering_state(
+                step["step_id"], {**state, "phase": "evaluating"},
+                binding=checkpoint_binding, input_fingerprint=fingerprint,
+            )
+            try:
+                calculated = calculate_relational_sources(
+                    program, datasets, limits=limits, cancel_requested=cancel_requested,
+                )
+            except TabularRelationalError as exc:
+                correction = _safe_program_correction(exc)
+                state = store.save_lowering_state(
+                    step["step_id"], {
+                        **state, "phase": "failure_saved",
+                        "last_failure": correction or {"category": exc.code},
+                        "completion_confirmed": False,
+                        "token_usage": deepcopy(
+                            getattr(context, "prompt_token_usage", {}) or {}
+                        ),
+                    }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                )
+                if correction is None or state["calls_used"] >= 2:
+                    raise
+                continue
+            break
+    service.access.authorize_input_sources(snapshots, require_snapshot=True)
+    calculated["coverage"]["source_snapshots"] = deepcopy(snapshots)
+    calculated["coverage"]["preparation_profile_sha256"] = context_value["profile_sha256"]
+    coverage = Coverage(len(snapshots), len(snapshots), "sources")
+    checks = (
+        "complete_authorized_tables", "complete_preparation_context",
+        "complete_generation_confirmed", "validated_relational_operations",
+        "precise_decimal_values", "declared_match_cardinality", "exact_row_lineage",
+    )
+    count = len(calculated["records"])
+    complete = Completeness("complete", count, count, coverage, "valid", checks, ())
+    outputs = [
+        NamedOutput(
+            "records", "records-v1", calculated["records"], complete,
+            tuple(RecordColumn.from_dict(column) for column in calculated["columns"]),
+        ),
+        NamedOutput("lineage", "records-v1", calculated["lineage"], complete, (
+            RecordColumn("result_row", "integer"), RecordColumn("sources", "array"),
+        )),
+        NamedOutput(
+            "coverage", "structured-v1", calculated["coverage"],
+            Completeness("complete", 1, 1, coverage, "valid", checks, ()),
+        ),
+    ]
+    token = _guard(context, service, producer)
+    task = service.persist_task_result(
+        producer=producer, role="reason", status="complete", outputs=outputs, sources=snapshots,
+        origin="grounded", source_policy=binding.source_policy, guard_token=token,
+        input_fingerprint=fingerprint,
+    )
+    store.save_lowering_state(
+        step["step_id"], {**state, "phase": "retained", "completion_confirmed": True},
+        binding=checkpoint_binding, input_fingerprint=fingerprint,
+    )
+    return _step_result(
+        status="completed", summary=f"Calculated and retained {count:,} prepared records.",
+        task_result=task,
+    )
+
+
+def _execute_preparation(
+    step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
+):
+    """Commit complete, exact analytical context before any model authors a program."""
+    from functions_orchestration_merge import build_tabular_merge_sources, tabular_merge_limits
+    from functions_tabular_merge import prepare_tabular_source_context
+
+    arguments = validate_native_orchestration_arguments(step["arguments"])
+    request = arguments["preparation_request"]
+    limits = tabular_merge_limits(settings)
+    fingerprint = _input_fingerprint(step, context, binding)
+    if len(manifest) > limits.max_sources:
+        raise NativeOrchestrationBridgeError("native_relational_limit")
+    sources = build_tabular_merge_sources(
+        manifest, producer.user_id, byte_reader=getattr(context, "merge_source_reader", None),
+    )
+    datasets = []
+    with orchestration_file_policy(allow_generated_files=False):
+        for source, requested in zip(sources, request["datasets"]):
+            _check_cancel(cancel_requested)
+            datasets.append(prepare_tabular_source_context(
+                source, requested, limits=limits, cancel_requested=cancel_requested,
+            ))
+    service.access.authorize_input_sources(snapshots, require_snapshot=True)
+    request_digest = hashlib.sha256(canonical_bytes({
+        "question": arguments["question"], "request": request,
+    })).hexdigest()
+    context_value = {
+        "version": "tabular-calculation-context-v1",
+        "analytical_request_sha256": request_digest,
+        "source_snapshots": deepcopy(snapshots),
+        "datasets": datasets,
+        "complete": True, "limitations": [],
+    }
+    context_value["profile_sha256"] = hashlib.sha256(
+        canonical_bytes({
+            "datasets": datasets, "source_snapshots": snapshots,
+            "analytical_request_sha256": request_digest,
+        })
+    ).hexdigest()
+    if len(canonical_bytes(context_value)) > 96 * 1024:
+        raise NativeOrchestrationBridgeError("native_relational_limit")
+    coverage = {
+        "version": "structured-v1",
+        "source_snapshots": deepcopy(snapshots),
+        "analytical_request_sha256": request_digest,
+        "profile_sha256": context_value["profile_sha256"],
+        "datasets": [
+            {
+                "alias": item["alias"], "document_id": item["document_id"],
+                "headers": deepcopy(item["headers"]), "row_count": item["physical_row_count"],
+                "selection": deepcopy(item["selection"]),
+                "complete": True,
+            }
+            for item in datasets
+        ],
+        "input_rows": sum(item["physical_row_count"] for item in datasets),
+        "complete": True,
+    }
+    result_coverage = Coverage(len(snapshots), len(snapshots), "sources")
+    complete = Completeness(
+        "complete", 1, 1, result_coverage, "valid",
+        ("complete_authorized_tables", "complete_context_columns", "complete_key_profiles"),
+        (),
+    )
+    outputs = [
+        NamedOutput("context", "structured-v1", context_value, complete),
+        NamedOutput("coverage", "structured-v1", coverage, complete),
+    ]
+    token = _guard(context, service, producer)
+    options = {"input_fingerprint": fingerprint} if fingerprint is not None else {}
+    task = service.persist_task_result(
+        producer=producer, role="reason", status="complete", outputs=outputs, sources=snapshots,
+        origin="grounded", source_policy=binding.source_policy, guard_token=token, **options,
+    )
+    return _step_result(
+        status="completed",
+        summary=(
+            f"Prepared complete calculation context from {len(snapshots)} files "
+            f"and {coverage['input_rows']:,} rows."
+        ),
+        task_result=task,
+    )
+
+
 def execute_native_orchestration_step(
     step, context, *, settings, user_id, emit=None, cancel_requested=None, binding=None,
 ):
@@ -813,14 +1341,25 @@ def execute_native_orchestration_step(
         _check_cancel(cancel_requested)
         service, producer = _runtime(step, context, user_id, binding)
         relational = binding.native_operation == "relate"
+        multiple = binding.native_operation in ("prepare", "relate")
         manifest, snapshots = _sources(
-            step, context, service, require_current=True, require_replay=True, multiple=relational,
+            step, context, service, require_current=True, require_replay=True, multiple=multiple,
         )
         input_fingerprint = _input_fingerprint(step, context, binding)
         _guard(context, service, producer)
         if relational:
             stage = "execution"
+            if step.get("arguments", {}).get("calculation_mode") == "prepared-v1":
+                return _execute_prepared_relational(
+                    step, context, service, producer, manifest, snapshots,
+                    binding, settings, cancel_requested,
+                )
             return _execute_relational(
+                step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
+            )
+        if binding.native_operation == "prepare":
+            stage = "execution"
+            return _execute_preparation(
                 step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
             )
         with orchestration_file_policy(allow_generated_files=False):

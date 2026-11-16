@@ -4,12 +4,28 @@ title: "Chat interface controls"
 description: "Reference for every documented control in the SimpleChat chat interface."
 section: "Reference"
 audience: user
-version: "0.261.431"
+version: "0.261.446"
 ---
 
 ## How to use this reference
 
 Use this page when you can see a control in Chat but are not sure what it does or when to use it. The generated inventory lists 47 real controls plus 3 child sub-elements. The child elements `document-comparison-edit-btn-label`, `fork-conversation-button-label`, and `fork-conversation-button-spinner` are mentioned with their parent controls instead of receiving separate rows.
+
+### Orchestration evidence, answer and delivery phases
+
+Fixed/Implemented in version: **0.261.446**
+(`application/single_app/config.py`).
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Quiet activity phase | Names the current purpose: Gather evidence, Prepare answer, or Deliver file, without exposing a machine-role wall. | Running or waiting orchestration |
+| Plan activity disclosure | Expands exact step names and settled/running/waiting states while keeping the current answer-first thread quiet. | Quiet activity row |
+| Run details | Opens the existing collapsed plan inspector; it does not create a second failure or progress card. | Running or saved orchestration |
+| Qualified calculation answer | States supported preparation facts and the unavailable determination without repeating a generic partial-work warning. | Complete preparation exists but the complete calculation bundle does not |
+
+Actionable transport, sign-in, approval, cancellation and actual file-delivery
+states remain visible. A qualified narrative answer is not a completed
+calculation, downloadable dataset or delivered report.
 
 ### Native Word and workbook evidence
 
