@@ -3701,7 +3701,7 @@ def register_route_backend_orchestration(bp):
                         memory_context=memory_context,
                         selected_sources=selected_sources,
                     )
-                    context['export_catalog'] = export_catalog = _admitted_export_catalog(
+                    context['export_catalog'] = _admitted_export_catalog(
                         user_id, resolved_conversation_id, settings=settings,
                         services=services,
                     )
