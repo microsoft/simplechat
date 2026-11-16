@@ -1,7 +1,7 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.446
+Version: 0.261.447
 Implemented in: 0.261.239
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.240
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.241
@@ -923,7 +923,7 @@ def prepare_tabular_source_context(
         profile_state = {
             name: {
                 "rows": 0, "null_count": 0, "counts": {}, "primitive_types": [
-                    set() for _column in key_profiles[index]["columns"]
+                    set() for _ in key_profiles[index]["columns"]
                 ],
             }
             for index, name in enumerate(profile_names)
