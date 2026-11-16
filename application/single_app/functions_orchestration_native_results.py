@@ -936,10 +936,13 @@ def _prepared_program_prompt(question, context_value, schema, *, correction=None
             f"step index {correction.get('step_index')}. Do not change the approved sources, "
             "question, horizon, output fields, token budget or requested effects."
         )
-    return json.dumps({
+    payload = {
         "instructions": instructions, "question": question,
         "program_schema": schema, "complete_preparation": context_value,
-    }, sort_keys=True, ensure_ascii=False)
+    }
+    if isinstance((correction or {}).get("program"), dict):
+        payload["rejected_program"] = deepcopy(correction["program"])
+    return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
 def _prepared_state(store, step_id, binding, fingerprint):
@@ -965,17 +968,18 @@ def _safe_program_correction(error):
     if not isinstance(error, TabularRelationalError):
         return None
     category = error.code
-    if not (
-        category.startswith("relational_column_")
-        or category in {
-            "relational_spec_invalid", "relational_expression_invalid",
-            "relational_source_unused", "relational_match_ambiguous",
-            "relational_numeric_invalid", "relational_numeric_scale_invalid",
-            "relational_date_invalid", "relational_key_invalid",
-        }
-    ):
+    if category not in {
+        "relational_column_missing", "relational_spec_invalid",
+        "relational_expression_invalid", "relational_source_unused",
+    }:
         return None
     detail = error.detail or {}
+    if (
+        detail.get("check") in {"json_parse", "json_object"}
+        or category == "relational_column_missing"
+        and detail.get("check") != "column_missing"
+    ):
+        return None
     return {
         "category": category,
         "check": detail.get("check") or "closed_validation",
@@ -983,14 +987,90 @@ def _safe_program_correction(error):
     }
 
 
+def _approved_preparation_request_digest(context, request, *, question=None):
+    approved_request = getattr(context, "resolved_message", None) or getattr(
+        context, "user_message", None,
+    ) or question
+    if not isinstance(approved_request, str) or not approved_request.strip():
+        raise NativeOrchestrationBridgeError("native_runtime_invalid")
+    return hashlib.sha256(canonical_bytes({
+        "question": approved_request, "request": request,
+    })).hexdigest()
+
+
+def _preparation_sources_match(value, snapshots, prepared_sources, manifest):
+    if (
+        type(value) is not list
+        or type(prepared_sources) is not list
+        or len(value) != len(prepared_sources)
+        or len(value) != len(snapshots)
+        or len(value) != len(manifest)
+    ):
+        return False
+    for bound, prepared, snapshot, source in zip(value, prepared_sources, snapshots, manifest):
+        if (
+            not isinstance(bound, dict) or not isinstance(prepared, dict)
+            or bound.get("document_id") != prepared.get("document_id")
+            or bound.get("document_id") != snapshot.get("document_id")
+            or bound.get("document_id") != source.get("document_id")
+            or bound.get("content_sha256") != prepared.get("content_sha256")
+            or {key: item for key, item in bound.items() if key != "content_sha256"} != snapshot
+        ):
+            return False
+    return True
+
+
+def _bound_preparation_step(context, step):
+    binding = (step.get("inputs") or {}).get("preparation") or {}
+    step_id = (binding.get("binding") or {}).get("step_id")
+    plan_steps = getattr(context, "plan_steps", None)
+    if not isinstance(step_id, str) or type(plan_steps) is not list:
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    preparation_step = next(
+        (candidate for candidate in plan_steps
+         if isinstance(candidate, dict) and candidate.get("step_id") == step_id),
+        None,
+    )
+    if (
+        not isinstance(preparation_step, dict)
+        or preparation_step.get("capability_id") != "tabular_analyze"
+    ):
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    preparation_arguments = validate_native_orchestration_arguments(
+        preparation_step.get("arguments"),
+    )
+    if preparation_arguments.get("native_operation") != "prepare":
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+    return preparation_step, preparation_arguments
+
+
+def _source_with_content_fence(source, expected_digest):
+    from functions_tabular_merge import TabularMergeSource
+
+    if re.fullmatch(r"[a-f0-9]{64}", expected_digest or "") is None:
+        raise NativeOrchestrationBridgeError("native_inputs_unsupported")
+
+    def load():
+        content = source.load_bytes()
+        if isinstance(content, bytearray):
+            content = bytes(content)
+        if not isinstance(content, bytes) or hashlib.sha256(content).hexdigest() != expected_digest:
+            raise NativeOrchestrationBridgeError("native_source_changed")
+        return content
+
+    return TabularMergeSource(
+        source.source_id, source.file_name, load, extension=source.extension,
+    )
+
+
 def _execute_prepared_relational(
     step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
 ):
     """Lower one prepared calculation, with a durable two-call ceiling and no tools."""
-    from functions_orchestration_checkpoints import CheckpointStore
+    from functions_orchestration_checkpoints import CheckpointError, CheckpointStore
     from functions_orchestration_merge import build_tabular_merge_sources, tabular_merge_limits
     from functions_orchestration_result_runtime import read_complete_input, resolve_step_inputs
-    from functions_tabular_merge import read_tabular_source_records
+    from functions_tabular_merge import TabularMergeSource, read_tabular_source_records
     from functions_tabular_relational import (
         TabularRelationalError, calculate_relational_sources, check_relational_columns,
         normalize_relational_spec, relational_spec_schema,
@@ -1011,11 +1091,17 @@ def _execute_prepared_relational(
     if reader.reference.output_name != "context" or reader.reference.producer.capability_id != "tabular_analyze":
         raise NativeOrchestrationBridgeError("native_inputs_unsupported")
     context_value = read_complete_input(reader, max_bytes=96 * 1024)
+    _preparation_step, preparation_arguments = _bound_preparation_step(context, step)
+    arguments = validate_native_orchestration_arguments(step["arguments"])
     if (
         type(context_value) is not dict
         or context_value.get("version") != "tabular-calculation-context-v1"
         or context_value.get("complete") is not True
-        or context_value.get("source_snapshots") != snapshots
+        or context_value.get("analytical_request_sha256")
+        != _approved_preparation_request_digest(
+            context, preparation_arguments["preparation_request"],
+            question=arguments["question"],
+        )
     ):
         raise NativeOrchestrationBridgeError("native_inputs_unsupported")
     preparation_binding = step["inputs"]["preparation"]["binding"]
@@ -1033,23 +1119,57 @@ def _execute_prepared_relational(
     if (
         type(preparation_coverage) is not dict
         or preparation_coverage.get("complete") is not True
-        or preparation_coverage.get("source_snapshots") != snapshots
+        or preparation_coverage.get("source_snapshots") != context_value.get("source_snapshots")
         or preparation_coverage.get("profile_sha256") != context_value.get("profile_sha256")
         or preparation_coverage.get("analytical_request_sha256")
         != context_value.get("analytical_request_sha256")
     ):
         raise NativeOrchestrationBridgeError("native_inputs_unsupported")
     prepared_sources = context_value.get("datasets")
+    requested_sources = preparation_arguments["preparation_request"].get("datasets")
     if (
         type(prepared_sources) is not list
+        or type(requested_sources) is not list
         or [item.get("document_id") for item in prepared_sources] != [
+            item.get("document_id") for item in manifest
+        ]
+        or [item.get("document_id") for item in requested_sources] != [
             item.get("document_id") for item in manifest
         ]
         or [item.get("document_id") for item in preparation_coverage.get("datasets") or []]
         != [item.get("document_id") for item in manifest]
+        or preparation_arguments.get("document_ids") != arguments["document_ids"]
+        or any(
+            prepared.get("alias") != requested.get("alias")
+            or prepared.get("selection") != {
+                key: requested[key]
+                for key in ("header_row", "cell_range", "table_id") if key in requested
+            }
+            or [
+                item.get("column") for item in prepared.get("context_columns") or []
+                if isinstance(item, dict)
+            ] != requested.get("context_columns")
+            or [
+                {"name": item.get("name"), "columns": item.get("columns")}
+                for item in prepared.get("key_profiles") or []
+                if isinstance(item, dict)
+            ] != requested.get("key_profiles")
+            or (
+                "sheet" in requested
+                and prepared.get("sheet") != requested["sheet"]
+            )
+            for prepared, requested in zip(prepared_sources, requested_sources)
+        )
+        or not _preparation_sources_match(
+            context_value.get("source_snapshots"), snapshots, prepared_sources, manifest,
+        )
+        or context_value.get("profile_sha256") != hashlib.sha256(canonical_bytes({
+            "datasets": prepared_sources,
+            "source_snapshots": context_value.get("source_snapshots"),
+            "analytical_request_sha256": context_value.get("analytical_request_sha256"),
+        })).hexdigest()
     ):
         raise NativeOrchestrationBridgeError("native_inputs_unsupported")
-    arguments = validate_native_orchestration_arguments(step["arguments"])
     fingerprint = _input_fingerprint(step, context, binding)
     state = _prepared_state(store, step["step_id"], checkpoint_binding, fingerprint)
     limits = tabular_merge_limits(settings)
@@ -1058,12 +1178,59 @@ def _execute_prepared_relational(
     source_headers = {
         item["alias"]: item["headers"] for item in prepared_sources if isinstance(item, dict)
     }
+    if state["phase"] in {"program_saved", "evaluating"}:
+        try:
+            saved_program = normalize_relational_spec(
+                state.get("program"), arguments["document_ids"],
+            )
+            check_relational_columns(saved_program, source_headers)
+            if saved_program != state.get("program"):
+                raise TabularRelationalError(
+                    "relational_spec_invalid", detail={"check": "saved_program_normalization"},
+                )
+            prepared_by_id = {
+                item["document_id"]: item for item in prepared_sources
+                if isinstance(item, dict)
+            }
+            for dataset in saved_program["datasets"]:
+                prepared = prepared_by_id[dataset["document_id"]]
+                expected_selectors = {
+                    "sheet": prepared.get("sheet"),
+                    **prepared.get("selection"),
+                }
+                if (
+                    dataset["alias"] != prepared["alias"]
+                    or any(
+                        dataset.get(name) != value
+                        for name, value in expected_selectors.items()
+                        if name in dataset
+                    )
+                    or "columns" in dataset and dataset["columns"] != prepared["headers"]
+                ):
+                    raise TabularRelationalError(
+                        "relational_selection_invalid",
+                        detail={"check": "saved_program_selection"},
+                    )
+        except (KeyError, TypeError, TabularRelationalError) as exc:
+            raise CheckpointError("checkpoint_invalid") from exc
     sources = build_tabular_merge_sources(
         manifest, producer.user_id, byte_reader=getattr(context, "merge_source_reader", None),
     )
+    sources = [
+        _source_with_content_fence(source, prepared["content_sha256"])
+        for source, prepared in zip(sources, prepared_sources)
+    ]
+    verified_sources = []
+    for source in sources:
+        content = source.load_bytes()
+        verified_sources.append(TabularMergeSource(
+            source.source_id, source.file_name, lambda value=content: value,
+            extension=source.extension,
+        ))
+    service.access.authorize_input_sources(snapshots, require_snapshot=True)
     with orchestration_file_policy(allow_generated_files=False):
         datasets = {}
-        for source, prepared in zip(sources, prepared_sources):
+        for source, prepared in zip(verified_sources, prepared_sources):
             def open_table(source=source, prepared=prepared):
                 return read_tabular_source_records(
                     source, sheet=prepared.get("sheet") or None,
@@ -1076,6 +1243,38 @@ def _execute_prepared_relational(
             datasets[prepared["alias"]] = open_table
 
         correction = None
+        if state["phase"] == "failure_saved":
+            if (
+                state.get("completion_confirmed") is not True
+                or not isinstance(state.get("last_failure"), dict)
+                or not isinstance(state.get("program"), dict)
+            ):
+                last_failure = state.get("last_failure") or {}
+                failure_detail = {
+                    key: last_failure[key] for key in (
+                        "check", "step_index", "role", "missing_count", "category",
+                    ) if key in last_failure
+                } if isinstance(last_failure, dict) else {}
+                raise TabularRelationalError(
+                    last_failure.get("category", "relational_spec_invalid")
+                    if isinstance(last_failure.get("category"), str)
+                    else "relational_spec_invalid",
+                    detail=failure_detail,
+                )
+            correction = deepcopy(state["last_failure"])
+            correction["program"] = deepcopy(state["program"])
+            if _safe_program_correction(TabularRelationalError(
+                correction["category"], detail={
+                    key: correction[key] for key in ("check", "step_index")
+                    if key in correction
+                },
+            )) is None:
+                raise TabularRelationalError(
+                    correction["category"], detail={
+                        key: correction[key] for key in ("check", "step_index")
+                        if key in correction
+                    },
+                )
         while True:
             if state["phase"] == "call_reserved":
                 raise NativeOrchestrationBridgeError(
@@ -1091,10 +1290,17 @@ def _execute_prepared_relational(
                     raise NativeOrchestrationBridgeError(
                         "native_execution_failed", rule="lowering_call_limit",
                     )
+                reservation = deepcopy(state)
+                reservation.pop("program", None)
+                reservation.pop("program_sha256", None)
+                reservation.pop("last_failure", None)
+                reservation.update({
+                    "phase": "call_reserved", "calls_used": state["calls_used"] + 1,
+                    "completion_confirmed": False,
+                })
                 state = store.save_lowering_state(
-                    step["step_id"], {
-                        **state, "phase": "call_reserved", "calls_used": state["calls_used"] + 1,
-                    }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                    step["step_id"], reservation,
+                    binding=checkpoint_binding, input_fingerprint=fingerprint,
                 )
 
                 def reserve_response_format_retry():
@@ -1103,11 +1309,17 @@ def _execute_prepared_relational(
                         raise NativeOrchestrationBridgeError(
                             "native_execution_failed", rule="lowering_call_limit",
                         )
+                    retry_reservation = deepcopy(state)
+                    retry_reservation.pop("program", None)
+                    retry_reservation.pop("program_sha256", None)
+                    retry_reservation.pop("last_failure", None)
+                    retry_reservation.update({
+                        "phase": "call_reserved", "calls_used": state["calls_used"] + 1,
+                        "completion_confirmed": False,
+                    })
                     state = store.save_lowering_state(
-                        step["step_id"], {
-                            **state, "phase": "call_reserved",
-                            "calls_used": state["calls_used"] + 1,
-                        }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                        step["step_id"], retry_reservation,
+                        binding=checkpoint_binding, input_fingerprint=fingerprint,
                     )
 
                 try:
@@ -1155,29 +1367,45 @@ def _execute_prepared_relational(
                             "category": "generation_incomplete",
                             "check": "complete_generation", "step_index": 0,
                         }
-                        state = store.save_lowering_state(
-                            step["step_id"], {
-                                **state, "phase": "failure_saved",
-                                "last_failure": correction,
-                                "completion_confirmed": False,
-                                "token_usage": deepcopy(
-                                    getattr(context, "prompt_token_usage", {}) or {}
-                                ),
-                            }, binding=checkpoint_binding, input_fingerprint=fingerprint,
-                        )
-                        if state["calls_used"] >= 2:
-                            raise
-                        continue
-                    correction = _safe_program_correction(exc)
-                    state = store.save_lowering_state(
-                        step["step_id"], {
-                            **state, "phase": "failure_saved",
-                            "last_failure": correction or {"category": exc.code},
+                        failed = deepcopy(state)
+                        failed.pop("program", None)
+                        failed.pop("program_sha256", None)
+                        failed.update({
+                            "phase": "failure_saved",
+                            "last_failure": correction,
                             "completion_confirmed": False,
                             "token_usage": deepcopy(
                                 getattr(context, "prompt_token_usage", {}) or {}
                             ),
-                        }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                        })
+                        state = store.save_lowering_state(
+                            step["step_id"], failed,
+                            binding=checkpoint_binding, input_fingerprint=fingerprint,
+                        )
+                        if state["calls_used"] >= 2:
+                            raise
+                        continue
+                    candidate = program if isinstance(locals().get("program"), dict) else None
+                    correction = _safe_program_correction(exc) if candidate is not None else None
+                    failed = deepcopy(state)
+                    if correction is None:
+                        failed.pop("program", None)
+                        failed.pop("program_sha256", None)
+                    else:
+                        correction["program"] = deepcopy(candidate)
+                        failed["program"] = deepcopy(candidate)
+                        failed["program_sha256"] = hashlib.sha256(canonical_bytes(candidate)).hexdigest()
+                    failed.update({
+                        "phase": "failure_saved",
+                        "last_failure": correction or {"category": exc.code},
+                        "completion_confirmed": correction is not None,
+                        "token_usage": deepcopy(
+                            getattr(context, "prompt_token_usage", {}) or {}
+                        ),
+                    })
+                    state = store.save_lowering_state(
+                        step["step_id"], failed,
+                        binding=checkpoint_binding, input_fingerprint=fingerprint,
                     )
                     if correction is None or state["calls_used"] >= 2:
                         raise
@@ -1192,22 +1420,30 @@ def _execute_prepared_relational(
                 )
             except TabularRelationalError as exc:
                 correction = _safe_program_correction(exc)
+                if correction is not None:
+                    correction["program"] = deepcopy(program)
+                failed = deepcopy(state)
+                if correction is None:
+                    failed.pop("program", None)
+                    failed.pop("program_sha256", None)
+                failed.update({
+                    "phase": "failure_saved",
+                    "last_failure": correction or {"category": exc.code},
+                    "completion_confirmed": correction is not None,
+                    "token_usage": deepcopy(
+                        getattr(context, "prompt_token_usage", {}) or {}
+                    ),
+                })
                 state = store.save_lowering_state(
-                    step["step_id"], {
-                        **state, "phase": "failure_saved",
-                        "last_failure": correction or {"category": exc.code},
-                        "completion_confirmed": False,
-                        "token_usage": deepcopy(
-                            getattr(context, "prompt_token_usage", {}) or {}
-                        ),
-                    }, binding=checkpoint_binding, input_fingerprint=fingerprint,
+                    step["step_id"], failed,
+                    binding=checkpoint_binding, input_fingerprint=fingerprint,
                 )
                 if correction is None or state["calls_used"] >= 2:
                     raise
                 continue
             break
     service.access.authorize_input_sources(snapshots, require_snapshot=True)
-    calculated["coverage"]["source_snapshots"] = deepcopy(snapshots)
+    calculated["coverage"]["source_snapshots"] = deepcopy(context_value["source_snapshots"])
     calculated["coverage"]["preparation_profile_sha256"] = context_value["profile_sha256"]
     coverage = Coverage(len(snapshots), len(snapshots), "sources")
     checks = (
@@ -1270,19 +1506,23 @@ def _execute_preparation(
                 source, requested, limits=limits, cancel_requested=cancel_requested,
             ))
     service.access.authorize_input_sources(snapshots, require_snapshot=True)
-    request_digest = hashlib.sha256(canonical_bytes({
-        "question": arguments["question"], "request": request,
-    })).hexdigest()
+    request_digest = _approved_preparation_request_digest(
+        context, request, question=arguments["question"],
+    )
+    source_snapshots = [
+        {**deepcopy(snapshot), "content_sha256": dataset["content_sha256"]}
+        for snapshot, dataset in zip(snapshots, datasets)
+    ]
     context_value = {
         "version": "tabular-calculation-context-v1",
         "analytical_request_sha256": request_digest,
-        "source_snapshots": deepcopy(snapshots),
+        "source_snapshots": deepcopy(source_snapshots),
         "datasets": datasets,
         "complete": True, "limitations": [],
     }
     context_value["profile_sha256"] = hashlib.sha256(
         canonical_bytes({
-            "datasets": datasets, "source_snapshots": snapshots,
+            "datasets": datasets, "source_snapshots": source_snapshots,
             "analytical_request_sha256": request_digest,
         })
     ).hexdigest()
@@ -1290,7 +1530,7 @@ def _execute_preparation(
         raise NativeOrchestrationBridgeError("native_relational_limit")
     coverage = {
         "version": "structured-v1",
-        "source_snapshots": deepcopy(snapshots),
+        "source_snapshots": deepcopy(source_snapshots),
         "analytical_request_sha256": request_digest,
         "profile_sha256": context_value["profile_sha256"],
         "datasets": [

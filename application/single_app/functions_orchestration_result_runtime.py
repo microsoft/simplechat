@@ -6,7 +6,9 @@ Version: 0.261.424
 
 from copy import deepcopy
 from dataclasses import replace
+import hashlib
 import json
+import re
 
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_action_manifest import is_document_search_action
@@ -21,8 +23,8 @@ from functions_orchestration_registry import (
 )
 from functions_orchestration_result_contracts import (
     IMAGE_ASSET_KIND, MAX_DESCRIPTOR_BYTES, MAX_EXTERNAL_SOURCES, Completeness, Coverage, ExternalSourceRef,
-    InputBinding, PartialInputNotAcceptedError, ResultContractError, ResultNotReadyError, ResultRef, TaskResult,
-    canonical_bytes, canonical_digest, output_name,
+    InputBinding, PartialInputNotAcceptedError, NARRATIVE_READY_CHECK, ResultContractError, ResultNotReadyError,
+    ResultRef, TaskResult, canonical_bytes, canonical_digest, narrative_result_ready, output_name,
 )
 from functions_orchestration_results import (
     MAX_LINEAGE_RESULTS, MAX_VALUE_BYTES, NamedOutput, OrchestrationResults, ResultUnavailableError, _reference,
@@ -152,20 +154,102 @@ def validate_tabular_requirement_readers(step, readers, service):
             or not required_ids <= preparation_readers[0][1]
         ):
             raise ResultContractError('result_tabular_preparation_incomplete')
-        calculation_sets = [
-            (step_id, outputs) for step_id, outputs in calculation_outputs.items()
-            if outputs & {'records', 'lineage', 'coverage'}
+        preparation_reader, preparation_sources = preparation_readers[0]
+        if preparation_sources != required_ids:
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        preparation = read_complete_input(preparation_reader)
+        if (
+            type(preparation) is not dict
+            or preparation.get('version') != 'tabular-calculation-context-v1'
+            or preparation.get('complete') is not True
+            or not isinstance(preparation.get('analytical_request_sha256'), str)
+            or not re.fullmatch(r'[a-f0-9]{64}', preparation['analytical_request_sha256'])
+            or type(preparation.get('datasets')) is not list
+            or {
+                item.get('document_id') for item in preparation['datasets']
+                if isinstance(item, dict)
+            } != required_ids
+            or any(
+                not isinstance(item, dict)
+                or not re.fullmatch(r'[a-f0-9]{64}', item.get('content_sha256') or '')
+                for item in preparation['datasets']
+            )
+        ):
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        authoritative_sources = []
+        for source in preparation.get('source_snapshots') or []:
+            if not isinstance(source, dict):
+                raise ResultContractError('result_tabular_preparation_incomplete')
+            authoritative_sources.append({
+                key: value for key, value in source.items() if key != 'content_sha256'
+            })
+        if (
+            authoritative_sources != analysis_source_snapshot(
+                preparation_reader.lineage_sources(),
+            )
+            or {
+                source.get('document_id') for source in authoritative_sources
+            } != required_ids
+        ):
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        expected_profile = hashlib.sha256(canonical_bytes({
+            'datasets': preparation['datasets'],
+            'source_snapshots': preparation.get('source_snapshots'),
+            'analytical_request_sha256': preparation['analytical_request_sha256'],
+        })).hexdigest()
+        if preparation.get('profile_sha256') != expected_profile:
+            raise ResultContractError('result_tabular_preparation_incomplete')
+        calculation_readers = [
+            reader for reader in readers.values()
+            if reader.reference.producer.capability_id == 'tabular_analyze'
+            and reader.reference.output_name in {'records', 'lineage', 'coverage'}
         ]
-        if not calculation_sets:
+        if not calculation_readers:
             return
-        required = {'records', 'lineage', 'coverage'}
-        if len(calculation_sets) != 1 or not required <= calculation_sets[0][1]:
+        if {reader.reference.output_name for reader in calculation_readers} != {
+            'records', 'lineage', 'coverage',
+        } or len(calculation_readers) != 3:
             raise ResultContractError('result_tabular_calculation_incomplete')
-        if len([
-            reader for reader, source_ids in calculation_records
-            if reader.reference.producer.step_id == calculation_sets[0][0]
-            and required_ids <= source_ids
-        ]) != 1:
+        producer = calculation_readers[0].reference.producer
+        if (
+            any(reader.reference.producer != producer for reader in calculation_readers)
+            or any(
+                reader.completeness.status != 'complete'
+                or {
+                    source.get('document_id') for source in reader.lineage_sources()
+                    if isinstance(source, dict)
+                } != required_ids
+                for reader in calculation_readers
+            )
+        ):
+            raise ResultContractError('result_tabular_calculation_incomplete')
+        values = {
+            reader.reference.output_name: read_complete_input(reader)
+            for reader in calculation_readers
+        }
+        coverage = values.get('coverage')
+        if (
+            type(values.get('records')) is not list
+            or type(values.get('lineage')) is not list
+            or len(values['records']) != len(values['lineage'])
+            or type(coverage) is not dict
+            or coverage.get('complete') is not True
+            or (coverage.get('operation_spec') or {}).get('version')
+            not in {'tabular-relate-v1', 'tabular-relate-v2'}
+            or coverage.get('source_snapshots') != preparation.get('source_snapshots')
+            or coverage.get('preparation_profile_sha256') != preparation.get('profile_sha256')
+        ):
+            raise ResultContractError('result_tabular_calculation_incomplete')
+        manifest = service._load_manifest(calculation_readers[0].reference)
+        outputs = manifest.get('outputs') or {}
+        if any(
+            outputs.get(name, {}).get('kind') != kind
+            or (outputs.get(name, {}).get('completeness') or {}).get('status') != 'complete'
+            for name, kind in (
+                ('records', 'records-v1'), ('lineage', 'records-v1'),
+                ('coverage', 'structured-v1'),
+            )
+        ):
             raise ResultContractError('result_tabular_calculation_incomplete')
         return
     if not required_ids <= complete_record_ids:
@@ -232,6 +316,63 @@ def read_complete_input(reader, *, max_bytes=MAX_VALUE_BYTES):
             raise ResultContractError('result_requires_streaming')
         values.append(item)
     return values
+
+
+def qualified_calculation_answer_ready(plan, reference, execution_steps):
+    """A partial narrative may replace only its one failed prepared calculation's prose."""
+    if (
+        type(plan) is not dict or not isinstance(reference, ResultRef)
+        or not narrative_result_ready(reference) or reference.completeness.status != 'partial'
+        or type(execution_steps) is not list
+        or NARRATIVE_READY_CHECK not in reference.completeness.checks
+    ):
+        return False
+    final_binding = plan.get('final_response')
+    if type(final_binding) is not dict:
+        return False
+    try:
+        final_binding = InputBinding.from_dict(final_binding)
+    except ResultContractError:
+        return False
+    steps = [
+        value for value in plan.get('steps') or []
+        if type(value) is dict and value.get('enabled', True)
+    ]
+    by_id = {step.get('step_id'): step for step in steps}
+    final_step = by_id.get(final_binding.step_id)
+    if (
+        final_step is None
+        or final_step.get('capability_id') != 'compose'
+        or (final_step.get('arguments') or {}).get('tabular_requirement', {}).get('mode')
+        != 'calculation_answer'
+        or reference.producer.step_id != final_binding.step_id
+        or reference.output_name != final_binding.output_name
+    ):
+        return False
+    calculation_step_ids = {
+        spec.binding.step_id for spec in step_input_specs(final_step)
+        if spec.binding.step_id is not None
+        and spec.binding.output_name in {'records', 'lineage', 'coverage'}
+        and (by_id.get(spec.binding.step_id, {}).get('arguments') or {}).get('native_operation') == 'relate'
+        and (by_id.get(spec.binding.step_id, {}).get('arguments') or {}).get('calculation_mode') == 'prepared-v1'
+    }
+    if len(calculation_step_ids) != 1:
+        return False
+    statuses = {
+        item.get('step_id'): item.get('status') for item in execution_steps
+        if isinstance(item, dict)
+    }
+    calculation_step_id = next(iter(calculation_step_ids))
+    if (
+        statuses.get(final_binding.step_id) != 'partial'
+        or statuses.get(calculation_step_id) not in {'failed', 'skipped', 'cancelled'}
+    ):
+        return False
+    return all(
+        step['step_id'] in {final_binding.step_id, calculation_step_id}
+        or statuses.get(step['step_id']) == 'completed'
+        for step in steps
+    )
 
 
 def _search_evidence_citations(reader, prepared):

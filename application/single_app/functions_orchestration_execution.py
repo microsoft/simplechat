@@ -167,9 +167,12 @@ from functions_orchestration_registry import (
     resolve_admitted_export_catalog, resolve_available_capability_ids,
 )
 from functions_orchestration_result_contracts import (
-    NARRATIVE_READY_CHECK, InputBinding, ResultContractError, ResultRef, TaskResult,
+    InputBinding, ResultContractError, ResultRef, TaskResult,
 )
-from functions_orchestration_result_runtime import read_complete_input, read_result_document_citations, read_result_evidence_status
+from functions_orchestration_result_runtime import (
+    qualified_calculation_answer_ready, read_complete_input, read_result_document_citations,
+    read_result_evidence_status,
+)
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import (
     LEGACY_PLAN_CODE,
@@ -1698,20 +1701,16 @@ class HarnessExecution:
             workflow_handoff = workflow_handoff_note(self.record["plan"], current.get("execution_steps") or [])
             if workflow_handoff:
                 content.append(workflow_handoff)
-        final_step_id = (self.record["plan"].get("final_response") or {}).get("step_id")
-        final_execution = next((
-            step for step in current.get("execution_steps") or []
-            if step.get("step_id") == final_step_id
-        ), {})
-        final_checks = (
-            (final_execution.get("task_completeness") or {}).get("checks")
-            or (final_execution.get("task_result") or {}).get("completeness", {}).get("checks")
-            or []
-        )
         answer_qualified = (
             outcome == "partial" and bool(prepared)
-            and final_execution.get("status") == "partial"
-            and NARRATIVE_READY_CHECK in final_checks
+            and reader is not None
+            and all(
+                output.get("state") == "completed" and output.get("available") is not False
+                for output in outputs
+            )
+            and qualified_calculation_answer_ready(
+                self.record["plan"], reader.reference, current.get("execution_steps") or [],
+            )
         )
         if (
             (self._reads_workflow_results() or self.record["plan"].get("workflow_results_notes"))
@@ -1727,7 +1726,7 @@ class HarnessExecution:
                 content.append(workflow_results)
         if status == "waiting":
             content.append(build_failure("result_not_ready")["message"])
-        elif status in {"failed", "cancelled"}:
+        elif status in {"failed", "cancelled"} and not answer_qualified:
             content.append(failure_explanation(failures, partial=outcome == "partial", cancelled=status == "cancelled"))
         elif not content:
             # A plan saved before every gather step needed a reader can gather without answering.

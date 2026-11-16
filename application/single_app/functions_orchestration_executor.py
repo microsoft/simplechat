@@ -76,7 +76,7 @@ from functions_orchestration_result_contracts import (
 )
 from functions_orchestration_result_runtime import (
     decode_step_result, raise_source_service_failure, read_complete_input, read_result_document_citations,
-    require_result_service, resolve_step_inputs,
+    qualified_calculation_answer_ready, require_result_service, resolve_step_inputs,
     retain_gather_result, validate_task_diagnostics, validate_task_outputs,
 )
 from functions_orchestration_results import ResultUnavailableError
@@ -1463,7 +1463,7 @@ def _execute_dependency_plan(
     )
     # The server-computed run-step waits, and what a waited run step re-checks when it starts.
     context.workflow_run_waits = deepcopy(plan.get('workflow_run_waits') or {})
-    context.plan_steps = deepcopy(steps) if context.workflow_run_waits else []
+    context.plan_steps = deepcopy(steps)
     context.workflow_run_headless = bool(context.workflow_run_waits) and plan_runs_headless(
         steps, settings, _dependency_request_context(context), export_catalog=context.export_catalog,
     )
@@ -1885,9 +1885,19 @@ def _execute_dependency_plan(
     outcome = 'cancelled' if cancelled else 'waiting' if waiting else (
         'completed' if complete else 'partial' if partial else 'failed'
     )
+    answer_qualified = (
+        outcome == 'partial'
+        and response_reference is not None
+        and not cancelled
+        and all(
+            output.get('state') == 'completed' and output.get('available') is True
+            for output in file_outputs
+        )
+        and qualified_calculation_answer_ready(plan, response_reference, records)
+    )
     if waiting:
         facts = build_failure('result_not_ready')['message']
-    elif cancelled or not complete:
+    elif (cancelled or not complete) and not answer_qualified:
         if not context.failures:
             context.failures.append(build_failure('result_partial' if partial else 'result_invalid'))
         facts = failure_explanation(context.failures, partial=partial, cancelled=cancelled)
@@ -1931,6 +1941,7 @@ def _execute_dependency_plan(
         'execution_deadline_at': context.execution_deadline_at,
         'final_response': response_reference.to_dict() if response_reference else None,
         'delivery_facts': {'files': file_outputs},
+        'answer_qualified': answer_qualified,
     }
     _persist(persist, 'run', run_result)
     _emit(emit, {

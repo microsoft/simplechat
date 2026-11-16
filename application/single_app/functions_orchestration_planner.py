@@ -46,7 +46,9 @@ from config import cognitive_services_scope
 from functions_action_manifest import is_document_search_action
 from functions_appinsights import is_debug_enabled, log_event, workflow_log_context
 from functions_document_analysis_results import narrative_analysis_options
-from functions_orchestration_context import conversation_reference_messages, resolve_elicitation_candidates
+from functions_orchestration_context import (
+    conversation_reference_messages, exact_requested_source_matches, resolve_elicitation_candidates,
+)
 from functions_orchestration_deliverables import build_deliverable_availability
 from functions_orchestration_events import build_model_reasoning_metadata
 from functions_orchestration_result_contracts import InputBinding
@@ -1147,14 +1149,20 @@ Do not answer the request, call tools, or add outside facts. Return one JSON obj
   "resolved_message": "<a concise standalone version of the latest request>",
   "message_ids": ["<IDs of supplied historical messages needed for this request>"],
   "requires_retrieval": true | false,
+  "source_requirement": "historical_originals" | "conversation_only" | "none",
   "clarification": "<one focused question only when the reference really is unresolved>"
 }
 
-Include all five fields. Use an empty string "" for clarification when no question is
+Include all six fields. Use an empty string "" for clarification when no question is
 needed; a nonempty clarification is required only for relationship "clarification".
 requires_retrieval must be a JSON boolean, and message_ids must be an array of exact
 supplied IDs. A follow_up needs at least one historical ID unless clarification answers
 supply the missing context.
+source_requirement records why the selected historical messages matter. Use
+"historical_originals" only when the requested work or question must read the exact original
+source set, "conversation_only" for an available-answer transformation or discussion, and
+"none" when no historical source is needed. A false retrieval flag never erases
+"historical_originals"; the server uses this structured field, not request keywords.
 
 Resolve pronouns, "which", "those", omitted subjects, and follow-ups against both the user's
 earlier requests and the assistant's actual answers. Preserve relevant constraints such as
@@ -1238,6 +1246,14 @@ def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
         raise ConversationResolutionError(reason='duplicate_message_ids')
     if not isinstance(parsed.get('requires_retrieval'), bool):
         raise ConversationResolutionError(reason='invalid_retrieval_flag')
+    source_requirement = parsed.get('source_requirement')
+    if source_requirement is None:
+        source_requirement = (
+            'historical_originals' if parsed['requires_retrieval'] else
+            'conversation_only' if relationship == 'follow_up' else 'none'
+        )
+    if source_requirement not in ('historical_originals', 'conversation_only', 'none'):
+        raise ConversationResolutionError(reason='invalid_source_requirement')
 
     clarification = parsed.get('clarification', '')
     # JSON null also means "no question", but cannot satisfy a requested clarification.
@@ -1256,6 +1272,7 @@ def _normalize_request_resolution(parsed, valid_ids, *, has_answers=False):
         'resolved_message': resolved.strip(),
         'message_ids': message_ids,
         'requires_retrieval': parsed['requires_retrieval'],
+        'source_requirement': source_requirement,
         'clarification': clarification.strip(),
     }
 
@@ -1364,6 +1381,16 @@ def resolve_conversation_request(
             )
             if resolution['relationship'] == 'clarification':
                 validate_source_clarification(parsed.get('clarification_context'), selected_sources)
+                matched = exact_requested_source_matches(
+                    resolution, {'runs': previous_source_requests or []},
+                )
+                if matched and (
+                    parsed.get('clarification_context') or {}
+                ).get('reason') in {'source_content', 'source_selection'}:
+                    resolution['source_requirement'] = 'historical_originals'
+                resolution['clarification_context'] = deepcopy(
+                    parsed.get('clarification_context'),
+                )
             break
         except (ConversationResolutionError, SourceClarificationError) as exc:
             log_event(
@@ -2334,6 +2361,16 @@ def plan_request(
                 validate_source_clarification(
                     parsed.get('clarification_context'), context.get('selected_sources'),
                 )
+                resolution = context.get('request_resolution') or {}
+                referenced = exact_requested_source_matches(
+                    resolution, context.get('earlier_runs') or {},
+                )
+                if (
+                    referenced and not context.get('selected_sources')
+                    and (parsed.get('clarification_context') or {}).get('reason')
+                    in {'source_content', 'source_selection'}
+                ):
+                    raise SourceClarificationError('referenced_source_set_requires_restore')
                 if context.get('selected_sources'):
                     log_event(
                         '[ORCHESTRATION_PLANNER] Prepared a selected-source clarification.',
@@ -2352,6 +2389,10 @@ def plan_request(
                         'selected_source_count': len(context.get('selected_sources') or []),
                     },
                 )
+                if exc.reason == 'referenced_source_set_requires_restore':
+                    return _failure(
+                        exc.reason, exc, stage='plan_clarification', attempt=attempt,
+                    )
                 if attempt > PLAN_REPAIR_ATTEMPTS:
                     return _failure(exc.reason, exc, stage='plan_clarification', attempt=attempt)
                 messages = [*messages, {

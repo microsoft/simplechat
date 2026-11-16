@@ -1,7 +1,7 @@
 # test_v2_orchestration_recovery.py
 """
 Real-component browser coverage for orchestration failure and checkpoint recovery.
-Version: 0.261.417
+Version: 0.261.446
 Implemented in: 0.261.105
 Earlier-version run refusals covered in: 0.261.139
 Settled runs whose stored plan still reads running covered in: 0.261.141
@@ -11,6 +11,7 @@ Retry from failed step, in: 0.261.303
 Empty pending-credential polling fixture updated in: 0.261.341
 Delayed detail, list and reconciliation reads fenced in: 0.261.356
 Available-information completion and explicit output-only continuation covered in: 0.261.399
+Qualified calculation output/action gap guards covered in: 0.261.446
 
 The production controller, SSE reader, stores, message list, and Run drawer execute
 in the existing local/Azure Playwright harness. Only API responses are deterministic.
@@ -1188,6 +1189,40 @@ def test_information_gaps_are_a_normal_answer_live_and_after_reload(recovery_ui,
     expect(page.get_by_text(AVAILABLE_ANSWER, exact=True).first).to_be_visible()
     expect(page.locator('section[aria-label="Orchestration recovery"]')).to_have_count(0)
     assert len(api.calls("/run")) == 1 and not api.calls("/retry")
+    record = api.records[api.plan["run_id"]]
+    record.update(status="failed", outcome="partial", answer_qualified=True)
+    sign_in = {
+        "code": "m365_sign_in_required", "message": "Microsoft 365 sign-in is required.",
+        "m365_sources": ["email"],
+    }
+    record["failure"] = sign_in
+    record["failures"] = [sign_in]
+    record["outputs"] = []
+    mount_recovery(page, api, saved=True)
+    notice = page.locator('section[aria-label="Orchestration recovery"]')
+    expect(notice).to_be_visible()
+    expect(page.get_by_role("button", name="Connect Microsoft 365")).to_be_visible()
+    failure = {
+        "code": "m365_approval_required", "message": "Review the Microsoft 365 approval.",
+        "approval_id": "approval-1",
+    }
+    record["failure"] = failure
+    record["failures"] = [failure]
+    record["outputs"] = []
+    mount_recovery(page, api, saved=True)
+    expect(notice).to_be_visible()
+    record.update(
+        failure={"code": "result_partial", "message": "A file was not delivered."},
+        failures=[{"code": "result_partial", "message": "A file was not delivered."}],
+        outputs=[{
+            "output_id": "file-1", "step_id": "answer", "name": "analysis.docx",
+            "kind": "file", "state": "failed", "available": False,
+        }],
+    )
+    mount_recovery(page, api, saved=True)
+    expect(page.locator(
+        'section[aria-label="Orchestration recovery"]',
+    )).to_be_visible()
 
 
 def test_blocked_old_answer_offers_output_only_available_information(recovery_ui):

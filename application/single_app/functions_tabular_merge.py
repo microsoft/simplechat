@@ -1,7 +1,7 @@
 # functions_tabular_merge.py
 """Deterministic merging and inspection of CSV and Excel files.
 
-Version: 0.261.447
+Version: 0.261.446
 Implemented in: 0.261.239
 Reconciliation policies, sheet modes, duplicate removal, sorting and inspection added in: 0.261.240
 Single-file merges for workflow files found at run time (min_sources=1) added in: 0.261.241
@@ -894,8 +894,12 @@ def prepare_tabular_source_context(
         or type(key_profiles) is not list or len(key_profiles) > 8
     ):
         raise TabularMergeError("invalid_options", "The calculation context request is invalid.")
+    content = _load_source_bytes(source, limits)
+    fingerprint_source = TabularMergeSource(
+        source.source_id, source.file_name, lambda: content, extension=source.extension,
+    )
     with read_tabular_source_records(
-        source, sheet=request.get("sheet"), header_row=request.get("header_row"),
+        fingerprint_source, sheet=request.get("sheet"), header_row=request.get("header_row"),
         cell_range=request.get("cell_range"), table_id=request.get("table_id"),
         limits=limits, cancel_requested=cancel_requested,
     ) as (columns, rows, sheet):
@@ -1000,6 +1004,7 @@ def prepare_tabular_source_context(
             })
         result = {
             "alias": request["alias"], "document_id": request["document_id"],
+            "content_sha256": hashlib.sha256(content).hexdigest(),
             "sheet": sheet, "selection": {
                 key: request[key]
                 for key in ("header_row", "cell_range", "table_id") if key in request

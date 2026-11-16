@@ -32,12 +32,19 @@ bundle even where a narrowly qualified preparation-only answer was possible.
 authorized CSV/Excel table, retains exact requested cell values with original
 row provenance, records the complete header and row count, and commits key
 profiles and coverage atomically. Preview rows cannot satisfy this contract.
-The context is bounded at 96 KiB and fails explicitly if it cannot fit.
+The context is bounded at 96 KiB and fails explicitly if it cannot fit. Every
+selected table retains the SHA256 digest of the original bytes actually read.
+Prepared calculation rereads verify that digest, the canonical approved
+request, the selected table/selector contract and the exact source snapshots;
+unchanged metadata cannot hide a changed source body.
 
 New model-authored multi-source `relate` work uses `calculation_mode=prepared-v1`
 and one named preparation input. It cannot contain the old frozen
 `relational_spec`. Saved and directly invoked trusted legacy explicit-spec
-calculations retain their separate compatibility path.
+calculations retain their separate compatibility path. Server-owned origin
+provenance is checked at run creation, model revision publication and run
+claim; approval edits and `initial_updates` cannot downgrade a generated plan
+to the trusted legacy policy.
 
 ### Bounded program lowering
 
@@ -51,6 +58,11 @@ provider's trusted finish marker to be `"stop"`. Incomplete, missing or other
 markers consume usage and the reserved call but cannot save or evaluate a
 program. Resume uses only an owner-confirmed saved program or a definite saved
 failure with remaining allowance. An uncertain reservation fails closed.
+Saved programs must match their canonical SHA256 and supported completion
+contract, and resume revalidates the admitted grammar, exact source set,
+aliases and selectors before evaluation. A completion-confirmed rejected candidate and its closed diagnostic
+are retained for the one permitted correction; correction never uses a
+genuine overlap, source, numeric, date, limit or cancellation fault.
 
 ### Checked calculation operators
 
@@ -87,8 +99,11 @@ an unchanged retry.
 Follow-up admission compares exact historical source sets, scope, filters,
 references, attachment messages and available source revisions. A false
 retrieval flag cannot override a structured follow-up that requires the
-original sources. New topics, explicit replacement, ambiguous history,
-revocation and changed revisions remain fenced.
+original sources. This admission uses the exact server-ledger message/source
+matcher rather than domain or language keywords at both resolver and
+main-planner missing-source question boundaries. New topics, explicit
+replacement, conversation-only rewrites, ambiguous history, revocation and
+changed revisions remain fenced.
 
 V2 progress now groups work as **Gather evidence**, **Prepare answer** and
 **Deliver file** while retaining existing machine roles and execution order.
@@ -108,6 +123,9 @@ Primary files include:
 - `functions_orchestration_schema.py`
 - `functions_orchestration_composition.py`
 - `functions_orchestration_context.py`
+- `functions_orchestration_result_runtime.py`
+- `functions_orchestration_runs.py`
+- `functions_orchestration_plan_revisions.py`
 - `application/v2_ui/src/lib/orchestrationPlan.ts`
 - `application/v2_ui/src/components/chat/OrchestrationRecoveryNotice.tsx`
 
@@ -116,7 +134,10 @@ complete-generation markers, reserved-call resume state, a portable 104-row
 five-source fixture, every dated control, split allocation conservation,
 cross-revision cumulative balances, the 250/750 unknown chains, Boolean
 rejection, stable residual order, exact continuation and the V2 answer-first
-presentation.
+presentation. Added regressions cover producer/run/attempt mismatches,
+unchanged-metadata body mutation, selector and request mismatches, private
+lowering-state resume, executor-to-durable save/reload finalization and mixed
+file/action gaps.
 
 ## Before and after
 

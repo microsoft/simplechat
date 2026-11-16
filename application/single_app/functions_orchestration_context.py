@@ -1913,15 +1913,12 @@ def continue_requested_sources(
     visibility. Returned document IDs still require the normal current manifest resolution.
     """
     resolved = deepcopy(seeds or {})
-    source_required = resolution.get('requires_retrieval') is not False
-    if resolution.get('requires_retrieval') is False and resolution.get('resolved_message'):
-        source_required = bool(re.search(
-            r'\b(calculate|recalculate|compare|review|amendment|payment|settlement|'
-            r'contract|ceiling|revisions?)\b',
-            resolution['resolved_message'], re.IGNORECASE,
-        ))
+    source_required = (
+        resolution.get('requires_retrieval') is not False
+        or resolution.get('source_requirement') == 'historical_originals'
+    )
     if (
-        resolution.get('relationship') != 'follow_up'
+        resolution.get('relationship') not in ('follow_up', 'clarification')
         or not source_required
         or any(resolved.get(key) for key in (
             'document_ids', 'tags', 'document_source_selection', 'conversation_references',

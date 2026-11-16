@@ -723,6 +723,7 @@ def _apply_image_input_policy(steps, existing_results):
     produced = {
         (step['step_id'], output['name']): output['kind'] for step in steps for output in step['outputs']
     }
+    steps_by_id = {step['step_id']: step for step in steps}
     for step in steps:
         for value in step['inputs'].values():
             if type(value) is not dict or type(value.get('binding')) is not dict:
@@ -741,11 +742,22 @@ def _apply_image_input_policy(steps, existing_results):
             if spec.optional and _optional_input_kind(spec, produced, existing_results) != IMAGE_ASSET_KIND
         ]
         if knowledge_optional and step['arguments'].get('knowledge_basis') not in GENERAL_KNOWLEDGE_BASES:
-            calculation_answer = (
+            calculation_answer = False
+            requirement_matches = (
                 (step['arguments'].get('tabular_requirement') or {}).get('mode')
                 == 'calculation_answer'
                 and step['arguments'].get('knowledge_basis') == 'sources'
             )
+            if requirement_matches:
+                calculation_answer = all(
+                    spec.binding.step_id is not None
+                    and spec.binding.output_name in {'records', 'lineage', 'coverage'}
+                    and (producer := steps_by_id.get(spec.binding.step_id)) is not None
+                    and producer.get('capability_id') == CAPABILITY_TABULAR_ANALYZE
+                    and (producer.get('arguments') or {}).get('native_operation') == 'relate'
+                    and (producer.get('arguments') or {}).get('calculation_mode') == 'prepared-v1'
+                    for spec in knowledge_optional
+                )
             if not calculation_answer:
                 raise PlanValidationError(
                     'An optional input requires an answer basis that allows general knowledge.',
@@ -1995,13 +2007,13 @@ def _validate_tabular_composition_requirements(
                     or value.get('allow_partial') is not False
                 )
             ]
-            if calculation and (
+            if (
                 len(calculation) != 1
-                or not {'records', 'lineage', 'coverage'} <= calculation_outputs
+                or calculation_outputs != {'records', 'lineage', 'coverage'}
                 or invalid_calculation_inputs
             ):
                 raise _step_contract_error(
-                    'A calculation answer must bind all calculation members from one producer or none.',
+                    'A calculation answer must bind all calculation members from one producer.',
                     step, code='plan_arguments_invalid', rule='tabular_calculation_bundle_invalid',
                 )
             continue

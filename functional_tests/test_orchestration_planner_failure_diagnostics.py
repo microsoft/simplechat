@@ -1,10 +1,11 @@
 # test_orchestration_planner_failure_diagnostics.py
 """
 Functional regressions for planner selection constraints and safe diagnostics.
-Version: 0.261.439
+Version: 0.261.446
 Implemented in: 0.261.115
 Single orchestration contract updated in: 0.261.139
 Real-module diagnostic harness updated in: 0.261.439
+Protocol-draft retry coverage updated in: 0.261.446
 
 The real planner, registry, request context, and validator use controlled provider
 responses. Tests distinguish missing selected work from malformed/provider output,
@@ -122,11 +123,11 @@ def test_three_pinned_documents_allow_analyze_but_explicit_search_stays_required
 ])
 def test_unusable_provider_output_is_not_a_successful_empty_plan(planner_case, reply, reason):
     fixture = planner_case
-    client = ScriptedClient(reply)
+    client = ScriptedClient(reply, reply, reply)
     with pytest.raises(fixture.runtime.planner["PlannerError"]) as failure:
         plan(fixture, client)
     assert failure_log(fixture)["reason"] == reason
-    assert len(client.calls) == 1
+    assert len(client.calls) == 3
     assert "PRIVATE" not in str(failure.value)
     assert "PRIVATE" not in json.dumps(fixture.logs)
 

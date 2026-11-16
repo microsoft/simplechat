@@ -9,6 +9,8 @@ Scripted model assessments exercise control flow, not factual-accuracy calibrati
 """
 
 import io
+import hashlib
+import importlib
 import json
 import sys
 from copy import copy, deepcopy
@@ -22,6 +24,7 @@ from docx import Document
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "application" / "single_app"))
 
 from functions_generated_export_contracts import GeneratedFileExportError
+from functions_analysis_access import analysis_source_snapshot
 from functions_task_completeness import (
     CompletenessError, NARRATIVE_OBLIGATIONS, check_and_correct, normalize_assessment,
 )
@@ -275,6 +278,150 @@ def test_calculation_answer_requires_preparation_and_keeps_optional_bundle_produ
     )
 
 
+@pytest.mark.parametrize("mismatch", [None, "run", "attempt", "step"])
+def test_calculation_answer_runtime_requires_one_atomic_producer_attempt_bundle(runtime, mismatch):
+    case = runtime.make([compose("answer")])
+    service = case.fixture.service
+    sources = [
+        {
+            "document_id": identifier, "scope": "personal", "scope_id": "owner",
+            "source_version": 1, "source_revision": "revision-1",
+            "content_sha256": hashlib.sha256(identifier.encode()).hexdigest(),
+        }
+        for identifier in ("orders", "prices")
+    ]
+    stored_sources = [
+        {key: value for key, value in source.items() if key != "content_sha256"}
+        for source in sources
+    ]
+    datasets = [
+        {
+            "alias": identifier, "document_id": identifier,
+            "content_sha256": source["content_sha256"], "sheet": "",
+            "selection": {}, "headers": ["id"], "physical_row_count": 1,
+            "context_columns": [], "key_profiles": [],
+        }
+        for identifier, source in zip(("orders", "prices"), sources)
+    ]
+    preparation = {
+        "version": "tabular-calculation-context-v1", "complete": True,
+        "analytical_request_sha256": "b" * 64,
+        "source_snapshots": sources, "datasets": datasets, "limitations": [],
+    }
+    preparation["profile_sha256"] = hashlib.sha256(runtime.contracts.canonical_bytes({
+        "datasets": datasets, "source_snapshots": sources,
+        "analytical_request_sha256": "b" * 64,
+    })).hexdigest()
+    completeness = runtime.contracts.Completeness(
+        "complete", 1, 1, runtime.contracts.Coverage(2, 2, "sources"),
+        "valid", ("complete_preparation",), (),
+    )
+    preparation_producer = case.context.result_producer(
+        {"step_id": "prepare", "capability_id": "tabular_analyze"},
+    )
+    calculate_producer = case.context.result_producer(
+        {"step_id": "calculate", "capability_id": "tabular_analyze"},
+    )
+    producer_changes = {
+        "run": {"run_id": "run-2"},
+        "attempt": {"run_id": "run-attempt", "attempt_index": 2},
+        "step": {"step_id": "calculate-other"},
+    }.get(mismatch, {"run_id": "run-2"})
+    other_producer = replace(calculate_producer, **producer_changes)
+    for producer in (preparation_producer, calculate_producer, other_producer):
+        case.fixture.add_producer(producer)
+    preparation_task = service.persist_task_result(
+        producer=preparation_producer, role="reason", status="complete",
+        outputs=[runtime.NamedOutput("context", "structured-v1", preparation, completeness)],
+        sources=stored_sources, origin="grounded", guard_token="prepare-guard",
+    )
+    records_complete = runtime.contracts.Completeness(
+        "complete", 1, 1, runtime.contracts.Coverage(2, 2, "sources"),
+        "valid", ("exact_rows",), (),
+    )
+    calculation_coverage = {
+        "complete": True, "operation_spec": {"version": "tabular-relate-v2"},
+        "source_snapshots": sources, "preparation_profile_sha256": preparation["profile_sha256"],
+    }
+    calculation_task = service.persist_task_result(
+        producer=calculate_producer, role="reason", status="complete",
+        outputs=[
+            runtime.NamedOutput(
+                "records", "records-v1", [{"id": "001"}], records_complete,
+                (runtime.contracts.RecordColumn("id", "string"),),
+            ),
+            runtime.NamedOutput(
+                "lineage", "records-v1",
+                [{"result_row": 0, "sources": []}], records_complete,
+                (
+                    runtime.contracts.RecordColumn("result_row", "integer"),
+                    runtime.contracts.RecordColumn("sources", "array"),
+                ),
+            ),
+            runtime.NamedOutput(
+                "coverage", "structured-v1", calculation_coverage, completeness,
+            ),
+        ],
+        sources=stored_sources, origin="grounded", guard_token="calculate-guard",
+    )
+    other_task = service.persist_task_result(
+        producer=other_producer, role="reason", status="complete",
+        outputs=[runtime.NamedOutput(
+            "lineage", "records-v1", [{"result_row": 0, "sources": []}],
+            records_complete,
+            (
+                runtime.contracts.RecordColumn("result_row", "integer"),
+                runtime.contracts.RecordColumn("sources", "array"),
+            ),
+        )],
+        sources=stored_sources, origin="grounded", guard_token="other-guard",
+    )
+    readers = {
+        "preparation": service.open_result(preparation_task.output("context")),
+        "records": service.open_result(calculation_task.output("records")),
+        "lineage": service.open_result(
+            (other_task if mismatch else calculation_task).output("lineage"),
+        ),
+        "coverage": service.open_result(calculation_task.output("coverage")),
+    }
+    answer_step = {
+        "arguments": {"tabular_requirement": {
+            "mode": "calculation_answer",
+            "version": "tabular-calculation-answer-v1",
+            "document_ids": ["orders", "prices"],
+        }},
+    }
+    if mismatch:
+        with pytest.raises(runtime.contracts.ResultContractError):
+            runtime.result_runtime.validate_tabular_requirement_readers(
+                answer_step, readers, service,
+            )
+    else:
+        runtime.result_runtime.validate_tabular_requirement_readers(
+            answer_step, readers, service,
+        )
+        invalid_producer = replace(preparation_producer, run_id="run-incomplete")
+        case.fixture.add_producer(invalid_producer)
+        invalid_preparation = service.persist_task_result(
+            producer=invalid_producer,
+            role="reason", status="complete",
+            outputs=[runtime.NamedOutput(
+                "context", "structured-v1",
+                {**preparation, "complete": False}, completeness,
+            )],
+            sources=stored_sources, origin="grounded",
+            guard_token="incomplete-preparation-guard",
+        )
+        with pytest.raises(runtime.contracts.ResultContractError):
+            runtime.result_runtime.validate_tabular_requirement_readers(
+                answer_step, {
+                    "preparation": service.open_result(
+                        invalid_preparation.output("context"),
+                    ),
+                }, service,
+            )
+
+
 def test_new_model_plan_rejects_frozen_multisource_relational_spec(runtime):
     step = {
         "step_id": "calculate", "capability_id": "tabular_analyze",
@@ -291,6 +438,331 @@ def test_new_model_plan_rejects_frozen_multisource_relational_spec(runtime):
     with pytest.raises(runtime.schema.PlanValidationError) as error:
         runtime.make([step], available=["tabular_analyze"])
     assert error.value.rule == "prepared_calculation_required"
+
+
+def test_executor_persists_and_reopens_qualified_preparation_only_answer(runtime, monkeypatch):
+    preparation = {
+        "step_id": "prepare", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Prepare the approved calculation context.",
+            "native_operation": "prepare", "document_ids": ["orders", "prices"],
+            "preparation_request": {
+                "version": "tabular-context-request-v1",
+                "datasets": [
+                    {
+                        "alias": "orders", "document_id": "orders",
+                        "context_columns": [], "key_profiles": [],
+                    },
+                    {
+                        "alias": "prices", "document_id": "prices",
+                        "context_columns": [], "key_profiles": [],
+                    },
+                ],
+            },
+        },
+        "outputs": [
+            {"name": "context", "kind": "structured-v1"},
+            {"name": "coverage", "kind": "structured-v1"},
+        ],
+    }
+    calculation = {
+        "step_id": "calculate", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Calculate the approved comparison.",
+            "native_operation": "relate", "document_ids": ["orders", "prices"],
+            "calculation_mode": "prepared-v1",
+        },
+        "inputs": {
+            "preparation": {
+                "binding": input_binding("prepare", "context"),
+                "allow_partial": False,
+            },
+        },
+        "outputs": [
+            {"name": "records", "kind": "records-v1"},
+            {"name": "lineage", "kind": "records-v1"},
+            {"name": "coverage", "kind": "structured-v1"},
+        ],
+    }
+    answer = compose("answer", inputs={
+        "preparation": {
+            "binding": input_binding("prepare", "context"), "allow_partial": False,
+        },
+        **{
+            output: {
+                "binding": input_binding("calculate", output),
+                "allow_partial": False, "optional": True,
+            }
+            for output in ("records", "lineage", "coverage")
+        },
+    })
+    answer["arguments"].update({
+        "knowledge_basis": "sources",
+        "tabular_requirement": {
+            "mode": "calculation_answer",
+            "version": "tabular-calculation-answer-v1",
+            "document_ids": ["orders", "prices"],
+        },
+    })
+    steps = runtime.schema.available_information_plan({
+        "steps": [preparation, calculation, answer],
+    })["steps"]
+    case = runtime.make(
+        steps, [ANSWER], final_response=input_binding("answer"),
+        available=["tabular_analyze", "compose"],
+    )
+    fixture = case.fixture
+    for identifier in ("orders", "prices"):
+        fixture.sources[identifier] = {
+            "document_id": identifier, "scope": "personal", "scope_id": "owner",
+            "source_version": 1, "source_revision": "revision-1",
+        }
+    def prepared_adapter(name):
+        def run(step, context, **options):
+            if name == "compose":
+                return runtime.composition.adapter_compose(step, context, **options)
+            if step["step_id"] == "calculate":
+                return runtime.schema.build_step_result(
+                    status="failed", failure=runtime.schema.build_failure(
+                        "result_partial",
+                    ),
+                )
+            raw_sources = analysis_source_snapshot(context.source_manifest)
+            bound_sources = [
+                {
+                    **source, "content_sha256": hashlib.sha256(
+                        source["document_id"].encode(),
+                    ).hexdigest(),
+                }
+                for source in raw_sources
+            ]
+            datasets = [
+                {
+                    "alias": source["document_id"], "document_id": source["document_id"],
+                    "content_sha256": source["content_sha256"], "sheet": "",
+                    "selection": {}, "headers": ["id"], "physical_row_count": 1,
+                    "context_columns": [], "key_profiles": [],
+                }
+                for source in bound_sources
+            ]
+            value = {
+                "version": "tabular-calculation-context-v1", "complete": True,
+                "analytical_request_sha256": "a" * 64,
+                "source_snapshots": bound_sources, "datasets": datasets,
+                "limitations": [],
+            }
+            value["profile_sha256"] = hashlib.sha256(runtime.contracts.canonical_bytes({
+                "datasets": datasets, "source_snapshots": bound_sources,
+                "analytical_request_sha256": "a" * 64,
+            })).hexdigest()
+            complete = runtime.contracts.Completeness(
+                "complete", 1, 1, runtime.contracts.Coverage(2, 2, "sources"),
+                "valid", ("complete_preparation",), (),
+            )
+            task = context.result_service.persist_task_result(
+                producer=context.result_producer(step), role="reason", status="complete",
+                outputs=[
+                    runtime.NamedOutput("context", "structured-v1", value, complete),
+                    runtime.NamedOutput(
+                        "coverage", "structured-v1",
+                        {
+                            "complete": True, "source_snapshots": bound_sources,
+                            "profile_sha256": value["profile_sha256"],
+                            "analytical_request_sha256": value["analytical_request_sha256"],
+                            "datasets": deepcopy(datasets),
+                        },
+                        complete,
+                    ),
+                ],
+                sources=raw_sources, origin="grounded",
+                guard_token=context.result_guard_token_for_step(step["step_id"]),
+            )
+            runtime.result_runtime.validate_task_outputs(step, context, task)
+            return runtime.schema.build_step_result(status="completed", task_result=task)
+
+        return run
+
+    native = importlib.import_module("functions_orchestration_native_results")
+    case.context.native_bridge_for_step = lambda step, _context: (
+        native.build_native_orchestration_bridge(
+            native_operation=step["arguments"]["native_operation"],
+            task_type=step["arguments"].get("task_type"),
+        )
+    )
+    native_run = prepared_adapter("tabular_analyze")
+
+    def execute_native(step, context, **options):
+        return native_run(step, context, **options)
+
+    monkeypatch.setattr(native, "execute_native_orchestration_step", execute_native)
+
+    result = execute(
+        runtime, case, get_adapter=lambda name, **_kwargs: prepared_adapter(name),
+    )
+    assert result["status"] == "failed" and result["outcome"] == "partial", json.dumps(
+        result, default=str,
+    )
+    assert result["answer_qualified"] is True
+    assert result["message"] == ANSWER
+    assert "only partially completed" not in result["message"]
+    final = runtime.contracts.TaskResult.from_dict(
+        result["task_results"]["answer"],
+    )
+    reopened = case.fixture.restart().open_result(
+        final.output("answer"), allow_partial=True,
+    )
+    assert reopened.read_text() == ANSWER
+
+
+def test_durable_finalizer_reloads_qualified_answer_without_generic_failure_wall(harness):
+    preparation = {
+        "step_id": "prepare", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Prepare all approved source context.",
+            "native_operation": "prepare", "document_ids": ["orders", "prices"],
+            "preparation_request": {
+                "version": "tabular-context-request-v1",
+                "datasets": [
+                    {"alias": identifier, "document_id": identifier,
+                     "context_columns": [], "key_profiles": []}
+                    for identifier in ("orders", "prices")
+                ],
+            },
+        },
+        "outputs": [
+            {"name": "context", "kind": "structured-v1"},
+            {"name": "coverage", "kind": "structured-v1"},
+        ],
+    }
+    calculation = {
+        "step_id": "calculate", "capability_id": "tabular_analyze",
+        "arguments": {
+            "question": "Calculate the approved result.",
+            "native_operation": "relate", "document_ids": ["orders", "prices"],
+            "calculation_mode": "prepared-v1",
+        },
+        "inputs": {
+            "preparation": {
+                "binding": input_binding("prepare", "context"), "allow_partial": False,
+            },
+        },
+        "outputs": [
+            {"name": "records", "kind": "records-v1"},
+            {"name": "lineage", "kind": "records-v1"},
+            {"name": "coverage", "kind": "structured-v1"},
+        ],
+    }
+    answer = compose_step("answer", inputs={
+        "preparation": {
+            "binding": input_binding("prepare", "context"), "allow_partial": False,
+        },
+        **{
+            output: {
+                "binding": input_binding("calculate", output),
+                "allow_partial": False, "optional": True,
+            }
+            for output in ("records", "lineage", "coverage")
+        },
+    })
+    answer["arguments"].update({
+        "knowledge_basis": "sources",
+        "tabular_requirement": {
+            "mode": "calculation_answer",
+            "version": "tabular-calculation-answer-v1",
+            "document_ids": ["orders", "prices"],
+        },
+    })
+    steps = harness.schema.available_information_plan({
+        "steps": [preparation, calculation, answer],
+    })["steps"]
+    for identifier in ("orders", "prices"):
+        harness.results.sources[identifier] = {
+            "document_id": identifier, "scope": "personal", "scope_id": "owner",
+            "source_version": 1, "source_revision": "revision-1",
+        }
+    harness.create(
+        steps, replies=[ANSWER], final_response=input_binding("answer"),
+        seeds={"document_ids": ["orders", "prices"], "doc_scope": "personal"},
+        original_seeds={"document_ids": ["orders", "prices"], "doc_scope": "personal"},
+    )
+    native = importlib.import_module("functions_orchestration_native_results")
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    results = importlib.import_module("functions_orchestration_results")
+
+    def execute_native(step, context, **_options):
+        if step["step_id"] == "calculate":
+            return harness.schema.build_step_result(
+                status="failed",
+                failure=harness.schema.build_failure("result_partial"),
+            )
+        sources = analysis_source_snapshot(context.source_manifest)
+        bound = [
+            {
+                **source, "content_sha256": hashlib.sha256(
+                    source["document_id"].encode(),
+                ).hexdigest(),
+            }
+            for source in sources
+        ]
+        datasets = [
+            {
+                "alias": source["document_id"], "document_id": source["document_id"],
+                "content_sha256": source["content_sha256"], "sheet": "",
+                "selection": {}, "headers": ["id"], "physical_row_count": 1,
+                "context_columns": [], "key_profiles": [],
+            }
+            for source in bound
+        ]
+        value = {
+            "version": "tabular-calculation-context-v1", "complete": True,
+            "analytical_request_sha256": "c" * 64,
+            "source_snapshots": bound, "datasets": datasets, "limitations": [],
+        }
+        value["profile_sha256"] = hashlib.sha256(contracts.canonical_bytes({
+            "datasets": datasets, "source_snapshots": bound,
+            "analytical_request_sha256": "c" * 64,
+        })).hexdigest()
+        complete = contracts.Completeness(
+            "complete", 1, 1, contracts.Coverage(2, 2, "sources"),
+            "valid", ("complete_preparation",), (),
+        )
+        task = context.result_service.persist_task_result(
+            producer=context.result_producer(step), role="reason", status="complete",
+            outputs=[
+                results.NamedOutput("context", "structured-v1", value, complete),
+                results.NamedOutput(
+                    "coverage", "structured-v1",
+                    {
+                        "complete": True, "source_snapshots": bound,
+                        "profile_sha256": value["profile_sha256"],
+                        "analytical_request_sha256": "c" * 64,
+                        "datasets": deepcopy(datasets),
+                    },
+                    complete,
+                ),
+            ],
+            sources=sources, origin="grounded",
+            guard_token=context.result_guard_token_for_step(step["step_id"]),
+        )
+        return harness.schema.build_step_result(status="completed", task_result=task)
+
+    harness.monkeypatch.setattr(
+        native, "execute_native_orchestration_step", execute_native,
+    )
+    harness.monkeypatch.setattr(
+        harness.execution, "assert_current_request_sources_available",
+        lambda *_args, **_kwargs: None,
+    )
+    execution = harness.prepare()
+    execution.context.resolve_source_manifest = harness.results.resolve
+    execution.execute()
+    saved = harness.read()
+    assert saved["status"] == "failed" and saved["outcome"] == "partial"
+    assert saved["answer_qualified"] is True
+    assert saved["message"] == ANSWER
+    message = harness.messages.read_item(saved["assistant_message_id"], "conversation-1")
+    assert message["content"] == ANSWER
+    assert "only partially completed" not in message["content"]
 
 
 def test_an_earlier_answer_alias_cannot_fulfill_unrelated_current_work_with_the_same_step_id(runtime):

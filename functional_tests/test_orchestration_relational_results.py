@@ -14,12 +14,14 @@ Only documents, blobs and model I/O are doubled by the existing native harness.
 from copy import deepcopy
 from dataclasses import replace
 import csv
+import hashlib
 import importlib
 import io
 import json
 import sys
 
 import pytest
+from azure.core import MatchConditions
 from azure.core.exceptions import ServiceRequestError
 
 from test_orchestration_native_results import USER, bridge_runtime, commits, execute
@@ -90,6 +92,36 @@ def prepare(runtime):
     parent["plan"]["steps"] = [deepcopy(runtime.step)]
     native.parents.replace_item(parent["id"], parent)
     return documents, data
+
+
+def test_legacy_native_fingerprint_keeps_the_recorded_capability_projection(monkeypatch):
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    with bridge_runtime(monkeypatch) as runtime:
+        prepare(runtime)
+        actual = checkpoints.step_input_fingerprint(
+            runtime.step, runtime.context, "coordinator-recorded-legacy-recovery",
+            settings=runtime.native.settings,
+        )
+    assert actual == "57da84c521a234d43a83db6e230d20fccdfc9b9d3aa3af3604ab9c87166e736c"
+
+
+def test_legacy_schema_projection_excludes_new_preparation_only_members():
+    checkpoints = importlib.import_module("functions_orchestration_checkpoints")
+    registry = importlib.import_module("functions_orchestration_registry")
+    native = registry.get_capability("tabular_analyze", contract_version=2)
+    compose = registry.get_capability("compose", contract_version=2)
+    native_inputs = checkpoints._legacy_tabular_capability_inputs(native["inputs"])
+    compose_inputs = checkpoints._legacy_compose_capability_inputs(compose["inputs"])
+    assert "prepare" not in native_inputs["properties"]["native_operation"]["enum"]
+    assert "preparation_request" not in native_inputs["properties"]
+    assert "calculation_mode" not in native_inputs["properties"]
+    assert not any(
+        "calculation_mode" in variant.get("required", [])
+        for variant in native_inputs["oneOf"]
+    )
+    requirement = compose_inputs["properties"]["tabular_requirement"]["properties"]
+    assert "calculation_answer" not in requirement["mode"]["enum"]
+    assert "version" not in requirement
 
 
 def test_cross_file_result_retains_exact_records_coverage_and_original_row_lineage(monkeypatch):
@@ -188,37 +220,85 @@ def test_relational_arguments_and_legacy_single_source_contracts_are_distinct():
         })
 
 
-def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(monkeypatch):
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        None, "body", "request", "selector", "saved_unsupported",
+        "saved_wrong_sources", "resume_correction",
+    ],
+)
+def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(monkeypatch, mutation):
     with bridge_runtime(monkeypatch) as runtime:
-        prepare(runtime)
+        documents, data = prepare(runtime)
         module = importlib.import_module("functions_orchestration_native_results")
         checkpoints = importlib.import_module("functions_orchestration_checkpoints")
         contracts = importlib.import_module("functions_orchestration_result_contracts")
         analysis_access = importlib.import_module("functions_analysis_access")
         snapshots = analysis_access.analysis_source_snapshot(runtime.context.source_manifest)
+        preparation_question = "Prepare the complete order and price context."
+        preparation_request = {
+            "version": "tabular-context-request-v1",
+            "datasets": [
+                {
+                    "alias": "sales", "document_id": "source-1",
+                    "context_columns": [], "key_profiles": [],
+                },
+                {
+                    "alias": "catalog", "document_id": "source-2",
+                    "context_columns": [], "key_profiles": [],
+                },
+            ],
+        }
         prep_step = {
-            "step_id": "prepare", "capability_id": "tabular_analyze",
-            "arguments": {"native_operation": "prepare"},
+            "step_id": "prepare", "capability_id": "tabular_analyze", "role": "reason",
+            "enabled": True, "inputs": {}, "depends_on": [],
+            "arguments": {
+                "question": preparation_question, "native_operation": "prepare",
+                "document_ids": ["source-1", "source-2"],
+                "preparation_request": preparation_request,
+            },
+            "outputs": [
+                {"name": "context", "kind": "structured-v1"},
+                {"name": "coverage", "kind": "structured-v1"},
+            ],
         }
         parent = runtime.native.parents.read_item("parent-run", runtime.context.conversation_id)
         parent["plan"]["steps"] = [deepcopy(prep_step), deepcopy(runtime.step)]
         runtime.native.parents.replace_item(parent["id"], parent)
         producer = runtime.context.result_producer(prep_step)
+        source_snapshots = [
+            {
+                **snapshot,
+                "content_sha256": hashlib.sha256(data[snapshot["document_id"]]).hexdigest(),
+            }
+            for snapshot in snapshots
+        ]
+        request_digest = hashlib.sha256(contracts.canonical_bytes({
+            "question": preparation_question, "request": preparation_request,
+        })).hexdigest()
+        datasets = [{
+            "alias": "sales", "document_id": "source-1", "sheet": "",
+            "content_sha256": source_snapshots[0]["content_sha256"],
+            "selection": {}, "headers": ["code", "quantity"],
+            "physical_row_count": 2, "context_columns": [], "key_profiles": [],
+        }, {
+            "alias": "catalog", "document_id": "source-2", "sheet": "",
+            "content_sha256": source_snapshots[1]["content_sha256"],
+            "selection": {}, "headers": ["sku", "price"],
+            "physical_row_count": 2, "context_columns": [], "key_profiles": [],
+        }]
         context_value = {
             "version": "tabular-calculation-context-v1", "complete": True,
-            "source_snapshots": snapshots,
-            "profile_sha256": "a" * 64, "analytical_request_sha256": "b" * 64,
-            "datasets": [{
-                "alias": "sales", "document_id": "source-1", "sheet": "",
-                "selection": {}, "headers": ["code", "quantity"],
-                "physical_row_count": 2, "context_columns": [], "key_profiles": [],
-            }, {
-                "alias": "catalog", "document_id": "source-2", "sheet": "",
-                "selection": {}, "headers": ["sku", "price"],
-                "physical_row_count": 2, "context_columns": [], "key_profiles": [],
-            }],
+            "source_snapshots": source_snapshots,
+            "analytical_request_sha256": request_digest,
+            "datasets": datasets,
             "limitations": [],
         }
+        context_value["profile_sha256"] = hashlib.sha256(contracts.canonical_bytes({
+            "datasets": datasets,
+            "source_snapshots": source_snapshots,
+            "analytical_request_sha256": request_digest,
+        })).hexdigest()
         complete = contracts.Completeness(
             "complete", 1, 1, contracts.Coverage(2, 2, "sources"), "valid",
             ("complete_preparation",), (),
@@ -229,7 +309,7 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
                 "context", "structured-v1", context_value, complete,
             ), runtime.module.NamedOutput(
                 "coverage", "structured-v1", {
-                    "complete": True, "source_snapshots": snapshots,
+                    "complete": True, "source_snapshots": source_snapshots,
                     "profile_sha256": context_value["profile_sha256"],
                     "analytical_request_sha256": context_value["analytical_request_sha256"],
                     "datasets": [
@@ -263,6 +343,8 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
                 ("coverage", "structured-v1"),
             )
         ]
+        runtime.context.resolved_message = preparation_question
+        runtime.context.plan_steps = [deepcopy(prep_step), deepcopy(runtime.step)]
         parent["plan"]["steps"][1] = deepcopy(runtime.step)
         runtime.native.parents.replace_item(parent["id"], parent)
         spec = join_spec()
@@ -298,11 +380,67 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
             module.build_native_orchestration_bridge(native_operation="relate"),
             input_fingerprint_for_step=fingerprint,
         )
+        if mutation in {"saved_unsupported", "saved_wrong_sources"}:
+            rejected = deepcopy(spec)
+            if mutation == "saved_unsupported":
+                rejected["version"] = "unsupported-program-contract"
+            else:
+                rejected["datasets"][0]["document_id"] = "outside-approved-selection"
+            checkpoint_store.save_lowering_state(
+                runtime.step["step_id"], {
+                    "version": "tabular-program-lowering-v1",
+                    "phase": "program_saved", "calls_used": 1,
+                    "completion_contract_version": "harness-stop-v1",
+                    "completion_confirmed": True, "program": rejected,
+                    "program_sha256": hashlib.sha256(
+                        contracts.canonical_bytes(rejected)
+                    ).hexdigest(),
+                }, binding=binding,
+                input_fingerprint=fingerprint(runtime.step, runtime.context),
+            )
+        elif mutation == "resume_correction":
+            rejected = deepcopy(spec)
+            rejected["steps"][0]["on"][0]["right"] = "catalog.missing"
+            checkpoint_store.save_lowering_state(
+                runtime.step["step_id"], {
+                    "version": "tabular-program-lowering-v1",
+                    "phase": "failure_saved", "calls_used": 1,
+                    "completion_contract_version": "harness-stop-v1",
+                    "completion_confirmed": True, "program": rejected,
+                    "program_sha256": hashlib.sha256(
+                        contracts.canonical_bytes(rejected)
+                    ).hexdigest(),
+                    "last_failure": {
+                        "category": "relational_column_missing",
+                        "check": "column_missing", "step_index": 0,
+                        "program": rejected,
+                    },
+                }, binding=binding,
+                input_fingerprint=fingerprint(runtime.step, runtime.context),
+            )
         failures = []
         runtime.native.patcher.setattr(
             module, "log_event", lambda _message, extra=None, **_kwargs: failures.append(extra),
         )
+        initial_commits = len(commits(runtime))
+        if mutation == "body":
+            key = ("user-documents", documents["source-2"]["blob_path"])
+            runtime.native.blobs.values[key]["bytes"] = b"sku,price\n008,0.21\n007,0.10\n"
+        elif mutation == "request":
+            runtime.context.resolved_message = "Calculate a different approved request."
+        elif mutation == "selector":
+            runtime.context.plan_steps[0]["arguments"]["preparation_request"]["datasets"][0][
+                "header_row"
+            ] = 2
         result = execute(runtime)
+        if mutation is not None and mutation != "resume_correction":
+            assert result["status"] == "failed", result
+            assert result["failure"]["native_code"] in {
+                "native_inputs_unsupported", "native_access_unavailable",
+                "native_source_changed", "native_execution_failed",
+            }
+            assert calls == [] and len(commits(runtime)) == initial_commits
+            return
         assert result["status"] == "completed", json.dumps(
             {"result": result, "diagnostics": failures}, default=str, indent=2,
         )
@@ -314,8 +452,11 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
             ),
         )
         assert state["phase"] == "retained"
-        assert state["calls_used"] == 1 and state["completion_confirmed"] is True
-        assert state["program_sha256"]
+        assert state["calls_used"] == (2 if mutation == "resume_correction" else 1)
+        assert state["completion_confirmed"] is True
+        assert state["program_sha256"] == hashlib.sha256(
+            contracts.canonical_bytes(spec)
+        ).hexdigest()
 
 
 def test_source_schema_assertion_failure_is_not_reported_as_missing_named_outputs(monkeypatch):
@@ -329,6 +470,100 @@ def test_source_schema_assertion_failure_is_not_reported_as_missing_named_output
         assert "complete source header" in result["error"]
         assert commits(runtime) == []
         assert runtime.provider.calls == []
+
+
+def test_saved_lowering_program_requires_supported_completion_and_exact_digest(monkeypatch):
+    module = importlib.import_module("functions_orchestration_checkpoints")
+    contracts = importlib.import_module("functions_orchestration_result_contracts")
+    container = ResultContainer()
+    store = module.CheckpointStore(
+        container, run_id="parent-run", user_id=USER,
+        conversation_id="conversation-1", turn_id="turn-1",
+        authorize=lambda: True, token="execution-token", claim_id="claim-1",
+    )
+    store.initialize()
+    program = join_spec()
+    digest = hashlib.sha256(contracts.canonical_bytes(program)).hexdigest()
+    state = {
+        "version": "tabular-program-lowering-v1",
+        "phase": "program_saved", "calls_used": 1,
+        "completion_contract_version": "harness-stop-v1",
+        "completion_confirmed": True, "program": program,
+        "program_sha256": digest,
+    }
+    store.save_lowering_state(
+        "compute", state, binding="lowering-binding",
+        input_fingerprint="a" * 64,
+    )
+    loaded = store.load_lowering_state(
+        "compute", binding="lowering-binding", input_fingerprint="a" * 64,
+    )
+    assert loaded == state
+    for change in ("digest", "contract"):
+        invalid = deepcopy(state)
+        if change == "digest":
+            invalid["program_sha256"] = "0" * 64
+        else:
+            invalid["completion_contract_version"] = "unsupported-contract"
+        with pytest.raises(module.CheckpointError):
+            store.save_lowering_state(
+                "compute", invalid, binding="lowering-binding",
+                input_fingerprint="a" * 64,
+            )
+    correction = {
+        "category": "relational_column_missing",
+        "check": "column_missing", "step_index": 0, "program": program,
+    }
+    store.save_lowering_state(
+        "resume", {
+            **state, "phase": "failure_saved", "last_failure": correction,
+        }, binding="lowering-binding", input_fingerprint="a" * 64,
+    )
+    resumed = store.load_lowering_state(
+        "resume", binding="lowering-binding", input_fingerprint="a" * 64,
+    )
+    assert resumed["last_failure"]["program"] == program
+    item_id = f"lowering:{module.fingerprint('compute')}"
+    saved = container.read_item(item_id, "parent-run")
+    saved["state"]["program_sha256"] = "0" * 64
+    container.replace_item(
+        saved["id"], saved, etag=saved["_etag"],
+        match_condition=MatchConditions.IfNotModified,
+    )
+    with pytest.raises(module.CheckpointError):
+        store.load_lowering_state(
+            "compute", binding="lowering-binding",
+            input_fingerprint="a" * 64,
+        )
+
+
+def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
+    native = importlib.import_module("functions_orchestration_native_results")
+    relational = importlib.import_module("functions_tabular_relational")
+    assert native._safe_program_correction(relational.TabularRelationalError(
+        "relational_match_ambiguous",
+        detail={"check": "effective_interval_overlap", "step_index": 1},
+    )) is None
+    assert native._safe_program_correction(relational.TabularRelationalError(
+        "relational_numeric_invalid",
+        detail={"check": "cumulative_value", "step_index": 2},
+    )) is None
+    correction = native._safe_program_correction(relational.TabularRelationalError(
+        "relational_column_missing",
+        detail={"check": "column_missing", "step_index": 0},
+    ))
+    assert correction == {
+        "category": "relational_column_missing",
+        "check": "column_missing",
+        "step_index": 0,
+    }
+    prompt = json.loads(native._prepared_program_prompt(
+        "Approved request.", {"version": "tabular-calculation-context-v1"},
+        {"type": "object"}, correction={
+            **correction, "program": join_spec(),
+        },
+    ))
+    assert prompt["rejected_program"] == join_spec()
 
 
 def test_native_prepare_retains_complete_context_and_exact_profiles(monkeypatch):
@@ -367,6 +602,16 @@ def test_native_prepare_retains_complete_context_and_exact_profiles(monkeypatch)
             {"value": "007", "rows": [2]}, {"value": "008", "rows": [3]},
         ]
         assert context["datasets"][0]["key_profiles"][0]["distinct_count"] == 2
+        assert all(
+            len(dataset["content_sha256"]) == 64 for dataset in context["datasets"]
+        )
+        snapshots = importlib.import_module(
+            "functions_analysis_access",
+        ).analysis_source_snapshot(runtime.context.source_manifest)
+        assert context["source_snapshots"] == [
+            {**source, "content_sha256": dataset["content_sha256"]}
+            for source, dataset in zip(snapshots, context["datasets"])
+        ]
         assert coverage["input_rows"] == 4 and coverage["complete"] is True
         assert runtime.provider.calls == [] and runtime.native.jobs.created == 0
 

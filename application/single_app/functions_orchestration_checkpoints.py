@@ -27,7 +27,7 @@ from functions_orchestration_invocation_capture import OrchestrationInvocationCo
 from functions_orchestration_schema import build_failure, step_input_specs
 from functions_orchestration_registry import build_planner_capability_projection, get_capability
 from functions_orchestration_result_contracts import (
-    ProducerIdentity, ResultContractError, ResultRef, TaskResult, digest as validate_result_digest,
+    ProducerIdentity, ResultContractError, ResultRef, TaskResult, canonical_bytes, digest as validate_result_digest,
 )
 from functions_orchestration_result_runtime import encode_step_result
 from functions_settings_runtime_state import configuration_settings
@@ -217,6 +217,68 @@ def context_binding(context, plan, settings):
     return fingerprint(payload)
 
 
+def _legacy_tabular_capability_inputs(schema):
+    """Project new preparation-only schema members out of a legacy saved step."""
+    projected = deepcopy(schema)
+    properties = projected.get('properties') or {}
+    properties.pop('calculation_mode', None)
+    properties.pop('preparation_request', None)
+    operation = properties.get('native_operation') or {}
+    if type(operation.get('enum')) is list:
+        operation['enum'] = [value for value in operation['enum'] if value != 'prepare']
+    relational = properties.get('relational_spec') or {}
+    description = relational.get('description')
+    if isinstance(description, str):
+        relational['description'] = description.replace(
+            'allocate preserves both inputs and adds stepid.allocated_amount and '
+            'stepid.allocation_status; cumulative_sum preserves its input and adds '
+            'stepid.cumulative_value and stepid.cumulative_status. ',
+            '',
+        )
+    version = (relational.get('properties') or {}).get('version')
+    if isinstance(version, dict):
+        relational['properties']['version'] = {'const': 'tabular-relate-v1'}
+    steps = ((relational.get('properties') or {}).get('steps') or {}).get('items') or {}
+    if type(steps.get('oneOf')) is list:
+        steps['oneOf'] = [
+            item for item in steps['oneOf']
+            if (
+                (item.get('properties') or {}).get('op') or {}
+            ).get('const') not in {'allocate', 'cumulative_sum'}
+        ]
+    variants = projected.get('oneOf')
+    if type(variants) is list:
+        retained = []
+        for variant in variants:
+            variant_properties = variant.get('properties') or {}
+            operation_name = (variant_properties.get('native_operation') or {}).get('const')
+            required = variant.get('required') or []
+            if operation_name == 'prepare' or 'calculation_mode' in required:
+                continue
+            restrictions = (variant.get('not') or {}).get('anyOf')
+            if type(restrictions) is list:
+                variant['not']['anyOf'] = [
+                    item for item in restrictions
+                    if set(item.get('required') or ())
+                    - {'preparation_request', 'calculation_mode'}
+                ]
+            retained.append(variant)
+        projected['oneOf'] = retained
+    return projected
+
+
+def _legacy_compose_capability_inputs(schema):
+    """Keep the prior compose argument contract for saved non-calculation-answer steps."""
+    projected = deepcopy(schema)
+    requirement = ((projected.get('properties') or {}).get('tabular_requirement') or {})
+    requirement_properties = requirement.get('properties') or {}
+    mode = requirement_properties.get('mode') or {}
+    if type(mode.get('enum')) is list:
+        mode['enum'] = [value for value in mode['enum'] if value != 'calculation_answer']
+    requirement_properties.pop('version', None)
+    return projected
+
+
 def step_input_fingerprint(step, context, binding, *, settings=None):
     """The exact inputs, request, model, settings and capability one step ran with."""
     references = {}
@@ -267,6 +329,22 @@ def step_input_fingerprint(step, context, binding, *, settings=None):
                 value for value in native_variants
                 if value.get('native_operation') != 'prepare'
             ]
+    legacy_tabular = (
+        step['capability_id'] == 'tabular_analyze'
+        and arguments.get('native_operation') != 'prepare'
+        and arguments.get('calculation_mode') != 'prepared-v1'
+    )
+    if legacy_tabular:
+        capability_binding['inputs'] = _legacy_tabular_capability_inputs(
+            capability_binding.get('inputs'),
+        )
+    if (
+        step['capability_id'] == 'compose'
+        and ((arguments.get('tabular_requirement') or {}).get('mode') != 'calculation_answer')
+    ):
+        capability_binding['inputs'] = _legacy_compose_capability_inputs(
+            capability_binding.get('inputs'),
+        )
     return fingerprint({
         'plan_contract_version': 2,
         'step': effective_plan({'planner_contract_version': 2, 'steps': [step]})[0],
@@ -587,13 +665,8 @@ class CheckpointStore:
             }
         ):
             raise CheckpointError('checkpoint_invalid')
-        if state.get('phase') in {'program_saved', 'evaluating', 'retained'} and (
-            state.get('completion_confirmed') is not True
-            or not isinstance(state.get('program'), dict)
-            or not re.fullmatch(r'[a-f0-9]{64}', state.get('program_sha256') or '')
-        ):
-            raise CheckpointError('checkpoint_invalid')
         validate_result_digest(input_fingerprint)
+        self._validate_lowering_state(state)
         json_bytes(state)
         self._write({
             'id': f'lowering:{fingerprint(step_id)}',
@@ -626,6 +699,7 @@ class CheckpointStore:
         if (
             type(state) is not dict
             or state.get('version') != 'tabular-program-lowering-v1'
+            or state.get('completion_contract_version') != 'harness-stop-v1'
             or state.get('phase') not in {
                 'context_checked', 'call_reserved', 'program_saved',
                 'evaluating', 'failure_saved', 'retained',
@@ -633,12 +707,38 @@ class CheckpointStore:
             or type(state.get('calls_used')) is not int
             or isinstance(state.get('calls_used'), bool)
             or not 0 <= state['calls_used'] <= 2
+            or set(state) - {
+                'version', 'phase', 'calls_used', 'completion_contract_version',
+                'program', 'program_sha256', 'completion_confirmed', 'last_failure',
+                'token_usage',
+            }
         ):
             raise CheckpointError('checkpoint_invalid')
-        if state['phase'] in {'program_saved', 'evaluating', 'retained'} and (
-            state.get('completion_confirmed') is not True
-            or not isinstance(state.get('program'), dict)
-            or not re.fullmatch(r'[a-f0-9]{64}', state.get('program_sha256') or '')
+        executable = state['phase'] in {'program_saved', 'evaluating', 'retained'}
+        correction_candidate = (
+            state['phase'] == 'failure_saved'
+            and state.get('completion_confirmed') is True
+        )
+        if executable or correction_candidate:
+            program = state.get('program')
+            digest = state.get('program_sha256')
+            if (
+                not isinstance(program, dict)
+                or re.fullmatch(r'[a-f0-9]{64}', digest or '') is None
+                or digest != hashlib.sha256(canonical_bytes(program)).hexdigest()
+                or state.get('completion_confirmed') is not True
+            ):
+                raise CheckpointError('checkpoint_invalid')
+        elif state.get('program') is not None or state.get('program_sha256') is not None:
+            raise CheckpointError('checkpoint_invalid')
+        if state['phase'] == 'failure_saved' and (
+            not isinstance(state.get('last_failure'), dict)
+            or not isinstance(state['last_failure'].get('category'), str)
+        ):
+            raise CheckpointError('checkpoint_invalid')
+        if correction_candidate and (
+            not isinstance(state['last_failure'].get('program'), dict)
+            or state['last_failure']['program'] != state['program']
         ):
             raise CheckpointError('checkpoint_invalid')
 

@@ -53,6 +53,7 @@ from functions_orchestration_schema import (
     plan_contract_version,
     summarize_plan,
     safe_failure,
+    validate_generated_plan_tabular_admission,
 )
 
 _LOG_PREFIX = '[ORCHESTRATION_RUNS]'
@@ -225,6 +226,7 @@ def create_orchestration_run(
     idempotent=False,
     turn_context=None,
     expected_previous_run=None,
+    plan_origin='model',
 ):
     """Persist a new run record for a validated plan.
 
@@ -237,6 +239,10 @@ def create_orchestration_run(
     It makes publication conditional on that unstarted plan remaining unchanged.
     """
     plan = plan if isinstance(plan, dict) else {}
+    if plan_origin not in ('model', 'trusted_legacy'):
+        raise ValueError('Unsupported orchestration plan origin.')
+    if plan_origin == 'model':
+        validate_generated_plan_tabular_admission(plan)
     conversation_id = conversation_id or plan.get('conversation_id')
     if not conversation_id:
         raise ValueError('conversation_id is required to create an orchestration run')
@@ -307,6 +313,7 @@ def create_orchestration_run(
         'unresolved': [],
         'answered_questions': [],
         'generated_plan_admission': generated_plan_admission_stamp(plan),
+        'generated_plan_origin': plan_origin,
     }
     for key in (
         'user_message', 'user_message_id', 'user_message_fingerprint', 'turn_id', 'seeds',
@@ -321,6 +328,7 @@ def create_orchestration_run(
     protected = {
         'id', 'record_type', 'run_id', 'conversation_id', 'user_id', 'created_at',
         'planner_contract_version', 'result_aliases', 'generated_plan_admission',
+        'generated_plan_origin',
     }
     record.update({
         key: value for key, value in (initial_updates or {}).items()
