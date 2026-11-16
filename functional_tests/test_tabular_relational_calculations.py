@@ -1,10 +1,11 @@
 # test_tabular_relational_calculations.py
 """
 Functional tests for complete multi-file calculations and per-row lineage.
-Version: 0.261.444
-Implemented in: 0.261.437
+Version: 0.261.446
+Implemented in: 0.261.437; 0.261.446
 Planner-visible grammar, column rules and content-free failure locations added in: 0.261.443
 Namespace-separated derived rejoins and evaluator diagnostics added in: 0.261.444
+Checked allocation and date-peer cumulative operations added in: 0.261.446
 
 These offline cases use unrelated schemas, precise source values and the real
 CSV/Excel readers. They do not invoke a model or change source documents.
@@ -277,6 +278,198 @@ def test_explicit_many_to_many_join_still_has_an_expansion_limit():
             "catalog": b"sku,price\n007,0.10\n007,0.20\n007,0.30\n",
         }, limits=replace(TabularMergeLimits(), max_total_rows=6))
     assert error.value.code == "relational_row_limit"
+
+
+def test_v2_checked_allocation_conserves_signed_cents_and_all_detail_lineage():
+    spec = {
+        "version": "tabular-relate-v2",
+        "datasets": [
+            {"alias": "events", "document_id": "events"},
+            {"alias": "details", "document_id": "details"},
+        ],
+        "steps": [{
+            "id": "allocated", "op": "allocate", "left": "events", "right": "details",
+            "on": [{"left": "events.contract", "right": "details.contract"}],
+            "event_key": "events.event_id", "detail_key": "details.detail_id",
+            "amount": "events.amount", "weight": "details.weight",
+            "detail_order": ["details.detail_id"], "weight_mode": "absolute",
+            "scale": 2, "rounding": "half_up",
+        }],
+        "result": "allocated",
+        "output": transform(
+            field("event", "events.event_id"),
+            field("detail", "details.detail_id", nullable=True),
+            field("amount", "allocated.allocated_amount", nullable=True),
+            field("status", "allocated.allocation_status"),
+        ),
+    }
+    result = run(spec, {
+        "events": b"contract,event_id,amount\nCA,E1,10.00\nCB,E2,\nCC,E3,-1.00\n",
+        "details": (
+            b"contract,detail_id,weight\nCA,D1,1\nCA,D2,1\nCA,D3,1\n"
+            b"CB,D4,0\nCC,D5,1\n"
+        ),
+    })
+    assert result["records"] == [
+        {"event": "E1", "detail": "D1", "amount": "3.33", "status": "complete"},
+        {"event": "E1", "detail": "D2", "amount": "3.33", "status": "complete"},
+        {"event": "E1", "detail": "D3", "amount": "3.34", "status": "complete"},
+        {"event": "E2", "detail": None, "amount": None, "status": "unknown_missing_amount"},
+        {"event": "E3", "detail": "D5", "amount": "-1.00", "status": "complete"},
+    ]
+    assert sum(len(source["row_ranges"]) for source in result["lineage"][0]["sources"]) == 2
+    assert [entry["row_ranges"] for entry in result["lineage"][0]["sources"] if entry["dataset"] == "details"] == [
+        [[2, 4]],
+    ]
+
+
+def test_v2_cumulative_sum_groups_date_peers_and_carries_prior_revisions():
+    spec = {
+        "version": "tabular-relate-v2",
+        "datasets": [{"alias": "cash", "document_id": "cash"}],
+        "steps": [{
+            "id": "running", "op": "cumulative_sum", "input": "cash",
+            "partition_by": ["cash.contract"], "order_by": "cash.settlement_date",
+            "value": "cash.amount", "include_when": {"value": True},
+            "frame": "unbounded_preceding_through_date_peers",
+        }],
+        "result": "running",
+        "output": transform(
+            field("event", "cash.event_id"),
+            field("value", "running.cumulative_value", nullable=True),
+            field("status", "running.cumulative_status"),
+        ),
+    }
+    result = run(spec, {
+        "cash": (
+            b"contract,event_id,settlement_date,amount\n"
+            b"CA,E1,2026-09-07,10\nCA,E2,2026-09-07,5\n"
+            b"CA,E3,2026-09-08,-2\n"
+        ),
+    })
+    assert result["records"] == [
+        {"event": "E1", "value": "15", "status": "complete"},
+        {"event": "E2", "value": "15", "status": "complete"},
+        {"event": "E3", "value": "13", "status": "complete"},
+    ]
+    assert result["lineage"][2]["sources"][0]["row_ranges"] == [[2, 4]]
+
+
+def test_v2_allocation_rejects_boolean_amount_instead_of_making_it_unknown():
+    spec = {
+        "version": "tabular-relate-v2",
+        "datasets": [
+            {"alias": "events", "document_id": "events"},
+            {"alias": "details", "document_id": "details"},
+        ],
+        "steps": [{
+            "id": "allocated", "op": "allocate", "left": "events", "right": "details",
+            "on": [{"left": "events.contract", "right": "details.contract"}],
+            "event_key": "events.event_id", "detail_key": "details.detail_id",
+            "amount": "events.amount", "weight": "details.weight",
+            "detail_order": ["details.detail_id"], "weight_mode": "absolute",
+            "scale": 2, "rounding": "half_up",
+        }],
+        "result": "allocated",
+        "output": transform(field("amount", "allocated.allocated_amount")),
+    }
+    event = type("Event", (), {"values": {
+        "events.contract": "CA", "events.event_id": "E1", "events.amount": True,
+    }, "lineage": (("events", "events", "", 2),)})()
+    detail = type("Detail", (), {"values": {
+        "details.contract": "CA", "details.detail_id": "D1", "details.weight": "1",
+    }, "lineage": (("details", "details", "", 2),)})()
+    from functions_tabular_relational import _Budget, _allocate, RelationalTable
+
+    with pytest.raises(TabularRelationalError) as error:
+        _allocate(
+            spec["steps"][0],
+            RelationalTable(tuple(event.values), (event,)),
+            RelationalTable(tuple(detail.values), (detail,)),
+            _Budget(TabularMergeLimits(), None),
+        )
+    assert error.value.code == "relational_numeric_invalid"
+
+
+def test_v2_allocation_requires_unique_declared_residual_order():
+    spec = {
+        "version": "tabular-relate-v2",
+        "datasets": [
+            {"alias": "events", "document_id": "events"},
+            {"alias": "details", "document_id": "details"},
+        ],
+        "steps": [{
+            "id": "allocated", "op": "allocate", "left": "events", "right": "details",
+            "on": [{"left": "events.contract", "right": "details.contract"}],
+            "event_key": "events.event_id", "detail_key": "details.detail_id",
+            "amount": "events.amount", "weight": "details.weight",
+            "detail_order": ["details.group"], "weight_mode": "absolute",
+            "scale": 2, "rounding": "half_up",
+        }],
+        "result": "allocated",
+        "output": transform(field("amount", "allocated.allocated_amount")),
+    }
+    with pytest.raises(TabularRelationalError) as error:
+        normalize_relational_spec(spec)
+    assert error.value.detail["check"] == "allocation_detail_order"
+
+
+def test_v2_allocation_preserves_valid_high_precision_amount():
+    spec = {
+        "version": "tabular-relate-v2",
+        "datasets": [
+            {"alias": "events", "document_id": "events"},
+            {"alias": "details", "document_id": "details"},
+        ],
+        "steps": [{
+            "id": "allocated", "op": "allocate", "left": "events", "right": "details",
+            "on": [{"left": "events.contract", "right": "details.contract"}],
+            "event_key": "events.event_id", "detail_key": "details.detail_id",
+            "amount": "events.amount", "weight": "details.weight",
+            "detail_order": ["details.detail_id"], "weight_mode": "absolute",
+            "scale": 12, "rounding": "half_up",
+        }],
+        "result": "allocated",
+        "output": transform(
+            field("amount", "allocated.allocated_amount", nullable=True),
+        ),
+    }
+    amount = "1000000000000000000.000000000000"
+    result = run(spec, {
+        "events": f"contract,event_id,amount\nCA,E1,{amount}\n".encode(),
+        "details": b"contract,detail_id,weight\nCA,D1,1\n",
+    })
+    assert result["records"] == [{"amount": amount}]
+
+
+@pytest.mark.parametrize("operation", ["allocate", "cumulative_sum"])
+def test_v2_operators_are_not_admitted_under_legacy_version(operation):
+    if operation == "allocate":
+        step = {
+            "id": "allocated", "op": "allocate", "left": "sales", "right": "catalog",
+            "on": [{"left": "sales.code", "right": "catalog.sku"}],
+            "event_key": "sales.code", "detail_key": "catalog.sku",
+            "amount": "sales.quantity", "weight": "catalog.price",
+            "detail_order": ["catalog.sku"], "weight_mode": "absolute",
+            "scale": 2, "rounding": "half_up",
+        }
+        spec = join_spec()
+        spec["steps"] = [step]
+        spec["result"] = "allocated"
+        spec["output"] = transform(field("amount", "allocated.allocated_amount"))
+    else:
+        spec = join_spec()
+        spec["datasets"] = spec["datasets"][:1]
+        spec["steps"] = [{
+            "id": "running", "op": "cumulative_sum", "input": "sales",
+            "partition_by": [], "order_by": "sales.code", "value": "sales.quantity",
+            "include_when": {"value": True},
+            "frame": "unbounded_preceding_through_date_peers",
+        }]
+        spec["result"] = "running"
+        spec["output"] = transform(field("amount", "running.cumulative_value"))
+    with pytest.raises(TabularRelationalError):
+        normalize_relational_spec(spec)
 
 
 @pytest.mark.parametrize("fault", ["forward_reference", "unused_source", "unknown_column", "untrusted_code"])
@@ -709,7 +902,9 @@ def test_a_step_that_does_not_name_a_known_operation_is_located_by_how_close_it_
     spec["steps"][2]["op"] = "private_marker_operation"
     location = located(spec)
     assert "argument_branch" not in location and location["argument_keyword"] == "const"
-    assert location["allowed_values"] == ["join", "filter", "derive", "project", "aggregate"]
+    assert location["allowed_values"] == [
+        "join", "filter", "derive", "project", "aggregate", "allocate", "cumulative_sum",
+    ]
     del spec["steps"][2]["op"]
     location = located(spec)
     assert "argument_branch" not in location

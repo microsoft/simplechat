@@ -2,9 +2,10 @@
 """
 Functional contracts for balanced orchestration research selection and its opt-in evaluator.
 
-Version: 0.261.139
+Version: 0.261.445
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
+Harness-boundary evaluation fixtures aligned in: 0.261.445
 
 Runs actual planner, capability projection, request gates and plan normalization with
 controlled completions. Azure-dependent imports are excluded through AST extraction.
@@ -279,7 +280,10 @@ class ResearchSelectionContracts(OfflineTestCase):
                     "original-playlist", [model_plan("web_search")], replan_hint=hint, revision=2,
                 )
                 messages = client.calls[0]["messages"]
-                self.assertEqual(messages[0]["content"], self.runtime.planner["PLANNER_SYSTEM_PROMPT"])
+                self.assertTrue(messages[0]["content"].startswith(
+                    self.runtime.planner["PLANNER_SYSTEM_PROMPT"],
+                ))
+                self.assertIn("Plan limits.", messages[0]["content"])
                 payload = json.JSONDecoder().raw_decode(messages[1]["content"])[0]
                 settings, request_context, _ = case_inputs(
                     self.runtime, self.suite, self.cases["original-playlist"],
@@ -318,9 +322,10 @@ class ResearchSelectionContracts(OfflineTestCase):
         for case_id in self.cases:
             with self.subTest(case=case_id):
                 if case_id in ("explicit-web-selection", "explicit-research-selection"):
-                    with self.assertRaises(self.runtime.planner["PlannerError"]):
-                        self.plan(case_id, [model_plan()])
-                    self.assertEqual(len(self.last_client.calls), 1)
+                    selected = "web_search" if case_id == "explicit-web-selection" else "deep_research"
+                    _, document, client = self.plan(case_id, [model_plan(), model_plan(selected)])
+                    self.assertEqual([step["capability_id"] for step in document["steps"]], [selected, "compose"])
+                    self.assertEqual(len(client.calls), 2)
                     continue
                 if case_id == "research-allowlist-excluded":
                     with self.assertRaises(self.runtime.planner["PlannerError"]):
@@ -395,14 +400,15 @@ class ResearchSelectionContracts(OfflineTestCase):
         duplicate["step_id"] = "extra_research"
         raw["steps"].insert(1, duplicate)
         with self.assertRaises(self.runtime.planner["PlannerError"]):
-            self.plan("broad-discovery-checking", [raw])
+            self.plan("broad-discovery-checking", [raw] * 3)
         diagnostic = self.last_client.calls[0]["messages"][1]["content"]
         self.assertIn("deep_research", diagnostic)
+        self.assertEqual(len(self.last_client.calls), 3)
 
     def test_unparseable_completion_cannot_masquerade_as_a_direct_choice(self):
         with self.assertRaises(self.runtime.planner["PlannerError"]):
-            self.plan("broad-discovery-checking", ["not a plan"])
-        self.assertEqual(len(self.last_client.calls), 1)
+            self.plan("broad-discovery-checking", ["not a plan"] * 3)
+        self.assertEqual(len(self.last_client.calls), 3)
 
     def test_missing_or_malformed_work_never_becomes_an_inserted_answer_only_plan(self):
         malformed = [
@@ -414,15 +420,15 @@ class ResearchSelectionContracts(OfflineTestCase):
         ]
         for proposal in malformed:
             with self.subTest(proposal=proposal), self.assertRaises(self.runtime.planner['PlannerError']):
-                self.plan('stable-direct', [proposal])
-            self.assertEqual(len(self.last_client.calls), 1)
+                self.plan('stable-direct', [proposal] * 3)
+            self.assertEqual(len(self.last_client.calls), 3)
 
     def test_real_model_authored_work_without_reasoning_step_is_rejected(self):
         proposal = model_plan('web_search')
         proposal['steps'] = proposal['steps'][:-1]
         with self.assertRaises(self.runtime.planner['PlannerError']):
-            self.plan('focused-current-lookup', [proposal])
-        self.assertEqual(len(self.last_client.calls), 1)
+            self.plan('focused-current-lookup', [proposal] * 3)
+        self.assertEqual(len(self.last_client.calls), 3)
 
     def test_unselected_web_is_neutral_and_actual_availability_is_authoritative(self):
         _, _, client = self.plan("neutral-web-selection", [model_plan("web_search")])
@@ -680,13 +686,13 @@ class EvaluationContracts(OfflineTestCase):
         self.assertNotIn("SYNTHETIC_PRIVATE_PROVIDER_DETAIL", json.dumps(report))
 
     def test_unparseable_reply_and_invalid_dependency_plan_are_reported_honestly(self):
-        report = self.compare(ScriptedClient("not parseable", model_plan()))
+        report = self.compare(ScriptedClient(*(["not parseable"] * 6)), call_cap=6)
         self.assertEqual(report["status"], "completed_with_planner_failures")
         self.assertEqual(report["results"][0]["fallback_classification"], "unparseable_reply")
         self.assertFalse(report["results"][0]["semantic_review_eligible"])
         raw = model_plan("deep_research")
         raw["steps"].insert(1, {**copy.deepcopy(raw["steps"][0]), "step_id": "duplicate"})
-        rejected = self.compare(ScriptedClient(raw, raw))
+        rejected = self.compare(ScriptedClient(*([raw] * 6)), call_cap=6)
         self.assertEqual(rejected["status"], "completed_with_planner_failures")
         self.assertEqual(rejected["results"][0]["fallback_classification"], "validation_failure")
         self.assertEqual(len(rejected["results"][0]["proposals"][0]["steps"]), 3)

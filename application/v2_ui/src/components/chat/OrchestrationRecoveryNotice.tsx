@@ -116,6 +116,15 @@ export function OrchestrationRecoveryNotice({
         output.state === 'waiting' || output.state === 'rendering' || output.state === 'retry_scheduled');
     const planRetryForFiles = filesNeedPlanRetry(outputs);
     const planRetryOffered = !fileOutputs || planRetryForFiles;
+    const allFailures = [...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])];
+    const materialOutputGap = outputs.some((output) =>
+        output.state !== 'completed' || output.available === false);
+    const materialActionGap = allFailures.some((failure) =>
+        ['m365_sign_in_required', 'm365_approval_required',
+            'action_credentials_required', 'user_action_required']
+            .includes(failure.code)
+        || failure.code.includes('credential')
+        || failure.code.includes('approval_required'));
     // The server refuses runs from an earlier orchestration version: there is nothing to reload,
     // check or review, only its message to show.
     const legacy = Boolean(saved?.legacyPlan);
@@ -133,7 +142,12 @@ export function OrchestrationRecoveryNotice({
         return () => { mounted = false; };
     }, [conversationId, runId, saved?.detailLoaded, legacy, Boolean(relevant), outcome]);
 
-    if (!runId || !relevant) return null;
+    if (
+        !runId || !relevant
+        || (attempt.answer_qualified === true && outcome === 'partial'
+            && !waiting && !materialOutputGap && !materialActionGap
+            && !saved?.transportUnknown && !saved?.error)
+    ) return null;
     const active = Object.values(inFlight).some((run) => run.conversationId === conversationId);
     const retryAllowed = failed && planRetryOffered && !isOrchestrationRunPending(runState) && recovery?.eligible && recovery.expected_version
         && (!newer || newer === runId) && !saved?.transportUnknown;
@@ -146,7 +160,6 @@ export function OrchestrationRecoveryNotice({
         setConfirmationAvailableInformation(availableInformation);
     };
     const titleFor = (stepId: string) => currentPlan?.steps.find((step) => step.step_id === stepId)?.title || stepId;
-    const allFailures = [...(attempt.failure ? [attempt.failure] : []), ...(attempt.failures ?? [])];
     const checkingFailed = allFailures.some((failure) =>
         ['completeness_unavailable', 'completeness_incomplete', 'task_incomplete', 'verification_unavailable']
             .includes(failure.code));

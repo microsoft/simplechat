@@ -1,7 +1,8 @@
 # functions_orchestration_composition.py
 """Explicit content preparation from named authorized result readers.
 
-Version: 0.261.428
+Version: 0.261.446
+Qualified preparation-only calculation answers added in: 0.261.446
 Refusals for a missing signed-in session reported as their own failure in: 0.261.209
 Charts drawn upstream reach the model as their placement tokens in: 0.261.293
 No retrieval, file-format inference, upload, publication, or implicit sibling inputs.
@@ -98,6 +99,14 @@ AVAILABLE_INFORMATION_INSTRUCTIONS = (
     'are the only factual inputs: diagnostics and unresolved candidates are not facts. Partial '
     'coverage does not prove that a fact is absent from an entire source or corpus. Do not '
     'invent values, citations, inspection counts, or certainty to make an answer complete.'
+)
+CALCULATION_ANSWER_INSTRUCTIONS = (
+    'When complete calculation records, lineage and coverage are all present from one producer, '
+    'reason only from that atomic bundle and the complete preparation. When all three calculation '
+    'members are unavailable, state that the requested dated monetary determination could not be '
+    'verified. You may report only exact retained preparation facts such as rules, scope, counts '
+    'and evidence horizon; never infer an exceedance, monetary result or missing absence from '
+    'search previews, diagnostics or partial calculation members.'
 )
 KNOWLEDGE_POLICIES = {
     KNOWLEDGE_BASIS_GENERAL: (
@@ -714,6 +723,9 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
         memory = _answer_memory(context)
         policy = ' '.join(part for part in (
             COMPOSE_POLICY, KNOWLEDGE_POLICIES[basis], transform_policy, MISSING_INPUT_POLICY if missing else '',
+            CALCULATION_ANSWER_INSTRUCTIONS
+            if (step['arguments'].get('tabular_requirement') or {}).get('mode') == 'calculation_answer'
+            else '',
             AVAILABLE_INFORMATION_INSTRUCTIONS if uses_available_information(step) else '',
             MISSING_IMAGE_POLICY if missing_images else '',
             CITATION_POLICY if _carries_citation_values(inputs) else '',
@@ -1200,10 +1212,23 @@ def adapter_compose(step, context, *, settings, user_id, emit=None, cancel_reque
                 response = invoke(retry_messages, stage='orchestration_compose', metadata=metadata)
                 recheck()
                 values = prepared_values(response)
-        partial = any(reader.completeness.status == 'partial' for reader in readers.values())
+        calculation_answer = (
+            (step['arguments'].get('tabular_requirement') or {}).get('mode')
+            == 'calculation_answer'
+        )
+        calculation_bundle_present = bool(
+            {reader.reference.output_name for reader in readers.values()}
+            & {'records', 'lineage', 'coverage'}
+        )
+        partial = (
+            any(reader.completeness.status == 'partial' for reader in readers.values())
+            or (calculation_answer and not calculation_bundle_present)
+        )
         limitations = tuple(dict.fromkeys(
             limitation for reader in readers.values() for limitation in reader.completeness.limitations
         ))
+        if calculation_answer and not calculation_bundle_present:
+            limitations += ('calculation_unavailable',)
         if partial and not limitations:
             raise ResultContractError('result_partial_unqualified')
         named = []

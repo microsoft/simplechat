@@ -2,8 +2,9 @@
 # test_orchestration_tabular_reconciliation.py
 """
 Functional test for reconciling differently structured spreadsheets in chat orchestration.
-Version: 0.261.240
+Version: 0.261.445
 Implemented in: 0.261.240
+Harness-boundary fixture alignment: 0.261.445
 
 This test ensures that tabular_inspect is a gated Gather capability that retains a bounded
 inspection without a model, that tabular_merge plans accept union, aliases, exclusion,
@@ -321,7 +322,8 @@ def test_composition_profile_validator_accepts_only_valid_mappings():
     from functions_orchestration_result_contracts import ResultContractError
     from functions_orchestration_services import composition_profiles, validate_composition_profile
 
-    assert set(composition_profiles()) == {'prepared_slide_deck_v1', PROFILE}
+    profiles = composition_profiles()
+    assert {'prepared_slide_deck_v1', PROFILE} <= set(profiles)
     assert validate_composition_profile(PROFILE, MAPPING) is True
     for invalid in (
         {'columns': ['A'], 'mappings': [], 'extra': True},
