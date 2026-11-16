@@ -4516,10 +4516,10 @@ ADMIN_SETTINGS_FIELDS = {
         {
             "key": "chat_orchestration_max_replans",
             "type": "number",
-            "label": "Maximum Re-plans Per Run",
+            "label": "Maximum Retained Runtime Hints",
             "help": (
-                "How often a step may send the plan back to be reconsidered after "
-                "discovering something. Zero means a plan is followed as written."
+                "Limits recovery hints collected in run-summary metadata. Zero disables summary "
+                "hint collection. This does not revise or run a plan automatically."
             ),
             "default": 2,
             "min": 0,
@@ -4531,7 +4531,7 @@ ADMIN_SETTINGS_FIELDS = {
             "key": "enable_chat_orchestration_completeness_check",
             "type": "switch",
             "label": "Check Answer Completeness",
-            "help": "Independently assess requested content before delivery and correct omissions using available evidence. Adds model calls; this is model-assisted, not a deterministic guarantee.",
+            "help": "Use a separate model-assisted review to assess requested content before delivery and correct omissions using available evidence. Adds model calls; this is not a deterministic guarantee.",
             "default": True,
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},
         },

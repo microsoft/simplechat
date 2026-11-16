@@ -203,6 +203,16 @@ ELICITATION_MAX_ARRAY_ITEMS = 100
 # Hard ceilings, independent of the administrator's own limits. These bound what the
 # validator will even consider, so a malformed plan cannot cost anything to reject.
 PLAN_HARD_MAX_STEPS = 30
+
+
+def effective_plan_step_limit(settings):
+    """Return the same effective step cap used by planning and compilation."""
+    try:
+        return min(PLAN_HARD_MAX_STEPS, max(1, int((settings or {}).get('chat_orchestration_max_steps') or 8)))
+    except (TypeError, ValueError):
+        return 8
+
+
 PLAN_MAX_TITLE_LENGTH = 200
 PLAN_MAX_RATIONALE_LENGTH = 600
 PLAN_MAX_SUMMARY_LENGTH = 600
@@ -1041,10 +1051,7 @@ def validate_dependency_plan(
     """
     settings = settings or {}
     canonical_bytes(composition_profiles or {})
-    try:
-        max_steps = min(PLAN_HARD_MAX_STEPS, max(1, int(settings.get('chat_orchestration_max_steps') or 8)))
-    except (TypeError, ValueError):
-        max_steps = 8
+    max_steps = effective_plan_step_limit(settings)
     raw_steps = plan.get('steps')
     if type(raw_steps) is not list or not raw_steps or len(raw_steps) > max_steps:
         if type(raw_steps) is list and raw_steps and _offers_handoff(available_capability_ids):
@@ -1055,7 +1062,13 @@ def validate_dependency_plan(
                 # The raw list length and effective limit, which a count of dictionary steps cannot show.
                 diagnostics={'plan_step_count': len(raw_steps), 'plan_step_limit': max_steps},
             )
-        raise PlanValidationError('The complete plan exceeds the available step budget.', code='result_step_limit')
+        raise PlanValidationError(
+            'The complete plan exceeds the available step budget.', code='result_step_limit',
+            diagnostics={
+                'plan_step_count': len(raw_steps) if type(raw_steps) is list else 0,
+                'plan_step_limit': max_steps,
+            },
+        )
     # A plan over a budget names hand-off as a way out only when the request offered it.
     handoff_offered = _offers_handoff(available_capability_ids)
     if available_capability_ids is None:
@@ -2795,9 +2808,8 @@ def build_step_result(
     tries to re-describe them -- ``functions_mixed_source_orchestration.build_evidence_envelope``
     already owns that contract, complete with its byte bounds.
 
-    ``replan_hint`` is how a step says the plan was wrong: a short sentence about what it
-    discovered, handed back to the planner. It is bounded by the run's replan budget, so a
-    step cannot loop the plan forever by always asking for another one.
+    ``replan_hint`` is inert diagnostic context retained for run-summary metadata. Its summary
+    cap never invokes a planner, tool or automatic revision.
     """
     if status not in STEP_STATUSES:
         status = STEP_STATUS_COMPLETED

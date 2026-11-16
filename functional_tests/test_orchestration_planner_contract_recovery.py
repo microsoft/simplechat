@@ -1,11 +1,12 @@
 # test_orchestration_planner_contract_recovery.py
 """
 Functional regressions for effective planner contracts and document action binding.
-Version: 0.261.444
+Version: 0.261.445
 Implemented in: 0.261.419; 0.261.422
 Source-schema preflight and native semantic correction added in: 0.261.439
 Column preflight and content-free schema locations added in: 0.261.443
 Complete tabular purpose handoff added in: 0.261.444
+Effective-limit and protocol recovery added in: 0.261.445
 
 Real registry, planner, validation, source preparation and logger owners run with
 external model/storage I/O isolated. A corrected draft must retain the original
@@ -90,6 +91,53 @@ def correction_records(caplog):
         if getattr(record, "sc_message", None)
         == "[ORCHESTRATION_PLANNER] Asking the planner to correct a rejected plan."
     ]
+
+
+def test_planner_always_sees_effective_limits_without_advertising_handoff(planning):
+    planning.harness.settings.update(
+        chat_orchestration_max_steps=2,
+        chat_orchestration_total_timeout_seconds=173,
+    )
+    kind, plan = run_plan(planning, [proposal([LEFT])])
+    assert kind == "plan"
+    prompt = planning.harness.model_calls[0]["messages"][0]["content"]
+    assert "At most 2 steps in one plan." in prompt
+    assert "At most 173 seconds for the whole plan to run." in prompt
+    assert "workflow_handoff step" not in prompt
+    assert "Hand-off tasks can run" not in prompt
+
+
+def test_oversized_and_protocol_drafts_share_the_two_correction_allowance(planning, caplog):
+    valid = proposal([LEFT])
+    oversized = deepcopy(valid)
+    duplicate = deepcopy(oversized["steps"][0])
+    duplicate["step_id"] = "extra-read"
+    oversized["steps"].insert(1, duplicate)
+    planning.harness.settings["chat_orchestration_max_steps"] = 2
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(planning, ["not a plan", oversized, valid])
+    assert kind == "plan" and plan["validation"]["ok"]
+    assert len(planning.harness.model_calls) == 3
+    records = correction_records(caplog)
+    assert [record.sc_validation_code for record in records] == [
+        "plan_structure_invalid", "result_step_limit",
+    ]
+    assert records[-1].sc_plan_step_count == 3
+    assert records[-1].sc_plan_step_limit == 2
+
+
+@pytest.mark.parametrize("draft,rule", [
+    ({"kind": "unsupported"}, "invalid_planner_response_kind"),
+    ({"kind": "plan"}, "invalid_plan_work"),
+    ({"kind": "plan", "steps": "not-a-list"}, "invalid_plan_work"),
+    ({"kind": "plan", "steps": []}, "invalid_plan_work"),
+])
+def test_model_owned_protocol_drafts_receive_one_bounded_correction(planning, caplog, draft, rule):
+    with caplog.at_level(logging.INFO, logger=planning.logger.name):
+        kind, plan = run_plan(planning, [draft, proposal([LEFT])])
+    assert kind == "plan" and plan["validation"]["ok"]
+    assert len(planning.harness.model_calls) == 2
+    assert correction_records(caplog)[0].sc_validation_rule == rule
 
 
 @pytest.mark.parametrize("fault,rule", [

@@ -1,8 +1,9 @@
 # test_admin_orchestration_planner_model.py
 """
 UI coverage for the orchestration planner model dropdown in both Admin Settings pages.
-Version: 0.261.137
+Version: 0.261.445
 Implemented in: 0.261.137
+Runtime-hint field coverage added in: 0.261.445
 
 The planner used to be named with four typed values: deployment, model id, endpoint id and
 provider. Both admin pages now offer one dropdown built from the configured models and write the
@@ -125,6 +126,21 @@ def test_classic_dropdown_lists_enabled_connection_chat_models_and_writes_the_se
     expect(select).to_have_value("")
     assert submitted(page) == planner(deployment="", model_id="", endpoint_id="", provider="")
     assert len(page.evaluate("() => window.changes")) == 2
+    assert errors == []
+
+
+def test_classic_runtime_hints_label_help_and_zero_value(page, static_origin):
+    errors = mount_classic(page, static_origin, {
+        "enable_chat_orchestration": True,
+        "chat_orchestration_max_replans": 0,
+    })
+    control = page.get_by_label("Maximum retained runtime hints", exact=True)
+    expect(control).to_have_value("0")
+    expect(page.get_by_text(
+        "Limits recovery hints collected in run-summary metadata. Zero disables summary "
+        "hint collection. This does not revise or run a plan automatically.",
+        exact=True,
+    )).to_be_visible()
     assert errors == []
 
 

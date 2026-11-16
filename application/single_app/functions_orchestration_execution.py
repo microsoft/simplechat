@@ -417,8 +417,15 @@ def build_harness_invoke_prompt(model, *, token_usage, revalidate):
                 raise CompletenessError("completeness_report_invalid")
             raise HarnessExecutionError("model_failed")
         choice = response.choices[0]
-        if choice.finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
+        finish_reason = getattr(choice, "finish_reason", None)
+        if finish_reason == "content_filter" or getattr(choice.message, "refusal", None):
             raise HarnessExecutionError("model_failed")
+        if finish_reason not in (None, "stop"):
+            if stage == "completeness_check":
+                raise CompletenessError("completeness_report_invalid")
+            raise HarnessExecutionError(
+                "model_failed", rule="incomplete_completion", stage=stage,
+            )
         text = extract_chat_completion_response_text(response)
         if not text.strip():
             if stage == "completeness_check":

@@ -2,8 +2,9 @@
 # test_admin_settings_fields_registry_integrity.py
 """
 Functional test guarding the shape of the Admin Settings field registry.
-Version: 0.261.071
+Version: 0.261.445
 Implemented in: 0.261.071
+Harness boundary copy coverage added in: 0.261.445
 
 ``ADMIN_SETTINGS_FIELDS`` is a single dict literal that several parallel branches
 extend at once, each adding the sections for one admin group. Git merges it
@@ -185,6 +186,17 @@ def test_every_section_id_exists_in_navigation():
     return True
 
 
+def test_runtime_hint_field_copy_describes_metadata_only_behavior():
+    fields = fields_module.ADMIN_SETTINGS_FIELDS["chat-orchestration-limits-section"]
+    field = next(
+        item for item in fields
+        if item.get("key") == "chat_orchestration_max_replans"
+    )
+    assert field["label"] == "Maximum Retained Runtime Hints"
+    assert field["min"] == 0 and field["max"] == 5 and field["default"] == 2
+    assert "does not revise or run a plan automatically" in field["help"]
+
+
 if __name__ == "__main__":
     tests = [
         test_no_section_is_declared_twice,
@@ -192,6 +204,7 @@ if __name__ == "__main__":
         test_every_section_holds_at_least_one_field,
         test_the_parsed_registry_matches_the_imported_one,
         test_every_section_id_exists_in_navigation,
+        test_runtime_hint_field_copy_describes_metadata_only_behavior,
     ]
 
     results = []

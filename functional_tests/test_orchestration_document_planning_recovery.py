@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional regressions for picked-document planning and debug diagnostics.
-Version: 0.261.423
+Version: 0.261.445
 Implemented in: 0.261.413
 Server-owned Auto handoff integration: 0.261.415
 Shared draft-contract recovery integration: 0.261.419
 Two shared corrective proposals and local source wiring: 0.261.422
+Harness-boundary fixture alignment: 0.261.445
 
 Real authenticated routes, source metadata, planner, validation and logger
 serialization run with external model/storage I/O isolated. Diagnostics must
@@ -57,7 +58,7 @@ def planning(source_runtime, monkeypatch):
     return source_runtime
 
 
-def proposal(document_ids=(), *, capability="document_search", options=None):
+def proposal(document_ids=(), *, capability="document_search", options=None, tabular_overview_ids=()):
     producer = {
         "step_id": "read", "capability_id": capability,
         "arguments": {"document_ids": list(document_ids)},
@@ -78,6 +79,10 @@ def proposal(document_ids=(), *, capability="document_search", options=None):
     answer["arguments"].update(
         instruction=PRIVATE, knowledge_basis="sources" if document_ids else "general_knowledge",
     )
+    if tabular_overview_ids:
+        answer["arguments"]["tabular_requirement"] = {
+            "mode": "overview", "document_ids": list(tabular_overview_ids),
+        }
     answer["delivers"] = ["answer"]
     return {
         "kind": "plan",
@@ -315,7 +320,9 @@ def test_http_picked_document_recovery_preserves_scope_and_does_not_execute(
             "requires_retrieval": True, "clarification": "",
         }),
         json.dumps(proposal()),
-        json.dumps(proposal([LEFT])),
+        json.dumps(proposal([LEFT], tabular_overview_ids=(
+            [LEFT] if extension in ("csv", "xlsx") else ()
+        ))),
     ]
     with caplog.at_level(logging.INFO, logger=planning.logger.name):
         response = planning.client.post("/api/v2/orchestration/plan", json={
@@ -391,14 +398,17 @@ def test_unavailable_capabilities_are_not_made_repairable(planning):
 
 def test_partial_mixed_source_omission_is_corrected_without_dropping_either_file(planning):
     kind, plan = run_plan(
-        planning, [proposal([LEFT]), proposal([LEFT, RIGHT])], identifiers=(LEFT, RIGHT),
+        planning, [
+            proposal([LEFT]),
+            proposal([LEFT, RIGHT], tabular_overview_ids=(RIGHT,)),
+        ], identifiers=(LEFT, RIGHT),
     )
     assert kind == "plan" and len(planning.harness.model_calls) == 2
     assert set(planning.harness.schema.plan_document_ids(plan)) == {LEFT, RIGHT}
 
 
 def test_implicit_search_scope_keeps_every_selected_document_without_a_retry(planning):
-    raw = proposal([LEFT])
+    raw = proposal([LEFT], tabular_overview_ids=(RIGHT,))
     raw["steps"][0]["arguments"].pop("document_ids")
     kind, plan = run_plan(planning, [raw], identifiers=(LEFT, RIGHT))
     assert kind == "plan" and len(planning.harness.model_calls) == 1
@@ -456,7 +466,9 @@ def test_limited_spreadsheet_preview_can_still_produce_an_inspection_plan(planni
         "availability": "available",
         "inspection": {"status": "limited", "content_complete": False, "tables": []},
     }
-    raw = proposal([RIGHT], capability="tabular_inspect")
+    raw = proposal(
+        [RIGHT], capability="tabular_inspect", tabular_overview_ids=(RIGHT,),
+    )
     kind, plan = run_plan(
         planning, [raw], identifiers=(RIGHT,), context_updates={"selected_sources": [source]},
     )

@@ -4188,7 +4188,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4203,7 +4203,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4218,7 +4218,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4233,7 +4233,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4248,7 +4248,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4263,7 +4263,7 @@
           "execute_item_batch"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4278,7 +4278,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4293,7 +4293,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4308,7 +4308,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4323,7 +4323,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -4338,7 +4338,7 @@
           "read_item"
         ],
         "kind": "seam",
-        "imports_sha256": "e2939a84d992c600671235caf974deab46a571ea211d79df7a91b64b583d53a2"
+        "imports_sha256": "c8a16d38d8e3b91687b0533f4d08afead2b42de8269e898b0b5c51bb74f3e855"
       },
       "classification": "fault-injection",
       "contract": "Existing scoped failure/race override is implementation-unchanged; normal point operations delegate to the SDK-default shared container. The containing real-runtime test restores the override and verifies the named fault without changing the default CosmosDict response contract.",
@@ -20076,7 +20076,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
+        "module_sha256": "0d716b3d294a52c9ffe4e2d78340c31bae1e9b17a9059dd7bf3b468c21c98728"
       },
       "classification": "sdk-compatible",
       "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner's AST or SDK response consumers. The published point mapping is projected with items() into plain message JSON and compared with publication_documents_match; conditional publication fields, all domain values and Mapping-compatible mirroring remain unchanged. Renewed SDK-default runtime coverage exercises publication, result citations, failure finalization and ownership fences. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
@@ -20105,7 +20105,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
+        "module_sha256": "0d716b3d294a52c9ffe4e2d78340c31bae1e9b17a9059dd7bf3b468c21c98728"
       },
       "classification": "sdk-compatible",
       "contract": "Review 0.261.439: only failure diagnostics changed in this module; this owner and its SDK point consumers are unchanged. The previous assistant mapping is checked for conversation/run ownership and projected into plain model/reasoning dictionaries. No SDK wrapper reaches an exact-dictionary contract, and metadata reads stay outside retained-result operation reuse. Renewed SDK-default runtime evidence verifies delivery metadata and recovery. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
@@ -20128,7 +20128,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
+        "module_sha256": "0d716b3d294a52c9ffe4e2d78340c31bae1e9b17a9059dd7bf3b468c21c98728"
       },
       "classification": "sdk-compatible",
       "contract": "Review 0.261.439: failure diagnostics changed the module fingerprint, not this owner. The SDK question mapping supplies role and nested plain thread metadata; only the validated nested thread dictionary is copied. Regeneration metadata remains outside result-read caching. Renewed SDK-default runtime evidence verifies original identity and forced review. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
@@ -20151,7 +20151,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
+        "module_sha256": "0d716b3d294a52c9ffe4e2d78340c31bae1e9b17a9059dd7bf3b468c21c98728"
       },
       "classification": "sdk-compatible",
       "contract": "Review 0.261.439: only failure diagnostics changed; this owner's response boundary is unchanged. The normalized owned conversation retains its ETag for IfNotModified replacement, and the returned SDK mapping is consumed by the Mapping-compatible cache invalidator. Lost-CAS retries preserve current ownership and do not reuse result-read snapshots. Renewed SDK-default runtime coverage verifies conditional updates and delivery. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
@@ -20179,7 +20179,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "acfc220201f6f6baaa1d314901a11809d8354e0a159f6b01b7138982e49393cd"
+        "module_sha256": "0d716b3d294a52c9ffe4e2d78340c31bae1e9b17a9059dd7bf3b468c21c98728"
       },
       "classification": "sdk-compatible",
       "contract": "Review 0.261.439: failure diagnostic changes do not alter this owner or its SDK response consumers. Partitioned message mappings are reauthorized, visibility-checked and converted with normalize_history_message before strict saved-snapshot validation. Fingerprint and shared-access checks still precede full source reads; result-operation snapshots cannot replace them. Renewed SDK-default runtime tests cover contextual messages and ownership. Re-reviewed 0.261.444 follow-up: source-kind admission, plugin validation, empty Word provenance and recovery guard diagnostics do not change reviewed Cosmos response consumers or storage calls. Re-reviewed 0.261.444 final edge pass: delivery final-response diagnostics, strict Word coverage counts and isolated plugin tests do not change reviewed Cosmos response consumers or storage calls.",
@@ -21396,7 +21396,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e5dafb70ae7505bddb42f98995f576e7845a1709c887238e2574c69fc71b216a"
+        "module_sha256": "a7927ec87c5bd00597a847e7801d48b04900eb597e10669db959dd453b999191"
       },
       "classification": "sdk-compatible",
       "contract": "_point_read: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -21424,7 +21424,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e5dafb70ae7505bddb42f98995f576e7845a1709c887238e2574c69fc71b216a"
+        "module_sha256": "a7927ec87c5bd00597a847e7801d48b04900eb597e10669db959dd453b999191"
       },
       "classification": "sdk-compatible",
       "contract": "_write_plan_wait: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
@@ -23595,7 +23595,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "Fresh SDK mappings are consumed via get/item access; nested settings remain plain JSON, ETags are preserved for conditional replace, and the returned SDK mapping refreshes the request cache with the committed ETag. Real-owner recovery tests cover persisted null, request/UI caches and matching ETags, SDK representation, missing ETags, authorization, conflicts and concurrent selections. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
@@ -23616,7 +23616,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
@@ -23642,7 +23642,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
@@ -23668,7 +23668,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
@@ -23689,7 +23689,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
@@ -23720,7 +23720,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
@@ -23741,7 +23741,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
@@ -23777,7 +23777,7 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "eb0769cf66c5aa0420fe357b78f6b893f0bf6f912b4c675ab57db2bd1ac3a0ba"
+        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
       },
       "classification": "sdk-compatible",
       "contract": "update_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
