@@ -1,11 +1,37 @@
 # functions_stats_windows.py
 """Shared helpers for stats pages that support selectable date windows."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 
 DEFAULT_STATS_WINDOW_DAYS = 30
 ALLOWED_STATS_WINDOW_DAYS = (7, 30, 90)
+# Bounded custom windows stay well inside the calendar, so neither a date's UTC offset
+# nor the day-by-day series built from the window can step past its first or last day.
+STATS_EARLIEST_CUSTOM_DATE = date(2000, 1, 1)
+STATS_LATEST_CUSTOM_DATE = date(9998, 12, 31)
+STATS_DATE_RANGE_MESSAGE = (
+    f"Choose dates between {STATS_EARLIEST_CUSTOM_DATE.isoformat()} and {STATS_LATEST_CUSTOM_DATE.isoformat()}."
+)
+# A bounded custom window may still span the whole calendar. That is millions of
+# days of CPU, memory and response body, so the bounded resolver caps the span the
+# way the native group insights already do. The message is shared verbatim.
+STATS_MAX_CUSTOM_DAYS = 366
+STATS_MAX_CUSTOM_DAYS_MESSAGE = (
+    f"Choose a date range of {STATS_MAX_CUSTOM_DAYS} days or fewer."
+)
+
+
+class StatsDateRangeError(ValueError):
+    """A refused custom stats window.
+
+    Defaults to ``STATS_DATE_RANGE_MESSAGE`` (a date outside the supported calendar).
+    The bounded resolver passes ``STATS_MAX_CUSTOM_DAYS_MESSAGE`` for a custom span
+    longer than ``STATS_MAX_CUSTOM_DAYS`` days.
+    """
+
+    def __init__(self, message=STATS_DATE_RANGE_MESSAGE):
+        super().__init__(message)
 
 
 def _get_request_value(source, key, default=None):
@@ -88,6 +114,30 @@ def resolve_stats_time_window(source=None, default_days=DEFAULT_STATS_WINDOW_DAY
         'start_date_iso': start_date.isoformat(),
         'end_date_iso': end_date.isoformat(),
     }
+
+
+def resolve_bounded_stats_time_window(source=None, default_days=DEFAULT_STATS_WINDOW_DAYS):
+    """``resolve_stats_time_window``, refusing a custom date outside the supported range.
+
+    A custom date before ``STATS_EARLIEST_CUSTOM_DATE`` or after
+    ``STATS_LATEST_CUSTOM_DATE``, including one whose UTC offset carries it past the
+    calendar's first or last day, raises ``StatsDateRangeError``. A custom span longer
+    than ``STATS_MAX_CUSTOM_DAYS`` days raises ``StatsDateRangeError`` with
+    ``STATS_MAX_CUSTOM_DAYS_MESSAGE``. Every other refusal is
+    ``resolve_stats_time_window``'s own ``ValueError``.
+    """
+    try:
+        window = resolve_stats_time_window(source, default_days=default_days)
+    except OverflowError as error:
+        raise StatsDateRangeError() from error
+    if window['type'] == 'custom' and (
+        window['start_date'].date() < STATS_EARLIEST_CUSTOM_DATE
+        or window['end_date'].date() > STATS_LATEST_CUSTOM_DATE
+    ):
+        raise StatsDateRangeError()
+    if window['type'] == 'custom' and window['days'] > STATS_MAX_CUSTOM_DAYS:
+        raise StatsDateRangeError(STATS_MAX_CUSTOM_DAYS_MESSAGE)
+    return window
 
 
 def build_stats_date_series(start_date, end_date):

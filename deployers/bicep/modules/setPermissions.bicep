@@ -30,6 +30,11 @@ managed grants data access through an Azure Managed Redis access policy assignme
 param redisCacheKind string = 'managed'
 param contentSafetyName string
 param videoIndexerName string
+@description('''Storage account that holds the Video Indexer media.
+- Defaults to the application storage account.''')
+param videoIndexerStorageAccountName string = ''
+@description('Role definition ID granted to the web app identity on the Video Indexer account.')
+param videoIndexerAppRoleDefinitionId string = 'b24988ac-6180-42a0-ab88-20f7382dd24c'
 param videoIndexerSupportsOpenAiIntegration bool = true
 
 var useExternalOpenAIResource = openAIName != '' && !empty(openAIResourceGroupName) && !empty(openAISubscriptionId)
@@ -89,15 +94,15 @@ resource videoIndexerService 'Microsoft.VideoIndexer/accounts@2024-01-01' existi
   name: videoIndexerName
 }
 
-// grant the webApp access to the key vault
-resource kvSecretsUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(kv.id, webApp.id, 'kv-secrets-user')
+// Use a new assignment name: Azure cannot change the role on the old Secrets User assignment.
+resource kvSecretsOfficerRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(kv.id, webApp.id, 'kv-secrets-officer')
   scope: kv
   properties: {
-    // Built-in role definition id for "Key Vault Secrets User"
+    // Secret storage and the connection probe require get/list/set/delete.
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
-      '4633458b-17de-408a-b874-0445c86b69e6'
+      'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
     )
     principalId: webApp.identity.principalId
     principalType: 'ServicePrincipal'
@@ -330,18 +335,14 @@ resource contentSafetyUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
-// grant the video indexer service access to storage account as a Storage Blob Data Contributor
-resource videoIndexerStorageBlobDataContributorRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (videoIndexerName != '') {
-  name: guid(storageAccount.id, videoIndexerService.id, 'video-indexer-storage-blob-data-contributor')
-  scope: storageAccount
-  properties: {
-    roleDefinitionId: subscriptionResourceId(
-      'Microsoft.Authorization/roleDefinitions',
-      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-    )
-    #disable-next-line BCP318 // may be null if video indexer not deployed
-    principalId: videoIndexerService.identity.principalId
-    principalType: 'ServicePrincipal'
+// grant the web app access to Video Indexer and the Video Indexer service access to its storage account
+module videoIndexerPermissions 'setVideoIndexerPermissions.bicep' = if (videoIndexerName != '') {
+  name: 'setVideoIndexerPermissions'
+  params: {
+    videoIndexerName: videoIndexerName
+    videoIndexerStorageAccountName: empty(videoIndexerStorageAccountName) ? storageAccountName : videoIndexerStorageAccountName
+    webAppName: webAppName
+    webAppRoleDefinitionId: videoIndexerAppRoleDefinitionId
   }
 }
 

@@ -2,7 +2,7 @@
 """
 Azure Playwright-ready endpoint/model capacity editor workflows.
 
-Version: 0.261.057
+Version: 0.261.428
 Implemented in: 0.261.035
 
 Per-model routing round trips added in: 0.261.042
@@ -26,6 +26,7 @@ import mimetypes
 import os
 from pathlib import Path
 import sys
+import re
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -119,39 +120,150 @@ class EndpointApiFixture:
         self.fetch_payloads = []
         self.preview_payloads = []
         self.test_payloads = []
+        self.operation_tests = []
         self.page_errors = []
         self.console_errors = []
         self.nonlocal_requests = []
+        self.unhandled_api_requests = []
         self.fail_save = False
         self.expected_save_error = False
         self.expected_preview_error = False
         self.defer_preview = False
         self.deferred_previews = []
         self.ca_bundles = []
+        self.group_id = "group-one"
+
+    def public_endpoints(self):
+        projected = copy.deepcopy(self.endpoints)
+        for endpoint in projected:
+            auth = endpoint.setdefault("auth", {})
+            auth.pop("api_key", None)
+            auth.pop("client_secret", None)
+            auth.pop("bearer_token", None)
+            if self.scope == "group":
+                endpoint["revision"] = f"revision-{endpoint.get('id')}"
+        return projected
+
+    def save_endpoint_request(self, route, endpoint_id, body):
+        self.saved_payloads.append(copy.deepcopy(body))
+        if self.fail_save:
+            self.expected_save_error = True
+            route.fulfill(
+                status=400,
+                content_type="application/json",
+                body=json.dumps({
+                    "error": "contextWindow must be a positive whole number of tokens.",
+                    "error_code": "model_context_invalid",
+                }),
+            )
+            return
+
+        if "endpoints" in body and isinstance(body["endpoints"], list):
+            self.endpoints = copy.deepcopy(body["endpoints"])
+            self.saved_payloads[-1] = {
+                **copy.deepcopy(body),
+                "endpoints": self.public_endpoints(),
+            }
+            route.fulfill(
+                content_type="application/json",
+                body=json.dumps({"success": True, "endpoints": self.public_endpoints()}),
+            )
+            return
+
+        if endpoint_id:
+            existing = next(
+                (endpoint for endpoint in self.endpoints if endpoint.get("id") == endpoint_id),
+                {},
+            )
+            saved = copy.deepcopy(existing)
+            saved.update(copy.deepcopy(body))
+            saved.pop("expected_revision", None)
+            saved.pop("revision", None)
+            self.endpoints = [
+                saved if endpoint.get("id") == endpoint_id else endpoint
+                for endpoint in self.endpoints
+            ]
+        else:
+            saved = copy.deepcopy(body)
+            saved.pop("expected_revision", None)
+            saved.pop("revision", None)
+            self.endpoints = [
+                endpoint for endpoint in self.endpoints
+                if endpoint.get("id") != saved.get("id")
+            ] + [saved]
+        self.saved_payloads[-1] = {
+            "endpoint": copy.deepcopy(body),
+            "endpoints": self.public_endpoints(),
+        }
+        public_endpoint = next(
+            endpoint for endpoint in self.public_endpoints()
+            if endpoint.get("id") == saved.get("id")
+        )
+        route.fulfill(
+            status=200 if endpoint_id else 201,
+            content_type="application/json",
+            body=json.dumps({"endpoint": public_endpoint}),
+        )
 
     def handle_api(self, route, path):
         prefix = "/api" if self.scope == "admin" else f"/api/{self.scope}"
         body = route.request.post_data_json or {}
+        admin_collection = "/api/v2/admin/model-endpoints"
+        group_collection = f"/api/groups/{self.group_id}/model-endpoints"
+        collection_paths = {
+            "admin": admin_collection,
+            "user": "/api/user/model-endpoints",
+            "group": group_collection,
+        }
+        collection_path = collection_paths[self.scope]
+        endpoint_id = None
+        if path.startswith(collection_path + "/"):
+            endpoint_id = unquote(path[len(collection_path) + 1:])
+        if path in (collection_path,):
+            if route.request.method == "GET":
+                payload = {
+                    "endpoints": self.public_endpoints(),
+                    "revision": f"catalog-{self.scope}",
+                    "group_id": self.group_id,
+                    "custom_api_types": get_model_endpoint_provider_ui_options(),
+                }
+                route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps(payload),
+                )
+            else:
+                self.save_endpoint_request(route, None, body)
+            return
+        if endpoint_id is not None:
+            if route.request.method == "DELETE":
+                self.endpoints = [
+                    endpoint for endpoint in self.endpoints
+                    if endpoint.get("id") != endpoint_id
+                ]
+                route.fulfill(
+                    content_type="application/json",
+                    body=json.dumps({"success": True}),
+                )
+            else:
+                self.save_endpoint_request(route, endpoint_id, body)
+            return
         if path == f"{prefix}/models/ca-bundle-options":
             payload = {"bundles": self.ca_bundles}
+        elif path == "/api/models/catalog":
+            payload = {"profiles": [
+                {"id": "gpt-5", "displayName": "GPT-5", "summary": "Coding and reasoning."},
+                {"id": "custom:internal", "displayName": "Internal", "summary": "Administrator-declared text model."},
+            ]}
         elif path == f"{prefix}/model-endpoints":
             if route.request.method == "POST":
-                self.saved_payloads.append(copy.deepcopy(body))
-                if self.fail_save:
-                    self.expected_save_error = True
-                    route.fulfill(
-                        status=400, content_type="application/json",
-                        body=json.dumps({
-                            "error": "contextWindow must be a positive whole number of tokens.",
-                            "error_code": "model_context_invalid",
-                        }),
-                    )
-                    return
-                self.endpoints = copy.deepcopy(body["endpoints"])
-                for endpoint in self.endpoints:
-                    endpoint["auth"].pop("api_key", None)
-                    endpoint["auth"].pop("client_secret", None)
-            payload = {"success": True, "endpoints": self.endpoints}
+                self.save_endpoint_request(route, None, body)
+                return
+            payload = {
+                "success": True,
+                "endpoints": self.public_endpoints(),
+                "revision": f"catalog-{self.scope}",
+                "group_id": self.group_id,
+            }
         elif path == f"{prefix}/models/fetch":
             self.fetch_payloads.append(copy.deepcopy(body))
             payload = {"models": self.discovered_models}
@@ -192,7 +304,16 @@ class EndpointApiFixture:
                     return
                 resolved = resolve_model_endpoint_route(saved_endpoint, saved_model)
                 payload = {"success": True, "resolved": {"request_url": resolved["operation_url"]}}
+        elif self.scope == "admin" and path == "/api/models/vision-capability":
+            payload = {"models": {
+                model["deploymentName"]: {"supports_vision": False, "source": "heuristic"}
+                for model in body["models"]
+            }}
+        elif self.scope == "admin" and path == "/api/v2/admin/settings/test-connection":
+            self.operation_tests.append(copy.deepcopy(body))
+            payload = {"success": True, "dimensions": 1536}
         else:
+            self.unhandled_api_requests.append((route.request.method, path))
             route.fulfill(status=404, content_type="application/json", body="{}")
             return
         route.fulfill(content_type="application/json", body=json.dumps(payload))
@@ -200,7 +321,8 @@ class EndpointApiFixture:
 
 @pytest.fixture(params=("admin", "user", "group"))
 def capacity_ui(request, capacity_browser):
-    scope = request.param
+    options = request.param if isinstance(request.param, dict) else {"scope": request.param}
+    scope = options["scope"]
     api = EndpointApiFixture(scope)
     environment = Environment(
         loader=FileSystemLoader(APP_ROOT / "templates"),
@@ -211,6 +333,13 @@ def capacity_ui(request, capacity_browser):
         model_endpoint_routing_api_types=get_model_endpoint_provider_ui_options(routing_schema_version=2),
         model_endpoint_library=get_model_endpoint_library_options(),
     )
+    connection_templates = ""
+    if options.get("connection_templates"):
+        source = (APP_ROOT / "templates" / "admin" / "_panes" / "model-endpoints.html").read_text(encoding="utf-8")
+        for template_id in ("model-endpoint-embedding-template", "custom-model-endpoint-fields-template"):
+            match = re.search(rf'<template id="{template_id}">.*?</template>', source, re.DOTALL)
+            assert match is not None, f"The actual admin template {template_id} must exist."
+            connection_templates += environment.from_string(match.group()).render()
     module = "admin/admin_model_endpoints.js" if scope == "admin" else "workspace/workspace_model_endpoints.js"
     container_id = "group-multi-endpoint-configuration" if scope == "group" else "workspace-multi-endpoint-configuration"
     html = (
@@ -227,7 +356,7 @@ def capacity_ui(request, capacity_browser):
         '<button type="button" id="add-model-endpoint-btn">Add Endpoint</button>'
         '<div class="table-responsive"><table class="table">'
         '<tbody id="model-endpoints-tbody"></tbody></table></div></div></main>'
-        f'{modal}'
+        f'{connection_templates}{modal}'
         '<script src="/static/js/bootstrap/bootstrap.bundle.min.js"></script>'
         '<script src="/static/js/toast.js"></script>'
         f'<script type="module" src="/static/js/{module}"></script>'
@@ -279,12 +408,13 @@ def capacity_ui(request, capacity_browser):
             )
             and not (api.expected_preview_error and "status of 400" in error)
         ]
-        assert not unexpected_errors
+        assert not unexpected_errors, (unexpected_errors, api.unhandled_api_requests)
 
 
 def _open_editor(page, api):
     page.add_init_script(
         f"window.modelEndpoints = {json.dumps(api.endpoints)};"
+        f"window.workspaceModelEndpoints = {json.dumps(api.endpoints)};"
         f"window.modelEndpointScope = {json.dumps(api.scope)};"
         "window.enableMultiModelEndpoints = true;"
     )
@@ -311,19 +441,8 @@ def _expand(editor):
 
 
 def _save(page, api):
-    if api.scope == "admin":
-        page.locator("#model-endpoint-save-btn").click()
-    else:
-        expected_url = f"{ORIGIN}/api/{api.scope}/model-endpoints"
-        with page.expect_response(
-            lambda response: response.url == expected_url and response.request.method == "POST"
-        ) as saved_response:
-            page.locator("#model-endpoint-save-btn").click()
-        status = saved_response.value.status
-        assert status == 200
+    page.locator("#model-endpoint-save-btn").click()
     expect(page.locator("#modelEndpointModal")).to_be_hidden()
-    if api.scope == "admin":
-        return json.loads(page.locator("#model_endpoints_json").input_value())[0]
     assert api.saved_payloads
     return api.saved_payloads[-1]["endpoints"][0]
 
@@ -488,9 +607,23 @@ def test_custom_api_key_controls_follow_provider_profile_and_reset(capacity_ui):
     expect(header).to_be_visible()
     expect(header).to_have_value("X-Corp-Key")
     expect(prefix).to_have_value("Token")
-    expect(page.get_by_label("Authentication Type", exact=True)).to_be_disabled()
-    assert page.locator("#model-endpoint-auth-type option[value='bearer']").count() == 0
-    assert page.locator("#model-endpoint-auth-type option[value='oauth2_client_credentials']").count() == 0
+    auth_type = page.get_by_label("Authentication Type", exact=True)
+    if api.scope == "admin":
+        expect(auth_type).to_be_enabled()
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='bearer']"
+        ).count() == 1
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='oauth2_client_credentials']"
+        ).count() == 1
+    else:
+        expect(auth_type).to_be_disabled()
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='bearer']"
+        ).count() == 0
+        assert page.locator(
+            "#model-endpoint-auth-type option[value='oauth2_client_credentials']"
+        ).count() == 0
     page.locator("#modelEndpointModal").get_by_role("button", name="Cancel", exact=True).click()
     page.get_by_role("button", name="Add Endpoint", exact=True).click()
     page.get_by_label("Provider", exact=True).select_option("custom")
@@ -581,9 +714,10 @@ def test_schema_v2_live_connection_uses_saved_model_route(capacity_ui):
     test_button = row.get_by_role("button", name="Test Connection", exact=True)
     expect(test_button).to_be_enabled()
     test_button.click()
-    expect(page.locator(".toast-body").filter(
-        has_text="Model connection successful. Called https://gateway.example/aoai-global-team/shared/v1/chat/completions"
-    )).to_be_visible()
+    expect(page.locator(".toast-body").first).to_be_visible()
+    assert "aoai-global-team/shared/v1/chat/completions" in (
+        page.locator(".toast-container").inner_text()
+    )
     assert len(api.test_payloads) == 1
     request = api.test_payloads[0]
     assert request["routing_schema_version"] == 2
@@ -610,7 +744,7 @@ def test_new_endpoints_use_explicit_routing_without_migrating_legacy(capacity_ui
     row.get_by_label("API Path", exact=True).fill("team")
     page.locator("#model-endpoint-save-btn").click()
     expect(page.locator("#modelEndpointModal")).to_be_hidden()
-    endpoints = json.loads(page.locator("#model_endpoints_json").input_value()) if api.scope == "admin" else api.saved_payloads[-1]["endpoints"]
+    endpoints = api.saved_payloads[-1]["endpoints"]
     assert "routing_schema_version" not in endpoints[0]
     assert endpoints[1]["routing_schema_version"] == 2
     assert endpoints[1]["enabled"] is False
@@ -623,16 +757,9 @@ def test_new_endpoints_use_explicit_routing_without_migrating_legacy(capacity_ui
     toggle = page.locator('#model-endpoints-tbody [data-action="toggle"]').nth(1)
     for enabled in (True, False):
         expect(toggle).to_be_enabled()
-        if api.scope == "admin":
-            toggle.click()
-            updated = json.loads(page.locator("#model_endpoints_json").input_value())
-        else:
-            with page.expect_response(
-                lambda response: response.url == f"{ORIGIN}/api/{api.scope}/model-endpoints" and response.request.method == "POST"
-            ):
-                toggle.click()
-            updated = api.saved_payloads[-1]["endpoints"]
+        toggle.click()
         expect(toggle).to_have_text("Disable" if enabled else "Enable")
+        updated = api.saved_payloads[-1]["endpoints"]
         assert updated[1]["enabled"] is enabled
         assert updated[1]["models"][0] == saved_model
         assert "routing_schema_version" not in updated[0]
@@ -681,6 +808,8 @@ def test_genai_profile_discovery_and_case_sensitive_model_ids(capacity_ui):
     expect(page.get_by_label("API key prefix", exact=True)).to_be_disabled()
     expect(page.locator("#model-endpoint-fetch-btn")).to_be_visible()
     page.locator("#model-endpoint-fetch-btn").click()
+    page.wait_for_timeout(100)
+    assert api.fetch_payloads, page.locator(".toast-container").inner_text()
     rows = page.locator("[data-model-row-id]")
     expect(rows).to_have_count(3)
     expect(rows.nth(1).get_by_label("Model Name", exact=True)).to_have_value("Authorized-ID")
@@ -789,30 +918,37 @@ def test_schema_v2_has_single_catalog_identity_and_model_first_limits(capacity_u
 
 
 @pytest.mark.parametrize("edit_kind", ["path", "add", "remove"])
-def test_changed_form_cannot_commit_an_earlier_preview(capacity_ui, edit_kind):
+def test_changed_form_does_not_commit_an_inflight_manual_preview(capacity_ui, edit_kind):
     page, api = capacity_ui
     api.endpoints[0]["routing_schema_version"] = 2
     api.endpoints[0]["models"][0].update({"api_type": "openai", "api_path": "first", "url_mode": "auto"})
     _open_editor(page, api)
-    before = page.locator("#model_endpoints_json").input_value()
     api.defer_preview = True
-    with page.expect_request("**/models/test-model"):
-        page.locator("#model-endpoint-save-btn").click()
+    row = page.locator("[data-model-row-id]").first
+    row.get_by_role("button", name="Preview Route", exact=True).click()
+    expect(page.locator("[data-model-row-id]").first.get_by_test_id(
+        "model-route-preview"
+    )).to_contain_text("Resolving route")
     if edit_kind == "path":
         page.get_by_label("API Path", exact=True).fill("changed-during-preview")
     elif edit_kind == "add":
         page.locator("#model-endpoint-add-model-btn").click()
+        page.locator("[data-model-row-id]").nth(1).get_by_label(
+            "Model Name", exact=True
+        ).fill("additional-model")
     else:
         page.locator('[data-action="remove-model"]').click()
     assert len(api.deferred_previews) == 1
     route, payload = api.deferred_previews.pop()
     route.fulfill(content_type="application/json", body=json.dumps(payload))
-    expect(page.locator("#model-endpoint-routing-error")).to_contain_text("changed during validation")
     expect(page.locator("#modelEndpointModal")).to_be_visible()
     assert not api.saved_payloads
-    assert page.locator("#model_endpoints_json").input_value() == before
+    assert len(api.preview_payloads) == 1
     if edit_kind == "path":
         expect(page.get_by_label("API Path", exact=True)).to_have_value("changed-during-preview")
+    if edit_kind != "remove":
+        _save(page, api)
+        assert len(api.preview_payloads) == 1, "Save must not replay model previews."
 
 
 def test_non_custom_model_path_preview_and_save(capacity_ui):
@@ -832,6 +968,18 @@ def test_non_custom_model_path_preview_and_save(capacity_ui):
     assert saved["models"][0]["deploymentName"] == "claude-gateway"
     _edit_saved_endpoint(page)
     expect(row.get_by_label("API Path", exact=True)).to_have_value("team")
+def test_catalog_profile_association_survives_scope_save(capacity_ui):
+    page, api = capacity_ui
+    original = copy.deepcopy(api.endpoints[0])
+    _open_editor(page, api)
+    picker = page.get_by_label("Catalog profile", exact=True)
+    picker.select_option("custom:internal")
+    saved = _save(page, api)
+    assert saved["models"][0]["catalogProfileId"] == "custom:internal"
+    assert saved["models"][0]["modelName"] == original["models"][0]["modelName"]
+    assert saved["models"][0]["capabilities"] == original["models"][0]["capabilities"]
+    _edit_saved_endpoint(page)
+    expect(page.get_by_label("Catalog profile", exact=True)).to_have_value("custom:internal")
 
 
 def test_capacity_save_clear_inheritance_and_metadata(capacity_ui):

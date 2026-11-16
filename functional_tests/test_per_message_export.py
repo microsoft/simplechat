@@ -32,6 +32,18 @@ sys.path.insert(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app')
 )
 
+from functions_export_visuals import (  # noqa: E402
+    EXPORT_VISUAL_KIND_CHART,
+    EXPORT_VISUAL_KIND_DIAGRAM,
+    EXPORT_VISUAL_KIND_IMAGE,
+    EXPORT_VISUAL_KIND_MATH,
+    EXPORT_VISUAL_WRAPPER_CLASSES,
+    find_export_visual_caption_node,
+    find_export_visual_wrapper,
+    get_export_visual_kind,
+    is_export_visual_caption_class,
+)
+
 
 # ---------------------------------------------------------------------------
 # Helpers – replicate key logic from route_backend_conversation_export.py
@@ -236,6 +248,27 @@ def _load_email_export_helpers():
         'DOCX_MARKDOWN_EXTRAS': ['fenced-code-blocks', 'tables', 'break-on-newline', 'cuddled-lists', 'strike'],
         'EMAIL_CHART_ATTACHMENT_FILENAME_PREFIX': 'message_chart',
         'EMAIL_IMAGE_ATTACHMENT_FILENAME_PREFIX': 'message_image',
+        'EMAIL_VISUAL_ATTACHMENT_FILENAME_PREFIX_BY_KIND': {
+            EXPORT_VISUAL_KIND_CHART: 'message_chart',
+            EXPORT_VISUAL_KIND_IMAGE: 'message_image',
+            EXPORT_VISUAL_KIND_DIAGRAM: 'message_diagram',
+            EXPORT_VISUAL_KIND_MATH: 'message_formula',
+        },
+        'EMAIL_VISUAL_ATTACHMENT_LABELS': {
+            EXPORT_VISUAL_KIND_CHART: 'Chart',
+            EXPORT_VISUAL_KIND_IMAGE: 'Image',
+            EXPORT_VISUAL_KIND_DIAGRAM: 'Diagram',
+            EXPORT_VISUAL_KIND_MATH: 'Formula',
+        },
+        'EXPORT_VISUAL_KIND_CHART': EXPORT_VISUAL_KIND_CHART,
+        'EXPORT_VISUAL_KIND_DIAGRAM': EXPORT_VISUAL_KIND_DIAGRAM,
+        'EXPORT_VISUAL_KIND_IMAGE': EXPORT_VISUAL_KIND_IMAGE,
+        'EXPORT_VISUAL_KIND_MATH': EXPORT_VISUAL_KIND_MATH,
+        'EXPORT_VISUAL_WRAPPER_CLASSES': EXPORT_VISUAL_WRAPPER_CLASSES,
+        'find_export_visual_caption_node': find_export_visual_caption_node,
+        'find_export_visual_wrapper': find_export_visual_wrapper,
+        'get_export_visual_kind': get_export_visual_kind,
+        'is_export_visual_caption_class': is_export_visual_caption_class,
         'EMAIL_SUBJECT_CHAR_LIMIT': 120,
         'EMAIL_SUBJECT_SOURCE_CHAR_LIMIT': 12000,
         'INLINE_IMAGE_PROPOSAL_EXPORT_REGEX': re.compile(
@@ -244,6 +277,8 @@ def _load_email_export_helpers():
         ),
         '_normalize_content': _normalize_content,
         'replace_inline_chart_blocks_with_export_html': lambda content: content,
+        'replace_inline_visual_blocks_with_export_html': lambda content, visual_assets=None: content,
+        'normalize_visual_assets': lambda raw_assets, max_count=None: [],
         'decode_base64_image_data_uri': _decode_base64_image_data_uri,
         '_role_to_label': lambda role: {
             'assistant': 'Assistant',
@@ -546,7 +581,7 @@ def test_email_export_converts_inline_charts_to_png_download_payload():
     )
     chart_block = '```simplechart\n{"kind":"bar"}\n```'
 
-    def fake_chart_export(content):
+    def fake_visual_export(content, visual_assets=None):
         return str(content or '').replace(
             chart_block,
             (
@@ -557,7 +592,7 @@ def test_email_export_converts_inline_charts_to_png_download_payload():
             )
         )
 
-    helpers['replace_inline_chart_blocks_with_export_html'] = fake_chart_export
+    helpers['replace_inline_visual_blocks_with_export_html'] = fake_visual_export
 
     draft = helpers['_message_to_email_draft_payload'](
         message={
@@ -879,7 +914,7 @@ def test_per_message_export_uses_content_override_contract():
 
     assert 'function buildMessageExportRequestBody(messageDiv, messageId, conversationId, role, extraFields = {})' in frontend_source
     assert 'requestBody.message_content_override = messageContentOverride;' in frontend_source
-    assert "body: JSON.stringify(buildMessageExportRequestBody(messageDiv, messageId, conversationId, role))" in frontend_source
+    assert "body: JSON.stringify(\n                await buildMessageExportRequestBody(messageDiv, messageId, conversationId, role)\n            )" in frontend_source
     assert 'delete requestBody.message_content_override;' in frontend_source
 
     print("✅ test_per_message_export_uses_content_override_contract passed!")

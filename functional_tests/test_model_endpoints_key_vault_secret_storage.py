@@ -1,9 +1,13 @@
-#!/usr/bin/env python3
 # test_model_endpoints_key_vault_secret_storage.py
+#!/usr/bin/env python3
 """
 Functional test for MultiGPT endpoint Key Vault secret storage.
-Version: 0.241.179
+Version: 0.261.140
 Implemented in: 0.241.179
+Strict screening credential hydration and safe retrieval logging: 0.261.106
+Custom credential strict hydration merge coverage: 0.261.113
+Actionable secret-write errors and explicit diagnostic credentials: 0.261.125
+Endpoint-keyed user and group secret names are always staged: 0.261.140
 
 This test ensures MultiGPT endpoint secrets are stored in Key Vault,
 returned to the UI as placeholders, resolved for backend use, and cleaned up
@@ -14,8 +18,13 @@ the secret.
 
 import importlib
 import os
+import re
 import sys
 import types
+from unittest.mock import Mock, patch
+
+import pytest
+from azure.core.exceptions import HttpResponseError
 
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -123,6 +132,49 @@ def read_file_text(file_path):
         return file_handle.read()
 
 
+def test_denied_secret_write_is_actionable_without_plaintext_fallback():
+    FakeSecretClient.reset()
+    module, original_modules = load_functions_keyvault_module()
+    denied = HttpResponseError(message="private provider details: synthetic-secret")
+    denied.status_code = 403
+    endpoint = {"id": "endpoint-123", "auth": {"type": "api_key", "api_key": "synthetic-secret"}}
+    try:
+        with (
+            patch.object(FakeSecretClient, "set_secret", side_effect=denied),
+            patch.object(module, "log_event") as logged,
+            pytest.raises(module.KeyVaultSecretStorageError) as failure,
+        ):
+            module.keyvault_model_endpoint_save_helper(
+                endpoint, "endpoint-123", scope="global", stage_new_secrets=True,
+            )
+        assert failure.value.code == "key_vault_write_forbidden"
+        assert "Key Vault Secrets Officer" in failure.value.public_message
+        assert "synthetic-secret" not in failure.value.public_message
+        assert "private provider details" not in str(logged.call_args_list)
+        assert "synthetic-secret" not in str(logged.call_args_list)
+        assert FakeSecretClient.stored_secrets == {}
+        assert endpoint["auth"]["api_key"] == "synthetic-secret"
+    finally:
+        restore_modules(original_modules)
+
+
+@pytest.mark.parametrize("identity", ["", None, "11111111-2222-3333-4444-555555555555"])
+def test_explicit_diagnostic_identity_does_not_reload_saved_settings(identity):
+    module, original_modules = load_functions_keyvault_module()
+    try:
+        with patch.object(module.app_settings_cache, "get_settings_cache", side_effect=AssertionError("Unexpected saved identity")):
+            credential = module.get_keyvault_credential(
+                settings={"key_vault_identity": identity},
+                connection_timeout=5, read_timeout=10, retry_total=0, process_timeout=10,
+            )
+        assert credential.kwargs == {
+            "managed_identity_client_id": identity or None,
+            "connection_timeout": 5, "read_timeout": 10, "retry_total": 0, "process_timeout": 10,
+        }
+    finally:
+        restore_modules(original_modules)
+
+
 def test_model_endpoint_key_vault_helper_lifecycle():
     """Ensure endpoint auth secrets are stored, resolved, and cleaned up correctly."""
     print("🔍 Testing model endpoint Key Vault helper lifecycle...")
@@ -142,7 +194,11 @@ def test_model_endpoint_key_vault_helper_lifecycle():
         saved_endpoint = module.keyvault_model_endpoint_save_helper(endpoint, "endpoint-123", scope="user")
         secret_reference = saved_endpoint["auth"]["api_key"]
 
-        assert secret_reference == "endpoint-123--model-endpoint--user--model-endpoint-api-key"
+        # User and group secret names are keyed by the endpoint id alone, so a new
+        # value gets a fresh staged name rather than the deterministic
+        # ``model-endpoint-api-key`` name another user's endpoint with the same id
+        # could hold (0.261.140).
+        assert re.fullmatch(r"endpoint-123--model-endpoint--user--s-[0-9a-f]{16,}", secret_reference)
         assert FakeSecretClient.stored_secrets[secret_reference] == "super-secret-key"
 
         placeholder_endpoint = module.keyvault_model_endpoint_get_helper(
@@ -219,10 +275,159 @@ def test_model_endpoint_frontend_contract_files():
     print("✅ Model endpoint UI/backend stored-secret contract passed.")
 
 
+def test_model_endpoint_strict_hydration_preserves_legacy_returns_and_plaintext():
+    """Strict runtime hydration fails closed while legacy retrieval remains opt-in."""
+    FakeSecretClient.reset()
+    module, original_modules = load_functions_keyvault_module()
+    reference = "endpoint-123--model-endpoint--global--model-endpoint-api-key"
+    endpoint = {"id": "endpoint-123", "auth": {"type": "api_key", "api_key": reference}}
+    configured = {"enable_key_vault_secret_storage": True, "key_vault_name": "unit-test-vault"}
+    try:
+        module.log_event = Mock()
+        for settings in (
+            configured,
+            {**configured, "enable_key_vault_secret_storage": False},
+            {**configured, "key_vault_name": ""},
+        ):
+            module.app_settings_cache.get_settings_cache = Mock(return_value=settings)
+            assert module.retrieve_secret_from_key_vault_by_full_name(reference) == reference
+            assert module.keyvault_model_endpoint_get_helper(
+                endpoint, "endpoint-123", return_type=module.SecretReturnType.VALUE,
+            )["auth"]["api_key"] == reference
+            for return_type in (module.SecretReturnType.NAME, module.SecretReturnType.TRIGGER):
+                assert module.keyvault_model_endpoint_get_helper(
+                    endpoint, "endpoint-123", return_type=return_type, strict=True,
+                ) == module.keyvault_model_endpoint_get_helper(
+                    endpoint, "endpoint-123", return_type=return_type,
+                )
+            for operation in (
+                lambda: module.retrieve_secret_from_key_vault_by_full_name(reference, strict=True),
+                lambda: module.keyvault_model_endpoint_get_helper(
+                    endpoint, "endpoint-123", return_type=module.SecretReturnType.VALUE, strict=True,
+                ),
+            ):
+                try:
+                    operation()
+                except ValueError as error:
+                    assert reference not in str(error)
+                else:
+                    raise AssertionError("Strict hydration must reject an unresolved stored credential.")
+            plaintext = {"id": "endpoint-123", "auth": {"type": "api_key", "api_key": "plaintext-test-key"}}
+            assert module.keyvault_model_endpoint_get_helper(
+                plaintext, "endpoint-123", return_type=module.SecretReturnType.VALUE, strict=True,
+            ) == plaintext
+            assert module.retrieve_secret_from_key_vault_by_full_name("plaintext-test-key", strict=True) == "plaintext-test-key"
+            for placeholder in (module.ui_trigger_word, module.REDACTED_SECRET_VALUE):
+                redacted = {"id": "endpoint-123", "auth": {"type": "api_key", "api_key": placeholder}}
+                assert module.keyvault_model_endpoint_get_helper(
+                    redacted, "endpoint-123", return_type=module.SecretReturnType.VALUE,
+                ) == redacted
+                try:
+                    module.keyvault_model_endpoint_get_helper(
+                        redacted, "endpoint-123", return_type=module.SecretReturnType.VALUE, strict=True,
+                    )
+                except ValueError as error:
+                    assert placeholder not in str(error)
+                else:
+                    raise AssertionError("Strict hydration must reject a redacted credential placeholder.")
+        assert reference not in repr(module.log_event.call_args_list)
+        assert all(not call.kwargs.get("exceptionTraceback") for call in module.log_event.call_args_list)
+    finally:
+        FakeSecretClient.reset()
+        restore_modules(original_modules)
+
+
+def test_model_endpoint_strict_hydration_success_is_nonmutating_and_logs_no_secrets():
+    """Resolve API keys and client secrets without changing references or UI modes."""
+    FakeSecretClient.reset()
+    module, original_modules = load_functions_keyvault_module()
+    reference = "endpoint-123--model-endpoint--global--model-endpoint-api-key"
+    try:
+        module.log_event = Mock()
+        FakeSecretClient.stored_secrets[reference] = "hydrated-test-key"
+        for field, auth_type in (("api_key", "api_key"), ("client_secret", "service_principal")):
+            endpoint = {"id": "endpoint-123", "auth": {"type": auth_type, field: reference}}
+            for return_type, expected in (
+                (module.SecretReturnType.VALUE, "hydrated-test-key"),
+                (module.SecretReturnType.NAME, reference),
+                (module.SecretReturnType.TRIGGER, module.ui_trigger_word),
+            ):
+                resolved = module.keyvault_model_endpoint_get_helper(
+                    endpoint, "endpoint-123", return_type=return_type, strict=True,
+                )
+                assert resolved["auth"][field] == expected
+                assert endpoint["auth"][field] == reference
+        for private_value in (reference, "hydrated-test-key"):
+            assert private_value not in repr(module.log_event.call_args_list)
+    finally:
+        FakeSecretClient.reset()
+        restore_modules(original_modules)
+
+
+def test_custom_endpoint_key_vault_secret_schemes():
+    """Custom secrets retain scoped staging, strict hydration, and cleanup."""
+    module, original_modules = load_functions_keyvault_module()
+    try:
+        for auth_type, field in (("bearer", "bearer_token"), ("oauth2_client_credentials", "client_secret")):
+            FakeSecretClient.reset()
+            endpoint = {"id": "custom-connection", "provider": "custom", "auth": {"type": auth_type, field: "fixture-secret"}}
+            saved = module.keyvault_model_endpoint_save_helper(endpoint, endpoint["id"], scope="global")
+            reference = saved["auth"][field]
+            assert FakeSecretClient.stored_secrets[reference] == "fixture-secret"
+            for strict in (False, True):
+                resolved = module.keyvault_model_endpoint_get_helper(
+                    saved, endpoint["id"], scope="global", return_type=module.SecretReturnType.VALUE,
+                    strict=strict,
+                )
+                assert resolved["auth"][field] == "fixture-secret"
+                assert saved["auth"][field] == reference
+            unchanged = module.keyvault_model_endpoint_save_helper(
+                {**endpoint, "auth": {"type": auth_type, field: ""}},
+                endpoint["id"], scope="global", existing_endpoint=saved,
+            )
+            assert unchanged["auth"][field] == reference
+            try:
+                module.keyvault_model_endpoint_save_helper(
+                    {"auth": {"type": auth_type, field: reference}}, "different-connection", scope="global",
+                )
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("A Custom credential reference crossed endpoint scope.")
+            staged = module.keyvault_model_endpoint_save_helper(
+                {**endpoint, "auth": {"type": auth_type, field: "rotated-fixture-secret"}},
+                endpoint["id"], scope="global", existing_endpoint=saved, stage_new_secrets=True,
+            )
+            assert staged["auth"][field] != reference
+            assert FakeSecretClient.stored_secrets[reference] == "fixture-secret"
+            module.keyvault_model_endpoint_cleanup_helper(saved, staged, endpoint["id"], scope="global")
+            assert reference not in FakeSecretClient.stored_secrets
+            module.keyvault_model_endpoint_delete_helper(staged, endpoint["id"], scope="global")
+            assert not FakeSecretClient.stored_secrets
+            assert module.keyvault_model_endpoint_get_helper(
+                staged, endpoint["id"], scope="global", return_type=module.SecretReturnType.VALUE,
+            ) == staged
+            try:
+                module.keyvault_model_endpoint_get_helper(
+                    staged, endpoint["id"], scope="global", return_type=module.SecretReturnType.VALUE,
+                    strict=True,
+                )
+            except ValueError as error:
+                assert staged["auth"][field] not in str(error)
+            else:
+                raise AssertionError("Strict Custom hydration must reject an unavailable credential.")
+    finally:
+        FakeSecretClient.reset()
+        restore_modules(original_modules)
+
+
 def run_tests():
     tests = [
         test_model_endpoint_key_vault_helper_lifecycle,
         test_model_endpoint_frontend_contract_files,
+        test_model_endpoint_strict_hydration_preserves_legacy_returns_and_plaintext,
+        test_model_endpoint_strict_hydration_success_is_nonmutating_and_logs_no_secrets,
+        test_custom_endpoint_key_vault_secret_schemes,
     ]
     results = []
 

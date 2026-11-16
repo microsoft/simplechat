@@ -501,6 +501,8 @@
                         Indexing maintenance only adds missing expected composite indexes and preserves existing policy paths. Composite indexes can increase write-index overhead while improving supported lookup and ordered-query speed. Stale cleanup is allowlisted to obsolete cache artifacts, supports dry-run review, and deletes at most one bounded batch per run.
                     </div>
                     <div id="cosmos-maintenance-message" class="alert alert-info d-none" role="status" aria-live="polite"></div>
+                    <div id="cosmos-indexing-last-apply" class="alert alert-info d-none small mb-3" role="status" aria-live="polite"></div>
+                    <p class="small text-muted">Current index inspection is read-only. Refreshing status does not retry a failed index update.</p>
 
                     <div class="row g-3">
                         <div class="col-md-6 col-xl-3">
@@ -523,7 +525,7 @@
                         </div>
                         <div class="col-md-6 col-xl-3">
                             <div class="border rounded p-2 h-100">
-                                <div class="small text-muted">Missing Expected Indexes</div>
+                                <div class="small text-muted">Containers Missing Expected Indexes</div>
                                 <div class="fw-semibold" id="cosmos-indexing-policy-missing-count">Not loaded</div>
                             </div>
                         </div>

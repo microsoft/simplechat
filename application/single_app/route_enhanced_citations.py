@@ -2,7 +2,9 @@
 # Backend endpoints for enhanced citations supporting different media types
 
 from flask import jsonify, request, Response
+from contextlib import ExitStack
 from datetime import datetime, timedelta, timezone
+import hashlib
 import logging
 import os
 import tempfile
@@ -10,27 +12,43 @@ import requests
 import mimetypes
 import io
 import uuid
+import zipfile
 from urllib.parse import quote
 import pandas
 import fitz
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
+from azure.core.exceptions import AzureError, ResourceNotFoundError
 from werkzeug.utils import secure_filename
 
+from content_screening.access import (
+    assert_blob_available,
+    assert_current_request_sources_available,
+    assert_document_available,
+    assert_evidence_available,
+    get_available_blob_reference,
+    read_available_document_bytes,
+)
+from content_screening.contracts import ScreeningError
+from excel_workbook_reader import build_excel_table_preview
 from functions_authentication import login_required, user_required, get_current_user_id, get_current_user_info
 from functions_appinsights import log_event
+from functions_artifact_publication import publish_generated_chat_artifact_for_user
 from functions_settings import get_settings, enabled_required
-from functions_documents import create_document, get_document_blob_storage_info, update_document
+from functions_documents import get_document_blob_storage_info, get_document_record
+from functions_image_formats import ImageFormatError, PREVIEW_VARIANTS, is_image_file_name, to_browser_image
+from functions_image_references import personal_document_metadata_reader
 from functions_conversation_memory import is_conversation_memory_blob_path
 from functions_visio import render_vsdx_page_preview
-from functions_group import check_group_status_allows_operation, find_group_by_id, get_user_groups, require_active_group
-from functions_notifications import create_group_notification, create_notification, create_public_workspace_notification
-from functions_public_workspaces import check_public_workspace_status_allows_operation, get_user_visible_public_workspace_ids_from_settings, require_active_public_workspace
+from functions_group import get_user_groups
+from public_source_access import get_public_source_workspace_ids
 from functions_collaboration import build_conversation_participation_context
 from functions_generated_file_approvals import assert_generated_file_approval_allows_download
+from functions_generated_artifact_sources import authorize_generated_artifact_source, has_generated_artifact_source
+from functions_orchestration_artifacts import is_orchestration_artifact_source
+from functions_saved_analysis import authorize_analysis_artifact
 from functions_simplechat_operations import (
     assert_generated_chat_artifact_is_published_for_user,
     download_blob_content,
-    upload_generated_document_for_current_user,
 )
 from swagger_wrapper import swagger_route, get_auth_security
 from config import CLIENTS, storage_account_user_documents_container_name, storage_account_group_documents_container_name, storage_account_public_documents_container_name, storage_account_personal_chat_container_name, IMAGE_EXTENSIONS, VIDEO_EXTENSIONS, AUDIO_EXTENSIONS, TABULAR_EXTENSIONS, VISIO_EXTENSIONS, cosmos_messages_container, cosmos_conversations_container
@@ -77,6 +95,11 @@ def _get_authorized_chat_artifact_message(user_id, conversation_id, message_id):
     # unreachable for every caller, including the participant who requested it.
     assert_generated_file_approval_allows_download(user_id, message_item)
     assert_generated_chat_artifact_is_published_for_user(user_id, message_item)
+    # A generated file takes its access from this conversation, so the documents it was
+    # made from are not rechecked. A workspace link names the active representation,
+    # and reading that workspace document is an input read.
+    if message_item.get("workspace_document_id"):
+        assert_document_available(message_item["workspace_document_id"], user_id, purpose="chat_file")
     return message_item
 
 
@@ -123,9 +146,20 @@ def _serialize_tabular_preview_table(df_preview):
     return columns, rows
 
 
+def _preview_integer(value, name, default, minimum=0, maximum=None):
+    if value is None:
+        return default
+    if not isinstance(value, str) or not value.isascii() or not value.isdigit():
+        raise ValueError(f"{name} must be an integer.")
+    parsed = int(value)
+    if parsed < minimum or maximum is not None and parsed > maximum:
+        raise ValueError(f"{name} is outside the supported preview range.")
+    return parsed
+
+
 def _resolve_document_blob_reference(raw_doc):
     """Resolve the persisted blob container and path for the cited document."""
-    container_name, blob_name = get_document_blob_storage_info(raw_doc)
+    _, container_name, blob_name = get_available_blob_reference(raw_doc, purpose="citation")
     if not container_name or not blob_name:
         raise FileNotFoundError("Blob reference is incomplete for this document")
     return container_name, blob_name
@@ -196,6 +230,59 @@ def _build_content_disposition(disposition, file_name, fallback='download'):
     return f'{normalized_disposition}; filename="{ascii_file_name}"; filename*=UTF-8\'\'{encoded_file_name}'
 
 
+def _serve_chat_artifact_download(user_id, conversation_id, message_id):
+    """Read an authorized chat artifact, not a workspace document's representation."""
+    artifact = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
+    with ExitStack() as resources:
+        active_document = None
+        streamed = False
+        if artifact.get('workspace_document_id'):
+            active_document, content = read_available_document_bytes(
+                artifact['workspace_document_id'], user_id=user_id, purpose='chat_file',
+            )
+        elif has_generated_artifact_source(artifact.get('metadata') or {}):
+            # This explicit source can exceed the old in-memory artifact path.
+            from functions_simplechat_operations import open_generated_chat_artifact_stream
+
+            content = resources.enter_context(open_generated_chat_artifact_stream(artifact))
+            streamed = True
+        else:
+            content = download_blob_content(artifact['blob_container'], artifact['blob_path'])
+        current = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
+        identity_fields = ('id', 'conversation_id', 'workspace_document_id', 'blob_container', 'blob_path', 'filename', '_etag')
+        digest = (artifact.get('metadata') or {}).get('generated_artifact_content_sha256')
+        current_digest = (current.get('metadata') or {}).get('generated_artifact_content_sha256')
+        if any(artifact.get(field) != current.get(field) for field in identity_fields) or digest != current_digest:
+            raise LookupError('The artifact changed during download.')
+        if not streamed and active_document is None and digest and hashlib.sha256(content).hexdigest() != digest:
+            raise LookupError('The artifact content changed.')
+
+        file_name = (active_document or {}).get('file_name') or _resolve_generated_artifact_file_name(current)
+        if active_document is None and is_orchestration_artifact_source(
+            (current.get('metadata') or {}).get('generated_artifact_source'),
+        ):
+            authorized = authorize_generated_artifact_source(user_id, current)
+            content_type = authorized['descriptor']['media_type']
+        else:
+            content_type = {
+                '.csv': 'text/csv; charset=utf-8',
+                '.md': 'text/markdown; charset=utf-8',
+                '.json': 'application/json',
+            }.get(os.path.splitext(file_name)[1].lower()) or mimetypes.guess_type(file_name)[0] or 'application/octet-stream'
+        response = Response(
+            iter(lambda: content.read(65536), b'') if streamed else content,
+            content_type=content_type, headers={
+                'Content-Length': str(current['metadata']['generated_artifact_size_bytes'] if streamed else len(content)),
+                'Content-Disposition': _build_content_disposition('attachment', file_name),
+                'Cache-Control': 'private, no-store',
+                'X-Content-Type-Options': 'nosniff',
+            },
+        )
+        if streamed:
+            response.call_on_close(resources.pop_all().close)
+        return response
+
+
 def _log_enhanced_citations_debug(message, **details):
     """Write debug-gated enhanced citations diagnostics."""
     log_event(
@@ -220,6 +307,21 @@ def _log_enhanced_citations_error(message, error, **details):
 
 def register_enhanced_citations_routes(bp):
     """Register enhanced citations routes"""
+
+    @bp.after_request
+    def enforce_screened_citation_response(response):
+        try:
+            assert_current_request_sources_available()
+        except ScreeningError as error:
+            response = jsonify({"error": error.public_message, "error_code": error.code})
+            response.status_code = error.status_code
+        except (PermissionError, LookupError):
+            response = jsonify({"error": "Document not found or access denied."})
+            response.status_code = 404
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers.pop("ETag", None)
+        return response
 
     @bp.route("/api/enhanced_citations/document_metadata", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -494,6 +596,10 @@ def register_enhanced_citations_routes(bp):
             # approver: a plain group User can create a group shared conversation while the
             # approvers are that group's Owner, Admin, and Document Manager roles.
             assert_generated_file_approval_allows_download(user_id, file_msg)
+            if not (file_msg.get('metadata') or {}).get('is_generated_chat_artifact'):
+                # An uploaded chat file is an input read. A generated file takes its access
+                # from this conversation, so its sources are not rechecked.
+                assert_evidence_available(file_msg, user_id)
 
             if file_content_source != 'blob':
                 return jsonify({"error": "File is not stored in blob storage"}), 400
@@ -511,12 +617,16 @@ def register_enhanced_citations_routes(bp):
             if not blob_service_client:
                 return jsonify({"error": "Storage not available"}), 500
 
-            blob_client = blob_service_client.get_blob_client(
-                container=blob_container,
-                blob=blob_path
-            )
-            stream = blob_client.download_blob()
-            content = stream.readall()
+            if file_msg.get("workspace_document_id"):
+                active_document, content = read_available_document_bytes(
+                    file_msg["workspace_document_id"], user_id=user_id, purpose="chat_file",
+                )
+                filename = active_document.get("file_name") or filename
+            else:
+                assert_blob_available(blob_container, blob_path, user_id=user_id)
+                blob_client = blob_service_client.get_blob_client(container=blob_container, blob=blob_path)
+                content = blob_client.download_blob().readall()
+                assert_blob_available(blob_container, blob_path, user_id=user_id)
 
             # Determine content type
             content_type, _ = mimetypes.guess_type(filename)
@@ -601,6 +711,110 @@ def register_enhanced_citations_routes(bp):
             debug_print(f"Error serving workspace document download: {e}")
             return jsonify({"error": str(e)}), 500
 
+    @bp.route("/api/workspace_documents/image_preview", methods=["GET"])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    def preview_workspace_document_image():
+        """Serve an authorized workspace image as a browser-safe preview."""
+
+        def preview_file_extension(mime_type):
+            return {
+                'image/png': 'png',
+                'image/jpeg': 'jpg',
+                'image/gif': 'gif',
+                'image/webp': 'webp',
+                'image/bmp': 'bmp',
+                'image/heic': 'heic',
+                'image/heif': 'heif',
+            }.get(str(mime_type or '').split(';', 1)[0].strip().lower(), 'png')
+
+        def build_workspace_image_preview_response(content, preview_variant, file_name):
+            converted = to_browser_image(content, preview_variant)
+            safe_name = secure_filename(str(file_name or 'image').replace('\\', '/').rsplit('/', 1)[-1]) or 'image'
+            stem = secure_filename(safe_name.rsplit('.', 1)[0] if '.' in safe_name else safe_name) or 'image'
+            output_name = f"{stem}.{preview_file_extension(converted['mime_type'])}"
+            return Response(
+                converted['bytes'],
+                mimetype=converted['mime_type'],
+                headers={
+                    'Content-Length': str(len(converted['bytes'])),
+                    'Content-Disposition': f'inline; filename="{output_name}"',
+                    'Cache-Control': 'no-store, private',
+                    'X-Content-Type-Options': 'nosniff',
+                },
+            )
+
+        doc_id = str(request.args.get("doc_id") or "").strip()
+        if not doc_id:
+            return jsonify({"error": "doc_id is required"}), 400
+
+        scope = str(request.args.get("scope") or "personal").strip().lower()
+        if scope not in {"personal", "group", "public"}:
+            return jsonify({"error": "scope must be personal, group, or public"}), 400
+
+        variant = str(request.args.get("variant") or "thumbnail").strip().lower()
+        if variant not in PREVIEW_VARIANTS:
+            return jsonify({
+                "error": "The preview variant is not supported.",
+                "error_code": "invalid_preview_variant",
+            }), 400
+
+        scope_id = str(request.args.get("scope_id") or "").strip()
+        if scope in {"group", "public"} and not scope_id:
+            return jsonify({"error": "scope_id is required for this scope"}), 400
+
+        user_id = get_current_user_id()
+        if not user_id:
+            return jsonify({"error": "User not authenticated"}), 401
+
+        settings = get_settings()
+        if scope == "personal" and not settings.get("enable_user_workspace", False):
+            return jsonify({"error": "User workspaces are not enabled"}), 403
+        if scope == "group" and not settings.get("enable_group_workspaces", False):
+            return jsonify({"error": "Group workspaces are not enabled"}), 403
+        if scope == "public" and not settings.get("enable_public_workspaces", False):
+            return jsonify({"error": "Public workspaces are not enabled"}), 403
+
+        try:
+            read_kwargs = {"user_id": user_id, "purpose": "image_preview"}
+            if scope == "group":
+                read_kwargs["group_id"] = scope_id
+            elif scope == "public":
+                read_kwargs["public_workspace_id"] = scope_id
+            else:
+                # An unscoped read also searches group and public containers, bypassing their flags.
+                read_kwargs["metadata_reader"] = personal_document_metadata_reader
+
+            active_document, content = read_available_document_bytes(doc_id, **read_kwargs)
+            if scope == "personal" and (
+                active_document.get("group_id") or active_document.get("public_workspace_id")
+            ):
+                return jsonify({"error": "Document not found or access denied"}), 404
+            if not is_image_file_name(active_document.get("file_name")):
+                return jsonify({
+                    "error": "This file is not an image.",
+                    "error_code": "not_an_image",
+                }), 415
+            return build_workspace_image_preview_response(
+                content,
+                variant,
+                active_document.get("file_name") or doc_id,
+            )
+        except ScreeningError as exc:
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), exc.status_code
+        except ImageFormatError as exc:
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), exc.status_code
+        except (PermissionError, LookupError, CosmosResourceNotFoundError):
+            return jsonify({"error": "Document not found or access denied"}), 404
+        except Exception as exc:
+            log_event(
+                "[CITATIONS] Failed to serve workspace image preview.",
+                extra={"doc_id": doc_id, "scope": scope, "exception_type": type(exc).__name__},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "Failed to retrieve image preview"}), 500
+
     @bp.route("/api/chat_artifacts/download", methods=["GET"])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -617,25 +831,29 @@ def register_enhanced_citations_routes(bp):
             return jsonify({"error": "User not authenticated"}), 401
 
         try:
-            message_item = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
-            return serve_enhanced_citation_content(
-                {
-                    'file_name': _resolve_generated_artifact_file_name(message_item),
-                    'blob_container': message_item.get('blob_container'),
-                    'blob_path': message_item.get('blob_path'),
-                },
-                force_download=True,
+            return _serve_chat_artifact_download(user_id, conversation_id, message_id)
+        except ScreeningError as exc:
+            return jsonify({"error": exc.public_message, "error_code": exc.code}), exc.status_code
+        except PermissionError:
+            return jsonify({"error": "You no longer have access to this artifact."}), 403
+        except (LookupError, ResourceNotFoundError):
+            return jsonify({"error": "The artifact content is unavailable. Refresh the conversation and try again."}), 404
+        except ValueError:
+            return jsonify({"error": "Invalid artifact download request."}), 400
+        except (AzureError, RuntimeError) as exc:
+            log_event(
+                "[ENHANCED_CITATIONS] Chat artifact storage is unavailable.",
+                extra={"error_type": type(exc).__name__, "conversation_id": conversation_id, "message_id": message_id},
+                level=logging.ERROR,
             )
-        except PermissionError as exc:
-            debug_print(f"Forbidden chat artifact download attempt: {exc}")
-            return jsonify({"error": "Forbidden"}), 403
-        except LookupError as exc:
-            return jsonify({"error": str(exc)}), 404
-        except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-        except Exception as e:
-            debug_print(f"Error serving chat artifact download: {e}")
-            return jsonify({"error": "An internal error has occurred"}), 500
+            return jsonify({"error": "Artifact storage is temporarily unavailable. Please retry the download."}), 503
+        except Exception as exc:
+            log_event(
+                "[ENHANCED_CITATIONS] Chat artifact download failed.",
+                extra={"error_type": type(exc).__name__, "conversation_id": conversation_id, "message_id": message_id},
+                level=logging.ERROR,
+            )
+            return jsonify({"error": "The artifact could not be downloaded. Please retry."}), 500
 
     @bp.route("/api/chat_artifacts/promote", methods=["POST"])
     @swagger_route(security=get_auth_security())
@@ -644,6 +862,8 @@ def register_enhanced_citations_routes(bp):
     def promote_chat_artifact_to_workspace():
         """Promote a generated chat artifact into a workspace document."""
         payload = request.get_json(silent=True) or {}
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Invalid publication request."}), 400
         conversation_id = str(payload.get("conversation_id") or "").strip()
         message_id = str(payload.get("message_id") or "").strip()
 
@@ -660,226 +880,45 @@ def register_enhanced_citations_routes(bp):
             workspace_scope = _normalize_generated_artifact_target_scope(payload.get("workspace_scope"))
             message_item = _get_authorized_chat_artifact_message(user_id, conversation_id, message_id)
 
+            if not payload.get("workspace_scope"):
+                raise ValueError("Choose an explicit destination for this analysis artifact.")
+            authorize_generated_artifact_source(
+                user_id, message_item, for_publication=True, native_authorizer=authorize_analysis_artifact,
+            )
             file_name = _resolve_generated_artifact_file_name(message_item)
-            artifact_metadata = message_item.get("metadata", {}) or {}
-            source_blob_container = str(message_item.get("blob_container") or "").strip()
-            source_blob_path = str(message_item.get("blob_path") or "").strip()
-
-            if workspace_scope == "personal":
-                artifact_bytes = download_blob_content(source_blob_container, source_blob_path)
-                upload_result = upload_generated_document_for_current_user(
-                    file_name=file_name,
-                    file_content=artifact_bytes,
-                    workspace_scope="personal",
-                )
-                return jsonify({
-                    "message": "Generated artifact added to your personal workspace.",
-                    "workspace_scope": "personal",
-                    "approval_required": False,
-                    "document": upload_result.get("document"),
-                }), 200
-
             requester_display_name = (
                 str(current_user_info.get("displayName") or "").strip()
                 or str(current_user_info.get("email") or "").strip()
                 or "A workspace member"
             )
-            request_timestamp = datetime.now(timezone.utc).isoformat()
-            pending_file_name = _build_workspace_generated_artifact_file_name(file_name, message_id)
-            document_id = str(uuid.uuid4())
-
-            if workspace_scope == "group":
-                requested_group_id = str(payload.get("group_id") or "").strip()
-                resolved_group_id = require_active_group(
-                    user_id,
-                    allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
-                )
-                if requested_group_id and requested_group_id != resolved_group_id:
-                    raise PermissionError("Target group does not match your authorized active group")
-
-                group_doc = find_group_by_id(resolved_group_id)
-                if not group_doc:
-                    raise LookupError("Group not found")
-
-                allowed, reason = check_group_status_allows_operation(group_doc, "upload")
-                if not allowed:
-                    raise PermissionError(reason)
-
-                group_name = str(group_doc.get("name") or "group workspace").strip() or "group workspace"
-
-                create_document(
-                    file_name=pending_file_name,
-                    group_id=resolved_group_id,
-                    user_id=user_id,
-                    document_id=document_id,
-                    num_file_chunks=0,
-                    status="Pending approval",
-                    allow_deferred_xsd_source=True,
-                )
-                update_document(
-                    document_id=document_id,
-                    user_id=user_id,
-                    group_id=resolved_group_id,
-                    percentage_complete=0,
-                    generated_artifact_promotion_status="pending_approval",
-                    generated_artifact_original_file_name=file_name,
-                    generated_artifact_source_conversation_id=conversation_id,
-                    generated_artifact_source_message_id=message_id,
-                    generated_artifact_source_blob_container=source_blob_container,
-                    generated_artifact_source_blob_path=source_blob_path,
-                    generated_artifact_requested_by_user_id=user_id,
-                    generated_artifact_requested_by_display_name=requester_display_name,
-                    generated_artifact_requested_at=request_timestamp,
-                    generated_artifact_capability=str(artifact_metadata.get("generated_artifact_capability") or "").strip(),
-                    generated_artifact_output_format=str(artifact_metadata.get("generated_artifact_output_format") or "").strip(),
-                    generated_artifact_summary=str(artifact_metadata.get("generated_artifact_summary") or "").strip(),
-                )
-
-                create_group_notification(
-                    resolved_group_id,
-                    "approval_request_pending",
-                    "Approval required: generated artifact",
-                    f"{requester_display_name} requested approval for {pending_file_name} in {group_name}.",
-                    link_url="/group_workspaces",
-                    link_context={
-                        "workspace_type": "group",
-                        "group_id": resolved_group_id,
-                        "document_id": document_id,
-                    },
-                    metadata={
-                        "document_id": document_id,
-                        "group_id": resolved_group_id,
-                        "request_type": "generated_artifact_promotion",
-                        "conversation_id": conversation_id,
-                        "message_id": message_id,
-                    },
-                )
-                create_notification(
-                    user_id=user_id,
-                    notification_type="approval_request_pending_submitter",
-                    title="Generated artifact submitted for approval",
-                    message=f"{pending_file_name} is waiting for approval in {group_name}.",
-                    link_url="/group_workspaces",
-                    link_context={
-                        "workspace_type": "group",
-                        "group_id": resolved_group_id,
-                        "document_id": document_id,
-                    },
-                    metadata={
-                        "document_id": document_id,
-                        "group_id": resolved_group_id,
-                        "request_type": "generated_artifact_promotion",
-                    },
-                )
-
-                return jsonify({
-                    "message": f"Generated artifact submitted to {group_name} for approval.",
-                    "workspace_scope": "group",
-                    "approval_required": True,
-                    "group_id": resolved_group_id,
-                    "document": {
-                        "id": document_id,
-                        "file_name": pending_file_name,
-                        "status": "Pending approval",
-                    },
-                }), 202
-
-            requested_public_workspace_id = str(payload.get("public_workspace_id") or "").strip()
-            resolved_public_workspace_id, workspace_doc, _ = require_active_public_workspace(user_id)
-            if requested_public_workspace_id and requested_public_workspace_id != resolved_public_workspace_id:
-                raise PermissionError("Target public workspace does not match your authorized active workspace")
-
-            allowed, reason = check_public_workspace_status_allows_operation(workspace_doc, "upload")
-            if not allowed:
-                raise PermissionError(reason)
-
-            workspace_name = str(workspace_doc.get("name") or "public workspace").strip() or "public workspace"
-
-            create_document(
-                file_name=pending_file_name,
-                public_workspace_id=resolved_public_workspace_id,
-                user_id=user_id,
-                document_id=document_id,
-                num_file_chunks=0,
-                status="Pending approval",
-                allow_deferred_xsd_source=True,
+            result = publish_generated_chat_artifact_for_user(
+                user_id,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                destination={
+                    "workspace_scope": workspace_scope,
+                    "group_id": payload.get("group_id"),
+                    "public_workspace_id": payload.get("public_workspace_id"),
+                },
+                request_id=payload.get("request_id") or "manual",
+                requester_display_name=requester_display_name,
+                file_name=file_name,
             )
-            update_document(
-                document_id=document_id,
-                user_id=user_id,
-                public_workspace_id=resolved_public_workspace_id,
-                percentage_complete=0,
-                generated_artifact_promotion_status="pending_approval",
-                generated_artifact_original_file_name=file_name,
-                generated_artifact_source_conversation_id=conversation_id,
-                generated_artifact_source_message_id=message_id,
-                generated_artifact_source_blob_container=source_blob_container,
-                generated_artifact_source_blob_path=source_blob_path,
-                generated_artifact_requested_by_user_id=user_id,
-                generated_artifact_requested_by_display_name=requester_display_name,
-                generated_artifact_requested_at=request_timestamp,
-                generated_artifact_capability=str(artifact_metadata.get("generated_artifact_capability") or "").strip(),
-                generated_artifact_output_format=str(artifact_metadata.get("generated_artifact_output_format") or "").strip(),
-                generated_artifact_summary=str(artifact_metadata.get("generated_artifact_summary") or "").strip(),
-            )
-
-            create_public_workspace_notification(
-                resolved_public_workspace_id,
-                "approval_request_pending",
-                "Approval required: generated artifact",
-                f"{requester_display_name} requested approval for {pending_file_name} in {workspace_name}.",
-                link_url="/public_workspaces",
-                link_context={
-                    "workspace_type": "public",
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "document_id": document_id,
-                },
-                metadata={
-                    "document_id": document_id,
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "request_type": "generated_artifact_promotion",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                },
-            )
-            create_notification(
-                user_id=user_id,
-                notification_type="approval_request_pending_submitter",
-                title="Generated artifact submitted for approval",
-                message=f"{pending_file_name} is waiting for approval in {workspace_name}.",
-                link_url="/public_workspaces",
-                link_context={
-                    "workspace_type": "public",
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "document_id": document_id,
-                },
-                metadata={
-                    "document_id": document_id,
-                    "public_workspace_id": resolved_public_workspace_id,
-                    "request_type": "generated_artifact_promotion",
-                },
-            )
-
-            return jsonify({
-                "message": f"Generated artifact submitted to {workspace_name} for approval.",
-                "workspace_scope": "public",
-                "approval_required": True,
-                "public_workspace_id": resolved_public_workspace_id,
-                "document": {
-                    "id": document_id,
-                    "file_name": pending_file_name,
-                    "status": "Pending approval",
-                },
-            }), 202
+            if result["publication"]["state"] in {"uncertain", "approval_failed"}:
+                return jsonify(result), 409
+            return jsonify(result), 202 if result["approval_required"] else 200
         except PermissionError as exc:
-            return jsonify({"error": str(exc)}), 403
+            return jsonify({"error": "Artifact publication is not permitted."}), 403
         except LookupError as exc:
-            return jsonify({"error": str(exc)}), 404
+            return jsonify({"error": "The artifact or destination is unavailable."}), 404
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
+            return jsonify({"error": "Choose an explicit, valid artifact publication destination."}), 400
         except Exception as e:
-            debug_print(f"Error promoting chat artifact: {e}")
-            return jsonify({"error": str(e)}), 500
+            log_event(
+                "[SIMPLE_CHAT] Artifact publication failed",
+                {"exception_type": type(e).__name__}, debug_only=True,
+            )
+            return jsonify({"error": "Publication could not be confirmed. Retry the same request."}), 500
 
     @bp.route("/api/enhanced_citations/tabular_preview", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -894,7 +933,7 @@ def register_enhanced_citations_routes(bp):
         doc_id = request.args.get("doc_id")
         sheet_name = request.args.get("sheet_name")
         sheet_index = request.args.get("sheet_index")
-        max_rows = min(request.args.get("max_rows", 200, type=int), 500)
+        table_id = request.args.get("table_id")
         if not doc_id:
             return jsonify({"error": "doc_id is required"}), 400
 
@@ -903,6 +942,9 @@ def register_enhanced_citations_routes(bp):
             return jsonify({"error": "User not authenticated"}), 401
 
         try:
+            max_rows = _preview_integer(request.args.get("max_rows"), "max_rows", 200, 1, 500)
+            start_row = _preview_integer(request.args.get("start_row"), "start_row", 0)
+            header_row = _preview_integer(request.args.get("header_row"), "header_row", None, 0, 1048576)
             doc_response, status_code = get_document(user_id, doc_id)
             if status_code != 200:
                 return doc_response, status_code
@@ -924,101 +966,56 @@ def register_enhanced_citations_routes(bp):
             blob_props = blob_client.get_blob_properties()
             if blob_props.size > max_blob_size:
                 return jsonify({"error": "File is too large to preview"}), 400
-            data = blob_client.download_blob().readall()
+            raw_doc, data = read_available_document_bytes(raw_doc, user_id=user_id, purpose="preview")
 
-            # Read into DataFrame, limiting rows for preview efficiency
-            # Read max_rows + 1 so we can detect truncation without loading the full file
-            nrows_limit = max_rows + 1
-            selected_sheet = None
-            sheet_names = []
             if ext == 'csv':
+                # Keep the optional CSV decoder out of Excel-only preview requests.
                 from functions_tabular_csv_query import read_tabular_csv
-                df = read_tabular_csv(io.BytesIO(data), keep_default_na=False, dtype=str, nrows=nrows_limit)
-            elif ext in ('xlsx', 'xlsm'):
-                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='openpyxl')
-                sheet_names = list(excel_file.sheet_names)
-                if not sheet_names:
-                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
-
-                if sheet_name:
-                    requested_sheet_name = sheet_name.strip()
-                    matching_sheet_name = next(
-                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
-                        None,
-                    )
-                    if not matching_sheet_name:
-                        return jsonify({
-                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = matching_sheet_name
-                elif sheet_index not in (None, ''):
-                    try:
-                        resolved_sheet_index = int(sheet_index)
-                    except ValueError:
-                        return jsonify({"error": "sheet_index must be an integer"}), 400
-                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
-                        return jsonify({
-                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = sheet_names[resolved_sheet_index]
-                else:
-                    selected_sheet = sheet_names[0]
-
-                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
-            elif ext == 'xls':
-                excel_file = pandas.ExcelFile(io.BytesIO(data), engine='xlrd')
-                sheet_names = list(excel_file.sheet_names)
-                if not sheet_names:
-                    return jsonify({"error": "Workbook does not contain any readable sheets"}), 400
-
-                if sheet_name:
-                    requested_sheet_name = sheet_name.strip()
-                    matching_sheet_name = next(
-                        (candidate for candidate in sheet_names if candidate.lower() == requested_sheet_name.lower()),
-                        None,
-                    )
-                    if not matching_sheet_name:
-                        return jsonify({
-                            "error": f"Sheet '{requested_sheet_name}' was not found. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = matching_sheet_name
-                elif sheet_index not in (None, ''):
-                    try:
-                        resolved_sheet_index = int(sheet_index)
-                    except ValueError:
-                        return jsonify({"error": "sheet_index must be an integer"}), 400
-                    if resolved_sheet_index < 0 or resolved_sheet_index >= len(sheet_names):
-                        return jsonify({
-                            "error": f"sheet_index {resolved_sheet_index} is out of range. Available sheets: {sheet_names}"
-                        }), 400
-                    selected_sheet = sheet_names[resolved_sheet_index]
-                else:
-                    selected_sheet = sheet_names[0]
-
-                df = excel_file.parse(selected_sheet, keep_default_na=False, dtype=str, nrows=nrows_limit)
+                frames, seen, selected = [], 0, 0
+                columns = []
+                with read_tabular_csv(
+                    io.BytesIO(data), keep_default_na=False, dtype=str, chunksize=10000,
+                ) as chunks:
+                    for frame in chunks:
+                        columns = frame.columns.tolist()
+                        if seen + len(frame) > start_row:
+                            window = frame.iloc[max(0, start_row - seen):]
+                            window = window.head(max_rows + 1 - selected)
+                            frames.append(window)
+                            selected += len(window)
+                        seen += len(frame)
+                        if selected > max_rows:
+                            break
+                frame = pandas.concat(frames, ignore_index=True) if frames else pandas.DataFrame(columns=columns)
+                has_more = len(frame) > max_rows
+                frame = frame.head(max_rows)
+                names, rows = _serialize_tabular_preview_table(frame)
+                result = {
+                    "selected_sheet": None, "sheet_names": [], "sheet_count": 0,
+                    "tables": [], "table_count": 0, "total_rows": None if has_more else seen,
+                    "total_columns": len(names), "columns": names, "rows": rows,
+                    "row_numbers": list(range(start_row + 2, start_row + 2 + len(rows))),
+                    "start_row": start_row, "has_more": has_more, "truncated": has_more,
+                    "next_start_row": start_row + len(rows) if has_more else None,
+                }
             else:
-                return jsonify({"error": f"Unsupported file type: {ext}"}), 400
+                result = build_excel_table_preview(
+                    data, "." + ext, sheet_name=sheet_name, sheet_index=sheet_index,
+                    table_id=table_id, start_row=start_row, max_rows=max_rows,
+                    cell_range=request.args.get("cell_range"), header_row=header_row,
+                )
+                frame = pandas.DataFrame(result["rows"], columns=result["columns"])
+                result["columns"], result["rows"] = _serialize_tabular_preview_table(frame)
+            return jsonify({"filename": file_name, **result})
 
-            total_rows = len(df)
-            truncated = total_rows > max_rows
-            preview = df.head(max_rows)
-            columns, rows = _serialize_tabular_preview_table(preview)
-
-            return jsonify({
-                "filename": file_name,
-                "selected_sheet": selected_sheet,
-                "sheet_names": sheet_names,
-                "sheet_count": len(sheet_names),
-                "total_rows": total_rows if not truncated else None,
-                "total_columns": len(df.columns),
-                "columns": columns,
-                "rows": rows,
-                "truncated": truncated
-            })
-
-        except Exception as e:
-            debug_print(f"Error generating tabular preview: {e}")
-            return jsonify({"error": str(e)}), 500
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        except (ValueError, zipfile.BadZipFile, pandas.errors.EmptyDataError) as error:
+            _log_enhanced_citations_error("Spreadsheet preview selection failed.", error, document_id=doc_id)
+            return jsonify({"error": "The spreadsheet selection is invalid or unavailable. Choose a valid worksheet, table, and row window."}), 400
+        except Exception as error:
+            _log_enhanced_citations_error("Spreadsheet preview failed.", error, document_id=doc_id)
+            return jsonify({"error": "Unable to load the spreadsheet preview."}), 500
 
     @bp.route("/api/enhanced_citations/visio", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -1072,7 +1069,8 @@ def register_enhanced_citations_routes(bp):
             try:
                 with tempfile.NamedTemporaryFile(suffix=".vsdx", delete=False) as temp_file:
                     temp_path = temp_file.name
-                    blob_client.download_blob().readinto(temp_file)
+                    raw_doc, content = read_available_document_bytes(raw_doc, user_id=user_id, purpose="preview")
+                    temp_file.write(content)
 
                 png_bytes = render_vsdx_page_preview(
                     temp_path,
@@ -1097,60 +1095,30 @@ def register_enhanced_citations_routes(bp):
             return jsonify({"error": str(error)}), 500
 
 def get_document(user_id, doc_id):
-    """
-    Get document metadata - searches across all enabled workspace types
-    """
-    from functions_documents import get_document as backend_get_document
-    from functions_settings import get_settings
-    
+    """Resolve raw metadata internally, after ordinary object authorization."""
     settings = get_settings()
-    
-    # Try to get document from different workspace types based on what's enabled
-    # Start with personal workspace (most common)
-    if settings.get('enable_user_workspace', False):
+    scopes = []
+    if settings.get("enable_user_workspace", False):
+        scopes.append({})
+    if settings.get("enable_group_workspaces", False):
+        scopes.extend({"group_id": group["id"]} for group in get_user_groups(user_id) if group.get("id"))
+    if settings.get("enable_public_workspaces", False):
+        scopes.extend(
+            {"public_workspace_id": workspace_id}
+            for workspace_id in get_public_source_workspace_ids(user_id) or []
+        )
+    for scope in scopes:
+        document = get_document_record(user_id, doc_id, **scope)
+        if not document:
+            continue
         try:
-            doc_response, status_code = backend_get_document(user_id, doc_id)
-            if status_code == 200:
-                return doc_response, status_code
-        except Exception as ex:
-            pass
-    
-    # Try group workspaces if enabled
-    if settings.get('enable_group_workspaces', False):
-        # We need to find which group this document belongs to
-        # This is more complex - we need to search across user's groups
-        try:
-            user_groups = get_user_groups(user_id)
-            for group in user_groups:
-                group_id = group.get('id')
-                if group_id:
-                    try:
-                        doc_response, status_code = backend_get_document(user_id, doc_id, group_id=group_id)
-                        if status_code == 200:
-                            return doc_response, status_code
-                    except Exception as ex:
-                        continue
-        except Exception as ex:
-            pass
-    
-    # Try public workspaces if enabled
-    if settings.get('enable_public_workspaces', False):
-        # We need to find which public workspace this document belongs to
-        # This requires checking user's accessible public workspaces
-        try:
-            accessible_workspace_ids = get_user_visible_public_workspace_ids_from_settings(user_id)
-            for workspace_id in accessible_workspace_ids:
-                try:
-                    doc_response, status_code = backend_get_document(user_id, doc_id, public_workspace_id=workspace_id)
-                    if status_code == 200:
-                        return doc_response, status_code
-                except Exception as ex:
-                    continue
-        except Exception as ex:
-            pass
-    
-    # If document not found in any workspace
-    return {"error": "Document not found or access denied"}, 404
+            document = assert_document_available(document, user_id=user_id, purpose="citation", **scope)
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
+        except (PermissionError, LookupError):
+            continue
+        return jsonify(document), 200
+    return jsonify({"error": "Document not found or access denied"}), 404
 
 
 def determine_workspace_type_and_container(raw_doc):
@@ -1211,8 +1179,8 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
     blob_name = None
 
     try:
-        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-        blob_name = get_blob_name(raw_doc, workspace_type)
+        raw_doc, container_name, blob_name = get_available_blob_reference(raw_doc, purpose="citation")
+        workspace_type, _ = determine_workspace_type_and_container(raw_doc)
         container_client = blob_service_client.get_container_client(container_name)
 
         _log_enhanced_citations_debug(
@@ -1226,9 +1194,7 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
         )
 
         # Download blob content directly
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        blob_data = blob_client.download_blob()
-        content = blob_data.readall()
+        raw_doc, content = read_available_document_bytes(raw_doc, purpose="citation")
         
         # Determine content type if not provided
         if not content_type:
@@ -1270,7 +1236,7 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
             content_type=content_type,
             headers={
                 'Content-Length': str(len(content)),
-                'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
+                'Cache-Control': 'no-store, private',
                 'Content-Disposition': _build_content_disposition(disposition, raw_doc.get('file_name')),
                 'Accept-Ranges': 'bytes'  # Support range requests for video/audio
             }
@@ -1278,6 +1244,8 @@ def serve_enhanced_citation_content(raw_doc, content_type=None, force_download=F
         
         return response
         
+    except ScreeningError:
+        raise
     except Exception as e:
         _log_enhanced_citations_error(
             "Failed to serve citation content",
@@ -1320,8 +1288,8 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
     blob_name = None
 
     try:
-        workspace_type, container_name = determine_workspace_type_and_container(raw_doc)
-        blob_name = get_blob_name(raw_doc, workspace_type)
+        raw_doc, container_name, blob_name = get_available_blob_reference(raw_doc, purpose="citation")
+        workspace_type, _ = determine_workspace_type_and_container(raw_doc)
         container_client = blob_service_client.get_container_client(container_name)
 
         _log_enhanced_citations_debug(
@@ -1336,9 +1304,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
         )
 
         # Download blob content directly
-        blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_name)
-        blob_data = blob_client.download_blob()
-        content = blob_data.readall()
+        raw_doc, content = read_available_document_bytes(raw_doc, purpose="citation")
         
         # Create temporary file for PDF processing
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as temp_file:
@@ -1426,7 +1392,7 @@ def serve_enhanced_citation_pdf_content(raw_doc, page_number, show_all=False):
             # Return the extracted PDF
             headers = {
                 'Content-Length': str(len(extracted_content)),
-                'Cache-Control': 'private, max-age=300',  # Cache for 5 minutes
+                'Cache-Control': 'no-store, private',
                 'Content-Disposition': _build_content_disposition('inline', raw_doc.get('file_name')),
                 'X-Sub-PDF-Page': str(new_page_number),  # Custom header with page info
                 'Accept-Ranges': 'bytes'

@@ -95,6 +95,9 @@
     }
 
     function describeStatus(approval, includeDecisions = true) {
+        if (approval.self_authored === true && approval.status === 'approved') {
+            return 'Decision: approved automatically because you saved this workflow revision yourself.';
+        }
         const status = typeof approval.status === 'string' ? approval.status : 'unknown';
         const execution = typeof approval.execution_status === 'string' ? approval.execution_status : 'not reported';
         const summary = `Decision: ${status.replaceAll('_', ' ')}. Execution: ${execution.replaceAll('_', ' ')}.`;

@@ -2,7 +2,7 @@
 # test_document_action_stream_reconnect.py
 """
 Functional test for document action stream reconnect support.
-Version: 0.250.070
+Version: 0.261.109
 Implemented in: 0.241.090
 
 This test ensures analysis and document comparison streaming
@@ -62,7 +62,7 @@ def test_document_action_stream_reconnect_wiring() -> None:
     assert "user_id = get_current_user_id()" in document_action_stream_block, (
         "Expected the document action streaming route to resolve the current user before creating a reconnectable stream session."
     )
-    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)" in document_action_stream_block, (
+    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(" in document_action_stream_block, (
         "Expected the document action streaming route to register a replayable stream session."
     )
     assert "return build_background_stream_response(generate_document_action_response, stream_session=stream_session)" in document_action_stream_block, (
@@ -72,12 +72,13 @@ def test_document_action_stream_reconnect_wiring() -> None:
     assert "user_id = get_current_user_id()" in analyze_stream_block, (
         "Expected the analysis streaming route to resolve the current user before creating a reconnectable stream session."
     )
-    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(user_id, conversation_id)" in analyze_stream_block, (
+    assert "stream_session = CHAT_STREAM_REGISTRY.start_session(" in analyze_stream_block, (
         "Expected the analysis streaming route to register a replayable stream session."
     )
     assert "return build_background_stream_response(generate_analyze_response, stream_session=stream_session)" in analyze_stream_block, (
         "Expected the analysis streaming route to publish events through the reconnectable stream session."
     )
+    assert "analysis_message_id=analysis_message_id" in analyze_stream_block
 
     print("✅ Document action stream reconnect wiring verified")
 

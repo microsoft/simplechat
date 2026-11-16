@@ -1,0 +1,447 @@
+// harness_entry.tsx
+//
+// Test-only harness entry (NOT application source). It is bundled for the browser by
+// build_harness.mjs and loaded by the ui_tests/test_v2_orchestration_*.py Playwright tests.
+//
+// The V2 UI ships as a bundled React SPA, so its orchestration components cannot be imported as
+// plain browser ES modules the way the classic chat JS can. This entry imports the REAL
+// components, stores, controller and plan library straight from application/v2_ui/src, and exposes
+// them on window.OrchHarness so a test can seed the stores, mount a component into a real DOM, and
+// drive it with genuine clicks. Nothing here is stubbed: the code under test is the code that ships.
+
+import { createElement, StrictMode, useEffect, useState, type ComponentProps, type ReactElement } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
+
+import * as orchestrationStore from '../../../application/v2_ui/src/stores/orchestrationStore';
+import * as chatStore from '../../../application/v2_ui/src/stores/chatStore';
+import * as bootstrapStore from '../../../application/v2_ui/src/stores/bootstrapStore';
+import * as collaborationStore from '../../../application/v2_ui/src/stores/collaborationStore';
+import * as generatedDocumentsStore from '../../../application/v2_ui/src/stores/generatedDocumentsStore';
+import * as generatedExportRunStore from '../../../application/v2_ui/src/stores/generatedExportRunStore';
+import * as userSettingsStore from '../../../application/v2_ui/src/stores/userSettingsStore';
+import * as assistThreadStore from '../../../application/v2_ui/src/stores/assistThreadStore';
+import * as m365PendingActionsStore from '../../../application/v2_ui/src/stores/m365PendingActionsStore';
+import * as appSessionStore from '../../../application/v2_ui/src/stores/appSessionStore';
+import * as userInputStore from '../../../application/v2_ui/src/stores/userInputStore';
+import * as controller from '../../../application/v2_ui/src/lib/orchestrationController';
+import * as plan from '../../../application/v2_ui/src/lib/orchestrationPlan';
+import * as orchestration from '../../../application/v2_ui/src/lib/orchestration';
+import * as resume from '../../../application/v2_ui/src/lib/orchestrationResume';
+import * as sharing from '../../../application/v2_ui/src/lib/sharing';
+import { conversationModes } from '../../../application/v2_ui/src/lib/conversationMode';
+import { composerAttachmentDrafts } from '../../../application/v2_ui/src/lib/composerAttachmentDrafts';
+
+import { OrchestrationPlanCard } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanCard';
+import { ElicitationCard } from '../../../application/v2_ui/src/components/chat/ElicitationCard';
+import { UserInputCards } from '../../../application/v2_ui/src/components/chat/UserInputCards';
+import { CredentialRequestCards } from '../../../application/v2_ui/src/components/chat/CredentialRequestCard';
+import { ActionRecoveryNotice } from '../../../application/v2_ui/src/components/chat/ActionRecoveryNotice';
+import * as actionRecovery from '../../../application/v2_ui/src/lib/actionRecovery';
+import * as chatSse from '../../../application/v2_ui/src/lib/sse';
+import * as credentialEvents from '../../../application/v2_ui/src/lib/actionCredentialEvents';
+import { ActionAuthentication } from '../../../application/v2_ui/src/components/workspaceActions/ActionAuthentication';
+import type { ActionConfiguration, ActionTypeDefinition } from '../../../application/v2_ui/src/lib/workspaceAuthoring';
+import { OrchestrationPlanPanel } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanPanel';
+import { OrchestrationRunView } from '../../../application/v2_ui/src/components/chat/OrchestrationRunView';
+import { OrchestrationMapView } from '../../../application/v2_ui/src/components/chat/OrchestrationMapView';
+import { OrchestrationPlanEditorHost } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanEditor';
+import { MessageList } from '../../../application/v2_ui/src/components/chat/MessageList';
+import { EnhancedCitationViewer } from '../../../application/v2_ui/src/components/chat/EnhancedCitationViewer';
+import { ConversationDrawer } from '../../../application/v2_ui/src/components/chat/ConversationDrawer';
+import { Composer } from '../../../application/v2_ui/src/components/chat/Composer';
+import { ComposerEditor } from '../../../application/v2_ui/src/components/chat/ComposerEditor';
+import { DocumentExplorer } from '../../../application/v2_ui/src/components/documents/DocumentExplorer';
+import { ParticipantsPanel } from '../../../application/v2_ui/src/components/chat/ParticipantsPanel';
+import { Toaster } from '../../../application/v2_ui/src/components/ui/Toaster';
+import { Dropdown } from '../../../application/v2_ui/src/components/ui/Dropdown';
+import { AppShell } from '../../../application/v2_ui/src/components/layout/AppShell';
+import { Sidebar } from '../../../application/v2_ui/src/components/layout/Sidebar';
+import { ChatPage } from '../../../application/v2_ui/src/pages/ChatPage';
+import { HomePage } from '../../../application/v2_ui/src/pages/HomePage';
+import { PageHeader } from '../../../application/v2_ui/src/components/layout/PageHeader';
+import type { HeaderAction } from '../../../application/v2_ui/src/components/layout/HeaderActions';
+import { RefreshCw } from 'lucide-react';
+import { ModelCatalogManager } from '../../../application/v2_ui/src/components/admin/ModelCatalogManager';
+import { OrchestrationPlannerModelPicker } from '../../../application/v2_ui/src/components/admin/OrchestrationPlannerModelPicker';
+import { WorkflowEditorDialog } from '../../../application/v2_ui/src/components/workflows/WorkflowEditorDialog';
+import { WorkflowRunHistory } from '../../../application/v2_ui/src/components/workflows/WorkflowRunHistory';
+import { M365Cards } from '../../../application/v2_ui/src/components/settings/M365Cards';
+import { PLANNER_MODEL_KEYS } from '../../../application/v2_ui/src/lib/orchestrationPlannerModel';
+import type { AdminField } from '../../../application/v2_ui/src/lib/adminFields';
+
+function ChatExperience() {
+    return <div style={{ height: '100dvh' }}><AppShell><ChatPage /></AppShell></div>;
+}
+
+function ActionCredentialAuthoring({ initial, definition }: {
+    initial: ActionConfiguration; definition: ActionTypeDefinition;
+}) {
+    const [draft, setDraft] = useState(initial);
+    return <>
+        <ActionAuthentication draft={draft} definition={definition} onChange={setDraft} original={null}
+            readOnly={false} errors={{}} onValidityChange={() => {}} identities={[]}
+            identitiesLoading={false} identitiesError={null} identitiesResolvable globalScope />
+        <output aria-label="Action credential requirements">{JSON.stringify(draft.credential_requirements ?? {})}</output>
+    </>;
+}
+
+function HeaderExperience({ count = 2, loading = false, saving = false, secondary = true, disabled = false }: {
+    count?: number; loading?: boolean; saving?: boolean; secondary?: boolean; disabled?: boolean;
+}) {
+    const [activated, setActivated] = useState('');
+    const actions: (HeaderAction | false)[] = Array.from({ length: count }, (_, index) =>
+        (index === 0 || secondary) && {
+            id: `action-${index}`, label: `Action ${index + 1}`, icon: <RefreshCw size={14} />,
+            loading: index === 0 && loading,
+            disabled: disabled || (index === 2 && loading),
+            onClick: () => setActivated(`Action ${index + 1}`),
+        });
+    return (
+        <div style={{ height: '100dvh' }}>
+            <AppShell>
+                <PageHeader title={'Long page title '.repeat(12)} description={'Long subtitle '.repeat(12)}
+                    actions={actions} status={saving ? <span>Saving</span> : undefined} />
+                <output aria-label="Activated action">{activated}</output>
+                <button type="button" className="mt-auto self-start">Outside control</button>
+            </AppShell>
+        </div>
+    );
+}
+
+/** The landing page and the chat page behind one shell, so its call to action can be followed. */
+function HomeExperience() {
+    return (
+        <div style={{ height: '100dvh' }}>
+            <AppShell>
+                <Routes>
+                    <Route path="/" element={<HomePage />} />
+                    <Route path="/chat" element={<ChatPage />} />
+                </Routes>
+            </AppShell>
+        </div>
+    );
+}
+
+function PlanEditorExperience() {
+    const conversationId = chatStore.useChatStore((state) => state.activeConversationId);
+    const drawer = chatStore.useChatStore((state) => state.drawerMode);
+    const setVisible = orchestrationStore.useOrchestrationStore((state) => state.setVisibleConversation);
+    useEffect(() => {
+        setVisible(conversationId);
+        return () => setVisible(null);
+    }, [conversationId, setVisible]);
+    return (
+        <div className="flex h-[100dvh] min-h-0 min-w-0">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col"><MessageList /></div>
+            {drawer === 'plan' ? (
+                <aside aria-label="Review drawer" className="w-80 shrink-0"><OrchestrationPlanPanel /></aside>
+            ) : null}
+            <OrchestrationPlanEditorHost />
+        </div>
+    );
+}
+
+function PromptExperience() {
+    return (
+        <div className="flex min-h-0 min-w-0 flex-col overflow-hidden" style={{ height: '100dvh' }}>
+            <MessageList />
+            <Composer />
+        </div>
+    );
+}
+
+function SessionChatExperience() {
+    return (
+        <div style={{ height: '100dvh' }}>
+            <AppShell><MessageList /><Composer /></AppShell>
+        </div>
+    );
+}
+
+function ContextWorkflow({ nativeChat = false }: { nativeChat?: boolean }) {
+    const location = useLocation();
+    return (
+        <>
+            <output aria-label="Current route">{location.pathname}{location.search}</output>
+            <Routes>
+                <Route path="/workspace" element={<DocumentExplorer />} />
+                <Route path="/chat" element={nativeChat ? <ChatPage /> : <Composer />} />
+            </Routes>
+        </>
+    );
+}
+
+function ApprovalPreferenceWorkflow() {
+    return (
+        <>
+            <nav aria-label="Test navigation">
+                <Link to="/chat">Return to chat</Link>
+                <Link to="/away">Leave chat</Link>
+            </nav>
+            <Routes>
+                <Route path="/chat" element={<Composer />} />
+                <Route path="/away" element={<p>Away from chat</p>} />
+            </Routes>
+        </>
+    );
+}
+
+/**
+ * The real planner model picker over an in-memory settings draft, the way Admin Settings
+ * holds unsaved edits. The four planner values are reported as JSON for assertions.
+ */
+function PlannerModelWorkflow({
+    settings,
+    connectionsEnabled,
+}: {
+    settings: Record<string, unknown>;
+    connectionsEnabled: boolean;
+}) {
+    const [values, setValues] = useState<Record<string, unknown>>(settings);
+    const field: AdminField = {
+        type: 'component', component: 'orchestration-planner-model',
+        label: 'Planner Model', help: 'Which model writes the plan.',
+    };
+    return (
+        <>
+            <OrchestrationPlannerModelPicker
+                field={field}
+                connectionsEnabled={connectionsEnabled}
+                read={(key) => values[key]}
+                onChange={(updates) => setValues((current) => ({ ...current, ...updates }))}
+            />
+            <output aria-label="Planner settings">
+                {JSON.stringify(Object.fromEntries(
+                    Object.values(PLANNER_MODEL_KEYS).map((key) => [key, values[key] ?? '']),
+                ))}
+            </output>
+        </>
+    );
+}
+
+type ComponentName =
+    | 'ModelCatalogManager'
+    | 'OrchestrationPlanCard'
+    | 'ElicitationCard'
+    | 'UserInputCards'
+    | 'CredentialRequestCards'
+    | 'ActionRecoveryNotice'
+    | 'ActionCredentialAuthoring'
+    | 'OrchestrationPlanPanel'
+    | 'OrchestrationRunView'
+    | 'OrchestrationMapView'
+    | 'MessageList'
+    | 'ConversationDrawer'
+    | 'Composer'
+    | 'PromptExperience'
+    | 'SessionChatExperience'
+    | 'Sidebar'
+    | 'ChatExperience'
+    | 'HomeExperience'
+    | 'HeaderExperience'
+    | 'Dropdown'
+    | 'ApprovalPreferenceWorkflow'
+    | 'PlannerModelWorkflow'
+    | 'PlanEditorExperience'
+    | 'OrchestrationPlanEditorHost'
+    | 'ContextWorkflow'
+    | 'ComposerEditor'
+    | 'ParticipantsPanel'
+    | 'WorkflowEditorDialog'
+    | 'WorkflowRunHistory'
+    | 'M365Cards'
+    | 'EnhancedCitationViewer'
+    | 'Toaster';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const components: Record<ComponentName, (props: any) => ReactElement | null> = {
+    ModelCatalogManager,
+    OrchestrationPlanCard,
+    ElicitationCard,
+    UserInputCards,
+    CredentialRequestCards,
+    ActionRecoveryNotice,
+    ActionCredentialAuthoring,
+    OrchestrationPlanPanel,
+    OrchestrationRunView,
+    OrchestrationMapView,
+    MessageList,
+    EnhancedCitationViewer,
+    ConversationDrawer,
+    Composer,
+    PromptExperience,
+    SessionChatExperience,
+    Sidebar,
+    ChatExperience,
+    HomeExperience,
+    HeaderExperience,
+    Dropdown,
+    ApprovalPreferenceWorkflow,
+    PlannerModelWorkflow,
+    PlanEditorExperience,
+    OrchestrationPlanEditorHost,
+    ContextWorkflow,
+    ComposerEditor,
+    ParticipantsPanel,
+    WorkflowEditorDialog,
+    WorkflowRunHistory,
+    M365Cards,
+    Toaster,
+};
+
+const roots = new Map<string, Root>();
+
+interface MountOptions {
+    initialEntries?: ComponentProps<typeof MemoryRouter>['initialEntries'];
+    basename?: ComponentProps<typeof MemoryRouter>['basename'];
+    strictMode?: boolean;
+}
+
+/** Mount a named component with plain-object props into the element with the given id. */
+function mount(
+    containerId: string,
+    name: ComponentName,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    props: Record<string, any> = {},
+    options: MountOptions = {},
+): void {
+    const container = document.getElementById(containerId);
+    if (!container) {
+        throw new Error(`harness mount: no element with id "${containerId}"`);
+    }
+    const Component = components[name];
+    if (!Component) {
+        throw new Error(`harness mount: unknown component "${name}"`);
+    }
+    let root = roots.get(containerId);
+    if (!root) {
+        root = createRoot(container);
+        roots.set(containerId, root);
+    }
+    // Wrap every mount in a router: some components (notably the Composer's subtree) read the
+    // location through react-router hooks, which throw outside a Router. A MemoryRouter supplies
+    // that context without a browser history, and is harmless for components that never route.
+    const tree = createElement(
+        MemoryRouter,
+        { initialEntries: options.initialEntries, basename: options.basename },
+        createElement(Component, props),
+    );
+    root.render(options.strictMode ? createElement(StrictMode, null, tree) : tree);
+}
+
+/** Unmount whatever is in the given container, if anything. */
+function unmount(containerId: string): void {
+    const root = roots.get(containerId);
+    if (root) {
+        root.unmount();
+        roots.delete(containerId);
+    }
+}
+
+/** Unmount everything and clear both stores and persisted runs, for isolation between tests. */
+function reset(): void {
+    userInputStore.useUserInputStore.setState({ actorId: null, records: {} });
+    conversationModes.reset();
+    for (const [containerId, root] of roots) {
+        root.unmount();
+        const container = document.getElementById(containerId);
+        if (container) {
+            container.innerHTML = '';
+        }
+    }
+    roots.clear();
+    composerAttachmentDrafts.reset();
+    orchestrationStore.useOrchestrationStore.setState({
+        plans: {},
+        runRecovery: {},
+        recoveryTarget: null,
+        elicitations: {},
+        elicitationDrafts: {},
+        edits: {},
+        stepRuntime: {},
+        inFlight: {},
+        history: {},
+        hydratedHistory: {},
+        hydration: {},
+        readOnlyTurns: {},
+        pinnedRunId: null,
+        visibleConversationId: null,
+        activeTurns: {},
+        planEditors: {},
+        editorTarget: null,
+    });
+    chatStore.useChatStore.setState({
+        activeConversationId: null,
+        drawerMode: null,
+        messages: [],
+    });
+    // What a conversation produced is shared by the drawer and the header, so a test reusing a
+    // conversation id would otherwise start from the previous test's list.
+    generatedDocumentsStore.useGeneratedDocumentsStore.setState({
+        requestKey: null,
+        conversationId: null,
+        documents: [],
+        error: null,
+    });
+    generatedExportRunStore.useGeneratedExportRunStore.setState({ runs: {} });
+    userSettingsStore.useUserSettingsStore.setState({
+        settings: {},
+        loading: false,
+        error: null,
+        saving: false,
+        saveError: null,
+    });
+    // Assist threads live in memory only, so a test reusing an editor would otherwise see
+    // the previous test's exchanges and draft.
+    assistThreadStore.useAssistThreadStore.getState().resetThreads();
+    // Saved Microsoft 365 actions belong to the conversation they were read for, so a test
+    // reusing a conversation id would otherwise start from the previous test's cards.
+    m365PendingActionsStore.chatPendingActionsStore.getState().reset();
+    appSessionStore.useAppSessionStore.setState({ status: 'ready', viewerId: '', revision: 0 });
+    try {
+        window.localStorage.clear();
+    } catch {
+        /* localStorage may be unavailable; the stores are already reset. */
+    }
+    // The resume module remembers which conversations it has already considered, so a test
+    // reusing a conversation id would otherwise be silently skipped.
+    resume.resetOrchestrationResume();
+}
+
+const harness = {
+    createElement,
+    mount,
+    unmount,
+    reset,
+    stores: {
+        orchestration: orchestrationStore,
+        chat: chatStore,
+        bootstrap: bootstrapStore,
+        collaboration: collaborationStore,
+        generatedDocuments: generatedDocumentsStore,
+        generatedExportRuns: generatedExportRunStore,
+        userSettings: userSettingsStore,
+        assistThread: assistThreadStore,
+        pendingActions: m365PendingActionsStore,
+        appSession: appSessionStore,
+        userInput: userInputStore,
+    },
+    controller,
+    plan,
+    orchestration,
+    resume,
+    sharing,
+    components,
+    credentialEvents,
+    actionRecovery,
+    chatSse,
+};
+
+declare global {
+    interface Window {
+        OrchHarness: typeof harness;
+    }
+}
+
+window.OrchHarness = harness;

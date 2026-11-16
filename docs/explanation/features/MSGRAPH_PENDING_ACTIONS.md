@@ -23,6 +23,7 @@ The Microsoft Graph action configuration nests delivery options directly under t
 - `semantic_kernel_plugins/msgraph_plugin.py` creates pending actions for manual or delayed mail/calendar operations and returns sanitized `pending_action` metadata in plugin results.
 - `functions_workflow_activity.py` merges pending Microsoft Graph actions into workflow activity snapshots.
 - `chat-messages.js` and `workflow-activity.js` render send/cancel controls and countdowns from sanitized pending action metadata.
+- In the React V2 interface the shared `PendingActionCard` draws the same controls in chat and on the Approvals page; see [V2 Microsoft 365 Pending-Action Cards](V2_M365_PENDING_ACTION_CARDS.md).
 - Consent or interactive-auth errors render a friendly Microsoft 365 grant-access card for Outlook email, Calendar, OneDrive, and SharePoint access. The card opens the generated Microsoft identity prompt in a popup, then offers a test-access button that verifies silent access after consent and clears the prompt.
 
 ### API Endpoints

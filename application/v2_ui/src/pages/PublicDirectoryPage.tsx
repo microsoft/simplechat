@@ -1,0 +1,280 @@
+// PublicDirectoryPage.tsx
+//
+// The V2 public workspace directory: a browse surface over every public workspace
+// the caller may discover. It is not a workspace shell -- there is no active handshake and no
+// per-workspace context load. It reads one route, GET /api/public_workspaces/directory, keeps
+// the view, search and page in the URL so back, forward and a shared link reopen the same view,
+// and offers three writes: creating a public workspace (the classic route), and
+// asking to manage a workspace's documents or cancelling that request (the M10A request routes).
+// Each membership write returns the server's fresh row, which replaces the row in place, so the
+// affordance is gated purely on the server-computed membership and never a client role check.
+
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { ArrowLeft, Globe, Loader2, Plus } from 'lucide-react';
+import { PageHeader } from '../components/layout/PageHeader';
+import { EmptyState, GlassButton, Skeleton } from '../components/ui/primitives';
+import { SectionSearch } from '../components/workspace/primitives';
+import { PublicDirectoryList } from '../components/workspace/PublicDirectoryList';
+import { CreatePublicWorkspaceDialog } from '../components/workspace/CreatePublicWorkspaceDialog';
+import { ApiError } from '../lib/apiClient';
+import {
+    DIRECTORY_PAGE_SIZE, DIRECTORY_MAX_PAGE, DIRECTORY_SEARCH_MAX_LENGTH, PUBLIC_DIRECTORY,
+    codePointLength, publicDirectoryErrorCode,
+    type PublicDirectoryPage as PublicDirectoryPageData, type PublicDirectoryView,
+} from '../lib/publicDirectory';
+import { useBootstrapStore } from '../stores/bootstrapStore';
+import { usePublicWorkspaceLabels } from '../lib/publicWorkspaceLabels';
+
+const VIEWS: { id: PublicDirectoryView; label: string }[] = [
+    { id: 'all', label: 'All' },
+    { id: 'mine', label: 'My workspaces' },
+];
+
+// A membership refusal that means the client's row is stale: the only way to learn the true state
+// is to re-read the directory. A write conflict keeps the row for a plain retry, so it is omitted.
+const RELOAD_CODES = new Set(['already_member', 'request_pending', 'no_pending_request', 'workspace_not_found']);
+
+function readView(value: string | null): PublicDirectoryView {
+    return value === 'mine' ? 'mine' : 'all';
+}
+
+function readPageNumber(value: string | null): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed < 1) return 1;
+    // Clamp into the server's accepted range so a hand-edited or stale URL can't strand the reader
+    // on a load error whose Retry would only repeat the same rejected request.
+    return Math.min(parsed, DIRECTORY_MAX_PAGE);
+}
+
+export function PublicDirectoryPage() {
+    const bootstrap = useBootstrapStore((state) => state.data);
+    const enabled = Boolean(bootstrap?.features?.enable_public_workspaces);
+    const labels = usePublicWorkspaceLabels();
+    const navigate = useNavigate();
+    const adapter = PUBLIC_DIRECTORY;
+    const [searchParams, setSearchParams] = useSearchParams();
+
+    const view = readView(searchParams.get('view'));
+    const urlSearch = searchParams.get('search') ?? '';
+    const page = readPageNumber(searchParams.get('page'));
+
+    const [searchInput, setSearchInput] = useState(urlSearch);
+    const [searchError, setSearchError] = useState('');
+    const [result, setResult] = useState<PublicDirectoryPageData | null>(null);
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
+    const [retry, setRetry] = useState(0);
+    const [createOpen, setCreateOpen] = useState(false);
+    const [creating, setCreating] = useState(false);
+    const [createError, setCreateError] = useState('');
+    const [busyId, setBusyId] = useState<string | null>(null);
+
+    const reload = useCallback(() => setRetry((value) => value + 1), []);
+
+    // Keep the search box in step with the URL so back and forward restore the typed term.
+    useEffect(() => { setSearchInput(urlSearch); }, [urlSearch]);
+
+    // A debounced commit of the typed term. A new search resets to the first page. A term longer
+    // than the server's limit is never sent -- it would only earn a 400 -- so it holds the current
+    // list and shows a message beside the box until the reader shortens it.
+    useEffect(() => {
+        const handle = window.setTimeout(() => {
+            const trimmed = searchInput.trim();
+            if (codePointLength(trimmed) > DIRECTORY_SEARCH_MAX_LENGTH) {
+                setSearchError(`Search terms can be at most ${DIRECTORY_SEARCH_MAX_LENGTH} characters.`);
+                return;
+            }
+            setSearchError('');
+            if (trimmed === urlSearch) return;
+            const next = new URLSearchParams(searchParams);
+            if (trimmed) next.set('search', trimmed); else next.delete('search');
+            next.set('page', '1');
+            setSearchParams(next, { replace: true });
+        }, 300);
+        return () => window.clearTimeout(handle);
+    }, [searchInput, urlSearch, searchParams, setSearchParams]);
+
+    useEffect(() => {
+        if (!enabled) return;
+        const controller = new AbortController();
+        setLoading(true);
+        setError('');
+        void adapter.list(view, urlSearch, page, DIRECTORY_PAGE_SIZE, controller.signal).then((next) => {
+            if (!controller.signal.aborted) setResult(next);
+        }).catch((cause: unknown) => {
+            if (!controller.signal.aborted) {
+                setResult(null);
+                setError(cause instanceof Error ? cause.message : 'Could not load the public directory. Please retry.');
+            }
+        }).finally(() => {
+            if (!controller.signal.aborted) setLoading(false);
+        });
+        return () => controller.abort();
+    }, [enabled, adapter, view, urlSearch, page, retry]);
+
+    const changeView = useCallback((next: PublicDirectoryView) => {
+        if (next === view) return;
+        const params = new URLSearchParams(searchParams);
+        params.set('view', next);
+        params.set('page', '1');
+        setSearchParams(params);
+    }, [searchParams, setSearchParams, view]);
+
+    const changePage = useCallback((next: number) => {
+        const params = new URLSearchParams(searchParams);
+        params.set('page', String(next));
+        setSearchParams(params);
+    }, [searchParams, setSearchParams]);
+
+    const runRequestAction = useCallback(async (id: string, kind: 'request' | 'cancel') => {
+        // The server's fresh row is the single source of truth: a request or cancel replaces the row
+        // in place, so its membership -- and thus the affordance -- always reflects what the server
+        // just committed, never an optimistic guess.
+        setBusyId(id);
+        setNotice('');
+        try {
+            const workspace = kind === 'request' ? await adapter.requestAccess(id) : await adapter.cancelRequest(id);
+            setResult((prev) => (prev
+                ? { ...prev, workspaces: prev.workspaces.map((row) => (row.id === id ? workspace : row)) }
+                : prev));
+            setNotice(kind === 'request'
+                ? `Your request to manage ${workspace.name} was sent.`
+                : `Your request to manage ${workspace.name} was cancelled.`);
+        } catch (cause: unknown) {
+            const code = publicDirectoryErrorCode(cause);
+            setNotice(cause instanceof Error ? cause.message : 'The request could not be completed. Please retry.');
+            if (code && RELOAD_CODES.has(code)) reload();
+        } finally {
+            setBusyId(null);
+        }
+    }, [adapter, reload]);
+
+    const submitCreate = useCallback(async (name: string, description: string) => {
+        setCreating(true);
+        setCreateError('');
+        try {
+            const created = await adapter.create(name, description);
+            navigate(adapter.openPath(created.id));
+        } catch (cause: unknown) {
+            // The classic route's refusals carry no error_code and its 400 exception path can echo an
+            // internal message, so the reader is shown a safe, status-derived sentence rather than the
+            // raw body. A 403 or a feature-off 400 can only mean the create hint went stale, so the
+            // directory is re-read to hide the control if it is no longer allowed.
+            const status = cause instanceof ApiError ? cause.status : 0;
+            if (status === 403) {
+                setCreateError(`You do not have permission to create a ${labels.lower_singular}.`);
+            } else {
+                setCreateError(`The ${labels.lower_singular} could not be created. Please retry.`);
+            }
+            if (status === 403 || status === 400) reload();
+        } finally {
+            setCreating(false);
+        }
+    }, [adapter, navigate, reload, labels]);
+
+    const openCreate = useCallback(() => { setCreateError(''); setCreateOpen(true); }, []);
+    const closeCreate = useCallback(() => { setCreateError(''); setCreateOpen(false); }, []);
+
+    const workspaces = result?.workspaces ?? [];
+    const totalCount = result?.totalCount ?? 0;
+    const totalPages = Math.max(1, Math.ceil(totalCount / DIRECTORY_PAGE_SIZE));
+    const canCreate = Boolean(result?.hints?.canCreate);
+
+    const emptyDescription = useMemo(() => {
+        if (urlSearch) return `No ${labels.lower_plural} match your search.`;
+        if (view === 'mine') return `You do not manage any ${labels.lower_singular} yet.`;
+        return `No ${labels.lower_plural} have been published yet.`;
+    }, [urlSearch, view, labels]);
+
+    if (!enabled) {
+        return (
+            <div className="flex h-full flex-col">
+                <PageHeader title="Public directory" leading={<Globe size={20} className="text-accent" />} />
+                <div className="p-4">
+                    <EmptyState icon={<Globe size={28} />} title={`${labels.plural} are not enabled`}
+                        description={`Your administrator has not enabled ${labels.lower_plural} for this deployment.`} />
+                </div>
+            </div>
+        );
+    }
+
+    const header = (
+        <PageHeader title="Public directory" description={`Browse ${labels.lower_plural}. All available workspaces are searchable in chat.`}
+            leading={<Globe size={20} className="text-accent" />}
+            actions={[
+                { id: 'back', label: labels.plural, icon: <ArrowLeft size={14} />, onClick: () => navigate('/public') },
+                { id: 'chat', label: 'Chat with all public', icon: <Globe size={14} />,
+                    onClick: () => navigate('/chat?public_workspace_selection=all') },
+                canCreate && { id: 'create', label: `Create ${labels.lower_singular}`, icon: <Plus size={14} />,
+                    variant: 'primary', onClick: openCreate },
+            ]} />
+    );
+
+    return (
+        <div className="flex h-full flex-col">
+            {header}
+            <div className="shrink-0 space-y-3 border-b border-edge px-4 py-3">
+                <div role="group" aria-label="Directory view" className="inline-flex max-w-full flex-wrap rounded-xl border border-edge bg-surface-1 p-0.5">
+                    {VIEWS.map((entry) => (
+                        <button key={entry.id} type="button" aria-pressed={view === entry.id}
+                            onClick={() => changeView(entry.id)}
+                            className={`rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${view === entry.id ? 'bg-accent text-on-accent' : 'text-text-2 hover:text-text-1'}`}>
+                            {entry.label}
+                        </button>
+                    ))}
+                </div>
+                <SectionSearch value={searchInput} onChange={setSearchInput} placeholder={`Search ${labels.lower_plural} by name or description`} />
+                {searchError ? <p role="alert" className="text-xs text-danger">{searchError}</p> : null}
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                <div className="mx-auto max-w-3xl space-y-4">
+                    {error ? (
+                        <div role="alert" className="space-y-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-sm text-danger">
+                            <p>{error}</p>
+                            <GlassButton size="sm" disabled={loading} onClick={reload}>Retry directory</GlassButton>
+                        </div>
+                    ) : null}
+                    {notice ? <p role="status" className="rounded-xl border border-edge bg-surface-1 px-3 py-2 text-sm text-text-2">{notice}</p> : null}
+                    {loading ? (
+                        <div role="status" className="space-y-2">
+                            <p className="flex items-center gap-2 text-sm text-text-2"><Loader2 size={16} className="animate-spin" />Loading {labels.lower_plural}...</p>
+                            <Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" />
+                        </div>
+                    ) : !error && workspaces.length === 0 ? (
+                        <EmptyState icon={<Globe size={28} />} title={`No ${labels.lower_plural} to show`} description={emptyDescription}
+                            action={canCreate && !urlSearch
+                                ? <GlassButton size="sm" variant="primary" onClick={openCreate}><Plus size={14} />Create {labels.lower_singular}</GlassButton>
+                                : undefined} />
+                    ) : !error ? (
+                        <>
+                            <p role="status" className="text-xs text-text-3">
+                                Showing {workspaces.length} of {totalCount} {totalCount === 1 ? 'workspace' : 'workspaces'}.
+                            </p>
+                            <PublicDirectoryList workspaces={workspaces} busyId={busyId} disabled={busyId !== null}
+                                logoUrlFor={(workspace) => adapter.logoUrl(workspace)}
+                                onOpen={(id) => navigate(adapter.openPath(id))}
+                                onRequestAccess={(id) => void runRequestAction(id, 'request')}
+                                onCancelRequest={(id) => void runRequestAction(id, 'cancel')} />
+                            {totalCount > DIRECTORY_PAGE_SIZE || page > 1 ? (
+                                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-text-3">
+                                    <span>Page {page} of {totalPages}</span>
+                                    <div className="flex gap-2">
+                                        <GlassButton size="sm" disabled={loading || page <= 1} onClick={() => changePage(page - 1)}>Previous workspaces</GlassButton>
+                                        <GlassButton size="sm" disabled={loading || page * DIRECTORY_PAGE_SIZE >= totalCount} onClick={() => changePage(page + 1)}>Next workspaces</GlassButton>
+                                    </div>
+                                </div>
+                            ) : null}
+                        </>
+                    ) : null}
+                </div>
+            </div>
+            {createOpen ? (
+                <CreatePublicWorkspaceDialog submitting={creating} serverError={createError}
+                    singular={labels.singular} lowerSingular={labels.lower_singular}
+                    onSubmit={(name, description) => void submitCreate(name, description)} onClose={closeCreate} />
+            ) : null}
+        </div>
+    );
+}

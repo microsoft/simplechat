@@ -1,19 +1,25 @@
 # functions_model_endpoint_validation.py
-"""Validation and outbound-network safety for Custom model endpoints."""
+"""Configuration and outbound-address validation for Custom model endpoints."""
 
 import ipaddress
 import re
 import socket
-from typing import Any, Dict, Iterable
+from typing import Any, Iterable
 from urllib.parse import urlparse, urlunparse
 from model_endpoint_ca_bundles import CABundleError, normalize_ca_bundle_reference
 from model_endpoint_profiles import ModelEndpointProfileError, validate_genai_profile
 
+from functions_model_capabilities import get_model_foundry_chat_api
 from functions_model_endpoint_providers import (
     AUTH_TYPE_API_KEY,
     AUTH_TYPE_BEARER,
     AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS,
+    CUSTOM_ENDPOINT_URL_MODES,
     MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
+    MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1,
+    MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+    MODEL_ENDPOINT_INFERENCE_API_MESSAGES,
+    MODEL_ENDPOINT_INFERENCE_API_RESPONSES,
     get_model_endpoint_provider,
     normalize_custom_endpoint_auth_type,
 )
@@ -31,130 +37,224 @@ from functions_model_endpoint_urls import (
 
 CUSTOM_ENDPOINT_MAX_URL_LENGTH = 2048
 CUSTOM_ENDPOINT_VERSION_PATTERN = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+CUSTOM_ENDPOINT_HEADER_PATTERN = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+CUSTOM_ENDPOINT_BLOCKED_HEADERS = {
+    "host", "content-length", "connection", "transfer-encoding",
+    "cookie", "set-cookie", "upgrade", "trailer", "te",
+}
 CUSTOM_ENDPOINT_BLOCKED_HOSTNAMES = {
-    "instance-data.ec2.internal",
-    "localhost",
-    "localhost.localdomain",
-    "metadata.azure.com",
-    "metadata.google.internal",
+    "instance-data.ec2.internal", "localhost", "localhost.localdomain",
+    "metadata.azure.com", "metadata.google.internal",
 }
 CUSTOM_ENDPOINT_BLOCKED_IPS = {
-    ipaddress.ip_address("168.63.129.16"),
-    ipaddress.ip_address("169.254.169.254"),
-    ipaddress.ip_address("169.254.169.250"),
-    ipaddress.ip_address("169.254.169.251"),
+    ipaddress.ip_address(value)
+    for value in ("168.63.129.16", "169.254.169.254", "169.254.169.250", "169.254.169.251")
 }
-CUSTOM_ENDPOINT_PRIVATE_NETWORKS = (
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("fc00::/7"),
+CUSTOM_ENDPOINT_PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(value)
+    for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
 )
 
 
 class ModelEndpointValidationError(ValueError):
-    """Raised when a model endpoint configuration violates the saved policy."""
+    """A stable, user-safe configuration or outbound-policy error."""
+
+    def __init__(self, public_message):
+        super().__init__(public_message)
+        self.public_message = public_message
 
 
 class ModelEndpointUnresolvableError(ModelEndpointValidationError):
-    """Raised when a Custom endpoint hostname cannot be resolved right now.
-
-    This is distinct from a policy violation. A name that does not resolve yet is
-    tolerable when saving configuration -- the environment may not be reachable
-    from the application tier at configuration time -- but a policy violation
-    never is.
-    """
+    """DNS is unavailable; saving is allowed, but a request must fail closed."""
 
 
-def _is_ip_literal(hostname: str) -> bool:
-    try:
-        ipaddress.ip_address(hostname)
-        return True
-    except ValueError:
+def is_native_foundry_endpoint(provider, endpoint):
+    """Automatic model routing is limited to the public Foundry resource authority."""
+    if str(provider or "").strip().lower() not in {"aifoundry", "new_foundry"}:
         return False
-
-
-def validate_custom_model_endpoint_address(
-    address: str,
-    *,
-    allow_private: bool = False,
-) -> None:
-    """Validate one resolved Custom endpoint address against the outbound policy."""
     try:
-        ip_address = ipaddress.ip_address(address)
+        parsed = urlparse(str(endpoint or "").strip())
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
     except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    if not hostname.endswith(".services.ai.azure.com"):
+        return False
+    if (
+        parsed.scheme != "https" or port not in (None, 443) or parsed.username is not None or parsed.password is not None
+        or parsed.query or parsed.fragment or parsed.params
+    ):
         raise ModelEndpointValidationError(
-            "Custom endpoint hostname resolved to an invalid address."
-        ) from exc
+            "Use a native Foundry HTTPS resource or project endpoint without credentials, query parameters, or a fragment."
+        )
+    return True
 
-    if ip_address in CUSTOM_ENDPOINT_BLOCKED_IPS:
-        raise ModelEndpointValidationError(
-            "Custom endpoint hostname resolves to a blocked platform address."
-        )
-    if ip_address.is_loopback:
-        raise ModelEndpointValidationError(
-            "Custom endpoint hostname must not resolve to a loopback address."
-        )
-    if ip_address.is_link_local:
-        raise ModelEndpointValidationError(
-            "Custom endpoint hostname must not resolve to a link-local address."
-        )
-    if ip_address.is_multicast or ip_address.is_reserved or ip_address.is_unspecified:
-        raise ModelEndpointValidationError(
-            "Custom endpoint hostname must resolve to a usable network address."
-        )
-    is_allowed_private_address = any(
-        ip_address in private_network
-        for private_network in CUSTOM_ENDPOINT_PRIVATE_NETWORKS
-        if ip_address.version == private_network.version
+
+def resolve_native_foundry_chat_api(provider, endpoint, model=None):
+    """Prefer selected model identity, retaining explicit native paths for unknown aliases."""
+    if model is None or not is_native_foundry_endpoint(provider, endpoint):
+        return None
+    api = get_model_foundry_chat_api(model)
+    if api is not None:
+        return api
+    path = urlparse(str(endpoint or "")).path.lower()
+    if re.search(r"/mai/v1(?:/|$)", path):
+        return "mai"
+    return "anthropic" if "/anthropic/" in path else "openai"
+
+
+def endpoint_uses_mai_chat_completions(endpoint: Any) -> bool:
+    """Recognize the explicit MAI v1 contract, including an APIM route prefix."""
+    try:
+        path = urlparse(str(endpoint or "").strip()).path.lower()
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    return re.search(r"/mai/v1(?:/|$)", path) is not None
+
+
+def endpoint_uses_openai_style_protocol(endpoint: Any) -> bool:
+    try:
+        parsed = urlparse(str(endpoint or "").strip())
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    path = parsed.path.lower()
+    hostname = (parsed.hostname or "").lower()
+    return (
+        re.search(r"/(?:openai|mai)/v1(?:/|$)", path) is not None
+        or "/api/projects/" in path
+        or hostname.endswith(".services.ai.azure.com")
     )
-    if is_allowed_private_address:
-        if not allow_private:
-            raise ModelEndpointValidationError(
-                "Private Custom endpoint hosts are not enabled by the administrator."
-            )
-        return
-    if not ip_address.is_global:
+
+
+def model_endpoint_inference_api(endpoint, use_responses_api=None, *, provider="", model=None):
+    """Prefer the saved API choice, retaining operation URLs for older records."""
+    if use_responses_api is not None:
+        if not isinstance(use_responses_api, bool):
+            raise ModelEndpointValidationError("Use Responses API must be true or false.")
+    native_api = resolve_native_foundry_chat_api(provider, endpoint, model)
+    explicit = model.get("inference_api") if isinstance(model, dict) else ""
+    if explicit:
+        if explicit == MODEL_ENDPOINT_INFERENCE_API_RESPONSES:
+            if native_api in {"mai", "anthropic"}:
+                raise ModelEndpointValidationError(
+                    "The selected native model API supports Chat Completions, not Responses."
+                )
+            return MODEL_ENDPOINT_INFERENCE_API_RESPONSES
+        if explicit in {
+            MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+            MODEL_ENDPOINT_INFERENCE_API_MESSAGES,
+        }:
+            return MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
         raise ModelEndpointValidationError(
-            "Custom endpoint hostname must resolve to a globally routable address."
+            "The model inference API must be Chat Completions, Responses, or Messages."
         )
+    if native_api in {"mai", "anthropic"}:
+        return "chat_completions"
+    if use_responses_api is not None:
+        if use_responses_api:
+            return "responses"
+    try:
+        path = urlparse(str(endpoint or "")).path.rstrip("/").lower()
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    return (
+        MODEL_ENDPOINT_INFERENCE_API_RESPONSES
+        if path.endswith("/responses")
+        else MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
+    )
+
+
+def normalize_model_inference_connection(connection):
+    """Save an operation URL as its base and an explicit, independently editable API choice."""
+    result = dict(connection)
+    if "use_responses_api" in result:
+        if not isinstance(result["use_responses_api"], bool):
+            raise ModelEndpointValidationError("Use Responses API must be true or false.")
+    endpoint = str(result.get("endpoint") or "").strip()
+    try:
+        parsed = urlparse(endpoint)
+    except ValueError as exc:
+        raise ModelEndpointValidationError("The model inference endpoint URL is invalid.") from exc
+    path = parsed.path.rstrip("/")
+    for suffix, enabled in (("/responses", True), ("/chat/completions", False)):
+        if path.lower().endswith(suffix):
+            if parsed.query or parsed.fragment:
+                raise ModelEndpointValidationError("Use a model endpoint without query parameters or a fragment.")
+            result["endpoint"] = urlunparse(parsed._replace(path=path[:-len(suffix)]))
+            result["use_responses_api"] = enabled
+            break
+    return result
+
+
+def validate_model_endpoint_api_version(provider, endpoint, api_version, api_type="", *, use_responses_api=None, model=None):
+    """Do not send a protocol name as a dated Azure API-version query."""
+    provider = str(provider or "aoai").strip().lower()
+    legacy_custom = provider == "custom" and api_type == "azure_openai"
+    native_foundry = is_native_foundry_endpoint(provider, endpoint)
+    inference_api = model_endpoint_inference_api(endpoint, use_responses_api, provider=provider, model=model)
+    if inference_api == "responses" and endpoint_uses_mai_chat_completions(endpoint) and not native_foundry:
+        raise ModelEndpointValidationError(
+            "The Microsoft MAI v1 endpoint supports Chat Completions, not Responses. Turn off Use Responses API."
+        )
+    legacy_azure = provider in {"aoai", "aifoundry", "new_foundry"} and (
+        inference_api != "responses" and not endpoint_uses_openai_style_protocol(endpoint)
+    )
+    if inference_api == "responses" and (
+        provider not in {"aoai", "aifoundry", "new_foundry", "custom"}
+        or provider == "custom"
+        and api_type not in {"openai", MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI_V1}
+        or "/api/projects/" in str(endpoint or "").lower() and not native_foundry
+    ):
+        raise ModelEndpointValidationError("Responses tool execution requires an OpenAI-compatible v1 inference connection.")
+    if (legacy_custom or legacy_azure) and str(api_version or "").strip().lower() in {"v1", "preview", "latest"}:
+        raise ModelEndpointValidationError(
+            "This connection requires a dated Azure API version. To use v1, configure an OpenAI-compatible /openai/v1/ inference endpoint; v1 is not a dated api-version value."
+        )
+
+
+def custom_endpoint_setting_enabled(settings: dict | None, key: str) -> bool:
+    """Do not treat a serialized false value as permission to widen network access."""
+    return (settings or {}).get(key) is True
+
+
+def validate_custom_model_endpoint_address(address: str, *, allow_private: bool = False) -> None:
+    try:
+        parsed = ipaddress.ip_address(address)
+    except ValueError as exc:
+        raise ModelEndpointValidationError("Custom endpoint resolved to an invalid address.") from exc
+    if isinstance(parsed, ipaddress.IPv6Address) and (parsed.ipv4_mapped or parsed.sixtofour or parsed.teredo):
+        raise ModelEndpointValidationError("Custom endpoint must not use an IPv4 transition address.")
+    if parsed in CUSTOM_ENDPOINT_BLOCKED_IPS:
+        raise ModelEndpointValidationError("Custom endpoint resolves to a blocked platform address.")
+    if parsed.is_loopback or parsed.is_link_local:
+        raise ModelEndpointValidationError("Custom endpoint must not use a loopback or link-local address.")
+    if parsed.is_multicast or parsed.is_reserved or parsed.is_unspecified:
+        raise ModelEndpointValidationError("Custom endpoint must resolve to a usable network address.")
+    if any(parsed in network for network in CUSTOM_ENDPOINT_PRIVATE_NETWORKS if network.version == parsed.version):
+        if not allow_private:
+            raise ModelEndpointValidationError("Private Custom endpoint hosts are not enabled by the administrator.")
+        return
+    if not parsed.is_global:
+        raise ModelEndpointValidationError("Custom endpoint must resolve to a globally routable address.")
 
 
 def resolve_custom_model_endpoint_addresses(
-    hostname: str,
-    port: int = 443,
-    *,
-    allow_private: bool = False,
+    hostname: str, port: int = 443, *, allow_private: bool = False,
 ) -> tuple[str, ...]:
-    """Resolve and validate every address before a Custom endpoint connection."""
+    """Validate every answer, then return exactly the addresses a transport may use."""
     try:
-        resolved_addresses = socket.getaddrinfo(
-            hostname,
-            port,
-            type=socket.SOCK_STREAM,
-        )
+        answers = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except socket.gaierror as exc:
-        raise ModelEndpointUnresolvableError(
-            "Custom endpoint hostname could not be resolved."
-        ) from exc
-
-    if not resolved_addresses:
-        raise ModelEndpointUnresolvableError(
-            "Custom endpoint hostname did not resolve to an address."
-        )
-
-    validated_addresses = []
-    seen_addresses = set()
-    for address_info in resolved_addresses:
-        address = address_info[4][0]
-        validate_custom_model_endpoint_address(
-            address,
-            allow_private=allow_private,
-        )
-        if address not in seen_addresses:
-            seen_addresses.add(address)
-            validated_addresses.append(address)
-    return tuple(validated_addresses)
+        raise ModelEndpointUnresolvableError("Custom endpoint hostname could not be resolved.") from exc
+    if not answers:
+        raise ModelEndpointUnresolvableError("Custom endpoint hostname did not resolve to an address.")
+    addresses = []
+    for answer in answers:
+        address = answer[4][0]
+        validate_custom_model_endpoint_address(address, allow_private=allow_private)
+        if address not in addresses:
+            addresses.append(address)
+    return tuple(addresses)
 
 
 def validate_custom_model_endpoint_url(
@@ -164,126 +264,75 @@ def validate_custom_model_endpoint_url(
     allow_insecure: bool = False,
     require_resolvable: bool = True,
 ) -> str:
-    """Validate and normalize a Custom endpoint URL before an outbound request.
-
-    ``allow_private`` is the administrator's on-premises gate. With it enabled, an
-    endpoint may be an IP literal, a single-label host, or a private-range
-    address, because those are how on-premises inference is normally addressed.
-    Connect-time address validation still applies on every request.
-
-    ``require_resolvable`` is set to False on the configuration save path so that
-    an endpoint can be configured, seeded, or restored from backup before the
-    application tier can resolve it. The connect-time check is what actually
-    protects the request, and it always runs.
-    """
-    endpoint_text = str(endpoint or "").strip()
-    if not endpoint_text:
-        raise ModelEndpointValidationError("Custom endpoint URL is required.")
-    if len(endpoint_text) > CUSTOM_ENDPOINT_MAX_URL_LENGTH:
-        raise ModelEndpointValidationError("Custom endpoint URL is too long.")
-
+    """Normalize an administrator URL; connect-time DNS pinning remains mandatory."""
+    text = str(endpoint or "").strip()
+    if not text or len(text) > CUSTOM_ENDPOINT_MAX_URL_LENGTH:
+        raise ModelEndpointValidationError("Custom endpoint URL is required and must not exceed 2048 characters.")
+    if any(ord(character) < 33 for character in text) or "\\" in text:
+        raise ModelEndpointValidationError("Custom endpoint URL contains invalid characters.")
     try:
-        parsed_endpoint = urlparse(endpoint_text)
-        port = parsed_endpoint.port
+        parsed = urlparse(text)
+        port = parsed.port
+        hostname = str(parsed.hostname or "").lower().rstrip(".")
     except ValueError as exc:
         raise ModelEndpointValidationError("Custom endpoint URL is invalid.") from exc
-
-    scheme = parsed_endpoint.scheme.lower()
-    if scheme == "http":
-        if not (allow_private and allow_insecure):
+    if parsed.scheme != "https":
+        if parsed.scheme != "http" or not (allow_private and allow_insecure):
             raise ModelEndpointValidationError(
-                "Custom endpoint URL must use HTTPS. Plaintext HTTP requires the "
-                "administrator to enable both private hosts and insecure endpoints."
+                "Custom endpoint URL must use HTTPS. HTTP requires both private-host and insecure-endpoint permission."
             )
-    elif scheme != "https":
-        raise ModelEndpointValidationError("Custom endpoint URL must use HTTPS.")
-
-    if not parsed_endpoint.netloc or not parsed_endpoint.hostname:
-        raise ModelEndpointValidationError(
-            "Custom endpoint URL must include a host name."
-        )
-    if parsed_endpoint.username or parsed_endpoint.password:
-        raise ModelEndpointValidationError(
-            "Custom endpoint URL must not include embedded credentials."
-        )
-    if parsed_endpoint.query or parsed_endpoint.fragment:
-        raise ModelEndpointValidationError(
-            "Custom endpoint URL must not include a query string or fragment."
-        )
-
-    hostname = parsed_endpoint.hostname.strip().lower().rstrip(".")
+    if not parsed.netloc or not hostname or port == 0:
+        raise ModelEndpointValidationError("Custom endpoint URL must include a valid hostname and port.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ModelEndpointValidationError("Custom endpoint URL must not contain credentials.")
+    if parsed.query or parsed.fragment or parsed.params:
+        raise ModelEndpointValidationError("Custom endpoint URL must not contain query parameters or a fragment.")
+    if "%" in hostname:
+        raise ModelEndpointValidationError("Custom endpoint hostname is invalid.")
     try:
         hostname = hostname.encode("idna").decode("ascii")
     except UnicodeError as exc:
-        raise ModelEndpointValidationError(
-            "Custom endpoint hostname is invalid."
-        ) from exc
-
-    if (
-        hostname in CUSTOM_ENDPOINT_BLOCKED_HOSTNAMES
-        or hostname.endswith(".localhost")
-    ):
+        raise ModelEndpointValidationError("Custom endpoint hostname is invalid.") from exc
+    if hostname in CUSTOM_ENDPOINT_BLOCKED_HOSTNAMES or hostname.endswith(".localhost"):
         raise ModelEndpointValidationError("Custom endpoint hostname is blocked.")
-
-    is_ip_literal = _is_ip_literal(hostname)
-    is_single_label = not is_ip_literal and "." not in hostname
-
-    if is_ip_literal:
+    try:
+        literal = ipaddress.ip_address(hostname)
+    except ValueError:
+        literal = None
+    if literal is not None:
         if not allow_private:
-            raise ModelEndpointValidationError(
-                "Custom endpoint URL must use a fully qualified domain name. "
-                "Enable private Custom endpoint hosts to use an IP address."
-            )
-        # An IP literal skips DNS entirely, so validate the address directly.
-        validate_custom_model_endpoint_address(hostname, allow_private=True)
-    elif is_single_label:
-        if not allow_private:
-            raise ModelEndpointValidationError(
-                "Custom endpoint URL must use a fully qualified domain name. "
-                "Enable private Custom endpoint hosts to use a short host name."
-            )
-    elif not allow_private and hostname.endswith((".internal", ".local")):
-        raise ModelEndpointValidationError(
-            "Private Custom endpoint hosts are not enabled by the administrator."
-        )
-
-    if not is_ip_literal:
-        default_port = 80 if scheme == "http" else 443
+            raise ModelEndpointValidationError("Custom endpoint IP addresses require private-host permission.")
+        validate_custom_model_endpoint_address(hostname, allow_private=allow_private)
+    else:
+        if not re.fullmatch(r"[a-z0-9.-]+", hostname) or ".." in hostname:
+            raise ModelEndpointValidationError("Custom endpoint hostname is invalid.")
+        if not allow_private and ("." not in hostname or hostname.endswith((".internal", ".local"))):
+            raise ModelEndpointValidationError("Custom endpoint must use a public fully qualified hostname.")
         try:
             resolve_custom_model_endpoint_addresses(
-                hostname,
-                port or default_port,
-                allow_private=allow_private,
+                hostname, port or (443 if parsed.scheme == "https" else 80), allow_private=allow_private,
             )
         except ModelEndpointUnresolvableError:
-            # A name that does not resolve yet is only fatal when the caller needs
-            # it resolvable now. Policy violations are a different exception and
-            # always propagate. The connect-time check re-resolves on every
-            # request, so nothing is skipped by tolerating this here.
             if require_resolvable:
                 raise
-
-    default_port = 80 if scheme == "http" else 443
-    normalized_netloc = hostname
-    if port and port != default_port:
-        normalized_netloc = f"{hostname}:{port}"
-    return urlunparse((
-        scheme,
-        normalized_netloc,
-        parsed_endpoint.path or "",
-        "",
-        "",
-        "",
-    )).rstrip("/")
+    netloc = f"[{hostname}]" if literal is not None and literal.version == 6 else hostname
+    if port and port != (443 if parsed.scheme == "https" else 80):
+        netloc = f"{netloc}:{port}"
+    return urlunparse((parsed.scheme, netloc, parsed.path, "", "", "")).rstrip("/")
 
 
-def _validate_version(value: Any, field_label: str) -> str:
-    normalized_value = str(value or "").strip()
-    if not CUSTOM_ENDPOINT_VERSION_PATTERN.fullmatch(normalized_value):
-        raise ModelEndpointValidationError(
-            f"{field_label} must contain only letters, numbers, dots, underscores, or hyphens."
-        )
-    return normalized_value
+def validate_custom_api_key_header(auth: dict) -> None:
+    """Prevent auth overrides from altering routing or HTTP message framing."""
+    name = str(auth.get("api_key_header") or "").strip()
+    prefix = str(auth.get("api_key_prefix") or "")
+    if name and (
+        not CUSTOM_ENDPOINT_HEADER_PATTERN.fullmatch(name)
+        or name.lower() in CUSTOM_ENDPOINT_BLOCKED_HEADERS
+        or name.lower().startswith("proxy-")
+    ):
+        raise ModelEndpointValidationError("Custom API key header is not an allowed authentication header.")
+    if any(ord(character) < 32 or ord(character) > 126 for character in prefix):
+        raise ModelEndpointValidationError("Custom API key prefix contains invalid characters.")
 
 
 def validate_model_endpoint_routing(endpoint, settings=None, *, require_resolvable=False):
@@ -295,8 +344,9 @@ def validate_model_endpoint_routing(endpoint, settings=None, *, require_resolvab
         raise ModelEndpointValidationError("Invalid explicit model routing configuration.") from exc
     policy = settings or {}
     for route in routes:
+        operation_url = str(route.get("operation_url") or "").split("?", 1)[0]
         validate_custom_model_endpoint_url(
-            route["api_base"],
+            operation_url,
             allow_private=policy.get("allow_private_custom_model_endpoints") is True,
             allow_insecure=policy.get("allow_insecure_custom_model_endpoints") is True,
             require_resolvable=require_resolvable,
@@ -305,16 +355,13 @@ def validate_model_endpoint_routing(endpoint, settings=None, *, require_resolvab
 
 
 def validate_custom_model_endpoint(
-    endpoint: Any,
-    settings: Dict[str, Any] | None = None,
-    *,
-    require_api_key: bool = True,
+    endpoint: Any, settings: dict | None = None, *, require_api_key: bool = True,
 ) -> None:
-    """Validate a normalized Custom endpoint record."""
+    """Validate a normalized record without requiring the deployment to be reachable."""
     if not isinstance(endpoint, dict):
-        raise ModelEndpointValidationError("Custom endpoint configuration is invalid.")
-    explicit_routing = routing_schema_version(endpoint) == 2
-    routes = validate_model_endpoint_routing(endpoint, settings) if explicit_routing else []
+        raise ModelEndpointValidationError(
+            "Custom endpoint configuration must be an object."
+        )
     if str(endpoint.get("provider") or "").strip().lower() != MODEL_ENDPOINT_PROVIDER_CUSTOM:
         return
     try:
@@ -322,29 +369,45 @@ def validate_custom_model_endpoint(
     except ModelEndpointProfileError as error:
         raise ModelEndpointValidationError(str(error)) from error
 
-    endpoint_name = str(endpoint.get("name") or "").strip()
-    if not endpoint_name:
+    if not str(endpoint.get("name") or "").strip():
         raise ModelEndpointValidationError("Custom endpoint name is required.")
+    explicit_routing = routing_schema_version(endpoint) == 2
+    connection = endpoint.get("connection") or {}
+    auth = endpoint.get("auth") or {}
+    if not isinstance(connection, dict) or not isinstance(auth, dict):
+        raise ModelEndpointValidationError(
+            "Custom endpoint authentication and connection must be objects."
+        )
 
-    api_type = "" if explicit_routing else get_model_endpoint_api_type(endpoint)
-    if not explicit_routing and not api_type:
-        raise ModelEndpointValidationError("Custom endpoint API type is not supported.")
-    registered_provider = get_model_endpoint_provider(api_type)
-    if registered_provider is not None and registered_provider.routing_schema_version > 1 and not explicit_routing:
-        raise ModelEndpointValidationError("This API type requires explicit model routing.")
+    routes = []
+    if explicit_routing:
+        routes = validate_model_endpoint_routing(endpoint, settings)
+        descriptors = [
+            get_model_endpoint_provider(route.get("api_type")) for route in routes
+        ]
+    else:
+        descriptor = get_model_endpoint_provider(
+            get_model_endpoint_api_type(endpoint)
+        )
+        if descriptor is None:
+            raise ModelEndpointValidationError(
+                "Custom endpoint API type is not supported."
+            )
+        if descriptor.routing_schema_version > 1:
+            raise ModelEndpointValidationError(
+                "This API type requires explicit model routing."
+            )
+        descriptors = [descriptor]
+    descriptors = [descriptor for descriptor in descriptors if descriptor is not None]
+    if not descriptors:
+        raise ModelEndpointValidationError(
+            "Custom endpoint API type is not supported."
+        )
 
-    auth = endpoint.get("auth") if isinstance(endpoint.get("auth"), dict) else {}
     auth_type = normalize_custom_endpoint_auth_type(auth.get("type"))
-    if not auth_type:
-        raise ModelEndpointValidationError(
-            "Custom endpoints support API key, bearer token, or OAuth2 "
-            "client credentials authentication."
-        )
-    if registered_provider is not None and auth_type not in registered_provider.auth_types:
-        raise ModelEndpointValidationError(
-            f"{registered_provider.display_name} does not support the selected "
-            "authentication type."
-        )
+    if any(auth_type not in descriptor.auth_types for descriptor in descriptors):
+        raise ModelEndpointValidationError("Custom endpoints require API key, bearer token, or OAuth2 authentication.")
+    validate_custom_api_key_header(auth)
     if require_api_key:
         if auth_type == AUTH_TYPE_API_KEY and not auth.get("api_key"):
             raise ModelEndpointValidationError("Custom endpoint API key is required.")
@@ -358,91 +421,99 @@ def validate_custom_model_endpoint(
                 "Custom endpoint OAuth2 authentication requires a token URL, "
                 "client ID, and client secret."
             )
-    if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS and auth.get("token_url"):
-        # The token endpoint is a separate host and must satisfy the same policy
-        # as the inference endpoint, otherwise it becomes an unchecked outbound
-        # request target.
-        validate_custom_model_endpoint_url(
-            auth.get("token_url"),
-            allow_private=bool((settings or {}).get("allow_private_custom_model_endpoints", False)),
-            allow_insecure=bool((settings or {}).get("allow_insecure_custom_model_endpoints", False)),
-            require_resolvable=False,
-        )
-
-    connection = (
-        endpoint.get("connection")
-        if isinstance(endpoint.get("connection"), dict)
-        else {}
-    )
     try:
         normalize_ca_bundle_reference(connection)
     except CABundleError as error:
         raise ModelEndpointValidationError(error.public_message) from error
-    endpoint_settings = settings or {}
-    allow_private = bool(endpoint_settings.get("allow_private_custom_model_endpoints", False))
-    allow_insecure = bool(endpoint_settings.get("allow_insecure_custom_model_endpoints", False))
-    connection["endpoint"] = validate_custom_model_endpoint_url(
-        connection.get("endpoint"),
-        allow_private=allow_private,
-        allow_insecure=allow_insecure,
-        # Configuration may be saved before the application tier can resolve the
-        # host, so saving does not require the name to resolve right now.
-        require_resolvable=False,
+    allow_private = custom_endpoint_setting_enabled(
+        settings, "allow_private_custom_model_endpoints"
     )
-
-    if registered_provider is not None and registered_provider.version_field:
-        version_value = connection.get(registered_provider.version_field)
-        if registered_provider.default_version:
-            version_value = version_value or registered_provider.default_version
-        if registered_provider.requires_api_version or version_value:
-            version_label = (
-                "Azure OpenAI API"
-                if registered_provider.api_type == MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI
-                else registered_provider.display_name
-            )
-            _validate_version(version_value, f"{version_label} version")
-
-    seen_model_names = set()
-    models: Iterable[Any] = endpoint.get("models") or []
-    if not isinstance(models, list):
-        raise ModelEndpointValidationError("Custom endpoint models must be a list.")
-    if not models:
-        raise ModelEndpointValidationError(
-            "Custom endpoints require at least one manually configured model."
+    allow_insecure = custom_endpoint_setting_enabled(
+        settings, "allow_insecure_custom_model_endpoints"
+    )
+    if auth_type == AUTH_TYPE_OAUTH2_CLIENT_CREDENTIALS:
+        validate_custom_model_endpoint_url(
+            auth.get("token_url"),
+            allow_private=allow_private,
+            allow_insecure=allow_insecure,
+            require_resolvable=False,
         )
+    connection["endpoint"] = validate_custom_model_endpoint_url(
+        connection.get("endpoint"), allow_private=allow_private,
+        allow_insecure=allow_insecure, require_resolvable=False,
+    )
+    endpoint["connection"] = connection
+    if connection.get("client_key_path") and not connection.get("client_cert_path"):
+        raise ModelEndpointValidationError("A Custom client key requires a client certificate.")
+    for field in ("client_cert_path", "client_key_path"):
+        if field in connection and not isinstance(connection[field], str):
+            raise ModelEndpointValidationError("Custom certificate paths must be text.")
+
+    if not explicit_routing:
+        url_mode = connection.get("url_mode", "auto")
+        if url_mode not in CUSTOM_ENDPOINT_URL_MODES:
+            raise ModelEndpointValidationError(
+                "Custom endpoint URL mode must be automatic, API base, full request URL, or legacy exact."
+            )
+        if descriptors[0].version_field:
+            version = (
+                connection.get(descriptors[0].version_field)
+                or descriptors[0].default_version
+            )
+            if descriptors[0].requires_api_version or version:
+                if not CUSTOM_ENDPOINT_VERSION_PATTERN.fullmatch(str(version or "")):
+                    raise ModelEndpointValidationError(
+                        "Custom API version must contain letters, numbers, dots, underscores, or hyphens."
+                    )
+
+    models: Iterable[Any] = endpoint.get("models") or []
+    if not isinstance(models, list) or not models:
+        raise ModelEndpointValidationError("Custom endpoints require at least one manually configured model.")
+    seen = set()
     for index, model in enumerate(models):
         if not isinstance(model, dict):
-            raise ModelEndpointValidationError("Custom endpoint model configuration is invalid.")
-        request_model = resolve_model_endpoint_request_model(endpoint, model, use_model_routing=explicit_routing)
+            raise ModelEndpointValidationError(
+                "Custom endpoint model configuration is invalid."
+            )
+        request_model = resolve_model_endpoint_request_model(
+            endpoint, model, use_model_routing=explicit_routing
+        )
+        descriptor = (
+            get_model_endpoint_provider(routes[index]["api_type"])
+            if explicit_routing
+            else descriptors[0]
+        )
         if not request_model:
-            model_field = (
-                "Model Name"
-                if registered_provider is not None and registered_provider.uses_model_name
-                else "Deployment Name"
-            )
+            field = "Model Name" if descriptor.uses_model_name else "Deployment Name"
             raise ModelEndpointValidationError(
-                f"Custom endpoint models require {model_field}."
+                f"Custom endpoint models require {field}."
             )
-        normalized_model_name = (request_model, routes[index]["operation_url"]) if explicit_routing else request_model.casefold()
-        if normalized_model_name in seen_model_names:
+        if len(request_model) > 512 or any(ord(character) < 32 for character in request_model):
+            raise ModelEndpointValidationError("Custom request model identifier is invalid.")
+        identity = (
+            (request_model, routes[index]["operation_url"])
+            if explicit_routing
+            else request_model.casefold()
+        )
+        if identity in seen:
             raise ModelEndpointValidationError(
-                "Custom endpoint model names must be unique."
+                "Custom endpoint model identities and routes must be unique."
             )
-        seen_model_names.add(normalized_model_name)
+        seen.add(identity)
 
 
 def validate_custom_model_endpoints(
-    endpoints: Any,
-    settings: Dict[str, Any] | None = None,
-    *,
-    require_api_key: bool = True,
+    endpoints: Any, settings: dict | None = None, *, require_api_key: bool = True,
 ) -> None:
-    """Validate every Custom endpoint in an endpoint list."""
     if not isinstance(endpoints, list):
         raise ModelEndpointValidationError("Model endpoints must be a list.")
     for endpoint in endpoints:
-        validate_custom_model_endpoint(
-            endpoint,
-            settings,
-            require_api_key=require_api_key,
-        )
+        if isinstance(endpoint, dict) and routing_schema_version(endpoint) == 1:
+            connection = endpoint.get("connection") or {}
+            validate_model_endpoint_api_version(
+                endpoint.get("provider"), connection.get("endpoint"),
+                connection.get("openai_api_version") or connection.get("api_version"),
+                get_model_endpoint_api_type(endpoint),
+                use_responses_api=connection.get("use_responses_api"),
+            )
+        validate_custom_model_endpoint(endpoint, settings, require_api_key=require_api_key)

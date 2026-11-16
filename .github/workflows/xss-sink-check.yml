@@ -4,13 +4,19 @@ on:
   pull_request:
     branches:
       - Development
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
     paths:
       - 'application/**/*.js'
       - 'application/**/*.html'
       - 'application/**/*.py'
+      - 'application/**/*.ts'
+      - 'application/**/*.tsx'
+      - 'application/**/*.jsx'
+      - 'application/**/*.mjs'
       - 'scripts/check_xss_sinks.py'
       - 'functional_tests/test_xss_guardrails_checker.py'
       - '.github/workflows/xss-sink-check.yml'
+      - '.github/workflows/xss-full-scan.yml'
       - '.github/instructions/xss-prevention.instructions.md'
       - '.github/prompts/xss-full-audit-and-remediation.prompt.md'
 
@@ -25,7 +31,7 @@ jobs:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.12'
 
@@ -38,10 +44,15 @@ jobs:
               - 'application/**/*.js'
               - 'application/**/*.html'
               - 'application/**/*.py'
+              - 'application/**/*.ts'
+              - 'application/**/*.tsx'
+              - 'application/**/*.jsx'
+              - 'application/**/*.mjs'
             xss_guardrails:
               - 'scripts/check_xss_sinks.py'
               - 'functional_tests/test_xss_guardrails_checker.py'
               - '.github/workflows/xss-sink-check.yml'
+              - '.github/workflows/xss-full-scan.yml'
               - '.github/instructions/xss-prevention.instructions.md'
               - '.github/prompts/xss-full-audit-and-remediation.prompt.md'
               - 'docs/explanation/features/v0.241.022/XSS_PR_GUARDRAILS.md'

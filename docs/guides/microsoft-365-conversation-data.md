@@ -4,7 +4,7 @@ title: "Microsoft 365 data and approvals"
 description: "Choose how Microsoft 365 data is retrieved, analyzed, and shared in conversations and workflows."
 section: "Guides"
 audience: user
-version: "0.261.038"
+version: "0.261.355"
 ---
 
 ## Choose the right action
@@ -16,6 +16,13 @@ use them.
 
 Direct chat uses the person asking. A workflow instead uses its explicitly
 authorized Run as account for both manual and scheduled execution.
+
+{% include media.html id="slide-microsoft-365-and-teams" %}
+
+The [Teams app]({{ '/guides/microsoft-teams-app/' | relative_url }}) is a
+configured personal tab into SimpleChat, not a channel bot. Opening it does
+not connect every Microsoft 365 source or approve sharing and outgoing actions.
+The decisions below still apply.
 
 To narrow a request, name the file or supply its canonical folder URL, for
 example: "Use SharePoint Online to find the current travel policy under
@@ -29,9 +36,9 @@ walk; continuation and coverage results describe the available search window.
 | Decision | What it authorizes |
 | --- | --- |
 | Microsoft Entra consent/sign-in | The application may call the selected Microsoft 365 APIs as the user. Source permissions still apply. |
-| Sharing acknowledgement | Retrieved answers and retained source evidence may be published to conversation participants. |
+| Sharing acknowledgement | Retrieved answers and retained source evidence may be published to conversation participants. In a shared conversation, your own chat or plan request is this acknowledgement for the data it reads. |
 | Extended analysis | The selected files may receive additional staged processing beyond the fast windows. |
-| Workflow Run as approval | A specific workflow revision may use the selected person's connected account. |
+| Workflow Run as approval | A specific workflow revision may use the selected person's connected account. A revision that person saved themselves needs no separate approval. |
 | Outgoing action review | The data owner may send the exact prepared email or invitation in manual mode, or stop a configured delayed delivery. |
 
 One decision does not substitute for another. An administrator who owns an
@@ -43,11 +50,20 @@ The **Settings** tab on Profile keeps independent sharing preferences for
 Calendar, Email, OneDrive, and SPO. They apply across personal, group, and global
 actions rather than being tied to one agent you might not be able to edit.
 
-In shared conversations, choose **Allow this request**, **Allow for today**,
-**Always allow**, or **No**. Today expires at local midnight in the confirmed
-time zone. An action owner can permit a shorter maximum duration. An Always
-preference does not silently create a fresh daily approval when that action's
-shorter approval has expired.
+Since **0.261.270**, asking for your own Microsoft 365 data in a shared
+conversation is your consent to share what that request reads with the
+conversation's participants, with or without **Orchestrate**. You aren't
+prompted, and each request and source is recorded in your audit history as
+shared by your request. Before 0.261.270 these requests waited for a sharing
+approval, and plans refused them.
+
+Sharing a private conversation that already used Microsoft 365 data, and a
+workflow that runs as you in a shared conversation, still ask. For those,
+choose **Allow this request**, **Allow for today**, **Always allow**, or
+**No**. Today expires at local midnight in the confirmed time zone. An action
+owner can permit a shorter maximum duration. An Always preference does not
+silently create a fresh daily approval when that action's shorter approval has
+expired.
 
 Declining a source lets the request continue without that source. Private
 single-user chats do not require a sharing acknowledgement merely because
@@ -71,6 +87,43 @@ access. A disconnected workflow account does not mean interactive chat is
 disabled. Reloading already-published file evidence also does not require a
 fresh source sign-in.
 
+## Use Microsoft 365 in a plan
+
+Implemented in version: **0.261.238** (`application/single_app/config.py`).
+Agent steps and shared conversations: **0.261.270**.
+
+With **Orchestrate** on in V2 chat, a plan can include a **Use an action** step
+that runs one of your Calendar, Email, OneDrive, or SharePoint Online actions.
+The step reads as you, the person who sent the request, and uses only that one
+action. An **Ask an agent** step whose agent uses Microsoft 365 actions reads
+with that agent's own actions, under the same rules.
+
+Since **0.261.321**, a step distinguishes **Gather information** from a
+**Requested operation**. Review the intended operation, inputs, and destination
+before execution. The action's existing capabilities and manual, delayed, or
+automatic delivery policy still apply; approving a plan does not send a
+manual-review draft. Older plans without explicit operation intent remain
+read-only until replanned. See
+[Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/#review-versus-edit' | relative_url }}).
+
+The step checks your delegated Microsoft 365 access before any model or
+Microsoft Graph call. If you haven't connected the source, or your sign-in has
+expired, the step stops and the plan's run details show **Connect Microsoft
+365** for the sources that step needs. Sign in in the window that opens, then
+select **Retry from failed step**. Completed steps aren't repeated.
+
+Some file analysis needs your approval first. The step then stops and links to
+**Approvals**. Deciding the approval doesn't restart the plan. Select **Retry
+from failed step** afterward: the retried step continues the same Microsoft 365
+request, so an approval you gave applies while the action is unchanged.
+
+In a shared conversation, a plan step reads for the conversation's
+participants, and your request is your consent to share what it reads, as it
+is in chat. Only the person who started a shared conversation plans in it. An
+answer from a plan step that read Microsoft 365 counts as Microsoft 365
+history: sharing a private conversation later asks for your approval, as it
+does for a chat answer.
+
 ## Review an email or meeting before delivery
 
 Chat shows a saved action card for manual or delayed Email and Calendar
@@ -83,15 +136,41 @@ time, timezone, location, and Teams status. Only the data owner sees private
 recipient/body details and can select **Send**, **Send now**, or **Cancel**.
 Other authorized participants receive a read-only summary.
 
+Since **0.261.325** (`application/single_app/config.py`), the V2 card shows the
+first five rendered body lines immediately. **Show More** expands a long body;
+shortened content is fetched through the authorized detail API before sending.
+For a manual-review action, the owner can choose **Edit** to change email
+To/Cc/Bcc, subject and body, or meeting title, attendees, start/end, timezone,
+location, body and the existing Teams option.
+
+The popup places **Ask AI & history** beside the draft (a separate panel on
+mobile). Ask for a wording or field change, review the resulting working copy,
+and choose **Save changes**. AI suggestions never send anything. Cancel or
+Escape asks before discarding unsaved edits. Saved revisions and AI history
+return when you reopen the action; **Load older history** retrieves another
+bounded page. Unsaved suggestions list their changed fields and offer
+**Apply suggestion** to reuse eligible changes in the working copy. Fields
+edited since the original suggestion are preserved, with a visible warning.
+Applying never saves or sends; review the result before Save.
+**Undo this change** affects only fields unchanged since that
+revision and still requires Save. History ends when the action is sent or
+cancelled. Scheduled and automatic actions do not gain this editor.
+
 If the card needs sign-in, reconnect and return to that card. Sign-in and
 sharing approval alone do not send it or repeat the original agent request.
 Changed content, permissions, audience, or an older unbound record can require
 preparing a new action instead.
 
-For email, SimpleChat checks the Outlook draft version and sends the immutable
-content reviewed on the card. The original draft remains after both Send and
-Cancel. Do not send it again. Successful email submission means Microsoft 365
-accepted it for sending; it is not a recipient-delivery receipt.
+For newly prepared draft-send email actions, Send submits the actual Outlook
+draft. Before sending, **Open draft in Outlook** points to that draft; afterward,
+**Open sent message in Outlook** appears only when the sent copy is verified.
+Until then the card reports that the link is pending. A pre-send version check
+cannot make external Outlook editing atomic: Send submits the current draft.
+Older retained-draft actions keep their compatibility path and label that link
+explicitly; do not send their retained draft again. Calendar invitations are
+created only on Send, and their link points to the created event. Successful
+email submission means Microsoft 365 accepted it for sending; it is not a
+recipient-delivery receipt.
 
 Delayed chat uses a short in-process timer. A browser countdown is informational
 only. After a lost timer, review and send manually; after an uncertain remote
@@ -109,10 +188,32 @@ The existing sign-in remains untouched until the new account, tenant, consent,
 and authorization-code flow are verified. After success, Profile shows the
 renewed sign-in; return to the conversation and retry your question explicitly.
 Profile reconnect does not run old requests, change sharing approvals, or renew
-workflow Run as authorizations. It does not require Key Vault.
+workflow Run as authorizations.
 
-The local status **available** means a matching sign-in is saved for the current
-session, not that every remote resource is accessible. A rejected Graph bearer
+### Keep chat connected across sign-ins
+
+Implemented in version: **0.261.355** (`application/single_app/config.py`).
+
+With Key Vault secret storage configured, reconnect saves an encrypted,
+chat-only credential in SimpleChat's connection storage. It survives browser
+restarts and normal SimpleChat sign-out/sign-in. Existing users should reconnect
+once to upgrade a session-only chat connection. The card says whether the
+connection is saved or session-only; without Key Vault, chat still works for
+the current app session.
+
+SimpleChat adds no shorter expiration to a saved connection. Access tokens
+refresh silently, and their routine expiry does not clear the source list.
+Microsoft, your organization, or your own revocation can still require sign-in.
+The source list describes verified consent, not a guarantee of current access
+to every remote file or mailbox.
+
+Use **Disconnect chat** and confirm to remove SimpleChat's saved chat credential.
+This is separate from disconnecting workflows: neither control disconnects the
+other. Normal application sign-out does not disconnect saved chat access.
+Disconnecting chat does not revoke consent in Microsoft or remove evidence
+already shared in conversations.
+
+A rejected Graph bearer
 token supplies a reconnect prompt through the existing paused-chat flow.
 An access-denied policy, service outage, throttling, or missing model context
 configuration is a different failure and must not be described as expired login.
@@ -120,8 +221,9 @@ configuration is a different failure and must not be described as expired login.
 ## Share evidence deliberately
 
 A sharing acknowledgement covers **retained source evidence, not only the final
-answer**. Other participants can reuse the published snapshot without having
-access to its original Microsoft 365 file. New remote calls still use the
+answer**. Your own request in a shared conversation is that acknowledgement for
+the files it reads. Other participants can reuse the published snapshot without
+having access to its original Microsoft 365 file. New remote calls still use the
 requesting participant's delegated identity.
 
 The same rules apply when a private conversation is shared later. Published
@@ -157,8 +259,8 @@ from its checkpoint rather than rerunning completed work.
 ## Connect an account for workflows
 
 Use the Profile Microsoft 365 connection controls for explicit background
-access. Saved workflow connections require configured Key Vault protection;
-normal interactive actions do not.
+access. Saved workflow and saved chat connections require configured Key Vault
+protection. Session-only interactive chat remains available without it.
 
 Choose the sources once; there is no second set of permission checkboxes.
 Calendar includes events, invitations, timezone, and recipient lookup. Email
@@ -171,10 +273,33 @@ an outgoing message. Existing action limits, delivery review, and workflow
 Run as approval remain separate. Older read-only connections need an explicit
 reconnect before workflows can use newly requested write permissions.
 
-Select the **Microsoft 365 Run as** account on the workflow. That person must
-approve the workflow's sources, instructions, and destinations. Material edits
-require approval again. Disconnecting the account stops future credential use
-and pauses affected work; it does not remove conversation evidence.
+Select the **Microsoft 365 Run as** account on the workflow. Selecting an
+account never grants consent on its own.
+
+- **The Run as person saved it.** When the Run as person saved the workflow's
+  current revision, it runs as them without a separate approval. Their save
+  counts as their review of the whole workflow, including earlier edits by
+  others. SimpleChat records an approved authorization for that exact revision
+  and connection in their audit history, sends no notification, and never shows
+  it as pending. This includes the first run.
+- **Someone else saved it.** When someone else saved the current revision, or
+  changed an agent or action it uses after the Run as person's save, the Run as
+  person must approve the workflow's sources, instructions, and destinations
+  before it runs as them. A later edit by someone else asks again.
+- **The account changed.** Reconnecting or disconnecting the Run as account
+  needs a new authorization for that connection. A revision someone else saved
+  asks again; a revision the Run as person saved is authorized for the new
+  connection without asking.
+- **The audience changed.** Adding or removing conversation participants never
+  asks for Run as approval again. Source-sharing acknowledgements still apply
+  to shared conversations as described above.
+
+Explicit decisions still win. Denying or cancelling a run's request stops that
+run. Revoking an authorization in Profile revokes every approved authorization
+for that workflow revision, and that revision then waits for the Run as
+person's approval even if they saved it. A new revision they save runs without
+asking again. Disconnecting the account stops future credential use and pauses
+affected work; it does not remove conversation evidence.
 
 Outgoing mail and calendar review is separate from permission to access a source.
 Manual outgoing actions notify the Run as user and appear in workflow activity;

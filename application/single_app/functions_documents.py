@@ -7,11 +7,80 @@ import time
 import traceback
 import zipfile
 import hashlib
+from functools import partial
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from io import BytesIO
 from flask import make_response
-from azure.core.exceptions import ResourceExistsError
+from azure.core import MatchConditions
+from azure.core.exceptions import AzureError, ResourceExistsError
+from azure.storage.blob import ContentSettings
+from blob_container_readiness import create_missing_blob_container
+from content_screening.contracts import (
+    ContentUnit,
+    SCREENING_EXEMPTION_FIELD,
+    SCREENING_FIELD,
+    DocumentHeldError,
+    ScreeningConflictError,
+    ScreeningError,
+    ScreeningValidationError,
+    document_is_available,
+    is_generated_screening_exempt,
+    require_document_available,
+    subject_from_document,
+)
+from content_screening.access import (
+    assert_document_available,
+    assert_document_chunks_available,
+    public_document_payload,
+    read_available_document_bytes,
+)
+from content_screening.extraction import (
+    current_extraction,
+    is_publication,
+)
+from content_screening.storage import ScreeningStorage
+from content_screening.service import (
+    document_requires_screening,
+    initial_document_marker,
+    prepare_document_deletion,
+    prepare_document_upload,
+    process_screened_upload,
+    reprocess_document,
+    validate_screened_metadata_update,
+)
 from config import *
 from functions_appinsights import log_event
+from functions_document_status import (
+    is_document_processing_complete,
+    is_document_processing_failure,
+    resolve_metadata_completion_status,
+)
+from document_chunk_counts import (
+    INDEXED_CHUNK_COUNT_VERSION_FIELD,
+    begin_chunk_tracking,
+    chunk_count_for_response,
+    count_indexed_chunks,
+    end_chunk_tracking,
+    record_chunk_deletions,
+    record_chunk_uploads,
+    remember_verified_chunk_count,
+)
+from document_metadata_identity import document_family_identity
+from functions_document_provenance import (
+    ORIGIN_FIELD_NAMES,
+    ORIGIN_KIND_FIELD,
+    DocumentOriginError,
+    apply_document_provenance,
+    remember_document_origin_summary,
+    validate_origin,
+)
+from functions_artifact_publication_readiness import (
+    PUBLICATION_BINDING, begin_publication_processing, finish_publication_processing,
+)
+from functions_ai_connections import require_model_capability
+from functions_embedding_compatibility import active_embedding_profile, prepare_embedding_search_documents
+from functions_model_capabilities import is_vision_capable_model
 from functions_document_access_index import (
     DOCUMENT_ACCESS_SCOPE_GROUP,
     DOCUMENT_ACCESS_SCOPE_PERSONAL,
@@ -26,9 +95,45 @@ from functions_data_management_search_write_fence import (
     DataManagementSearchWritesFrozenError,
     hold_data_management_search_write_slot,
 )
+from functions_group_document_projection_fence import (
+    GROUP_DOCUMENT_PROJECTION_WRITER,
+    GroupDocumentProjectionConflict,
+    assert_group_document_source_writable,
+    hold_group_document_projection,
+)
+from utils_cache import (
+    invalidate_group_search_cache,
+    invalidate_personal_search_cache,
+    invalidate_public_workspace_search_cache,
+)
 from functions_visio import build_visio_page_markdown, parse_vsdx_pages
+from functions_onenote import ONENOTE_MAX_CHUNKS, OneNoteExtractionError, extract_onenote
 from functions_content import *
-from functions_office_media import extract_office_embedded_images_with_diagnostics
+from functions_office_media import (
+    extract_office_embedded_images_with_diagnostics,
+    format_word_comment_block,
+    strip_appended_word_comments,
+)
+from functions_accessibility import (
+    build_word_chunk_accessibility_items,
+    extract_office_accessibility_metadata,
+    extract_pdf_accessibility_metadata,
+    format_accessibility_metadata_for_chat,
+    format_pdf_page_annotation_block,
+    format_pptx_comment_block,
+)
+from functions_excel_accessibility import build_excel_evidence_chunks
+from excel_workbook_reader import ExcelWorkbookReader
+from functions_excel_inventory import (
+    EXCEL_INVENTORY_FIELD,
+    clear_excel_inventory_cache,
+    persist_excel_inventory,
+)
+from functions_document_transform_sources import (
+    OFFICE_REFERENCE_MIME_TYPES,
+    TEMPLATE_EXTENSIONS,
+    native_template_pages,
+)
 from functions_content_understanding import analyze_image_with_content_understanding
 from functions_settings import *
 from functions_search import *
@@ -63,6 +168,7 @@ from functions_xsd_schema import (
     validate_xml_bytes,
 )
 from functions_model_endpoint_types import (
+    find_enabled_model_endpoint_for_model_name,
     get_model_endpoint_api_type,
     resolve_model_endpoint_request_model,
 )
@@ -75,6 +181,32 @@ _AUDIO_RUNTIME_CAPABILITIES_CACHE = None
 
 class DocumentSearchAclProjectionDeferredError(RuntimeError):
     """Raised when an authorization-reducing Search ACL update must be retried safely."""
+
+
+class DocumentSearchAclProjectionError(RuntimeError):
+    """Raised when a Search ACL update failed, so the access change was not saved."""
+
+
+class DocumentSearchSyncLeaseLostError(RuntimeError):
+    """Raised when another worker took over a document's search metadata sync lease."""
+
+
+class DocumentMutationPropagationError(RuntimeError):
+    """The source changed, but a required downstream projection needs repair."""
+
+    def __init__(self, message, *, deleted_document_ids=(), search_writes_frozen=False):
+        super().__init__(message)
+        self.deleted_document_ids = list(deleted_document_ids)
+        # True when the projection waits only on a Data Management migration's Search write freeze.
+        self.search_writes_frozen = bool(search_writes_frozen)
+
+
+class DocumentRevisionDeleteError(RuntimeError):
+    """A revision-family deletion stopped after removing some source records."""
+
+    def __init__(self, deleted_document_ids):
+        super().__init__("Some document revisions could not be deleted. Refresh before retrying.")
+        self.deleted_document_ids = list(deleted_document_ids)
 
 
 class XsdIngestionCapabilityError(RuntimeError):
@@ -104,15 +236,61 @@ def _search_indexing_results_succeeded(results):
     )
 
 
-def _execute_document_search_write(search_client, operation_name, *args, **kwargs):
+def _execute_document_search_write(
+    search_client, operation_name, *args, group_id=None, document_id=None, document_version=None, **kwargs,
+):
     """Serialize bounded target Search writes with an active Data Management migration fence."""
     kwargs.update({
         "connection_timeout": 30,
         "read_timeout": 30,
         "retry_total": 0,
     })
-    with hold_data_management_search_write_slot(cosmos_data_management_jobs_container):
-        results = getattr(search_client, operation_name)(*args, **kwargs)
+    documents = kwargs.get("documents")
+    if documents is None and args:
+        documents = args[0]
+    vector_write = operation_name in ("upload_documents", "merge_or_upload_documents") and any(
+            isinstance(document, dict) and document.get("embedding") is not None
+            for document in documents or []
+    )
+    slot_options = {}
+    if vector_write:
+        slot_options["embedding_profile_id"] = next(
+            (getattr(document.get("embedding"), "profile_id", None) for document in documents if document.get("embedding") is not None),
+            None,
+        )
+    if group_id is not None and not document_id:
+        raise GroupDocumentProjectionConflict("The group projection has no document identity.")
+    projection = (
+        hold_group_document_projection(
+            cosmos_group_documents_container, document_id, group_id,
+            expected_version=document_version, log=log_event,
+        ) if group_id is not None else nullcontext(None)
+    )
+    with hold_data_management_search_write_slot(cosmos_data_management_jobs_container, **slot_options):
+        if vector_write:
+            prepare_embedding_search_documents(search_client, documents)
+        with projection as current:
+            if current is not None:
+                allowed = set(current.get("shared_group_ids") or [])
+                for payload in documents or []:
+                    if not isinstance(payload, dict):
+                        raise GroupDocumentProjectionConflict("The group projection payload is invalid.")
+                    if payload.get("document_id", document_id) != document_id:
+                        raise GroupDocumentProjectionConflict("The group projection targets another document.")
+                    if "shared_group_ids" in payload:
+                        payload["shared_group_ids"] = [
+                            entry for entry in payload["shared_group_ids"] or [] if entry in allowed
+                        ]
+                    if current.get("is_current_version") is False and "group_id" in payload:
+                        payload["group_id"] = _build_archived_scope_value(group_id)
+                        payload["shared_group_ids"] = []
+            results = list(getattr(search_client, operation_name)(*args, **kwargs))
+            if vector_write:
+                record_chunk_uploads(search_client, documents, results)
+            if operation_name == "delete_documents":
+                record_chunk_deletions(
+                    search_client, (document["id"] for document in documents), results,
+                )
     if not _search_indexing_results_succeeded(results):
         raise RuntimeError(
             f"Azure AI Search did not acknowledge every {operation_name} document mutation."
@@ -209,13 +387,183 @@ def _build_model_endpoint_client(
     return client
 
 
-def _resolve_metadata_extraction_client(settings, identity_context=None):
+def _build_model_endpoint_client_for_model(
+    settings,
+    endpoint_cfg,
+    model_id,
+    *,
+    fallback_endpoint_id='',
+    fallback_provider='',
+    purpose_label='model',
+    identity_context=None,
+):
+    """Build a sync chat client for one model on a configured AI connection.
+
+    Finds the model by id and re-checks that it may serve chat requests before any of the
+    connection's Key Vault secrets are resolved, then validates the provider and connection
+    details. ``purpose_label`` names the feature in error messages, which never include secrets.
+
+    Returns ``(client, request_model)``.
+    """
+    models = endpoint_cfg.get("models", []) or []
+    model_cfg = next((m for m in models if m.get("id") == model_id), None)
+    if not model_cfg:
+        raise LookupError(f"Selected {purpose_label} model could not be found on the endpoint.")
+    provider = str(endpoint_cfg.get("provider") or fallback_provider or "aoai").lower()
+    require_model_capability(model_cfg, provider=provider)
+
+    resolved_route = None
+    if routing_schema_version(endpoint_cfg) == 2:
+        identity = (
+            identity_context if isinstance(identity_context, dict) else {}
+        )
+        endpoint_cfg = resolve_model_endpoint_from_context(
+            settings,
+            {
+                "routing_schema_version": 2,
+                "scope_type": "global",
+                "scope_id": "global",
+                "endpoint_id": (
+                    endpoint_cfg.get("id") or fallback_endpoint_id
+                ),
+                "model_id": model_id,
+                "user_id": str(identity.get("user_id") or "").strip(),
+            },
+            authorize=True,
+        )
+        if not isinstance(endpoint_cfg, dict):
+            raise LookupError(
+                f"Selected {purpose_label} endpoint could not be authorized."
+            )
+        resolved_route = endpoint_cfg.get("_resolved_route")
+        if not isinstance(resolved_route, dict):
+            raise ValueError(
+                f"Selected {purpose_label} route could not be resolved."
+            )
+    else:
+        endpoint_cfg = keyvault_model_endpoint_get_helper(
+            endpoint_cfg,
+            endpoint_cfg.get("id") or fallback_endpoint_id,
+            scope="global",
+            return_type=SecretReturnType.VALUE,
+        )
+
+    connection = endpoint_cfg.get("connection", {}) or {}
+    auth_settings = endpoint_cfg.get("auth", {}) or {}
+    deployment = (
+        resolved_route["request_model"]
+        if resolved_route
+        else resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
+    )
+    endpoint = str(connection.get("endpoint") or "").strip()
+    api_version = str(
+        resolved_route["api_version"]
+        if resolved_route
+        else connection.get("openai_api_version")
+        or connection.get("api_version")
+        or ""
+    ).strip()
+    api_type = (
+        resolved_route["api_type"]
+        if resolved_route
+        else get_model_endpoint_api_type(endpoint_cfg)
+    )
+    anthropic_version = str(
+        resolved_route["anthropic_version"]
+        if resolved_route
+        else connection.get("anthropic_version")
+        or ""
+    ).strip()
+    runtime_protocol = (
+        resolved_route["protocol"]
+        if resolved_route
+        else infer_model_endpoint_protocol(
+            provider, endpoint, deployment, api_type
+        )
+    )
+
+    if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
+        raise ValueError(f"Selected {purpose_label} provider '{provider}' is not supported.")
+    if not endpoint or not deployment or (
+        runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
+    ):
+        raise ValueError(f"Selected {purpose_label} endpoint is incomplete.")
+
+    return _build_model_endpoint_client(
+        auth_settings,
+        provider,
+        endpoint,
+        api_version,
+        deployment,
+        api_type=api_type,
+        anthropic_version=anthropic_version,
+        allow_private_custom_endpoints=bool(
+            settings.get("allow_private_custom_model_endpoints", False)
+        ),
+        settings=settings,
+        endpoint_config=endpoint_cfg,
+        identity_context=identity_context,
+        resolved_route=resolved_route,
+    ), deployment
+
+
+def resolve_vision_model_endpoint(settings, vision_model):
+    """Return the enabled AI connection and model that serve the configured vision model.
+
+    The vision model setting stores a model name and, when configured through V2 Admin
+    Settings, a structured ``multimodal_vision_model_selection`` reference. When an explicit
+    selection reference matches the active vision model, it resolves that exact connection
+    and model (and raises if the selected connection or model is missing or disabled).
+    Otherwise, the model name is matched against enabled endpoints and models when
+    multi-endpoint models are enabled. Returns ``(endpoint, model)`` from the normalized
+    endpoint list, or ``(None, None)`` when the legacy GPT connection should be used instead.
+    """
+    settings = settings or {}
+    if not settings.get("enable_multi_model_endpoints", False):
+        return None, None
+
+    requested_name = str(vision_model or "").strip()
+    if not requested_name:
+        return None, None
+
+    endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
+    selection = _normalize_model_endpoint_selection(
+        settings.get("multimodal_vision_model_selection")
+    )
+    stored_vision_model = str(settings.get("multimodal_vision_model") or "").strip()
+    if (
+        (selection["endpoint_id"] or selection["model_id"])
+        and (not stored_vision_model or requested_name == stored_vision_model)
+    ):
+        endpoint_cfg = next(
+            (e for e in endpoints if e.get("id") == selection["endpoint_id"]),
+            None,
+        )
+        if not endpoint_cfg:
+            raise LookupError("Selected vision endpoint could not be found.")
+        if not endpoint_cfg.get("enabled", True):
+            raise ValueError("Selected vision endpoint is disabled.")
+        models = endpoint_cfg.get("models", []) or []
+        model_cfg = next(
+            (m for m in models if m.get("id") == selection["model_id"]),
+            None,
+        )
+        if not model_cfg:
+            raise LookupError("Selected vision model could not be found on the endpoint.")
+        if not model_cfg.get("enabled", True):
+            raise ValueError("Selected vision model is disabled.")
+        return endpoint_cfg, model_cfg
+
+    return find_enabled_model_endpoint_for_model_name(endpoints, requested_name)
+
+
+def resolve_metadata_extraction_client(settings, identity_context=None):
+    """Resolve the metadata extraction chat client and request model from configured settings."""
     selection = _normalize_model_endpoint_selection(settings.get("metadata_extraction_model_selection"))
 
     if (
         settings.get("enable_multi_model_endpoints", False)
-        and selection["endpoint_id"]
-        and selection["model_id"]
+        and (selection["endpoint_id"] or selection["model_id"])
     ):
         endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
         endpoint_cfg = next((e for e in endpoints if e.get("id") == selection["endpoint_id"]), None)
@@ -224,89 +572,31 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
         if not endpoint_cfg.get("enabled", True):
             raise ValueError("Selected metadata extraction endpoint is disabled.")
 
-        resolved_route = None
-        if routing_schema_version(endpoint_cfg) == 2:
-            identity = identity_context if isinstance(identity_context, dict) else {}
-            endpoint_cfg = resolve_model_endpoint_from_context(settings, {
-                "routing_schema_version": 2,
-                "scope_type": "global",
-                "scope_id": "global",
-                "endpoint_id": selection["endpoint_id"],
-                "model_id": selection["model_id"],
-                "user_id": str(identity.get("user_id") or "").strip(),
-            })
-            if not isinstance(endpoint_cfg, dict):
-                raise LookupError("Selected metadata extraction endpoint could not be authorized.")
-            resolved_route = endpoint_cfg.get("_resolved_route")
-            if not isinstance(resolved_route, dict):
-                raise ValueError("Selected metadata extraction route could not be resolved.")
-        else:
-            endpoint_cfg = keyvault_model_endpoint_get_helper(
-                endpoint_cfg,
-                endpoint_cfg.get("id") or selection["endpoint_id"],
-                scope="global",
-                return_type=SecretReturnType.VALUE,
-            )
-
-        models = endpoint_cfg.get("models", []) or []
-        model_cfg = next((m for m in models if m.get("id") == selection["model_id"]), None)
-        if not model_cfg:
-            raise LookupError("Selected metadata extraction model could not be found on the endpoint.")
-        if not model_cfg.get("enabled", True):
-            raise ValueError("Selected metadata extraction model is disabled.")
-
-        provider = str(endpoint_cfg.get("provider") or selection["provider"] or "aoai").lower()
-        connection = endpoint_cfg.get("connection", {}) or {}
-        auth_settings = endpoint_cfg.get("auth", {}) or {}
-        deployment = (
-            resolved_route["request_model"]
-            if resolved_route
-            else resolve_model_endpoint_request_model(endpoint_cfg, model_cfg)
-        )
-        endpoint = str(connection.get("endpoint") or "").strip()
-        if resolved_route:
-            api_version = resolved_route["api_version"]
-            api_type = resolved_route["api_type"]
-            anthropic_version = resolved_route["anthropic_version"]
-            runtime_protocol = resolved_route["protocol"]
-        else:
-            api_version = str(connection.get("openai_api_version") or connection.get("api_version") or "").strip()
-            api_type = get_model_endpoint_api_type(endpoint_cfg)
-            anthropic_version = str(connection.get("anthropic_version") or "").strip()
-            runtime_protocol = infer_model_endpoint_protocol(
-                provider,
-                endpoint,
-                deployment,
-                api_type,
-            )
-
-        if provider not in MODEL_ENDPOINT_PROVIDER_ALLOWLIST:
-            raise ValueError(f"Selected metadata extraction provider '{provider}' is not supported.")
-        if not endpoint or not deployment or (
-            runtime_protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI and not api_version
-        ):
-            raise ValueError("Selected metadata extraction endpoint is incomplete.")
-
-        return _build_model_endpoint_client(
-            auth_settings,
-            provider,
-            endpoint,
-            api_version,
-            deployment,
-            api_type=api_type,
-            anthropic_version=anthropic_version,
-            allow_private_custom_endpoints=bool(
-                settings.get("allow_private_custom_model_endpoints", False)
-            ),
-            settings=settings,
-            endpoint_config=endpoint_cfg,
+        return _build_model_endpoint_client_for_model(
+            settings,
+            endpoint_cfg,
+            selection["model_id"],
+            fallback_endpoint_id=selection["endpoint_id"],
+            purpose_label="metadata extraction",
             identity_context=identity_context,
-            resolved_route=resolved_route,
-        ), deployment
+        )
 
     gpt_model = settings.get('metadata_extraction_model')
     if not gpt_model:
         raise ValueError("No metadata extraction model is selected.")
+
+    if settings.get("enable_multi_model_endpoints", False):
+        endpoints, _ = normalize_model_endpoints(settings.get("model_endpoints", []) or [])
+        endpoint_cfg, model_cfg = find_enabled_model_endpoint_for_model_name(endpoints, gpt_model)
+        if endpoint_cfg and model_cfg:
+            return _build_model_endpoint_client_for_model(
+                settings,
+                endpoint_cfg,
+                model_cfg.get("id"),
+                fallback_endpoint_id=str(endpoint_cfg.get("id") or ""),
+                purpose_label="metadata extraction",
+                identity_context=identity_context,
+            )
 
     extra_headers = build_model_endpoint_identity_headers(settings, identity_context=identity_context)
     if settings.get('enable_gpt_apim', False):
@@ -337,6 +627,9 @@ def _resolve_metadata_extraction_client(settings, identity_context=None):
     ), gpt_model
 
 
+_resolve_metadata_extraction_client = resolve_metadata_extraction_client
+
+
 ARCHIVED_SCOPE_PREFIX = "__archived__::"
 CURRENT_ALIAS_BLOB_PATH_MODE = "current_alias"
 ARCHIVED_REVISION_BLOB_PATH_MODE = "archived_revision"
@@ -357,6 +650,18 @@ DI_MARKDOWN_TABLE_ROW_PATTERN = re.compile(r'(?m)^\s*\|.+\|\s*$')
 # treats them as a signal that Enhanced extraction is worth the extra cost, because Content
 # Understanding is the only engine that describes figures.
 DI_MARKDOWN_FIGURE_PATTERN = re.compile(r'(<figure\b|</figure>|!\[[^\]]*\]\()', re.IGNORECASE)
+# Document Intelligence Layout emits page numbers and page breaks as markdown comments, for example
+# <!-- PageNumber="J" -->. They annotate the page rather than carry its text, so an image whose OCR
+# output is only these annotations has no text worth indexing on its own. Header and footer comments
+# are deliberately not matched, because their quoted values are the recognized text itself.
+DI_MARKDOWN_PAGE_ANNOTATION_PATTERN = re.compile(
+    r'<!--\s*(?:PageNumber\s*=\s*"[^"]*"|PageBreak)\s*-->',
+    re.IGNORECASE,
+)
+VISION_ANALYSIS_CONTENT_FIELDS = ('description', 'objects', 'text', 'analysis')
+# Marks the single chunk saved for an image that has no OCR text but does have an AI vision
+# description, so the save loop keeps it and save_chunks indexes the description on its own.
+VISION_DESCRIPTION_ONLY_CHUNK_FLAG = 'vision_description_only'
 # Budget for image content merged into an existing chunk. The limit is the embedding character
 # budget, so a merged chunk can never grow past what the embedding endpoint accepts.
 OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT = 4000
@@ -444,6 +749,7 @@ def _build_office_embedded_image_chunks(
     file_path,
     settings,
     update_callback,
+    native_media_metadata=None,
 ):
     """Analyze images embedded in an Office file and return placeable content blocks.
 
@@ -478,11 +784,13 @@ def _build_office_embedded_image_chunks(
 
     try:
         temp_image_dir = tempfile.mkdtemp(prefix='office_images_')
+        extra_arguments = {"native_media_metadata": native_media_metadata} if native_media_metadata is not None else {}
         embedded_images, image_diagnostics = extract_office_embedded_images_with_diagnostics(
             file_path,
             temp_image_dir,
             min_pixels=min_pixels,
             max_images=max_images,
+            **extra_arguments,
         )
 
         candidate_count = image_diagnostics.get('candidates', 0)
@@ -536,6 +844,8 @@ def _build_office_embedded_image_chunks(
                     settings,
                 )
             except Exception as image_error:
+                if current_extraction() is not None:
+                    raise ScreeningError(code="screening_embedded_image_failed") from image_error
                 log_event(
                     f"[OFFICE_EMBEDDED_IMAGES] Failed to analyze {embedded_image.get('name')}: {image_error}",
                     level=logging.WARNING,
@@ -554,10 +864,34 @@ def _build_office_embedded_image_chunks(
             if not body_parts:
                 continue
 
+            alt_text = str(embedded_image.get('alt_text') or '').strip()
+            title_text = str(embedded_image.get('title_text') or '').strip()
+            is_decorative = bool(embedded_image.get('is_decorative', False))
+            placement = str(embedded_image.get('placement') or 'inline').strip()
+            allow_overlap = bool(embedded_image.get('allow_overlap', False))
+            a11y_parts = []
+            if is_decorative:
+                a11y_parts.append("Decorative=true")
+            elif alt_text or title_text:
+                if alt_text:
+                    a11y_parts.append(f'Alt text="{alt_text}"')
+                if title_text and title_text != alt_text:
+                    a11y_parts.append(f'Title="{title_text}"')
+            else:
+                a11y_parts.append("Alt text=MISSING")
+            a11y_parts.append(
+                f"Placement={placement}" + (" (allowOverlap=true)" if allow_overlap else "")
+            )
+            body_parts.append("Native image accessibility: " + "; ".join(a11y_parts))
+
             location_label = ''
             slide_number = embedded_image.get('slide_number')
             if slide_number:
                 location_label = f" on slide {slide_number}"
+            elif embedded_image.get('sheet_name'):
+                location_label = f" on worksheet {embedded_image['sheet_name']}"
+                if embedded_image.get('cell'):
+                    location_label += f" at {embedded_image['cell']}"
 
             heading = (
                 f"### Embedded image {image_index} of {total_images}: "
@@ -569,6 +903,11 @@ def _build_office_embedded_image_chunks(
                 'word_offset': embedded_image.get('word_offset'),
                 'position_known': bool(embedded_image.get('position_known')),
                 'name': embedded_image.get('name'),
+                **({
+                    'sheet_name': embedded_image.get('sheet_name'), 'cell': embedded_image.get('cell'),
+                    'object_id': embedded_image.get('object_id'), 'media_part': embedded_image.get('media_part'),
+                    'placements': embedded_image.get('placements') or [],
+                } if native_media_metadata is not None else {}),
             })
             analyzed_count += 1
 
@@ -583,6 +922,13 @@ def _build_office_embedded_image_chunks(
                 office_embedded_image_skipped=image_diagnostics.get('skipped', 0),
             )
     except Exception as embedded_image_error:
+        if current_extraction() is not None:
+            log_event(
+                "[CONTENT_SCREENING] Embedded image extraction did not complete.",
+                extra={"error_type": type(embedded_image_error).__name__},
+                level=logging.ERROR,
+            )
+            raise ScreeningError(code="screening_embedded_image_failed") from embedded_image_error
         log_event(
             f"[OFFICE_EMBEDDED_IMAGES] Embedded image analysis failed for "
             f"{os.path.basename(file_path)}: {embedded_image_error}",
@@ -705,6 +1051,157 @@ def _append_overflow_image_chunks(merged_chunks, overflow_blocks):
     return merged_chunks
 
 
+def _build_word_comment_chunks(file_path, file_ext=None, update_callback=None):
+    """Extract review comments from a Word file and return placeable content blocks.
+
+    Azure Document Intelligence and docx2txt ignore review comments in Word documents, and legacy
+    .doc piece tables mix annotation streams with body text unless parsed via the FIB. Extracting
+    structured comments with their reading-order word offsets lets the ingestion pipeline merge
+    each comment thread into the chunk containing its anchored text.
+
+    Returns ``(comment_blocks, comment_count, total_body_words)``.
+    """
+    try:
+        comments, total_body_words = extract_word_comments(file_path, file_ext)
+    except Exception as comment_error:
+        if current_extraction() is not None:
+            raise ScreeningError(code="screening_word_comment_extraction_failed") from comment_error
+        log_event(
+            f"[DOCUMENTS] Word comment extraction failed for "
+            f"{os.path.basename(str(file_path or ''))}: {comment_error}",
+            level=logging.WARNING,
+        )
+        return [], 0, 0
+
+    if not comments:
+        return [], 0, total_body_words
+
+    total_comments = len(comments)
+    blocks = []
+    for index, comment in enumerate(comments, start=1):
+        formatted = format_word_comment_block(comment, index=index, total=total_comments)
+        if not formatted:
+            continue
+        blocks.append({
+            'content': formatted,
+            'slide_number': None,
+            'word_offset': comment.get('word_offset'),
+            'position_known': bool(comment.get('position_known')),
+            'comment_id': comment.get('id'),
+        })
+
+    if blocks and update_callback is not None:
+        update_callback(
+            status=f"Extracted {len(blocks)} review comment(s) from {os.path.basename(str(file_path or ''))}."
+        )
+
+    return blocks, len(blocks), total_body_words
+
+
+def _append_inline_page_supplements_with_budget(page_content, supplement_blocks, settings):
+    """Append inline comment and accessibility blocks to a page/slide within the embedding budget."""
+    existing = str(page_content or '').rstrip()
+    if not supplement_blocks:
+        return existing
+
+    try:
+        embedding_char_budget = int(get_embedding_safe_chunk_characters(settings))
+    except Exception:
+        embedding_char_budget = OFFICE_IMAGE_MERGE_FALLBACK_CHAR_LIMIT
+    merged_char_limit = max(OFFICE_IMAGE_MERGE_MIN_CHAR_LIMIT, embedding_char_budget)
+
+    for block in supplement_blocks:
+        clean_block = str(block or '').strip()
+        if not clean_block:
+            continue
+        candidate = f"{existing}\n\n{clean_block}" if existing else clean_block
+        if len(candidate) <= merged_char_limit:
+            existing = candidate
+        else:
+            remaining = merged_char_limit - len(existing) - 4
+            if remaining > 200:
+                existing = f"{existing}\n\n{clean_block[:remaining].rstrip()}..."
+            break
+
+    return existing
+
+
+def _enrich_pdf_pages_with_comments_and_accessibility(di_pages, pdf_per_page_details, settings, capture=None):
+    """Attach PDF page annotations/comments and per-page tag trees inline to each extracted page."""
+    if not di_pages or not isinstance(pdf_per_page_details, dict):
+        return di_pages, 0
+
+    enriched_pages = []
+    total_annotations = 0
+    for page in di_pages:
+        page_copy = dict(page)
+        page_num = page_copy.get('page_number')
+        detail = pdf_per_page_details.get(page_num) if isinstance(page_num, int) else None
+        if detail:
+            supplements = []
+            annots = detail.get('annotations') or []
+            total_annots_on_page = len(annots)
+            for idx, annot in enumerate(annots, start=1):
+                formatted_annot = format_pdf_page_annotation_block(
+                    annot, index=idx, total=total_annots_on_page
+                )
+                if formatted_annot:
+                    supplements.append(formatted_annot)
+                    total_annotations += 1
+                    if capture is not None:
+                        capture.add_supplement(formatted_annot, kind="comment", page_number=page_num)
+
+            a11y_block = str(detail.get('formatted_accessibility_block') or '').strip()
+            if a11y_block:
+                supplements.append(a11y_block)
+
+            if supplements:
+                page_copy['content'] = _append_inline_page_supplements_with_budget(
+                    page_copy.get('content', ''), supplements, settings
+                )
+        enriched_pages.append(page_copy)
+
+    return enriched_pages, total_annotations
+
+
+def _enrich_pptx_slides_with_comments_and_accessibility(di_pages, pptx_per_slide_details, settings, capture=None):
+    """Attach PowerPoint slide comments and per-slide accessibility blocks inline to each slide."""
+    if not di_pages or not isinstance(pptx_per_slide_details, dict):
+        return di_pages, 0
+
+    enriched_slides = []
+    total_comments = 0
+    for slide in di_pages:
+        slide_copy = dict(slide)
+        slide_num = slide_copy.get('page_number')
+        detail = pptx_per_slide_details.get(slide_num) if isinstance(slide_num, int) else None
+        if detail:
+            supplements = []
+            comments = detail.get('comments') or []
+            total_on_slide = len(comments)
+            for idx, comment in enumerate(comments, start=1):
+                formatted_comment = format_pptx_comment_block(
+                    comment, index=idx, total=total_on_slide
+                )
+                if formatted_comment:
+                    supplements.append(formatted_comment)
+                    total_comments += 1
+                    if capture is not None:
+                        capture.add_supplement(formatted_comment, kind="comment", page_number=slide_num)
+
+            a11y_block = str(detail.get('formatted_accessibility_block') or '').strip()
+            if a11y_block:
+                supplements.append(a11y_block)
+
+            if supplements:
+                slide_copy['content'] = _append_inline_page_supplements_with_budget(
+                    slide_copy.get('content', ''), supplements, settings
+                )
+        enriched_slides.append(slide_copy)
+
+    return enriched_slides, total_comments
+
+
 def _assert_unique_chunk_page_numbers(chunks, document_id):
     """Warn when chunks share a page number, which would overwrite entries in the search index."""
     seen_page_numbers = set()
@@ -736,6 +1233,7 @@ def _extract_pages_with_extraction_engine(
     extraction_engine,
     settings=None,
     pages=None,
+    is_image=False,
 ):
     """Extract page content with the resolved engine, falling back to Document Intelligence Layout."""
     return extract_content_with_extraction_engine(
@@ -744,6 +1242,7 @@ def _extract_pages_with_extraction_engine(
         extraction_engine=extraction_engine,
         settings=settings,
         pages=pages,
+        is_image=is_image,
     )
 
 
@@ -876,25 +1375,16 @@ def _get_download_content_type(file_name):
     return mimetypes.guess_type(str(file_name or ''))[0] or 'application/octet-stream'
 
 
-def _get_document_download_entry(document_item, user_id=None, group_id=None, public_workspace_id=None):
+def _get_document_download_entry(
+    document_item, user_id=None, group_id=None, public_workspace_id=None, *, metadata_reader=None,
+):
     if not document_item:
         raise FileNotFoundError('Document not found.')
 
-    container_name, blob_path = get_document_blob_storage_info(
-        document_item,
-        user_id=user_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
+    document_item, file_bytes = read_available_document_bytes(
+        document_item, user_id, group_id, public_workspace_id,
+        metadata_reader=metadata_reader,
     )
-    if not container_name or not blob_path:
-        raise FileNotFoundError('Document source file is unavailable.')
-
-    blob_service_client = _get_blob_service_client()
-    blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
-    try:
-        file_bytes = blob_client.download_blob().readall()
-    except Exception as exc:
-        raise FileNotFoundError('Document source file was not found in Blob Storage.') from exc
 
     file_name = _sanitize_download_file_name(
         document_item.get('file_name') or document_item.get('title') or document_item.get('id'),
@@ -907,21 +1397,28 @@ def _get_document_download_entry(document_item, user_id=None, group_id=None, pub
     }
 
 
-def build_document_download_response(document_item, user_id=None, group_id=None, public_workspace_id=None):
+def build_document_download_response(
+    document_item, user_id=None, group_id=None, public_workspace_id=None, *, metadata_reader=None,
+):
     """Build an attachment response for a single authorized document source file."""
     entry = _get_document_download_entry(
         document_item,
         user_id=user_id,
         group_id=group_id,
         public_workspace_id=public_workspace_id,
+        metadata_reader=metadata_reader,
     )
     response = make_response(entry['content'])
     response.headers['Content-Type'] = entry['content_type']
     response.headers['Content-Disposition'] = f'attachment; filename="{entry["file_name"]}"'
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     return response
 
 
-def build_documents_zip_download_response(documents, archive_name, user_id=None, group_id=None, public_workspace_id=None):
+def build_documents_zip_download_response(
+    documents, archive_name, user_id=None, group_id=None, public_workspace_id=None, *, metadata_reader=None,
+):
     """Build a ZIP attachment for multiple authorized document source files."""
     buffer = BytesIO()
     used_names = set()
@@ -934,6 +1431,7 @@ def build_documents_zip_download_response(documents, archive_name, user_id=None,
                 user_id=user_id,
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
+                metadata_reader=metadata_reader,
             )
             base_name, extension = os.path.splitext(entry['file_name'])
             candidate_name = entry['file_name']
@@ -1013,33 +1511,8 @@ def _get_blob_service_client():
 
 def _ensure_blob_container_ready(blob_service_client, container_name):
     """Create the Enhanced Citations target container on demand if it is missing."""
-    if not container_name:
-        raise ValueError("Blob container name is required")
-
-    container_client = blob_service_client.get_container_client(container_name)
-    try:
-        container_client.create_container()
-        log_event(
-            "[ENHANCED_CITATIONS] Created blob storage container during upload.",
-            extra={"container_name": container_name},
-            level=logging.INFO,
-        )
-    except ResourceExistsError:
-        pass
-    except HttpResponseError as exc:
-        if getattr(exc, "status_code", None) != 409:
-            log_event(
-                "[ENHANCED_CITATIONS] Blob storage container readiness check failed during upload.",
-                extra={
-                    "container_name": container_name,
-                    "error_type": type(exc).__name__,
-                    "status_code": getattr(exc, "status_code", None),
-                },
-                level=logging.ERROR,
-                exceptionTraceback=True,
-            )
-            raise
-    return container_client
+    create_missing_blob_container(blob_service_client, container_name, log=log_event)
+    return blob_service_client.get_container_client(container_name)
 
 
 def require_xsd_ingestion_capability(
@@ -1482,22 +1955,7 @@ def _get_search_client(group_id=None, public_workspace_id=None):
 
 
 def _get_document_family_key(document_item):
-    revision_family_id = document_item.get("revision_family_id")
-    if revision_family_id:
-        return revision_family_id
-
-    scope_value = (
-        document_item.get("public_workspace_id")
-        or document_item.get("group_id")
-        or document_item.get("user_id")
-        or "unknown"
-    )
-    document_identity = (
-        document_item.get("xsd_revision_identity")
-        if document_item.get("document_kind") == "xml_schema"
-        else document_item.get("file_name", "")
-    )
-    return f"legacy::{scope_value}::{document_identity}"
+    return document_family_identity(document_item)
 
 
 def _document_revision_sort_key(document_item):
@@ -1530,19 +1988,63 @@ def select_current_documents(documents):
     return current_documents
 
 
-def sort_documents(documents, sort_by="_ts", sort_order="DESC"):
+def _safe_float(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+# Fields the document lists may be ordered by, split by the type of value they hold.
+#
+# The split is what makes the sort safe. A document that has never been given a value for
+# the sort field still has to compare against one that has, and deriving the fallback from
+# the *field* rather than from the value is the only way to guarantee a single comparable
+# type: a missing numeric field yielding "" while a present one yields an int raises
+# TypeError in Python 3. That hazard is why this was limited to string fields.
+#
+# `upload_date` is text on purpose. It is stored as ISO 8601, which sorts correctly
+# lexicographically, so it needs no parsing to order properly.
+NUMERIC_DOCUMENT_SORT_FIELDS = frozenset({
+    "_ts",
+    "file_size",
+    "number_of_pages",
+    "version",
+})
+
+TEXT_DOCUMENT_SORT_FIELDS = frozenset({
+    "file_name",
+    "title",
+    "upload_date",
+    "document_classification",
+})
+
+ALLOWED_DOCUMENT_SORT_FIELDS = NUMERIC_DOCUMENT_SORT_FIELDS | TEXT_DOCUMENT_SORT_FIELDS
+
+DEFAULT_DOCUMENT_SORT_FIELD = "_ts"
+
+
+def sort_documents(documents, sort_by=DEFAULT_DOCUMENT_SORT_FIELD, sort_order="DESC"):
+    """Order documents by one field, keeping every sort key a single comparable type.
+
+    An unrecognised field falls back to the default rather than raising, which matches what
+    each calling route already does with its own allow-list and hardens the callers that
+    pass a field straight through.
+    """
+    if sort_by not in ALLOWED_DOCUMENT_SORT_FIELDS:
+        sort_by = DEFAULT_DOCUMENT_SORT_FIELD
+
     reverse = str(sort_order).lower() != "asc"
+    numeric = sort_by in NUMERIC_DOCUMENT_SORT_FIELDS
 
     def sort_key(document_item):
         value = document_item.get(sort_by)
-        if sort_by == "_ts":
-            return _safe_int(value)
+        if numeric:
+            return _safe_float(value)
         if value is None:
             return ""
         if isinstance(value, str):
             return value.lower()
-        if isinstance(value, (int, float)):
-            return value
         return str(value).lower()
 
     return sorted(documents or [], key=sort_key, reverse=reverse)
@@ -1598,12 +2100,40 @@ def _query_accessible_documents(user_id, group_id=None, public_workspace_id=None
     return documents
 
 
-def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation):
-    persisted_document = cosmos_container.upsert_item(document_item)
-    sync_document_access_index_for_document_fail_open(
+def _upsert_document_and_sync_access_index(cosmos_container, document_item, operation, *, strict=False):
+    try:
+        current_document = cosmos_container.read_item(
+            item=document_item["id"], partition_key=document_item["id"],
+        )
+    except CosmosResourceNotFoundError:
+        current_document = None
+    coordinated_group = bool(document_item.get("group_id")) and not document_item.get("public_workspace_id")
+    if current_document and coordinated_group:
+        assert_group_document_source_writable(current_document)
+    if (strict or coordinated_group) and current_document is None and document_item.get("_etag"):
+        raise ScreeningConflictError()
+    if current_document and (strict or coordinated_group or SCREENING_FIELD in current_document):
+        expected_etag = document_item.get("_etag")
+        if ((strict or coordinated_group) and not expected_etag) or expected_etag != current_document.get("_etag"):
+            raise ScreeningConflictError()
+        if document_item.get("version") != current_document.get("version"):
+            raise ScreeningConflictError()
+        if SCREENING_FIELD in current_document:
+            document_item = {**document_item, SCREENING_FIELD: current_document[SCREENING_FIELD]}
+        persisted_document = cosmos_container.replace_item(
+            item=document_item["id"], body=document_item,
+            etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+        )
+    elif current_document is None and (strict or coordinated_group or SCREENING_FIELD in document_item):
+        persisted_document = cosmos_container.create_item(document_item)
+    else:
+        persisted_document = cosmos_container.upsert_item(document_item)
+    projection = sync_document_access_index_for_document_fail_open(
         persisted_document if isinstance(persisted_document, dict) else document_item,
         operation=operation,
     )
+    if strict and not projection.get("success"):
+        raise DocumentMutationPropagationError("Document saved, but its access projection could not be updated.")
     return persisted_document if isinstance(persisted_document, dict) else document_item
 
 
@@ -1635,21 +2165,25 @@ def set_document_chunk_visibility(document_item, active=True):
 
     documents_to_update = []
     for chunk_item in chunk_results:
+        visibility_update = {"id": chunk_item["id"]}
         if is_public_workspace:
-            chunk_item["public_workspace_id"] = public_workspace_id if active else _build_archived_scope_value(public_workspace_id)
+            visibility_update["public_workspace_id"] = public_workspace_id if active else _build_archived_scope_value(public_workspace_id)
         elif is_group:
-            chunk_item["group_id"] = group_id if active else _build_archived_scope_value(group_id)
-            chunk_item["shared_group_ids"] = document_item.get("shared_group_ids", []) if active else []
+            visibility_update["group_id"] = group_id if active else _build_archived_scope_value(group_id)
+            visibility_update["shared_group_ids"] = document_item.get("shared_group_ids", []) if active else []
         else:
-            chunk_item["user_id"] = user_id if active else _build_archived_scope_value(user_id)
-            chunk_item["shared_user_ids"] = document_item.get("shared_user_ids", []) if active else []
+            visibility_update["user_id"] = user_id if active else _build_archived_scope_value(user_id)
+            visibility_update["shared_user_ids"] = document_item.get("shared_user_ids", []) if active else []
 
-        documents_to_update.append(chunk_item)
+        documents_to_update.append(visibility_update)
 
     _execute_document_search_write(
         search_client,
-        "upload_documents",
+        "merge_documents",
         documents=documents_to_update,
+        group_id=group_id if is_group and not is_public_workspace else None,
+        document_id=document_id,
+        document_version=document_item.get("version"),
     )
     return len(documents_to_update)
 
@@ -1831,7 +2365,24 @@ def create_document(
     xsd_family_namespace=None,
     source_file_path=None,
     allow_deferred_xsd_source=False,
+    origin=None,
+    server_tags=None,
+    screening_exemption=None,
 ):
+    """Create or version a document record.
+
+    ``origin``, ``server_tags`` and ``screening_exemption`` are server-only: callers pass them only
+    from server-held workflow, chat, or generated-content bindings, never from client input. Each
+    version stores only its own origin and exemption.
+    """
+    if origin is not None:
+        # Validated before any earlier revision is archived, so a malformed origin can never
+        # leave the document family without a current version.
+        origin = validate_origin(origin)
+    if screening_exemption is not None and not is_generated_screening_exempt(
+        {SCREENING_EXEMPTION_FIELD: screening_exemption}
+    ):
+        raise ScreeningValidationError("The screening exemption is invalid.")
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -2138,6 +2689,15 @@ def create_document(
                     "enhanced_citations": True,
                     "xsd_blob_etag": staged_xsd_source.get("blob_etag"),
                 })
+        apply_document_provenance(document_metadata, origin=origin, server_tags=server_tags)
+        if screening_exemption is not None:
+            # Stored before the marker is chosen, so a generated version is never enrolled.
+            document_metadata[SCREENING_EXEMPTION_FIELD] = dict(screening_exemption)
+        screening_marker = initial_document_marker(document_metadata)
+        if screening_marker is not None:
+            document_metadata[SCREENING_FIELD] = screening_marker
+            document_metadata["status"] = "Content screening pending"
+            document_metadata["user_id"] = user_id
 
         _upsert_document_and_sync_access_index(
             cosmos_container,
@@ -2275,6 +2835,15 @@ def save_video_chunk(
     already appended to page_text_content for searchability.
     The chunk_id is built from document_id and the integer second offset to ensure a valid key.
     """
+    capture = current_extraction(document_id)
+    if capture is not None:
+        capture.add_chunk(
+            f"{page_text_content}\n{ocr_chunk_text}".strip(), 0, start_time=start_time,
+        )
+        return {"staged": True, "staged_units": 1, "total_tokens": 0}
+    _require_screening_chunk_write(get_document_metadata(
+        document_id, user_id, group_id, public_workspace_id,
+    ))
     from functions_debug import debug_print
 
     debug_print(f"[VIDEO_CHUNK] Saving video chunk for document: {document_id}, start_time: {start_time}")
@@ -2304,6 +2873,8 @@ def save_video_chunk(
 
             debug_print(f"[VIDEO_CHUNK] Embedding generated successfully")
             print(f"[VIDEO_CHUNK] EMBEDDING OK for {document_id}@{start_time}", flush=True)
+        except AIConnectionError:
+            raise
         except Exception as e:
             debug_print(f"[VIDEO_CHUNK] Embedding generation failed: {str(e)}")
             print(f"[VIDEO_CHUNK] EMBEDDING ERROR for {document_id}@{start_time}: {e}", flush=True)
@@ -2381,13 +2952,21 @@ def save_video_chunk(
                 client,
                 "upload_documents",
                 documents=[chunk],
+                group_id=group_id if is_group and not is_public_workspace else None,
+                document_id=document_id,
+                document_version=version,
             )
             debug_print(f"[VIDEO_CHUNK] Upload successful for chunk: {chunk_id}")
             print(f"[VIDEO_CHUNK] UPLOAD OK for {chunk_id}", flush=True)
+        except AIConnectionError:
+            raise
         except Exception as e:
             debug_print(f"[VIDEO_CHUNK] Upload to search index failed: {str(e)}")
             print(f"[VIDEO_CHUNK] UPLOAD ERROR for {chunk_id}: {e}", flush=True)
 
+    except AIConnectionError as exc:
+        log_event("[EMBEDDING] Video chunk could not be indexed", extra={"code": exc.code})
+        raise
     except Exception as e:
         debug_print(f"[VIDEO_CHUNK] Unexpected error processing chunk: {str(e)}")
         print(f"[VIDEO_CHUNK] UNEXPECTED ERROR for {document_id}@{start_time}: {e}", flush=True)
@@ -3131,7 +3710,7 @@ def process_video_document(
                 insight_parts.append(f"Objects: {', '.join(chunk_objects)}")
 
             chunk_text = ". ".join(insight_parts) if insight_parts else "[No content detected]"
-            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} has no speech, using insights as text: {chunk_text[:100]}...")
+            debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} has no speech; insight text length: {len(chunk_text)}")
 
         debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} at timestamp {start_ts}")
         debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} text length: {len(chunk_text)}, OCR text length: {len(ocr_text)}")
@@ -3160,6 +3739,8 @@ def process_video_document(
             debug_print(f"[VIDEO_INDEXER] Chunk {chunk_num + 1} saved successfully")
             total += 1
         except Exception as e:
+            if current_extraction(document_id) is not None:
+                raise ScreeningError(code="screening_video_chunk_failed") from e
             debug_print(f"[VIDEO_INDEXER] Failed to save chunk {chunk_num + 1}: {str(e)}")
             debug_print(f"[VIDEO_INDEXER] Chunk save traceback: {traceback.format_exc()}")
 
@@ -3222,10 +3803,10 @@ def calculate_processing_percentage(doc_metadata):
     total_chunks_saved = doc_metadata.get('current_file_chunk', 0)
 
     # --- Final States ---
-    if "processing complete" in status or current_pct == 100:
+    if is_document_processing_complete(status) or current_pct == 100:
         # Ensure it stays 100 if it ever reached it
         return 100
-    if "error" in status or "failed" in status:
+    if is_document_processing_failure(status):
         # Keep the last known percentage on error/failure
         return current_pct
 
@@ -3280,11 +3861,33 @@ def calculate_processing_percentage(doc_metadata):
     return max(final_pct, current_pct)
 
 def update_document(**kwargs):
+    """Update a document and its derived search state.
+
+    Metadata mirrored on search chunks (title, authors, file name, classification, tags) is projected
+    by a durable background sync: the request is recorded before the save, the save carries the
+    request's token, and the save itself does no per-chunk work. Access-control changes are projected
+    to the chunks synchronously and fail closed. Non-strict calls return
+    {'updated': bool, 'search_sync': {...}}; strict calls return the saved document, or
+    (saved document, search_sync) when return_search_sync is set.
+    """
+    # Screening state and every screening_* field, including the generated-content
+    # exemption, are server-managed and set only when a version is created.
+    if SCREENING_FIELD in kwargs or any(str(name).startswith("screening_") for name in kwargs):
+        raise ScreeningValidationError("Screening state is managed by the review workflow.")
+    if any(field_name in kwargs for field_name in ORIGIN_FIELD_NAMES):
+        # Origin is written only when a version is created; no update path may set or change it.
+        raise DocumentOriginError()
     document_id = kwargs.get('document_id')
     user_id = kwargs.get('user_id')
     group_id = kwargs.get('group_id')
     public_workspace_id = kwargs.get('public_workspace_id')
+    strict = kwargs.pop('strict', False)
+    expected_etag = kwargs.pop('expected_etag', None)
+    operation_guard = kwargs.pop('operation_guard', None)
     num_chunks_increment = kwargs.pop('num_chunks_increment', 0)
+    return_search_sync = kwargs.pop('return_search_sync', False)
+    if operation_guard is not None:
+        operation_guard()
 
     if not document_id or not user_id:
         # Cannot proceed without these identifiers
@@ -3378,11 +3981,42 @@ def update_document(**kwargs):
 
 
         existing_document = existing_documents[0]
+        if strict and (not expected_etag or expected_etag != existing_document.get("_etag")):
+            raise ScreeningConflictError()
+        capture = current_extraction(document_id)
+        if capture is not None and getattr(capture, "heartbeat", None) is not None:
+            capture.heartbeat()
+        marker = existing_document.get(SCREENING_FIELD)
+        if marker is not None and not document_is_available(existing_document):
+            requested_status = str(kwargs.get("status") or "").lower()
+            if is_document_processing_complete(requested_status):
+                kwargs["status"] = "Content review required" if marker.get("review_required") else "Content screening pending"
+            if kwargs.get("percentage_complete") == 100:
+                kwargs["percentage_complete"] = 99
+        if (
+            marker is not None and capture is None
+            and not is_publication(subject_from_document(existing_document), marker.get("scan_id"))
+        ):
+            # Metadata edits, including model-generated metadata, apply directly and never
+            # start a new hold. Only the inspected source format of the file stays fixed.
+            validate_screened_metadata_update(existing_document, kwargs)
         original_percentage = existing_document.get('percentage_complete', 0) # Store for comparison
+        # update_document only replaces top-level fields, so a shallow copy keeps the stored state.
+        original_document = dict(existing_document)
+        reconciles_metadata_warning = False
+        if "status" not in kwargs and document_is_available(existing_document):
+            resolved_status = resolve_metadata_completion_status(
+                existing_document.get("status"), kwargs.get("metadata_extraction_status"),
+            )
+            if resolved_status != existing_document.get("status"):
+                kwargs["status"] = resolved_status
+                reconciles_metadata_warning = True
 
         # 2. Apply updates from kwargs
         update_occurred = False
-        updated_fields_requiring_chunk_sync = set() # Track fields needing propagation
+        metadata_fields_requiring_sync = set()
+        acl_changes = {}
+        document_search_acl_fields = get_document_search_acl_fields(group_id, public_workspace_id)
 
         if num_chunks_increment > 0:
             current_num_chunks = existing_document.get('num_chunks', 0)
@@ -3395,17 +4029,24 @@ def update_document(**kwargs):
             )
 
         for key, value in kwargs.items():
-            if value is not None and existing_document.get(key) != value:
+            if strict and key in {'document_id', 'user_id', 'group_id', 'public_workspace_id'}:
+                continue
+            previous_value = existing_document.get(key)
+            if value is not None and previous_value != value:
                 # Avoid overwriting num_chunks if it was just incremented
                 if key == 'num_chunks' and num_chunks_increment > 0:
                     continue # Skip direct assignment if increment was used
                 existing_document[key] = value
                 update_occurred = True
-                if key in ['title', 'authors', 'file_name', 'document_classification', 'tags']:
-                    updated_fields_requiring_chunk_sync.add(key)
-                # Propagate shared_group_ids to group chunks if changed
-                if is_group and key == 'shared_group_ids':
-                    updated_fields_requiring_chunk_sync.add('shared_group_ids')
+                if key in DOCUMENT_SEARCH_METADATA_FIELD_MAP:
+                    metadata_fields_requiring_sync.add(key)
+                # Project only real access changes; a missing list and an empty list grant the same
+                # access, so legacy normalization never waits on (or fails because of) Search.
+                if (
+                    key in document_search_acl_fields
+                    and _normalize_search_acl_entries(previous_value) != _normalize_search_acl_entries(value)
+                ):
+                    acl_changes[key] = (previous_value, value)
 
         # 3. If any update happened, handle timestamps and percentage
         if update_occurred:
@@ -3425,83 +4066,112 @@ def update_document(**kwargs):
             elif isinstance(status_lower, dict):
                 status_lower = json.dumps(status_lower).lower()
 
-            if "processing complete" in status_lower:
+            if is_document_processing_complete(status_lower):
                 new_percentage = 100
-            elif "error" in status_lower or "failed" in status_lower:
+            elif is_document_processing_failure(status_lower):
                  pass # Percentage already calculated by helper based on 'failed' status
 
             # Ensure percentage doesn't decrease (unless reset on failure or hitting 100)
             # Compare against original_percentage fetched *before* any updates in this call
-            if new_percentage < original_percentage and new_percentage != 0 and "failed" not in status_lower and "error" not in status_lower:
+            if new_percentage < original_percentage and new_percentage != 0 and not is_document_processing_failure(status_lower):
                  existing_document['percentage_complete'] = original_percentage
             else:
                  existing_document['percentage_complete'] = new_percentage
 
-        # 4. Propagate relevant changes to search index chunks
-        # This happens regardless of 'update_occurred' flag because the *intent* from kwargs might trigger it,
-        # even if the main doc update didn't happen (e.g., only percentage changed).
-        # However, it's better to only do this if the relevant fields *actually* changed.
-        if update_occurred and updated_fields_requiring_chunk_sync:
-            try:
-                chunks_to_update = get_all_chunks(
-                    document_id,
-                    user_id,
-                    group_id=group_id,
-                    public_workspace_id=public_workspace_id
-                )
-                for chunk in chunks_to_update:
-                    chunk_updates = {}
-                    if 'title' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['title'] = existing_document.get('title')
-                    if 'authors' in updated_fields_requiring_chunk_sync:
-                         # Ensure authors is a list for the chunk metadata if needed
-                        chunk_updates['author'] = ensure_list(existing_document.get('authors'))
-                    if 'file_name' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['file_name'] = existing_document.get('file_name')
-                    if 'document_classification' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['document_classification'] = existing_document.get('document_classification')
-                    if 'tags' in updated_fields_requiring_chunk_sync:
-                        chunk_updates['document_tags'] = existing_document.get('tags', [])
+        if strict:
+            # Retry the requested projections even when a previous attempt committed the source
+            # but did not finish downstream: a strict caller's projected fields are re-requested.
+            metadata_fields_requiring_sync.update(
+                field for field in DOCUMENT_SEARCH_METADATA_FIELD_MAP
+                if field in kwargs and kwargs[field] is not None
+            )
 
-                    if chunk_updates: # Only call update if there's something to change
-                        # Build the call parameters
-                        update_params = {
-                            'chunk_id': chunk['id'],
-                            'user_id': user_id,
-                            'document_id': document_id,
-                            'group_id': group_id,
-                            'public_workspace_id': public_workspace_id,
-                            **chunk_updates
-                        }
+        # A held screened document has no released chunks; publication rebuilds them from the document.
+        releases_chunks = marker is None or document_is_available(existing_document)
 
-                        # Only include shared_group_ids for group workspaces
-                        if is_group and 'shared_group_ids' in updated_fields_requiring_chunk_sync:
-                            update_params['shared_group_ids'] = existing_document.get('shared_group_ids')
-
-                        update_chunk_metadata(**update_params)
-                add_file_task_to_file_processing_log(
-                    document_id=document_id,
-                    user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-                    content=f"Propagated updates for fields {updated_fields_requiring_chunk_sync} to search chunks."
-                )
-            except Exception as chunk_sync_error:
-                # Log error but don't necessarily fail the whole document update
-                error_msg = f"Warning: Failed to sync metadata updates to search chunks for doc {document_id}: {chunk_sync_error}"
-                print(error_msg)
-                add_file_task_to_file_processing_log(
-                    document_id=document_id,
-                    user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
-                    content=error_msg
-                )
-
-
-        # 5. Upsert the document if changes were made
-        if update_occurred:
-            _upsert_document_and_sync_access_index(
+        # 4. Project access-control changes that must reach the search chunks before they are saved,
+        # so the index never grants access that Cosmos does not record and a revocation is enforced first.
+        acl_changes_after_save = {}
+        if acl_changes:
+            if operation_guard is not None:
+                operation_guard()
+            acl_changes_after_save = _project_document_acl_before_save(
                 cosmos_container,
                 existing_document,
-                operation='document_updated',
+                original_document,
+                acl_changes,
+                user_id,
+                group_id=group_id,
+                releases_chunks=releases_chunks,
             )
+            add_file_task_to_file_processing_log(
+                document_id=document_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
+                content=f"Projected access changes for fields {sorted(acl_changes)} to search chunks before saving."
+            )
+
+        # 5. Durably request the chunk metadata projection alongside this save. A background worker
+        # merges it into the search chunks, so the save never waits on the document's chunk count.
+        search_sync = {'status': DOCUMENT_SEARCH_SYNC_STATUS_NOT_REQUIRED}
+        if metadata_fields_requiring_sync and releases_chunks:
+            sync_record = request_document_search_metadata_sync(
+                document_id,
+                metadata_fields_requiring_sync,
+                user_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            ) or {}
+            existing_document[DOCUMENT_SEARCH_SYNC_TOKEN_FIELD] = sync_record.get('latest_request_token')
+            search_sync = {
+                'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+                'revision': int(sync_record.get('revision') or 0),
+                'fields': sorted(metadata_fields_requiring_sync),
+            }
+
+        # 6. Save the document. The sync request's token rides in this same save.
+        saved_document = None
+        if strict:
+            if operation_guard is not None:
+                operation_guard()
+            saved_document = _upsert_document_and_sync_access_index(
+                cosmos_container, existing_document, operation='document_updated', strict=True,
+            )
+        elif update_occurred:
+            if operation_guard is not None:
+                operation_guard()
+            _upsert_document_and_sync_access_index(
+                cosmos_container, existing_document, operation='document_updated',
+                strict=reconciles_metadata_warning,
+            )
+
+        if search_sync['status'] == DOCUMENT_SEARCH_SYNC_STATUS_PENDING:
+            schedule_document_search_metadata_sync(
+                document_id,
+                group_id=group_id,
+                public_workspace_id=public_workspace_id,
+            )
+            add_file_task_to_file_processing_log(
+                document_id=document_id,
+                user_id=public_workspace_id if is_public_workspace else (group_id if is_group else user_id),
+                content=f"Queued search chunk sync for fields {search_sync['fields']} at revision {search_sync['revision']}."
+            )
+
+        # 7. The group projection fence admits new access entries only once Cosmos records them.
+        if acl_changes_after_save:
+            _project_document_acl_after_save(
+                document_id,
+                acl_changes_after_save,
+                user_id,
+                group_id=group_id,
+                document_version=existing_document.get('version'),
+                releases_chunks=releases_chunks,
+            )
+
+        if strict:
+            if return_search_sync:
+                return saved_document, search_sync
+            return saved_document
+        return {'updated': update_occurred, 'search_sync': search_sync}
 
     except CosmosResourceNotFoundError as e:
         # Error already logged where it was first detected
@@ -3524,13 +4194,90 @@ def update_document(**kwargs):
         #    print(f"Failed to update status to error state for {document_id}: {inner_e}")
         raise # Re-raise the original exception
 
+def _require_screening_chunk_write(metadata):
+    if metadata and SCREENING_FIELD in metadata:
+        marker = metadata.get(SCREENING_FIELD) or {}
+        if (
+            marker.get("state") != "publishing"
+            or not is_publication(subject_from_document(metadata), marker.get("scan_id"))
+        ):
+            raise DocumentHeldError("Screened content must be published through its review workflow.")
+def _is_usable_vision_analysis(vision_analysis):
+    """Return True when a vision analysis succeeded and describes something worth indexing."""
+    if not isinstance(vision_analysis, dict) or 'error' in vision_analysis:
+        return False
+
+    for field_name in VISION_ANALYSIS_CONTENT_FIELDS:
+        field_value = vision_analysis.get(field_name)
+        if isinstance(field_value, str):
+            if field_value.strip():
+                return True
+        elif field_value:
+            return True
+    return False
+
+
+def _format_vision_analysis_block(vision_analysis):
+    """Format a vision analysis as the searchable block appended to an image's chunk text.
+
+    Returns an empty string for a missing, failed, or empty analysis, so an error message from
+    the vision model is never indexed as if it described the image.
+    """
+    if not _is_usable_vision_analysis(vision_analysis):
+        return ''
+
+    vision_text_parts = ["\n\n=== AI Vision Analysis ==="]
+    vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
+
+    if vision_analysis.get('description'):
+        vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
+
+    if vision_analysis.get('objects'):
+        objects_list = vision_analysis['objects']
+        if isinstance(objects_list, list):
+            vision_text_parts.append(f"\nObjects Detected: {', '.join(str(item) for item in objects_list)}")
+        else:
+            vision_text_parts.append(f"\nObjects Detected: {objects_list}")
+
+    if vision_analysis.get('text'):
+        vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
+
+    if vision_analysis.get('analysis'):
+        vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
+
+    return "\n".join(vision_text_parts)
+
+
+def _append_vision_block_to_chunk_text(chunk_text, vision_text):
+    """Append a vision block to chunk text, dropping its leading blank lines when there is no text."""
+    chunk_text = chunk_text or ''
+    if not vision_text:
+        return chunk_text
+    if not chunk_text.strip():
+        return vision_text.lstrip()
+    return chunk_text + vision_text
+
+
+def _has_indexable_ocr_text(page_content):
+    """Return True when OCR output has text beyond Document Intelligence page-number annotations."""
+    text_without_annotations = DI_MARKDOWN_PAGE_ANNOTATION_PATTERN.sub('', str(page_content or ''))
+    return bool(text_without_annotations.strip())
+
+
 def save_chunks(page_text_content, page_number, file_name, user_id, document_id, group_id=None, public_workspace_id=None):
     """
     Save a single chunk (one page) at a time:
-      - Generate embedding
+      - Build the chunk text, appending the document's AI vision analysis when it has one
+      - Generate the embedding from that same text
       - Build chunk metadata
       - Upload to Search index
+
+    A chunk with no text to index, and no vision analysis to stand in for it, is not written.
     """
+    capture = current_extraction(document_id)
+    if capture is not None:
+        capture.add_chunk(page_text_content, page_number)
+        return {"staged": True, "staged_units": 1, "total_tokens": 0, "prompt_tokens": 0}
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -3588,12 +4335,62 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         print(f"Error updating document status or retrieving metadata for document {document_id}: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
         raise
 
+    _require_screening_chunk_write(metadata)
+    # Build the stored chunk text before embedding it, so an image's vector reflects its AI vision
+    # description rather than only whatever OCR text it happened to contain.
+    enhanced_chunk_text = page_text_content or ''
+    vision_text = _format_vision_analysis_block(metadata.get('vision_analysis'))
+    if vision_text:
+        enhanced_chunk_text = _append_vision_block_to_chunk_text(enhanced_chunk_text, vision_text)
+        debug_print(
+            f"[SAVE_CHUNKS] Appended vision analysis for document {document_id}: "
+            f"chunk_text length {len(enhanced_chunk_text)} (original: {len(page_text_content or '')}, "
+            f"vision: {len(vision_text)})"
+        )
+    else:
+        debug_print(f"[SAVE_CHUNKS] No usable vision analysis found for document {document_id}")
+
+    if not enhanced_chunk_text.strip():
+        log_event(
+            "[SAVE_CHUNKS] Skipped a chunk with no text or vision description to index.",
+            extra={
+                "document_id": document_id,
+                "page_number": page_number,
+                "file_name": file_name,
+            },
+            level=logging.WARNING
+        )
+        return None
+
     # Generate embedding
     try:
         #status = f"Generating embedding for page {page_number}"
         #update_document(document_id=document_id, user_id=user_id, status=status)
-        embedding_input = page_text_content
+        embedding_input = enhanced_chunk_text
         max_embedding_characters = get_embedding_safe_chunk_characters()
+
+        # Processors bound the page text, not the vision block appended to it. When the block
+        # alone pushes a page that fits over the budget -- including an image whose only text
+        # is its description -- embed the leading part of the stored text instead of refusing
+        # a chunk the page itself never made too large. The full text is still stored below.
+        page_text = page_text_content or ''
+        if (
+            vision_text
+            and len(embedding_input) > max_embedding_characters
+            and len(page_text) <= max_embedding_characters
+        ):
+            log_event(
+                "[SAVE_CHUNKS] The vision description was clamped for embedding only.",
+                extra={
+                    "document_id": document_id,
+                    "page_number": page_number,
+                    "original_characters": len(embedding_input),
+                    "clamped_characters": max_embedding_characters,
+                },
+                level=logging.INFO,
+                debug_only=True,
+            )
+            embedding_input = embedding_input[:max_embedding_characters]
 
         # Last-resort guard. Every processor bounds its own chunks, so reaching this means content
         # tokenized far worse than estimated. Splitting is not an option here because chunk ids are
@@ -3601,6 +4398,11 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         # index. Only the embedding input is clamped: the full text is still stored below, so the
         # chunk stays readable and citable and only its vector comes from the leading portion.
         if embedding_input and len(embedding_input) > max_embedding_characters:
+            if not active_embedding_profile().legacy:
+                raise AIConnectionError(
+                    "The chunk is too large for the selected embedding model. Reprocess with smaller chunks.",
+                    "embedding_input_too_large",
+                )
             log_event(
                 "Chunk exceeded the embedding character budget and was clamped for embedding only.",
                 extra={
@@ -3627,40 +4429,6 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
         author = ensure_list(metadata.get('authors')) if metadata else []
         title = metadata.get('title', '') if metadata else ''
         document_classification = metadata.get('document_classification', 'None') if metadata else 'None'
-
-        # Check if this document has vision analysis and append it to chunk_text
-        vision_analysis = metadata.get('vision_analysis')
-        enhanced_chunk_text = page_text_content
-
-        if vision_analysis:
-            debug_print(f"[SAVE_CHUNKS] Document {document_id} has vision analysis, appending to chunk_text")
-            # Format vision analysis as structured text for better searchability
-            vision_text_parts = []
-            vision_text_parts.append("\n\n=== AI Vision Analysis ===")
-            vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
-
-            if vision_analysis.get('description'):
-                vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
-
-            if vision_analysis.get('objects'):
-                objects_list = vision_analysis['objects']
-                if isinstance(objects_list, list):
-                    vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
-                else:
-                    vision_text_parts.append(f"\nObjects Detected: {objects_list}")
-
-            if vision_analysis.get('text'):
-                vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
-
-            if vision_analysis.get('analysis'):
-                vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
-
-            vision_text = "\n".join(vision_text_parts)
-            enhanced_chunk_text = page_text_content + vision_text
-
-            debug_print(f"[SAVE_CHUNKS] Enhanced chunk_text length: {len(enhanced_chunk_text)} (original: {len(page_text_content)}, vision: {len(vision_text)})")
-        else:
-            debug_print(f"[SAVE_CHUNKS] No vision analysis found for document {document_id}")
 
         if is_public_workspace:
             chunk_document = {
@@ -3749,6 +4517,9 @@ def save_chunks(page_text_content, page_number, file_name, user_id, document_id,
             search_client,
             "upload_documents",
             documents=[chunk_document],
+            group_id=group_id if is_group and not is_public_workspace else None,
+            document_id=document_id,
+            document_version=version,
         )
 
     except Exception as e:
@@ -3773,6 +4544,11 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
     Returns:
         dict with 'total_tokens', 'prompt_tokens', 'model_deployment_name'
     """
+    capture = current_extraction(document_id)
+    if capture is not None:
+        for chunk in chunks_data:
+            capture.add_chunk(chunk["page_text_content"], chunk["page_number"])
+        return {"staged": True, "staged_units": len(chunks_data), "total_tokens": 0, "prompt_tokens": 0}
     from functions_content import generate_embeddings_batch
 
     current_time = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -3807,44 +4583,44 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
         log_event(f"[SAVE_CHUNKS_BATCH] Error retrieving metadata for document {document_id}: {repr(e)}", level=logging.ERROR)
         raise
 
+    _require_screening_chunk_write(metadata)
+    # Build every chunk's stored text first and embed that same text, matching save_chunks().
+    vision_text = _format_vision_analysis_block(metadata.get('vision_analysis'))
+    chunks_to_save = []
+    for chunk_info in chunks_data:
+        enhanced_chunk_text = _append_vision_block_to_chunk_text(chunk_info['page_text_content'], vision_text)
+        if not enhanced_chunk_text.strip():
+            log_event(
+                "[SAVE_CHUNKS_BATCH] Skipped a chunk with no text or vision description to index.",
+                extra={
+                    "document_id": document_id,
+                    "page_number": chunk_info.get('page_number'),
+                    "file_name": chunk_info.get('file_name'),
+                },
+                level=logging.WARNING
+            )
+            continue
+        chunks_to_save.append((chunk_info, enhanced_chunk_text))
+
+    total_token_usage = {'total_tokens': 0, 'prompt_tokens': 0, 'model_deployment_name': None}
+    if not chunks_to_save:
+        return total_token_usage
+
     # Generate all embeddings in batches
-    texts = [c['page_text_content'] for c in chunks_data]
+    texts = [enhanced_chunk_text for _, enhanced_chunk_text in chunks_to_save]
     try:
         embedding_results = generate_embeddings_batch(texts)
     except Exception as e:
         log_event(f"[SAVE_CHUNKS_BATCH] Error generating batch embeddings for document {document_id}: {e}", level=logging.ERROR)
         raise
 
-    # Check for vision analysis once
-    vision_analysis = metadata.get('vision_analysis')
-    vision_text = ""
-    if vision_analysis:
-        vision_text_parts = []
-        vision_text_parts.append("\n\n=== AI Vision Analysis ===")
-        vision_text_parts.append(f"Model: {vision_analysis.get('model', 'unknown')}")
-        if vision_analysis.get('description'):
-            vision_text_parts.append(f"\nDescription: {vision_analysis['description']}")
-        if vision_analysis.get('objects'):
-            objects_list = vision_analysis['objects']
-            if isinstance(objects_list, list):
-                vision_text_parts.append(f"\nObjects Detected: {', '.join(objects_list)}")
-            else:
-                vision_text_parts.append(f"\nObjects Detected: {objects_list}")
-        if vision_analysis.get('text'):
-            vision_text_parts.append(f"\nVisible Text: {vision_analysis['text']}")
-        if vision_analysis.get('analysis'):
-            vision_text_parts.append(f"\nContextual Analysis: {vision_analysis['analysis']}")
-        vision_text = "\n".join(vision_text_parts)
-
     # Build all chunk documents
     chunk_documents = []
-    total_token_usage = {'total_tokens': 0, 'prompt_tokens': 0, 'model_deployment_name': None}
 
-    for idx, chunk_info in enumerate(chunks_data):
+    for idx, (chunk_info, enhanced_chunk_text) in enumerate(chunks_to_save):
         embedding, token_usage = embedding_results[idx]
         page_number = chunk_info['page_number']
         file_name = chunk_info['file_name']
-        page_text_content = chunk_info['page_text_content']
 
         if token_usage:
             total_token_usage['total_tokens'] += token_usage.get('total_tokens', 0)
@@ -3853,7 +4629,6 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 total_token_usage['model_deployment_name'] = token_usage.get('model_deployment_name')
 
         chunk_id = f"{document_id}_{page_number}"
-        enhanced_chunk_text = page_text_content + vision_text if vision_text else page_text_content
 
         if is_public_workspace:
             chunk_document = {
@@ -3939,6 +4714,9 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
                 search_client,
                 "upload_documents",
                 documents=sub_batch,
+                group_id=group_id if is_group and not is_public_workspace else None,
+                document_id=document_id,
+                document_version=version,
             )
 
     except Exception as e:
@@ -3949,8 +4727,8 @@ def save_chunks_batch(chunks_data, user_id, document_id, group_id=None, public_w
 
 def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
     """
-    Retrieve keywords and abstract from a document for creating metadata citations.
-    Used to enhance search results with additional context from document metadata.
+    Retrieve keywords, abstract, vision analysis, and accessibility metadata from a document
+    for creating metadata citations and enriching search context.
 
     Args:
         document_id: The document's unique identifier
@@ -3959,7 +4737,7 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
         public_workspace_id: Public workspace ID (for public documents)
 
     Returns:
-        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
+        dict: Dictionary with metadata fields, or None if document not found
     """
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -3979,71 +4757,35 @@ def get_document_metadata_for_citations(document_id, user_id=None, group_id=None
             partition_key=document_id
         )
 
-        # Extract keywords and abstract
+        document_item = assert_document_available(document_item, user_id, group_id, public_workspace_id)
+
         keywords = document_item.get('keywords', [])
         abstract = document_item.get('abstract', '')
-
-        # Return only if we have actual content
-        if keywords or abstract:
-            return {
-                'keywords': keywords if keywords else [],
-                'abstract': abstract if abstract else '',
-                'file_name': document_item.get('file_name', 'Unknown')
-            }
-
-        return None
-
-    except Exception as e:
-        # Document not found or error reading - return None silently
-        # This is expected for documents without metadata
-        return None
-
-def get_document_metadata_for_citations(document_id, user_id=None, group_id=None, public_workspace_id=None):
-    """
-    Retrieve keywords and abstract from a document for creating metadata citations.
-    Used to enhance search results with additional context from document metadata.
-
-    Args:
-        document_id: The document's unique identifier
-        user_id: User ID (for personal documents)
-        group_id: Group ID (for group documents)
-        public_workspace_id: Public workspace ID (for public documents)
-
-    Returns:
-        dict: Dictionary with 'keywords' and 'abstract' fields, or None if document not found
-    """
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    # Determine the correct container
-    if is_public_workspace:
-        cosmos_container = cosmos_public_documents_container
-    elif is_group:
-        cosmos_container = cosmos_group_documents_container
-    else:
-        cosmos_container = cosmos_user_documents_container
-
-    try:
-        # Read the document directly by ID
-        document_item = cosmos_container.read_item(
-            item=document_id,
-            partition_key=document_id
+        vision_analysis = document_item.get('vision_analysis')
+        accessibility_metadata = document_item.get('accessibility_metadata')
+        accessibility_summary = (
+            format_accessibility_metadata_for_chat(accessibility_metadata)
+            if isinstance(accessibility_metadata, dict) and accessibility_metadata
+            else ''
         )
 
-        # Extract keywords and abstract
-        keywords = document_item.get('keywords', [])
-        abstract = document_item.get('abstract', '')
-
-        # Return only if we have actual content
-        if keywords or abstract:
+        if keywords or abstract or vision_analysis or accessibility_summary:
             return {
                 'keywords': keywords if keywords else [],
                 'abstract': abstract if abstract else '',
+                'vision_analysis': vision_analysis if isinstance(vision_analysis, dict) else None,
+                'accessibility_metadata': accessibility_metadata if isinstance(accessibility_metadata, dict) else None,
+                'accessibility_summary': accessibility_summary,
+                'title': document_item.get('title', ''),
+                'authors': document_item.get('authors', []),
+                'language': document_item.get('language', ''),
                 'file_name': document_item.get('file_name', 'Unknown')
             }
 
         return None
 
+    except ScreeningError:
+        raise
     except Exception as e:
         # Document not found or error reading - return None silently
         # This is expected for documents without metadata
@@ -4057,6 +4799,8 @@ def get_all_chunks(document_id, user_id, group_id=None, public_workspace_id=None
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
+    except ScreeningError:
+        raise
     except Exception as e:
         print(f"Error retrieving chunks for document {document_id}: {e}")
         raise
@@ -4101,22 +4845,1082 @@ def update_chunk_metadata(chunk_id, user_id, group_id=None, public_workspace_id=
         if is_group:
             updatable_fields.append('shared_group_ids')
 
+        metadata_update = {"id": chunk_id}
         for field in updatable_fields:
             if field in kwargs:
                 if field == 'author':
-                    chunk_item[field] = ensure_list(kwargs[field])
+                    metadata_update[field] = ensure_list(kwargs[field])
                 else:
-                    chunk_item[field] = kwargs[field]
+                    metadata_update[field] = kwargs[field]
 
         _execute_document_search_write(
             search_client,
-            "upload_documents",
-            documents=[chunk_item],
+            "merge_documents",
+            documents=[metadata_update],
+            group_id=group_id if is_group and not is_public_workspace else None,
+            document_id=document_id,
+            document_version=chunk_item.get("version"),
         )
 
     except Exception as e:
         print(f"Error updating chunk metadata for chunk {chunk_id}: {e}")
         raise
+
+
+# Search chunk metadata and access-control synchronization.
+#
+# Document metadata (title, authors, file name, classification, tags) is mirrored onto every AI
+# Search chunk. Edits are projected by a background worker so a save never waits on a document's
+# chunk count: update_document() records a durable sync request in the settings container before
+# it saves the document, and the worker merges only the changed fields into each chunk in batches.
+# Access-control lists are different: they are projected synchronously, so the index never grants
+# access that Cosmos does not record.
+DOCUMENT_SEARCH_SYNC_RECORD_TYPE = 'document_search_metadata_sync'
+DOCUMENT_SEARCH_SYNC_SCHEMA_VERSION = 1
+# Each sync request gets a unique token, and the document save that goes with it stores the same
+# token. A worker treats the save as landed only when the tokens match, so a value left on the
+# document by an earlier request can never be mistaken for a newer one.
+DOCUMENT_SEARCH_SYNC_TOKEN_FIELD = 'search_metadata_sync_token'
+DOCUMENT_SEARCH_SYNC_STATUS_PENDING = 'pending'
+DOCUMENT_SEARCH_SYNC_STATUS_SYNCING = 'syncing'
+DOCUMENT_SEARCH_SYNC_STATUS_FAILED = 'failed'
+DOCUMENT_SEARCH_SYNC_STATUS_NOT_REQUIRED = 'not_required'
+DOCUMENT_SEARCH_SYNC_BATCH_SIZE = 500
+DOCUMENT_SEARCH_SYNC_MAX_BATCH_SIZE = 1000
+DOCUMENT_SEARCH_SYNC_MAX_BATCH_BYTES = 8 * 1024 * 1024
+DOCUMENT_SEARCH_SYNC_LEASE_SECONDS = 600
+DOCUMENT_SEARCH_SYNC_LEASE_WAIT_SECONDS = 20
+DOCUMENT_SEARCH_SYNC_LEASE_POLL_SECONDS = 2
+DOCUMENT_SEARCH_SYNC_PENDING_GRACE_SECONDS = 120
+DOCUMENT_SEARCH_SYNC_COMMIT_RECHECK_SECONDS = 60
+DOCUMENT_SEARCH_SYNC_UNCOMMITTED_INTENT_SECONDS = 600
+DOCUMENT_SEARCH_SYNC_MAX_PASSES = 5
+DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS = 8
+DOCUMENT_SEARCH_SYNC_RETRY_DELAYS_SECONDS = (60, 300, 900, 3600, 21600)
+# Search writes frozen by a Data Management migration are not failures, so they retry on a short
+# fixed delay instead of climbing the backoff ladder.
+DOCUMENT_SEARCH_SYNC_FROZEN_RETRY_SECONDS = 300
+DOCUMENT_SEARCH_SYNC_WORKER_COUNT = 2
+DOCUMENT_SEARCH_SYNC_RECONCILE_BATCH_SIZE = 25
+DOCUMENT_SEARCH_SYNC_RECONCILE_TIME_BUDGET_SECONDS = 240
+# Cosmos document field -> AI Search chunk field for metadata the background sync projects.
+DOCUMENT_SEARCH_METADATA_FIELD_MAP = {
+    'title': 'title',
+    'authors': 'author',
+    'file_name': 'file_name',
+    'document_classification': 'document_classification',
+    'tags': 'document_tags',
+}
+# Access lists a projection may carry. A projection never rewrites a key or scope field.
+DOCUMENT_SEARCH_ACL_INDEX_FIELDS = frozenset({'shared_user_ids', 'shared_group_ids'})
+# Cosmos system properties, and the claim the projection fence adds and removes around each fenced
+# Search write. Neither is a change to the document.
+DOCUMENT_SEARCH_ACL_REBASE_IGNORED_FIELDS = frozenset({
+    '_etag', '_ts', '_rid', '_self', '_attachments', GROUP_DOCUMENT_PROJECTION_WRITER,
+})
+DOCUMENT_SEARCH_ACL_RETRY_AFTER_SECONDS = 150
+DOCUMENT_SEARCH_ACL_DEFERRED_MESSAGE = (
+    "Document access was not changed because target Search writes are temporarily frozen. "
+    "Retry after the migration finishes."
+)
+DOCUMENT_SEARCH_ACL_FAILED_MESSAGE = (
+    "Document access was not changed because the search index could not be updated. Try again."
+)
+DOCUMENT_SEARCH_ACL_INCOMPLETE_MESSAGE = (
+    "The access change was saved, but the search index has not applied it yet. Try again to finish the update."
+)
+DOCUMENT_SEARCH_ACL_INCOMPLETE_DEFERRED_MESSAGE = (
+    "The access change was saved, but target Search writes are temporarily frozen. "
+    "Retry after the migration finishes to complete it."
+)
+DOCUMENT_SEARCH_ACL_CONFLICT_MESSAGE = (
+    "The document changed while its access was being updated. Refresh and try again."
+)
+
+_document_search_sync_executor = None
+_document_search_sync_lock = threading.Lock()
+_document_search_sync_queued_records = set()
+
+
+def _escape_search_filter_literal(value):
+    """Escape a value for an OData single-quoted string literal."""
+    return str(value or '').replace("'", "''")
+
+
+def _resolve_document_chunk_scope(user_id, group_id=None, public_workspace_id=None):
+    """Return the chunk field and value that scope a document's active search chunks."""
+    if public_workspace_id is not None:
+        return 'public_workspace_id', public_workspace_id
+    if group_id is not None:
+        return 'group_id', group_id
+    return 'user_id', user_id
+
+
+def get_document_search_acl_fields(group_id=None, public_workspace_id=None):
+    """Return the document fields that control search access for a workspace scope."""
+    if public_workspace_id is not None:
+        return ()
+    if group_id is not None:
+        return ('shared_group_ids',)
+    return ('shared_user_ids',)
+
+
+def _normalize_search_acl_entries(value):
+    """Return access entries in a comparable form; a missing list and an empty list are the same."""
+    if value is None:
+        return []
+    entries = value if isinstance(value, (list, tuple, set)) else [value]
+    return sorted({str(entry).strip() for entry in entries if str(entry or '').strip()})
+
+
+def _search_acl_grant_entries(value):
+    """Return the access entries that let a principal find the document in search.
+
+    Search matches only approved entries. An entry without a status is treated as approved, so
+    removing one is never mistaken for a change that revokes nothing.
+    """
+    return {
+        entry for entry in _normalize_search_acl_entries(value)
+        if ',' not in entry or entry.endswith(',approved')
+    }
+
+
+def iter_document_chunk_key_pages(
+    document_id,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    page_size=None,
+):
+    """Yield ordered pages of the active search chunk keys for one document.
+
+    Pages by key instead of $skip, so a document's chunk count is never capped and merges that run
+    between pages cannot move page boundaries. Only the key is selected, so chunk text and
+    embeddings are never downloaded. Archived revision chunks carry an archived scope value and are
+    excluded on purpose.
+    """
+    scope_field, scope_value = _resolve_document_chunk_scope(user_id, group_id, public_workspace_id)
+    if not document_id or not scope_value:
+        raise ValueError("A document id and workspace scope are required to list document chunks.")
+
+    if page_size is None:
+        page_size = DOCUMENT_SEARCH_SYNC_BATCH_SIZE
+    page_size = max(1, min(int(page_size), DOCUMENT_SEARCH_SYNC_MAX_BATCH_SIZE))
+    search_client = _get_search_client(group_id=group_id, public_workspace_id=public_workspace_id)
+    base_filter = (
+        f"document_id eq '{_escape_search_filter_literal(document_id)}' "
+        f"and {scope_field} eq '{_escape_search_filter_literal(scope_value)}'"
+    )
+    last_key = None
+    while True:
+        page_filter = base_filter
+        if last_key is not None:
+            page_filter = f"{base_filter} and id gt '{_escape_search_filter_literal(last_key)}'"
+        results = search_client.search(
+            search_text='*',
+            filter=page_filter,
+            select=['id'],
+            order_by=['id asc'],
+            top=page_size,
+        )
+        keys = [str(result.get('id')) for result in results if result.get('id')]
+        if not keys:
+            return
+        if last_key is not None and keys[0] <= last_key:
+            raise RuntimeError("Search chunk key paging did not advance.")
+        yield keys
+        if len(keys) < page_size:
+            return
+        last_key = keys[-1]
+
+
+def project_fields_to_document_chunks(
+    document_id,
+    field_values,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    batch_size=None,
+    before_batch=None,
+    document_version=None,
+):
+    """Merge index fields into every active chunk of one document and return the chunk count.
+
+    Each merge sends only the chunk key and the supplied fields, so embeddings and unrelated chunk
+    fields are never read or rewritten, and concurrent projections of other fields cannot be undone.
+    A projection carries either mirrored metadata or the workspace's access list, never both. A group
+    access list goes through the document's projection fence, which admits only entries the source
+    document records. Metadata merges carry no access or scope field, so they skip the fence and
+    never write to the document. Every merge holds the Data Management Search write slot. Raises
+    when any batch is not fully acknowledged. before_batch runs ahead of each merge, which lets a
+    caller confirm it still owns the work.
+    """
+    if not field_values:
+        return 0
+
+    field_names = set(field_values)
+    if field_names & DOCUMENT_SEARCH_ACL_INDEX_FIELDS:
+        if not field_names <= set(get_document_search_acl_fields(group_id, public_workspace_id)):
+            raise ValueError("An access projection may carry only the workspace's access list.")
+    elif not field_names <= set(DOCUMENT_SEARCH_METADATA_FIELD_MAP.values()):
+        raise ValueError("A metadata projection may carry only mirrored document metadata.")
+    fenced_group_id = group_id if 'shared_group_ids' in field_names else None
+
+    if batch_size is None:
+        batch_size = DOCUMENT_SEARCH_SYNC_BATCH_SIZE
+    action_bytes = len(json.dumps(field_values, default=str).encode('utf-8')) + len(str(document_id)) + 64
+    effective_batch_size = max(
+        1,
+        min(int(batch_size), DOCUMENT_SEARCH_SYNC_MAX_BATCH_SIZE, DOCUMENT_SEARCH_SYNC_MAX_BATCH_BYTES // action_bytes),
+    )
+    search_client = _get_search_client(group_id=group_id, public_workspace_id=public_workspace_id)
+    chunks_updated = 0
+    for chunk_keys in iter_document_chunk_key_pages(
+        document_id,
+        user_id,
+        group_id=group_id,
+        public_workspace_id=public_workspace_id,
+        page_size=effective_batch_size,
+    ):
+        if before_batch is not None:
+            before_batch()
+        _execute_document_search_write(
+            search_client,
+            "merge_documents",
+            documents=[{'id': chunk_key, **field_values} for chunk_key in chunk_keys],
+            group_id=fenced_group_id,
+            document_id=document_id,
+            document_version=document_version,
+        )
+        chunks_updated += len(chunk_keys)
+    return chunks_updated
+
+
+def project_document_acl_to_chunks(
+    document_id,
+    acl_fields,
+    user_id,
+    group_id=None,
+    public_workspace_id=None,
+    document_version=None,
+):
+    """Project access-control fields to every active chunk of a document.
+
+    Raises DocumentSearchAclProjectionDeferredError while target Search writes are frozen and
+    DocumentSearchAclProjectionError for any other failure. Both carry fixed messages that are safe
+    to show, so a caller never reports an access change that the search index does not enforce.
+    """
+    if not acl_fields:
+        return 0
+    try:
+        return project_fields_to_document_chunks(
+            document_id,
+            acl_fields,
+            user_id,
+            group_id=group_id,
+            public_workspace_id=public_workspace_id,
+            document_version=document_version,
+        )
+    except DataManagementSearchWritesFrozenError as exc:
+        raise DocumentSearchAclProjectionDeferredError(DOCUMENT_SEARCH_ACL_DEFERRED_MESSAGE) from exc
+    except Exception as exc:
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Search access projection failed.",
+            extra={
+                'document_id': document_id,
+                'fields': sorted(acl_fields),
+                'group_id': group_id,
+                'public_workspace_id': public_workspace_id,
+                'error_type': type(exc).__name__,
+            },
+            level=logging.ERROR,
+        )
+        raise DocumentSearchAclProjectionError(DOCUMENT_SEARCH_ACL_FAILED_MESSAGE) from exc
+
+
+def _document_search_acl_incomplete_error(error):
+    """Return the error for a saved access change whose search projection has not finished."""
+    search_writes_frozen = isinstance(error, DocumentSearchAclProjectionDeferredError)
+    return DocumentMutationPropagationError(
+        DOCUMENT_SEARCH_ACL_INCOMPLETE_DEFERRED_MESSAGE if search_writes_frozen else DOCUMENT_SEARCH_ACL_INCOMPLETE_MESSAGE,
+        search_writes_frozen=search_writes_frozen,
+    )
+
+
+def describe_document_search_acl_error(error):
+    """Return (message, status_code, retry_after_seconds) for an access change Search could not apply.
+
+    Returns None for any other error. Every message is fixed, so no exception text reaches a client.
+    """
+    if isinstance(error, DocumentSearchAclProjectionDeferredError):
+        return DOCUMENT_SEARCH_ACL_DEFERRED_MESSAGE, 503, DOCUMENT_SEARCH_ACL_RETRY_AFTER_SECONDS
+    if isinstance(error, DocumentSearchAclProjectionError):
+        return DOCUMENT_SEARCH_ACL_FAILED_MESSAGE, 500, None
+    if isinstance(error, DocumentMutationPropagationError):
+        if error.search_writes_frozen:
+            return DOCUMENT_SEARCH_ACL_INCOMPLETE_DEFERRED_MESSAGE, 503, DOCUMENT_SEARCH_ACL_RETRY_AFTER_SECONDS
+        return DOCUMENT_SEARCH_ACL_INCOMPLETE_MESSAGE, 500, None
+    if isinstance(error, ScreeningConflictError):
+        return DOCUMENT_SEARCH_ACL_CONFLICT_MESSAGE, 409, None
+    return None
+
+
+def _document_search_acl_comparable_content(document_item):
+    """Return a document without Cosmos system properties or the projection fence's claim."""
+    return {
+        key: value for key, value in (document_item or {}).items()
+        if key not in DOCUMENT_SEARCH_ACL_REBASE_IGNORED_FIELDS
+    }
+
+
+def _rebase_document_after_fenced_acl_projection(
+    cosmos_container,
+    document_item,
+    original_document,
+    user_id,
+    group_id,
+):
+    """Adopt the etag a fenced access projection left on a document, or refuse a concurrent change.
+
+    The group projection fence claims and releases a marker on the source document, which changes
+    its etag, so the save that follows has to read the document again. When anything other than
+    Cosmos system properties and the fence's claim changed, another writer won: Search is projected
+    back to the access list Cosmos now records, and the update is refused with a conflict.
+    """
+    document_id = document_item['id']
+    current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+    if (
+        _document_search_acl_comparable_content(current_document)
+        == _document_search_acl_comparable_content(original_document)
+    ):
+        document_item['_etag'] = current_document.get('_etag')
+        return current_document
+
+    try:
+        project_document_acl_to_chunks(
+            document_id,
+            {'shared_group_ids': list(current_document.get('shared_group_ids') or [])},
+            user_id,
+            group_id=group_id,
+            document_version=current_document.get('version'),
+        )
+    except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError):
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Search access could not be restored after a concurrent document change.",
+            extra={'document_id': document_id, 'group_id': group_id},
+            level=logging.WARNING,
+        )
+    raise ScreeningConflictError()
+
+
+def _project_document_acl_before_save(
+    cosmos_container,
+    document_item,
+    original_document,
+    acl_changes,
+    user_id,
+    group_id=None,
+    releases_chunks=True,
+):
+    """Project the part of an access change that has to reach Search before Cosmos records it.
+
+    Search may only ever hold a subset of what Cosmos records, so removing search access is enforced
+    first and fails closed. A personal list has no projection fence, so its new value is projected
+    now. The group projection fence admits only entries the document already records, so a group
+    list projects its reduced form (the new list without anything it adds) now and the rest after
+    the save. Grants reach only released documents; a held document's chunks are rebuilt from the
+    document when it is published. Returns the access changes to project after the save.
+    """
+    after_save = {}
+    for field_name, (previous_value, new_value) in acl_changes.items():
+        new_entries = list(new_value or [])
+        previous_entries = set(_normalize_search_acl_entries(previous_value))
+        reduced_entries = [entry for entry in new_entries if str(entry).strip() in previous_entries]
+        revokes_access = bool(_search_acl_grant_entries(previous_value) - _search_acl_grant_entries(new_entries))
+        if field_name == 'shared_group_ids':
+            if revokes_access:
+                projected_chunks = project_document_acl_to_chunks(
+                    document_item['id'],
+                    {field_name: reduced_entries},
+                    user_id,
+                    group_id=group_id,
+                    document_version=document_item.get('version'),
+                )
+                if projected_chunks:
+                    _rebase_document_after_fenced_acl_projection(
+                        cosmos_container, document_item, original_document, user_id, group_id,
+                    )
+            if not revokes_access or (
+                _normalize_search_acl_entries(reduced_entries) != _normalize_search_acl_entries(new_entries)
+            ):
+                after_save[field_name] = (previous_value, new_entries)
+        elif releases_chunks:
+            project_document_acl_to_chunks(document_item['id'], {field_name: new_entries}, user_id)
+        elif revokes_access:
+            project_document_acl_to_chunks(document_item['id'], {field_name: reduced_entries}, user_id)
+    return after_save
+
+
+def _project_document_acl_after_save(
+    document_id,
+    acl_changes,
+    user_id,
+    group_id=None,
+    document_version=None,
+    releases_chunks=True,
+):
+    """Project the rest of a group access change once Cosmos records it.
+
+    The projection fence now admits the new entries. A grant that does not reach Search raises
+    DocumentMutationPropagationError so a retry can complete it; entries that grant nothing, such as
+    pending shares, are projected best effort.
+    """
+    for field_name, (previous_value, new_entries) in acl_changes.items():
+        grants_access = bool(_search_acl_grant_entries(new_entries) - _search_acl_grant_entries(previous_value))
+        if grants_access and not releases_chunks:
+            continue
+        try:
+            project_document_acl_to_chunks(
+                document_id,
+                {field_name: new_entries},
+                user_id,
+                group_id=group_id,
+                document_version=document_version,
+            )
+        except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError) as exc:
+            if grants_access:
+                raise _document_search_acl_incomplete_error(exc) from exc
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] An access change that grants no search access was not projected; it is saved.",
+                extra={'document_id': document_id, 'group_id': group_id, 'error_type': type(exc).__name__},
+                level=logging.WARNING,
+            )
+
+
+def reproject_document_search_acl(document_item, user_id, group_id=None):
+    """Project a document's recorded access list to its search chunks again.
+
+    Completes an access change that was saved before its search projection finished, such as an
+    approval whose projection failed. Grants reach only released documents; a held document's chunks
+    are rebuilt from the document when it is published. Raises DocumentMutationPropagationError, with
+    search_writes_frozen set while Search writes are frozen, when the projection fails.
+    """
+    acl_fields = get_document_search_acl_fields(group_id)
+    if not acl_fields or not document_is_available(document_item):
+        return 0
+    try:
+        return project_document_acl_to_chunks(
+            document_item['id'],
+            {field_name: list(document_item.get(field_name) or []) for field_name in acl_fields},
+            document_item.get('user_id') or user_id,
+            group_id=group_id,
+            document_version=document_item.get('version'),
+        )
+    except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError) as exc:
+        raise _document_search_acl_incomplete_error(exc) from exc
+
+
+def build_document_search_metadata_fields(document_item, fields=None):
+    """Return the AI Search chunk values for a document's projected metadata fields."""
+    requested_fields = DOCUMENT_SEARCH_METADATA_FIELD_MAP if fields is None else fields
+    field_values = {}
+    for document_field in requested_fields:
+        index_field = DOCUMENT_SEARCH_METADATA_FIELD_MAP.get(document_field)
+        if not index_field:
+            continue
+        value = document_item.get(document_field)
+        if document_field == 'authors':
+            value = ensure_list(value)
+        elif document_field == 'tags':
+            value = list(value or [])
+        elif document_field == 'file_name' and not value:
+            continue
+        field_values[index_field] = value
+    return field_values
+
+
+def summarize_document_search_sync(search_syncs):
+    """Summarize the search sync outcomes of several document saves for one receipt."""
+    pending_count = sum(
+        1 for search_sync in search_syncs
+        if isinstance(search_sync, dict) and search_sync.get('status') == DOCUMENT_SEARCH_SYNC_STATUS_PENDING
+    )
+    if pending_count:
+        return {'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING, 'document_count': pending_count}
+    return {'status': DOCUMENT_SEARCH_SYNC_STATUS_NOT_REQUIRED}
+
+
+def _document_search_sync_now():
+    return datetime.now(timezone.utc)
+
+
+def _format_document_search_sync_time(value):
+    """Format a UTC timestamp at fixed width so stored values sort and compare as strings."""
+    return value.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f+00:00')
+
+
+def _parse_document_search_sync_time(value):
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _get_document_search_sync_scope_name(group_id=None, public_workspace_id=None):
+    if public_workspace_id is not None:
+        return 'public'
+    if group_id is not None:
+        return 'group'
+    return 'personal'
+
+
+def get_document_search_sync_record_id(document_id, group_id=None, public_workspace_id=None):
+    """Return the settings-container id of a document's search metadata sync record."""
+    scope_name = _get_document_search_sync_scope_name(group_id, public_workspace_id)
+    return f"{DOCUMENT_SEARCH_SYNC_RECORD_TYPE}:{scope_name}:{document_id}"
+
+
+def _document_search_sync_lease_is_active(record, now):
+    expires_at = _parse_document_search_sync_time(record.get('lease_expires_at'))
+    return bool(record.get('lease_token')) and expires_at is not None and expires_at > now
+
+
+def _document_search_sync_intent_is_stale(record, now):
+    requested_at = _parse_document_search_sync_time(record.get('requested_at'))
+    if requested_at is None:
+        return True
+    return (now - requested_at).total_seconds() >= DOCUMENT_SEARCH_SYNC_UNCOMMITTED_INTENT_SECONDS
+
+
+def _is_cosmos_write_conflict(exc):
+    return getattr(exc, 'status_code', None) in (409, 412)
+
+
+def _is_cosmos_not_found(exc):
+    return isinstance(exc, CosmosResourceNotFoundError) or getattr(exc, 'status_code', None) == 404
+
+
+def _read_document_search_sync_record(record_id):
+    try:
+        return cosmos_settings_container.read_item(item=record_id, partition_key=record_id)
+    except Exception as exc:
+        if _is_cosmos_not_found(exc):
+            return None
+        raise
+
+
+def _replace_document_search_sync_record(record):
+    return cosmos_settings_container.replace_item(
+        item=record['id'],
+        body=record,
+        etag=record.get('_etag'),
+        match_condition=MatchConditions.IfNotModified,
+    )
+
+
+def request_document_search_metadata_sync(document_id, changed_fields, user_id, group_id=None, public_workspace_id=None):
+    """Durably record that changed document metadata must be projected to its search chunks.
+
+    Called before the document itself is saved, so a crash between the two writes leaves a pending
+    request for the reconciler instead of silently dropping the projection. Every call stores a new
+    request token; the caller saves the same token on the document. Returns the record.
+    """
+    fields = sorted(set(changed_fields or []) & set(DOCUMENT_SEARCH_METADATA_FIELD_MAP))
+    if not fields:
+        return None
+
+    request_token = uuid.uuid4().hex
+    record_id = get_document_search_sync_record_id(document_id, group_id, public_workspace_id)
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        now = _document_search_sync_now()
+        now_text = _format_document_search_sync_time(now)
+        next_attempt_at = _format_document_search_sync_time(
+            now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_PENDING_GRACE_SECONDS)
+        )
+        record = _read_document_search_sync_record(record_id)
+        try:
+            if record is None:
+                return cosmos_settings_container.create_item(body={
+                    'id': record_id,
+                    'type': DOCUMENT_SEARCH_SYNC_RECORD_TYPE,
+                    'schema_version': DOCUMENT_SEARCH_SYNC_SCHEMA_VERSION,
+                    'document_id': document_id,
+                    'user_id': user_id,
+                    'group_id': group_id,
+                    'public_workspace_id': public_workspace_id,
+                    'revision': 1,
+                    'latest_request_token': request_token,
+                    'pending_fields': fields,
+                    'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+                    'requested_at': now_text,
+                    'updated_at': now_text,
+                    'next_attempt_at': next_attempt_at,
+                    'attempts': 0,
+                    'last_error_type': None,
+                    'lease_token': None,
+                    'lease_expires_at': None,
+                })
+
+            record['revision'] = int(record.get('revision') or 0) + 1
+            record['latest_request_token'] = request_token
+            record['pending_fields'] = sorted(set(record.get('pending_fields') or []) | set(fields))
+            record['requested_at'] = now_text
+            record['updated_at'] = now_text
+            record['attempts'] = 0
+            record['last_error_type'] = None
+            # A running worker picks up the new revision itself; otherwise the request waits briefly
+            # for the immediate in-process sync before the reconciler may claim it.
+            if not _document_search_sync_lease_is_active(record, now):
+                record['status'] = DOCUMENT_SEARCH_SYNC_STATUS_PENDING
+                record['next_attempt_at'] = next_attempt_at
+            return _replace_document_search_sync_record(record)
+        except Exception as exc:
+            # A conflict means another writer changed the record; not-found means a worker finished
+            # and removed it after this read. Either way, re-read and try again.
+            if not (_is_cosmos_write_conflict(exc) or _is_cosmos_not_found(exc)):
+                raise
+    raise RuntimeError("Unable to record the document search metadata sync request.")
+
+
+def _get_document_search_sync_executor():
+    global _document_search_sync_executor
+    with _document_search_sync_lock:
+        if _document_search_sync_executor is None:
+            # A small dedicated pool keeps bulk tag operations from crowding out document uploads on
+            # the shared Flask executor and bounds this process's Search write pressure.
+            _document_search_sync_executor = ThreadPoolExecutor(
+                max_workers=DOCUMENT_SEARCH_SYNC_WORKER_COUNT,
+                thread_name_prefix='document-search-sync',
+            )
+        return _document_search_sync_executor
+
+
+def schedule_document_search_metadata_sync(document_id, group_id=None, public_workspace_id=None):
+    """Queue an immediate in-process sync. The reconciler retries anything that does not run here."""
+    record_id = get_document_search_sync_record_id(document_id, group_id, public_workspace_id)
+    with _document_search_sync_lock:
+        if record_id in _document_search_sync_queued_records:
+            return True
+        _document_search_sync_queued_records.add(record_id)
+    try:
+        _get_document_search_sync_executor().submit(_run_scheduled_document_search_metadata_sync, record_id)
+        return True
+    except Exception as exc:
+        with _document_search_sync_lock:
+            _document_search_sync_queued_records.discard(record_id)
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Unable to queue a search metadata sync; the reconciler will run it.",
+            extra={'record_id': record_id, 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+        return False
+
+
+def _run_scheduled_document_search_metadata_sync(record_id):
+    with _document_search_sync_lock:
+        _document_search_sync_queued_records.discard(record_id)
+    try:
+        run_document_search_metadata_sync(record_id, lease_wait_seconds=DOCUMENT_SEARCH_SYNC_LEASE_WAIT_SECONDS)
+    except Exception as exc:
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Search metadata sync stopped unexpectedly; the reconciler will retry it.",
+            extra={'record_id': record_id, 'error_type': type(exc).__name__},
+            level=logging.ERROR,
+            exceptionTraceback=True,
+        )
+
+
+def _acquire_document_search_sync_lease(record_id, lease_wait_seconds=0):
+    """Lease a document's sync record, waiting up to lease_wait_seconds for a running sync."""
+    deadline = time.monotonic() + max(0, lease_wait_seconds)
+    conflicts = 0
+    while True:
+        record = _read_document_search_sync_record(record_id)
+        if record is None:
+            return None
+        now = _document_search_sync_now()
+        if not _document_search_sync_lease_is_active(record, now):
+            lease_expires_at = _format_document_search_sync_time(
+                now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_LEASE_SECONDS)
+            )
+            record.update({
+                'lease_token': uuid.uuid4().hex,
+                'lease_expires_at': lease_expires_at,
+                'next_attempt_at': lease_expires_at,
+                'status': DOCUMENT_SEARCH_SYNC_STATUS_SYNCING,
+                'updated_at': _format_document_search_sync_time(now),
+            })
+            try:
+                return _replace_document_search_sync_record(record)
+            except Exception as exc:
+                if not (_is_cosmos_write_conflict(exc) or _is_cosmos_not_found(exc)):
+                    raise
+                conflicts += 1
+                if conflicts >= DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS:
+                    return None
+                continue
+        if time.monotonic() >= deadline:
+            return None
+        time.sleep(DOCUMENT_SEARCH_SYNC_LEASE_POLL_SECONDS)
+
+
+def _renew_document_search_sync_lease(record_id, lease_token):
+    """Confirm this worker still holds the lease, extending it once half of it has elapsed."""
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None or record.get('lease_token') != lease_token:
+            raise DocumentSearchSyncLeaseLostError("The document search sync lease was lost.")
+        now = _document_search_sync_now()
+        expires_at = _parse_document_search_sync_time(record.get('lease_expires_at'))
+        if expires_at is not None and (expires_at - now).total_seconds() > DOCUMENT_SEARCH_SYNC_LEASE_SECONDS / 2:
+            return record
+        lease_expires_at = _format_document_search_sync_time(
+            now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_LEASE_SECONDS)
+        )
+        record.update({
+            'lease_expires_at': lease_expires_at,
+            'next_attempt_at': lease_expires_at,
+            'updated_at': _format_document_search_sync_time(now),
+        })
+        try:
+            return _replace_document_search_sync_record(record)
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                raise DocumentSearchSyncLeaseLostError("The document search sync lease was lost.") from exc
+            if not _is_cosmos_write_conflict(exc):
+                raise
+    raise DocumentSearchSyncLeaseLostError("The document search sync lease could not be renewed.")
+
+
+def _release_document_search_sync_lease(record_id, lease_token):
+    """Hand a still-pending record back to the reconciler without waiting for a retry delay."""
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None or record.get('lease_token') != lease_token:
+            return
+        now_text = _format_document_search_sync_time(_document_search_sync_now())
+        record.update({
+            'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+            'lease_token': None,
+            'lease_expires_at': None,
+            'next_attempt_at': now_text,
+            'updated_at': now_text,
+        })
+        try:
+            _replace_document_search_sync_record(record)
+            return
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return
+            if not _is_cosmos_write_conflict(exc):
+                raise
+
+
+def _record_document_search_sync_failure(record_id, lease_token, error):
+    """Release the lease and schedule a retry: a short fixed delay while Search writes are frozen,
+    otherwise an increasing backoff."""
+    search_writes_frozen = isinstance(error, DataManagementSearchWritesFrozenError)
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None or record.get('lease_token') != lease_token:
+            return None
+        now = _document_search_sync_now()
+        attempts = int(record.get('attempts') or 0)
+        if search_writes_frozen:
+            status = DOCUMENT_SEARCH_SYNC_STATUS_PENDING
+            retry_delay_seconds = DOCUMENT_SEARCH_SYNC_FROZEN_RETRY_SECONDS
+        else:
+            attempts += 1
+            status = DOCUMENT_SEARCH_SYNC_STATUS_FAILED
+            retry_delays = DOCUMENT_SEARCH_SYNC_RETRY_DELAYS_SECONDS
+            retry_delay_seconds = retry_delays[min(attempts, len(retry_delays)) - 1]
+        record.update({
+            'status': status,
+            'attempts': attempts,
+            'last_error_type': type(error).__name__,
+            'last_failed_at': _format_document_search_sync_time(now),
+            'next_attempt_at': _format_document_search_sync_time(now + timedelta(seconds=retry_delay_seconds)),
+            'lease_token': None,
+            'lease_expires_at': None,
+            'updated_at': _format_document_search_sync_time(now),
+        })
+        try:
+            return _replace_document_search_sync_record(record)
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return None
+            if not _is_cosmos_write_conflict(exc):
+                raise
+    return None
+
+
+def _complete_document_search_sync_pass(record_id, lease_token, synced_revision, document_committed):
+    """Record the outcome of one projection pass.
+
+    Returns ('complete' | 'continue' | 'deferred' | 'lost', record). 'continue' means a newer edit
+    arrived during the pass and the worker keeps its lease to project it. 'deferred' means the
+    document write for this request has not landed yet, so the request is re-checked shortly.
+    """
+    for _attempt in range(DOCUMENT_SEARCH_SYNC_RECORD_WRITE_ATTEMPTS):
+        record = _read_document_search_sync_record(record_id)
+        if record is None:
+            return 'complete', None
+        if record.get('lease_token') != lease_token:
+            return 'lost', record
+        now = _document_search_sync_now()
+        try:
+            if int(record.get('revision') or 0) > synced_revision:
+                lease_expires_at = _format_document_search_sync_time(
+                    now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_LEASE_SECONDS)
+                )
+                record.update({
+                    'lease_expires_at': lease_expires_at,
+                    'next_attempt_at': lease_expires_at,
+                    'updated_at': _format_document_search_sync_time(now),
+                })
+                return 'continue', _replace_document_search_sync_record(record)
+            if not document_committed:
+                record.update({
+                    'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING,
+                    'lease_token': None,
+                    'lease_expires_at': None,
+                    'next_attempt_at': _format_document_search_sync_time(
+                        now + timedelta(seconds=DOCUMENT_SEARCH_SYNC_COMMIT_RECHECK_SECONDS)
+                    ),
+                    'updated_at': _format_document_search_sync_time(now),
+                })
+                return 'deferred', _replace_document_search_sync_record(record)
+            cosmos_settings_container.delete_item(
+                item=record_id,
+                partition_key=record_id,
+                etag=record.get('_etag'),
+                match_condition=MatchConditions.IfNotModified,
+            )
+            return 'complete', None
+        except Exception as exc:
+            if _is_cosmos_not_found(exc):
+                return 'complete', None
+            if not _is_cosmos_write_conflict(exc):
+                raise
+    raise RuntimeError("Unable to record the document search metadata sync result.")
+
+
+def _delete_document_search_sync_record(record_id):
+    try:
+        cosmos_settings_container.delete_item(item=record_id, partition_key=record_id)
+    except Exception as exc:
+        if not _is_cosmos_not_found(exc):
+            raise
+
+
+def _read_document_for_search_sync(record):
+    """Read the document a sync record targets, only while it still belongs to that scope."""
+    document_id = record.get('document_id')
+    group_id = record.get('group_id')
+    public_workspace_id = record.get('public_workspace_id')
+    container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
+    try:
+        document_item = container.read_item(item=document_id, partition_key=document_id)
+    except Exception as exc:
+        if _is_cosmos_not_found(exc):
+            return None
+        raise
+    if public_workspace_id is not None:
+        belongs_to_scope = document_item.get('public_workspace_id') == public_workspace_id
+    elif group_id is not None:
+        belongs_to_scope = document_item.get('group_id') == group_id
+    else:
+        belongs_to_scope = document_item.get('user_id') == record.get('user_id')
+    return document_item if belongs_to_scope else None
+
+
+def _approved_search_share_principals(entries):
+    """Return the users or groups whose approved share lets them find a document in search."""
+    principals = []
+    for entry in _normalize_search_acl_entries(entries):
+        principal, _separator, status = entry.partition(',')
+        if principal and status == 'approved':
+            principals.append(principal)
+    return principals
+
+
+def _invalidate_document_search_results_cache(document_item, group_id=None, public_workspace_id=None):
+    """Drop cached search results that can include a document once a sync has changed its chunks.
+
+    Routes clear the cache when a change is saved, but a search that ran while the sync was still
+    merging could otherwise keep serving the old values until its cache entry expires. Recipients of
+    approved shares cache their own results, so theirs are cleared too. Best effort.
+    """
+    try:
+        if public_workspace_id is not None:
+            invalidate_public_workspace_search_cache(public_workspace_id)
+        elif group_id is not None:
+            invalidate_group_search_cache(group_id)
+            for shared_group_id in _approved_search_share_principals(document_item.get('shared_group_ids')):
+                invalidate_group_search_cache(shared_group_id)
+        else:
+            owner_user_id = document_item.get('user_id')
+            if owner_user_id:
+                invalidate_personal_search_cache(owner_user_id)
+            for shared_user_id in _approved_search_share_principals(document_item.get('shared_user_ids')):
+                invalidate_personal_search_cache(shared_user_id)
+    except Exception as exc:
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Cached search results were not cleared after a search metadata sync.",
+            extra={'document_id': document_item.get('id'), 'error_type': type(exc).__name__},
+            level=logging.WARNING,
+        )
+
+
+def run_document_search_metadata_sync(record_id, lease_wait_seconds=0):
+    """Project a document's pending metadata to all of its search chunks.
+
+    Serialized per document by a lease on the sync record. Every pass projects the latest saved value
+    of each pending field, so a retry also heals chunks a failed pass left behind. A held screened
+    document has no released chunks and publication rebuilds them from the document, so it has
+    nothing to sync. The worker never writes to the document. Failures are recorded on the record
+    with a retry delay. Returns a status summary.
+    """
+    record = _acquire_document_search_sync_lease(record_id, lease_wait_seconds)
+    if record is None:
+        return {'status': 'not_started', 'record_id': record_id}
+
+    lease_token = record.get('lease_token')
+    document_id = record.get('document_id')
+    group_id = record.get('group_id')
+    public_workspace_id = record.get('public_workspace_id')
+    chunks_updated = 0
+    for _pass in range(DOCUMENT_SEARCH_SYNC_MAX_PASSES):
+        revision = int(record.get('revision') or 0)
+        pending_fields = list(record.get('pending_fields') or [])
+        try:
+            document_item = _read_document_for_search_sync(record)
+            if document_item is None:
+                _delete_document_search_sync_record(record_id)
+                return {'status': 'document_missing', 'record_id': record_id}
+
+            chunks_updated = 0
+            if document_is_available(document_item):
+                # Personal chunks are scoped by the owner; group and public chunks by their workspace.
+                owner_user_id = document_item.get('user_id') or record.get('user_id')
+                chunks_updated = project_fields_to_document_chunks(
+                    document_id,
+                    build_document_search_metadata_fields(document_item, pending_fields),
+                    owner_user_id,
+                    group_id=group_id,
+                    public_workspace_id=public_workspace_id,
+                    before_batch=lambda: _renew_document_search_sync_lease(record_id, lease_token),
+                )
+                if 'tags' in pending_fields:
+                    # Blob tag metadata is informational; this refresh is best effort and never fails the pass.
+                    propagate_tags_to_blob_metadata(
+                        document_id,
+                        document_item.get('tags') or [],
+                        owner_user_id,
+                        group_id,
+                        public_workspace_id,
+                    )
+                if chunks_updated:
+                    _invalidate_document_search_results_cache(
+                        document_item,
+                        group_id=group_id,
+                        public_workspace_id=public_workspace_id,
+                    )
+        except DocumentSearchSyncLeaseLostError:
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] Search metadata sync stopped after another worker took over.",
+                extra={'record_id': record_id, 'document_id': document_id},
+                level=logging.WARNING,
+            )
+            return {'status': 'lost', 'record_id': record_id}
+        except Exception as exc:
+            failure_record = _record_document_search_sync_failure(record_id, lease_token, exc)
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] Search metadata sync failed; it will be retried.",
+                extra={
+                    'record_id': record_id,
+                    'document_id': document_id,
+                    'fields': pending_fields,
+                    'attempts': (failure_record or {}).get('attempts'),
+                    'next_attempt_at': (failure_record or {}).get('next_attempt_at'),
+                    'error_type': type(exc).__name__,
+                },
+                level=logging.WARNING,
+                exceptionTraceback=True,
+            )
+            return {'status': 'failed', 'record_id': record_id, 'error_type': type(exc).__name__}
+
+        now = _document_search_sync_now()
+        # Only the save that carries this request's token proves the projected values are current.
+        latest_request_token = record.get('latest_request_token')
+        document_committed = (
+            bool(latest_request_token)
+            and document_item.get(DOCUMENT_SEARCH_SYNC_TOKEN_FIELD) == latest_request_token
+        ) or _document_search_sync_intent_is_stale(record, now)
+        outcome, next_record = _complete_document_search_sync_pass(
+            record_id,
+            lease_token,
+            revision,
+            document_committed,
+        )
+        if outcome != 'continue':
+            return {'status': outcome, 'record_id': record_id, 'chunks_updated': chunks_updated}
+        record = next_record
+
+    _release_document_search_sync_lease(record_id, lease_token)
+    return {'status': DOCUMENT_SEARCH_SYNC_STATUS_PENDING, 'record_id': record_id, 'chunks_updated': chunks_updated}
+
+
+def process_due_document_search_metadata_syncs(max_records=None, time_budget_seconds=None):
+    """Run search metadata syncs that are due for a retry or were never picked up.
+
+    Used by the background reconciler. Covers syncs whose in-process run failed, never started
+    because the process restarted, or lost their lease when a worker stopped mid-sync.
+    """
+    if max_records is None:
+        max_records = DOCUMENT_SEARCH_SYNC_RECONCILE_BATCH_SIZE
+    if time_budget_seconds is None:
+        time_budget_seconds = DOCUMENT_SEARCH_SYNC_RECONCILE_TIME_BUDGET_SECONDS
+    started = time.monotonic()
+    due_records = list(cosmos_settings_container.query_items(
+        query=(
+            'SELECT TOP @limit c.id FROM c '
+            'WHERE c.type = @type AND c.next_attempt_at <= @now '
+            'ORDER BY c.next_attempt_at ASC'
+        ),
+        parameters=[
+            {'name': '@limit', 'value': int(max_records)},
+            {'name': '@type', 'value': DOCUMENT_SEARCH_SYNC_RECORD_TYPE},
+            {'name': '@now', 'value': _format_document_search_sync_time(_document_search_sync_now())},
+        ],
+        enable_cross_partition_query=True,
+    ))
+    summary = {'due': len(due_records), 'processed': 0, 'complete': 0, 'failed': 0}
+    for due_record in due_records:
+        if time.monotonic() - started >= time_budget_seconds:
+            break
+        try:
+            result = run_document_search_metadata_sync(due_record.get('id'))
+        except Exception as exc:
+            log_event(
+                "[DOCUMENT_SEARCH_SYNC] Search metadata reconciliation failed for a document.",
+                extra={'record_id': due_record.get('id'), 'error_type': type(exc).__name__},
+                level=logging.ERROR,
+                exceptionTraceback=True,
+            )
+            summary['failed'] += 1
+            continue
+        summary['processed'] += 1
+        if result.get('status') == 'complete':
+            summary['complete'] += 1
+        elif result.get('status') == 'failed':
+            summary['failed'] += 1
+    return summary
 
 
 def get_pdf_page_count(pdf_path: str) -> int:
@@ -4214,7 +6018,7 @@ def get_document_record(user_id, document_id, group_id=None, public_workspace_id
     return _normalize_document_enhanced_citations(document_item)
 
 
-def get_ordered_document_chunks(document_id, user_id, group_id=None, public_workspace_id=None, max_chunks=None):
+def get_ordered_document_chunks(document_id, user_id, group_id=None, public_workspace_id=None, max_chunks=None, *, native_only=False):
     """Return ordered chunk records for a document after access has been verified."""
     document_item = get_document_record(
         user_id=user_id,
@@ -4225,6 +6029,8 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
 
     if not document_item:
         return []
+
+    document_item = assert_document_available(document_item, user_id, group_id, public_workspace_id)
 
     search_client = _get_search_client(
         group_id=group_id,
@@ -4249,18 +6055,24 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
         'title',
         'chunk_summary',
     ]
+    escaped_document_id = str(document_id).replace("'", "''")
     search_kwargs = {
         'search_text': '*',
-        'filter': f"document_id eq '{document_id}'",
+        'filter': f"document_id eq '{escaped_document_id}'",
         'select': ','.join(select_fields),
     }
     if max_chunks is not None:
         search_kwargs['top'] = max(1, int(max_chunks))
+    if native_only:
+        search_kwargs.update(search_text='"Excel native inspection"', search_fields=['chunk_text'])
 
     try:
         results = list(search_client.search(**search_kwargs))
-    except Exception as e:
-        print(f"Error retrieving chunks for document {document_id}: {e}")
+    except Exception as error:
+        log_event(
+            "[DOCUMENT_METADATA] Document evidence retrieval failed.",
+            level=logging.WARNING, extra={"document_id": document_id, "error_type": type(error).__name__},
+        )
         raise
 
     ordered_chunks = []
@@ -4293,7 +6105,10 @@ def get_ordered_document_chunks(document_id, user_id, group_id=None, public_work
             str(chunk.get('id') or ''),
         )
     )
-    return ordered_chunks
+    return assert_document_chunks_available(
+        ordered_chunks, document_item, user_id, group_id, public_workspace_id,
+        expected_chunk_count=document_item.get("num_chunks") if max_chunks is None and not native_only else None,
+    )
 
 def get_documents(user_id, group_id=None, public_workspace_id=None):
     try:
@@ -4329,11 +6144,62 @@ def get_documents(user_id, group_id=None, public_workspace_id=None):
             source_query_metrics=source_query_metrics,
             context='functions_documents.get_documents',
         )
-        return jsonify({"documents": current_documents}), 200
+        return jsonify({"documents": [public_document_payload(item) for item in current_documents]}), 200
     except Exception as e:
         return jsonify({'error': f'Error retrieving documents: {str(e)}'}), 500
 
-def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
+
+def _indexed_chunk_count_for_document(document):
+    scope_field = (
+        "public_workspace_id" if document.get("public_workspace_id") is not None
+        else "group_id" if document.get("group_id") is not None else "user_id"
+    )
+    scope_value = document.get(scope_field)
+    if document.get("is_current_version") is False or document.get("search_visibility_state") == "archived":
+        scope_value = _build_archived_scope_value(scope_value)
+    return count_indexed_chunks(
+        _get_search_client(
+            group_id=document.get("group_id"), public_workspace_id=document.get("public_workspace_id"),
+        ),
+        document["id"], document.get("version") or 1, scope_field, scope_value,
+    )
+
+
+def _document_with_current_bookkeeping(document):
+    """Read-only compatibility for completed records saved before chunk bookkeeping was fixed."""
+    if not document_is_available(document):
+        return document
+    result = dict(document)
+    result["status"] = resolve_metadata_completion_status(
+        document.get("status"), document.get("metadata_extraction_status"),
+    )
+    result["num_chunks"] = chunk_count_for_response(document)
+    if is_document_processing_complete(result["status"]) and result["num_chunks"] is None:
+        count = _indexed_chunk_count_for_document(document)
+        result["num_chunks"] = count
+        result[INDEXED_CHUNK_COUNT_VERSION_FIELD] = document.get("version") or 1
+        remember_verified_chunk_count(document, count)
+    return result
+
+
+def _update_failed_document_chunk_count(document_id, user_id, update_callback, group_id=None, public_workspace_id=None):
+    """Keep acknowledged partial indexing visible without hiding the processing failure."""
+    try:
+        document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+        if document and document_is_available(document):
+            update_callback(
+                num_chunks=_indexed_chunk_count_for_document(document),
+                indexed_chunk_count_version=document.get("version") or 1,
+            )
+    except Exception as error:
+        log_event(
+            "[DOCUMENTS] Failed document chunk count could not be reconciled.",
+            extra={"document_id": document_id, "error_type": type(error).__name__},
+            level=logging.WARNING,
+        )
+
+
+def get_document(user_id, document_id, group_id=None, public_workspace_id=None, include_origin_summary=False):
     try:
         document_record = get_document_record(
             user_id=user_id,
@@ -4345,10 +6211,23 @@ def get_document(user_id, document_id, group_id=None, public_workspace_id=None):
         if not document_record:
             return jsonify({'error': 'Document not found or access denied'}), 404
 
-        return jsonify(document_record), 200
+        payload = public_document_payload(document_record)
+        if is_document_processing_complete(payload.get("status")):
+            bookkeeping = _document_with_current_bookkeeping(document_record)
+            payload["num_chunks"] = bookkeeping.get("num_chunks")
+            payload["status"] = bookkeeping.get("status")
+        # Held documents project no origin_kind, so they never resolve an origin summary.
+        if include_origin_summary and payload.get(ORIGIN_KIND_FIELD):
+            remember_document_origin_summary(user_id, document_record)
+        return jsonify(payload), 200
 
     except Exception as e:
-        return jsonify({'error': f'Error retrieving document: {str(e)}'}), 500
+        log_event(
+            "[DOCUMENTS] Document details could not be retrieved.",
+            extra={"document_id": document_id, "error_type": type(e).__name__},
+            level=logging.WARNING,
+        )
+        return jsonify({'error': 'Unable to retrieve document details.'}), 500
 
 def get_latest_version(document_id, user_id, group_id=None, public_workspace_id=None):
     try:
@@ -4433,26 +6312,46 @@ def get_document_version(user_id, document_id, version, group_id=None, public_wo
         if not document_results:
             return jsonify({'error': 'Document version not found'}), 404
 
-        return jsonify(_normalize_document_enhanced_citations(document_results[0])), 200
+        return jsonify(public_document_payload(_normalize_document_enhanced_citations(document_results[0]))), 200
 
     except Exception as e:
         return jsonify({'error': f'Error retrieving document version: {str(e)}'}), 500
 
-def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_workspace_id=None):
+def delete_from_blob_storage(
+    document_item, user_id=None, group_id=None, public_workspace_id=None, *, strict=False, operation_guard=None,
+    persisted_sources_only=False,
+):
     """Delete a document from Azure Blob Storage."""
 
     try:
+        if persisted_sources_only and not (
+            document_item.get("blob_path") or document_item.get("archived_blob_path")
+        ):
+            return
         delete_targets = get_document_blob_delete_targets(
             document_item,
             user_id=user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
+        if persisted_sources_only:
+            persisted_paths = {
+                path for path in (document_item.get("blob_path"), document_item.get("archived_blob_path"))
+                if isinstance(path, str) and path
+            }
+            delete_targets = [
+                (container_name, blob_path) for container_name, blob_path in delete_targets
+                if blob_path in persisted_paths
+            ]
         if not delete_targets:
             return
 
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
         if not blob_service_client:
+            if strict and (_has_persisted_blob_reference(document_item) or document_item.get("enhanced_citations")):
+                raise RuntimeError("Document source storage is unavailable.")
+            if SCREENING_FIELD in document_item:
+                raise ScreeningError("The storage connection is required to finish deleting this document.")
             log_event(
                 "[DOCUMENT_BLOB_DELETE] Persisted document source could not be deleted because Blob Storage is unavailable.",
                 extra={
@@ -4465,6 +6364,22 @@ def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_
 
         for container_name, blob_path in delete_targets:
             blob_client = blob_service_client.get_blob_client(container=container_name, blob=blob_path)
+            if strict:
+                try:
+                    properties = blob_client.get_blob_properties()
+                except Exception as error:
+                    if getattr(error, "status_code", None) == 404:
+                        continue
+                    raise
+                if operation_guard is not None:
+                    operation_guard(document_id=document_item["id"])
+                current = _get_documents_container(group_id, public_workspace_id).read_item(
+                    item=document_item["id"], partition_key=document_item["id"],
+                )
+                if not document_item.get("_etag") or current.get("_etag") != document_item["_etag"]:
+                    raise ScreeningConflictError()
+                blob_client.delete_blob(etag=properties.etag, match_condition=MatchConditions.IfNotModified)
+                continue
             if blob_client.exists():
                 blob_client.delete_blob()
                 print(f"Successfully deleted blob at {container_name}/{blob_path}")
@@ -4472,11 +6387,28 @@ def delete_from_blob_storage(document_item, user_id=None, group_id=None, public_
                 print(f"No blob found at {container_name}/{blob_path} to delete")
 
     except Exception as e:
+        if strict:
+            log_event(
+                "[DOCUMENT_BLOB_DELETE] Scoped source deletion failed.",
+                extra={"document_id": document_item.get("id"), "exception_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise
+        if SCREENING_FIELD in document_item:
+            log_event(
+                "[CONTENT_SCREENING] Source deletion failed.",
+                extra={"document_id": document_item.get("id"), "error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise ScreeningError(code="screening_source_delete_failed") from e
         print(f"Error deleting document from blob storage: {str(e)}")
         # Don't raise the exception, as we want the Cosmos DB deletion to proceed
         # even if blob deletion fails
 
-def delete_document(user_id, document_id, group_id=None, public_workspace_id=None):
+def delete_document(
+    user_id, document_id, group_id=None, public_workspace_id=None, *,
+    strict=False, expected_etag=None, operation_guard=None, persisted_sources_only=False,
+):
     """Delete a document from the user's documents in Cosmos DB and blob storage if enhanced citations are enabled."""
     from functions_debug import debug_print
 
@@ -4493,10 +6425,31 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
         cosmos_container = cosmos_user_documents_container
 
     try:
+        if operation_guard is not None:
+            operation_guard(document_id=document_id)
         document_item = cosmos_container.read_item(
             item=document_id,
             partition_key=document_id
         )
+
+        if is_public_workspace:
+            if document_item.get("public_workspace_id") != public_workspace_id:
+                raise PermissionError("Document access denied.")
+        elif is_group:
+            if document_item.get("group_id") != group_id:
+                raise PermissionError("Document access denied.")
+            assert_group_document_source_writable(document_item)
+        elif document_item.get("user_id") != user_id:
+            raise PermissionError("Document access denied.")
+        if strict and (not expected_etag or document_item.get("_etag") != expected_etag):
+            raise ScreeningConflictError()
+        if (
+            SCREENING_FIELD in document_item or EXCEL_INVENTORY_FIELD in document_item
+            or str(document_item.get("file_name") or "").lower().endswith((".xlsx", ".xlsm", ".xls"))
+        ):
+            prepare_document_deletion(document_item, user_id)
+            clear_excel_inventory_cache(subject_from_document(document_item))
+            document_item = cosmos_container.read_item(item=document_id, partition_key=document_id)
 
         # Log document deletion transaction before deletion
         try:
@@ -4519,51 +6472,74 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
                 user_id=user_id,
                 document_id=document_id,
                 workspace_type=workspace_type,
-                file_name=file_name,
+                file_name="Screened document" if SCREENING_FIELD in document_item else file_name,
                 file_type=file_ext,
                 page_count=document_item.get('number_of_pages'),
                 version=document_item.get('version'),
                 group_id=group_id,
                 public_workspace_id=public_workspace_id,
-                document_metadata=document_item  # Store full metadata
+                document_metadata=(
+                    {"id": document_id, "version": document_item.get("version"), "screened": True}
+                    if SCREENING_FIELD in document_item else document_item
+                )
             )
         except Exception as log_error:
             print(f"⚠️  Warning: Failed to log document deletion transaction: {log_error}")
             # Don't fail the deletion if logging fails
 
-        if is_public_workspace:
-            if document_item.get('public_workspace_id') != public_workspace_id:
-                raise Exception("Unauthorized access to document")
-        elif is_group:
-            # For group documents, only the owning group can delete (not shared groups)
-            if document_item.get('group_id') != group_id:
-                raise Exception("Unauthorized access to document - only document owning group can delete")
-        else:
-            # For personal documents, only the owner can delete (not shared users)
-            if document_item.get('user_id') != user_id:
-                raise Exception("Unauthorized access to document - only document owner can delete")
-
         # Delete from blob storage
         try:
-            delete_from_blob_storage(
-                document_item,
-                user_id=user_id,
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
+            if operation_guard is not None:
+                operation_guard(document_id=document_id)
+            if strict:
+                delete_from_blob_storage(
+                    document_item, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+                    strict=True, operation_guard=operation_guard, persisted_sources_only=persisted_sources_only,
+                )
+            else:
+                delete_from_blob_storage(
+                    document_item, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+                )
         except Exception as blob_error:
+            if strict or SCREENING_FIELD in document_item:
+                raise
             # Log the error but continue with Cosmos DB deletion
             print(f"Error deleting from blob storage (continuing with document deletion): {str(blob_error)}")
 
         # Then delete from Cosmos DB
-        cosmos_container.delete_item(
-            item=document_id,
-            partition_key=document_id
-        )
-        delete_document_access_index_for_document_fail_open(
+        if operation_guard is not None:
+            operation_guard(document_id=document_id)
+        if SCREENING_FIELD in document_item:
+            current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
+            if (
+                subject_from_document(current_document) != subject_from_document(document_item)
+                or (current_document.get(SCREENING_FIELD) or {}).get("state") != "deleting"
+            ):
+                raise ScreeningConflictError()
+            cosmos_container.delete_item(
+                item=document_id, partition_key=document_id,
+                etag=current_document["_etag"], match_condition=MatchConditions.IfNotModified,
+            )
+        elif strict or is_group:
+            cosmos_container.delete_item(
+                item=document_id, partition_key=document_id,
+                etag=expected_etag if strict else document_item["_etag"],
+                match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            cosmos_container.delete_item(
+                item=document_id,
+                partition_key=document_id
+            )
+        projection = delete_document_access_index_for_document_fail_open(
             document_item,
             operation='document_deleted',
         )
+        if strict and not projection.get("success"):
+            raise DocumentMutationPropagationError(
+                "Document deleted, but its access projection could not be removed.",
+                deleted_document_ids=[document_id],
+            )
         if (
             document_item.get("source_kind") == "xml_schema"
             and document_item.get("is_current_version") is not False
@@ -4585,36 +6561,70 @@ def delete_document(user_id, document_id, group_id=None, public_workspace_id=Non
         raise
 
 
-def delete_document_revision(user_id, document_id, delete_mode="all_versions", group_id=None, public_workspace_id=None):
+def delete_document_revision(
+    user_id, document_id, delete_mode="all_versions", group_id=None, public_workspace_id=None, *,
+    family_documents=None, strict=False, operation_guard=None, persisted_sources_only=False,
+):
     if delete_mode not in {"all_versions", "current_only"}:
         raise ValueError("Unsupported delete mode")
 
     cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
     target_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
 
-    family_documents = _get_document_family_items_from_document(
-        target_document,
-        user_id=user_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
-    )
+    if family_documents is None:
+        family_documents = _get_document_family_items_from_document(
+            target_document, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
+    if strict:
+        scope_field = "public_workspace_id" if public_workspace_id is not None else "group_id" if group_id is not None else "user_id"
+        scope_id = public_workspace_id if public_workspace_id is not None else group_id if group_id is not None else user_id
+        if (
+            target_document.get(scope_field) != scope_id
+            or not any(member.get("id") == document_id for member in family_documents)
+            or any(
+                member.get(scope_field) != scope_id
+                or _get_document_family_key(member) != _get_document_family_key(target_document)
+                for member in family_documents
+            )
+        ):
+            raise PermissionError("Document access denied.")
+        selected_documents = family_documents if delete_mode == "all_versions" else [target_document]
+        for member in selected_documents:
+            if operation_guard is not None:
+                operation_guard(document_id=member["id"])
+            fresh = cosmos_container.read_item(item=member["id"], partition_key=member["id"])
+            if not member.get("_etag") or fresh.get("_etag") != member["_etag"]:
+                raise ScreeningConflictError()
     current_document = _choose_current_document(family_documents)
     target_is_current = current_document and current_document.get('id') == document_id
 
     if delete_mode == "all_versions":
         deleted_document_ids = []
         for family_document in family_documents:
-            delete_document(
-                user_id=user_id,
-                document_id=family_document['id'],
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
-            delete_document_chunks(
-                document_id=family_document['id'],
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
+            try:
+                if strict:
+                    if operation_guard is not None:
+                        operation_guard(document_id=family_document["id"])
+                    delete_document_chunks(family_document["id"], group_id=group_id, public_workspace_id=public_workspace_id)
+                    delete_document(
+                        user_id, family_document["id"], group_id=group_id, public_workspace_id=public_workspace_id,
+                        strict=True, expected_etag=family_document.get("_etag"), operation_guard=operation_guard,
+                        persisted_sources_only=persisted_sources_only,
+                    )
+                else:
+                    delete_document(
+                        user_id=user_id, document_id=family_document['id'],
+                        group_id=group_id, public_workspace_id=public_workspace_id,
+                    )
+                    delete_document_chunks(
+                        document_id=family_document['id'], group_id=group_id, public_workspace_id=public_workspace_id,
+                    )
+            except Exception as error:
+                if strict:
+                    raise DocumentRevisionDeleteError(
+                        [*deleted_document_ids, *getattr(error, "deleted_document_ids", [])],
+                    ) from error
+                raise
             deleted_document_ids.append(family_document['id'])
 
         return {
@@ -4623,40 +6633,56 @@ def delete_document_revision(user_id, document_id, delete_mode="all_versions", g
             'promoted_document_id': None,
         }
 
-    delete_document(
-        user_id=user_id,
-        document_id=document_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
-    )
-    delete_document_chunks(
-        document_id=document_id,
-        group_id=group_id,
-        public_workspace_id=public_workspace_id,
-    )
+    if strict:
+        if operation_guard is not None:
+            operation_guard(document_id=document_id)
+        delete_document_chunks(document_id, group_id=group_id, public_workspace_id=public_workspace_id)
+        delete_document(
+            user_id, document_id, group_id=group_id, public_workspace_id=public_workspace_id,
+            strict=True, expected_etag=target_document.get("_etag"), operation_guard=operation_guard,
+            persisted_sources_only=persisted_sources_only,
+        )
+    else:
+        delete_document(
+            user_id=user_id, document_id=document_id, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
+        delete_document_chunks(document_id=document_id, group_id=group_id, public_workspace_id=public_workspace_id)
 
     promoted_document_id = None
     if target_is_current:
         remaining_documents = [doc for doc in family_documents if doc.get('id') != document_id]
         if remaining_documents:
+            if operation_guard is not None:
+                operation_guard()
             promoted_document = _choose_current_document(remaining_documents)
             promoted_document['revision_family_id'] = target_document.get('revision_family_id') or promoted_document.get('revision_family_id') or promoted_document.get('id')
             promoted_document['is_current_version'] = True
             promoted_document['search_visibility_state'] = 'active'
-            _promote_document_blob_to_current_alias(
-                promoted_document,
-                user_id=user_id,
-                group_id=group_id,
-                public_workspace_id=public_workspace_id,
-            )
-            set_document_chunk_visibility(promoted_document, active=True)
-            _upsert_document_and_sync_access_index(
-                cosmos_container,
-                promoted_document,
-                operation='document_revision_promoted',
-            )
+            screened_promotion = strict and SCREENING_FIELD in promoted_document
+            promotion_available = not screened_promotion or public_document_payload(promoted_document)[SCREENING_FIELD]["available"]
+            if strict:
+                try:
+                    if not screened_promotion and promoted_document.get("archived_blob_path"):
+                        promoted_document["blob_path"] = promoted_document["archived_blob_path"]
+                        promoted_document["blob_path_mode"] = ARCHIVED_REVISION_BLOB_PATH_MODE
+                    promoted_document = _upsert_document_and_sync_access_index(
+                        cosmos_container, promoted_document, operation='document_revision_promoted', strict=True,
+                    )
+                    if operation_guard is not None:
+                        operation_guard()
+                    set_document_chunk_visibility(promoted_document, active=promotion_available)
+                except Exception as error:
+                    raise DocumentRevisionDeleteError([document_id]) from error
+            else:
+                _promote_document_blob_to_current_alias(
+                    promoted_document, user_id=user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+                )
+                set_document_chunk_visibility(promoted_document, active=True)
+                _upsert_document_and_sync_access_index(
+                    cosmos_container, promoted_document, operation='document_revision_promoted',
+                )
             promoted_document_id = promoted_document.get('id')
-            if promoted_document.get("source_kind") == "xml_schema":
+            if promoted_document.get("source_kind") == "xml_schema" and promotion_available:
                 try:
                     _refresh_xsd_document_schema_state(
                         promoted_document,
@@ -5078,12 +7104,10 @@ def delete_document_chunks(document_id, group_id=None, public_workspace_id=None)
             return
 
         documents_to_delete = [{"id": doc_id} for doc_id in ids_to_delete]
-        batch = IndexDocumentsBatch()
-        batch.add_delete_actions(documents_to_delete)
-        result = _execute_document_search_write(
+        _execute_document_search_write(
             search_client,
-            "index_documents",
-            batch,
+            "delete_documents",
+            documents=documents_to_delete,
         )
     except Exception as e:
         raise
@@ -5098,7 +7122,7 @@ def delete_document_version_chunks(document_id, version, group_id=None, public_w
     _execute_document_search_write(
         search_client,
         "delete_documents",
-        actions=[
+        documents=[
             {"@search.action": "delete", "id": chunk['id']} for chunk in
             search_client.search(
                 search_text="*",
@@ -5183,110 +7207,58 @@ def detect_doc_type(document_id, user_id=None):
 
     return None
 
-def process_metadata_extraction_background(document_id, user_id, group_id=None, public_workspace_id=None):
-    """
-    Background function that calls extract_document_metadata(...)
-    and updates Cosmos DB accordingly.
-    """
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
+def _update_document_for_job(*, operation_guard=None, safe_errors=False, **arguments):
+    status = arguments.get("status")
+    if safe_errors and is_document_processing_failure(status):
+        arguments["status"] = "Document processing failed. Contact an administrator if the problem persists."
+    if operation_guard is None:
+        return update_document(**arguments)
+    document = operation_guard()
+    return update_document(
+        **arguments, strict=True, expected_etag=document.get("_etag"), operation_guard=operation_guard,
+    )
 
+
+def process_metadata_extraction_background(
+    document_id, user_id, group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
+):
+    """Analyze metadata without changing the indexed content's readiness."""
+    update_doc = update_document if operation_guard is None and not safe_errors else partial(
+        _update_document_for_job, operation_guard=operation_guard, safe_errors=safe_errors,
+    )
+    scope = _build_document_scope_args(
+        document_id, user_id, group_id=group_id, public_workspace_id=public_workspace_id,
+    )
     try:
-        # Log status: starting
-        args = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "percentage_complete": 5,
-            "status": "Metadata extraction started..."
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        update_document(**args)
-
-        # Call your existing extraction function
-        args = {
-            "document_id": document_id,
-            "user_id": user_id
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        metadata = extract_document_metadata(**args)
-
-
-        if not metadata:
-            # If it fails or returns nothing, log an error status and quit
-            args = {
-                "document_id": document_id,
-                "user_id": user_id,
-                "status": "Metadata extraction returned empty or failed"
-            }
-
-            if is_public_workspace:
-                args["public_workspace_id"] = public_workspace_id
-            elif is_group:
-                args["group_id"] = group_id
-
-            update_document(**args)
-
+        if not get_settings().get("enable_extract_meta_data", False):
+            update_doc(**scope, metadata_extraction_status="disabled")
             return
-
-        # Persist the returned metadata fields back into Cosmos
-        args_metadata = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "title": metadata.get('title'),
-            "authors": ensure_list(metadata.get('authors')),
-            "abstract": metadata.get('abstract'),
-            "keywords": metadata.get('keywords'),
-            "publication_date": metadata.get('publication_date'),
-            "organization": metadata.get('organization')
+        update_doc(**scope, metadata_extraction_status="running")
+        metadata = extract_document_metadata(
+            **scope, operation_guard=operation_guard, safe_errors=safe_errors,
+        )
+        updates = {
+            key: value for key, value in (metadata or {}).items()
+            if not is_effectively_empty(value)
         }
+        saved = update_doc(
+            **scope, **updates, metadata_extraction_status="succeeded" if updates else "empty",
+        )
+        if safe_errors and isinstance(saved, dict) and SCREENING_FIELD in saved and not document_is_available(saved):
+            return
+    except Exception as error:
+        log_event(
+            "[DOCUMENT_METADATA_EXTRACTION] Metadata analysis failed.",
+            extra={**scope, "error_type": type(error).__name__}, level=logging.WARNING,
+        )
+        # The guarded write rechecks scope/version; a revoked job must not persist even its failure.
+        update_doc(**scope, metadata_extraction_status="failed")
+        if safe_errors:
+            raise RuntimeError("Metadata analysis failed.") from error
 
-        if is_public_workspace:
-            args_metadata["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args_metadata["group_id"] = group_id
-
-        update_document(**args_metadata)
-
-        args_status = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "status": "Metadata extraction complete",
-            "percentage_complete": 100
-        }
-
-        if is_public_workspace:
-            args_status["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args_status["group_id"] = group_id
-
-        update_document(**args_status)
-
-    except Exception as e:
-        # Log any exceptions
-        args = {
-            "document_id": document_id,
-            "user_id": user_id,
-            "status": f"Metadata extraction failed: {str(e)}"
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        update_document(**args)
-
-def extract_document_metadata(document_id, user_id, group_id=None, public_workspace_id=None):
+def extract_document_metadata(
+    document_id, user_id, group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
+):
     """
     Extract metadata from a document stored in Cosmos DB.
     This function is called in the background after the document is uploaded.
@@ -5294,9 +7266,15 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     content safety checks.
     """
 
+    if operation_guard is not None:
+        operation_guard()
+    update_doc = update_document if operation_guard is None and not safe_errors else partial(
+        _update_document_for_job, operation_guard=operation_guard, safe_errors=safe_errors,
+    )
+    screening_document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    if screening_document and SCREENING_FIELD in screening_document:
+        require_document_available(screening_document)
     settings = get_settings()
-    enable_user_workspace = settings.get('enable_user_workspace', False)
-    enable_group_workspaces = settings.get('enable_group_workspaces', False)
 
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -5324,8 +7302,8 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     meta_data_example = {
         "title": "Title here",
         "authors": ["Author 1", "Author 2"],
-        "organization": "Organization or Unknown",
-        "publication_date": "MM/YYYY or N/A",
+        "organization": "Organization if identified",
+        "publication_date": "MM/YYYY if identified",
         "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"],
         "abstract": "two sentence abstract"
     }
@@ -5387,7 +7365,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         args = {
             "document_id": document_id,
             "user_id": user_id,
-            "status": f"Retrieved document items for document {document_id}"
+            "metadata_extraction_status": "running",
         }
 
         if is_public_workspace:
@@ -5395,21 +7373,16 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         elif is_group:
             args["group_id"] = group_id
 
-        update_document(**args)
+        update_doc(**args)
 
 
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Retrieved document items for document {document_id}: {document_items}"
+            content=f"Retrieved {len(document_items)} metadata record(s) for document {document_id}"
         )
-    except Exception as e:
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error querying document items for document {document_id}: {e}"
-        )
-        print(f"Error querying document items for document {document_id}: {e}")
+    except Exception:
+        raise
 
     if not document_items:
         return None
@@ -5434,13 +7407,13 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"Extracted metadata for document {document_id}, metadata: {meta_data}"
+        content=f"Read existing metadata fields for document {document_id}"
     )
 
     args = {
         "document_id": document_id,
         "user_id": user_id,
-        "status": f"Extracted metadata for document {document_id}"
+        "metadata_extraction_status": "running",
     }
 
     if is_public_workspace:
@@ -5448,7 +7421,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     elif is_group:
         args["group_id"] = group_id
 
-    update_document(**args)
+    update_doc(**args)
 
 
     # --- Step 3: Content Safety Check (if enabled) ---
@@ -5506,7 +7479,11 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
 
     # --- Step 4: Hybrid Search ---
     try:
-        if enable_user_workspace or enable_group_workspaces:
+        workspace_flag = (
+            "enable_public_workspaces" if is_public_workspace
+            else "enable_group_workspaces" if is_group else "enable_user_workspace"
+        )
+        if settings.get(workspace_flag, False):
             add_file_task_to_file_processing_log(
                 document_id=document_id,
                 user_id=group_id if is_group else user_id,
@@ -5516,7 +7493,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             args = {
                 "document_id": document_id,
                 "user_id": user_id,
-                "status": f"Collecting document data to generate metadata from document: {document_id}"
+                "metadata_extraction_status": "running",
             }
 
             if is_public_workspace:
@@ -5524,13 +7501,15 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             elif is_group:
                 args["group_id"] = group_id
 
-            update_document(**args)
+            update_doc(**args)
 
 
-            document_scope, scope_id = detect_doc_type(
-                document_id,
-                user_id
-            )
+            if group_id is not None:
+                document_scope, scope_id = "group", group_id
+            elif public_workspace_id is not None:
+                document_scope, scope_id = "public", public_workspace_id
+            else:
+                document_scope, scope_id = detect_doc_type(document_id, user_id)
 
             if document_scope == "personal":
                 search_results = hybrid_search(
@@ -5575,31 +7554,26 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
 
         else:
             search_results = "No Hybrid results"
-    except Exception as e:
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error processing Hybrid search for document {document_id}: {e}"
-        )
-        print(f"Error processing Hybrid search for document {document_id}: {e}")
-        search_results = "No Hybrid results"
+    except Exception:
+        raise
+
+    if not search_results or search_results == "No Hybrid results":
+        raise RuntimeError("No indexed content is available for metadata analysis.")
 
     # --- Step 5: Prepare GPT Client ---
+    if operation_guard is not None:
+        operation_guard()
     try:
         gpt_client, gpt_model = _resolve_metadata_extraction_client(
             settings,
             identity_context={'user_id': user_id},
         )
-    except Exception as e:
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error resolving metadata extraction model for document {document_id}: {e}"
-        )
-        print(f"Error resolving metadata extraction model for document {document_id}: {e}")
-        return meta_data
+    except Exception:
+        raise
 
     # --- Step 6: GPT Prompt and JSON Parsing ---
+    if screening_document and SCREENING_FIELD in screening_document:
+        require_document_available(get_document_metadata(document_id, user_id, group_id, public_workspace_id))
     try:
         add_file_task_to_file_processing_log(
             document_id=document_id,
@@ -5618,6 +7592,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
                     f"Current known metadata:\n{json.dumps(meta_data, indent=2)}\n\n"
                     f"Desired metadata structure:\n{json.dumps(meta_data_example, indent=2)}\n\n"
                     f"Please attempt to fill in any missing, or empty values."
+                    f" Leave unknown fields empty. Do not invent authors, dates, or organizations."
                     f"If generating keywords, please create 5-10 keywords."
                     f"Return only JSON."
                 )
@@ -5629,23 +7604,20 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
             messages=messages
         )
 
-    except Exception as e:
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error processing GPT request for document {document_id}: {e}"
-        )
-        print(f"Error processing GPT request for document {document_id}: {e}")
-        return meta_data  # Return what we have so far
+    except Exception:
+        raise
+
+    if screening_document and SCREENING_FIELD in screening_document:
+        require_document_available(get_document_metadata(document_id, user_id, group_id, public_workspace_id))
 
     if not response:
-        return meta_data  # or None, depending on your logic
+        raise RuntimeError("Metadata generation returned no response.")
 
     response_content = response.choices[0].message.content
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"GPT response for document {document_id}: {response_content}"
+        content=f"Received metadata response for document {document_id}, characters={len(response_content or '')}"
     )
 
     # --- Step 7: Clean and parse the GPT JSON output ---
@@ -5661,29 +7633,37 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Cleaned JSON from GPT response for document {document_id}: {cleaned_str}"
+            content=f"Prepared metadata JSON for document {document_id}, characters={len(cleaned_str)}"
         )
 
         gpt_output = json.loads(cleaned_str)
+        if not isinstance(gpt_output, dict):
+            raise ValueError("Metadata generation did not return an object.")
+        for key in ("title", "organization", "publication_date", "abstract"):
+            if gpt_output.get(key) is not None and not isinstance(gpt_output[key], str):
+                raise ValueError("Metadata generation returned an invalid text field.")
+        for key in ("authors", "keywords"):
+            value = gpt_output.get(key)
+            if value is not None and not (
+                isinstance(value, str)
+                or isinstance(value, list) and all(isinstance(item, str) for item in value)
+            ):
+                raise ValueError("Metadata generation returned an invalid list field.")
+        if not any(not is_effectively_empty(gpt_output.get(key)) for key in meta_data):
+            return None
 
         add_file_task_to_file_processing_log(
             document_id=document_id,
             user_id=group_id if is_group else user_id,
-            content=f"Decoded JSON from GPT response for document {document_id}: {gpt_output}"
+            content=f"Decoded metadata JSON for document {document_id}"
         )
 
         # Ensure authors and keywords are always lists
         gpt_output["authors"] = ensure_list(gpt_output.get("authors", []))
         gpt_output["keywords"] = ensure_list(gpt_output.get("keywords", []))
 
-    except (json.JSONDecodeError, TypeError) as e:
-        add_file_task_to_file_processing_log(
-            document_id=document_id,
-            user_id=group_id if is_group else user_id,
-            content=f"Error decoding JSON from GPT response for document {document_id}: {e}"
-        )
-        print(f"Error decoding JSON from response: {e}")
-        return meta_data  # or None
+    except (json.JSONDecodeError, TypeError):
+        raise
 
     # --- Step 8: Merge GPT Output with Existing Metadata ---
     #
@@ -5698,8 +7678,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
 
     # Authors
     if is_effectively_empty(meta_data["authors"]):
-        # If GPT has no authors either, fallback to ["Unknown"]
-        meta_data["authors"] = gpt_output["authors"] or ["Unknown"]
+        meta_data["authors"] = gpt_output["authors"]
 
     # Organization
     if is_effectively_empty(meta_data["organization"]):
@@ -5720,13 +7699,13 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     add_file_task_to_file_processing_log(
         document_id=document_id,
         user_id=group_id if is_group else user_id,
-        content=f"Final metadata for document {document_id}: {meta_data}"
+        content=f"Metadata analysis completed for document {document_id}"
     )
 
     args = {
         "document_id": document_id,
         "user_id": user_id,
-        "status": f"Metadata generated for document {document_id}"
+        "metadata_extraction_status": "running",
     }
 
     if is_public_workspace:
@@ -5734,7 +7713,7 @@ def extract_document_metadata(document_id, user_id, group_id=None, public_worksp
     elif is_group:
         args["group_id"] = group_id
 
-    update_document(**args)
+    update_doc(**args)
 
 
     return meta_data
@@ -5852,49 +7831,101 @@ def analyze_image_with_vision_model(image_path, user_id, document_id, settings):
             print(f"Warning: Multi-modal vision enabled but no model selected")
             return None
 
-        # Initialize client (reuse Chat Model)
-        enable_gpt_apim = settings.get('enable_gpt_apim', False)
-        debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
-
-        if enable_gpt_apim:
-            api_version = settings.get('azure_apim_gpt_api_version')
-            endpoint = settings.get('azure_apim_gpt_endpoint')
-            debug_print(f"[VISION_ANALYSIS] APIM Configuration:")
-            debug_print(f"  Endpoint: {endpoint}")
-            debug_print(f"  API Version: {api_version}")
-
-            gpt_client = AzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=endpoint,
-                api_key=settings.get('azure_apim_gpt_subscription_key')
+        # The setting stores only a model name. With multi-endpoint models enabled, route the call
+        # through the AI connection that hosts that model; otherwise use the legacy GPT connection.
+        request_model = vision_model
+        vision_endpoint_cfg, vision_model_cfg = resolve_vision_model_endpoint(settings, vision_model)
+        if vision_endpoint_cfg and vision_model_cfg:
+            # Chat support is re-checked when the client is built; image input is checked here
+            # against the connection's own record, which is what the admin actually selected.
+            if not is_vision_capable_model(vision_model_cfg, vision_endpoint_cfg):
+                raise ValueError('The selected vision model must support image input and text responses.')
+            gpt_client, request_model = _build_model_endpoint_client_for_model(
+                settings,
+                vision_endpoint_cfg,
+                vision_model_cfg.get('id'),
+                fallback_endpoint_id=str(vision_endpoint_cfg.get('id') or ''),
+                purpose_label='vision',
+                identity_context={'user_id': user_id},
+            )
+            log_event(
+                "[VISION_ANALYSIS] Using the AI connection that hosts the vision model.",
+                extra={
+                    "document_id": document_id,
+                    "vision_model": vision_model,
+                    "request_model": request_model,
+                    "endpoint_id": vision_endpoint_cfg.get('id'),
+                    "endpoint_name": vision_endpoint_cfg.get('name'),
+                    "model_id": vision_model_cfg.get('id'),
+                    "provider": vision_endpoint_cfg.get('provider'),
+                },
             )
         else:
-            # Use managed identity or key
-            auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
-            api_version = settings.get('azure_openai_gpt_api_version')
-            endpoint = settings.get('azure_openai_gpt_endpoint')
+            selected_models = (settings.get('gpt_model') or {}).get('selected') or []
+            vision_model_record = next(
+                (
+                    model for model in selected_models if isinstance(model, dict)
+                    and vision_model in (model.get('deploymentName'), model.get('deployment'), model.get('id'))
+                ),
+                vision_model,
+            )
+            require_model_capability(vision_model_record)
+            if not is_vision_capable_model(vision_model_record):
+                raise ValueError('The selected vision model must support image input and text responses.')
 
-            debug_print(f"[VISION_ANALYSIS] Direct Azure OpenAI Configuration:")
-            debug_print(f"  Endpoint: {endpoint}")
-            debug_print(f"  API Version: {api_version}")
-            debug_print(f"  Auth Type: {auth_type}")
+            # Initialize client (reuse Chat Model)
+            enable_gpt_apim = settings.get('enable_gpt_apim', False)
+            debug_print(f"[VISION_ANALYSIS] Using APIM: {enable_gpt_apim}")
 
-            if auth_type == 'managed_identity':
-                token_provider = get_bearer_token_provider(
-                    DefaultAzureCredential(),
-                    cognitive_services_scope
-                )
+            if enable_gpt_apim:
+                api_version = settings.get('azure_apim_gpt_api_version')
+                endpoint = settings.get('azure_apim_gpt_endpoint')
+                debug_print(f"[VISION_ANALYSIS] APIM Configuration:")
+                debug_print(f"  Endpoint: {endpoint}")
+                debug_print(f"  API Version: {api_version}")
+
                 gpt_client = AzureOpenAI(
                     api_version=api_version,
                     azure_endpoint=endpoint,
-                    azure_ad_token_provider=token_provider
+                    api_key=settings.get('azure_apim_gpt_subscription_key')
                 )
             else:
-                gpt_client = AzureOpenAI(
-                    api_version=api_version,
-                    azure_endpoint=endpoint,
-                    api_key=settings.get('azure_openai_gpt_key')
-                )
+                # Use managed identity or key
+                auth_type = settings.get('azure_openai_gpt_authentication_type', 'key')
+                api_version = settings.get('azure_openai_gpt_api_version')
+                endpoint = settings.get('azure_openai_gpt_endpoint')
+
+                debug_print(f"[VISION_ANALYSIS] Direct Azure OpenAI Configuration:")
+                debug_print(f"  Endpoint: {endpoint}")
+                debug_print(f"  API Version: {api_version}")
+                debug_print(f"  Auth Type: {auth_type}")
+
+                if auth_type == 'managed_identity':
+                    token_provider = get_bearer_token_provider(
+                        DefaultAzureCredential(),
+                        cognitive_services_scope
+                    )
+                    gpt_client = AzureOpenAI(
+                        api_version=api_version,
+                        azure_endpoint=endpoint,
+                        azure_ad_token_provider=token_provider
+                    )
+                else:
+                    gpt_client = AzureOpenAI(
+                        api_version=api_version,
+                        azure_endpoint=endpoint,
+                        api_key=settings.get('azure_openai_gpt_key')
+                    )
+
+            log_event(
+                "[VISION_ANALYSIS] Using the legacy GPT connection for the vision model.",
+                extra={
+                    "document_id": document_id,
+                    "vision_model": vision_model,
+                    "connection": "apim" if enable_gpt_apim else "azure_openai",
+                    "multi_endpoint_enabled": bool(settings.get('enable_multi_model_endpoints', False)),
+                },
+            )
 
         # Create vision prompt
         print(f"Analyzing image with vision model: {vision_model}")
@@ -5938,7 +7969,7 @@ Format your response as JSON with these keys:
 }"""
 
         api_params = {
-            "model": vision_model,
+            "model": request_model,
             "messages": [
                 {
                     "role": "user",
@@ -6082,12 +8113,28 @@ Format your response as JSON with these keys:
     except Exception as e:
         print(f"Error in vision analysis for {document_id}: {str(e)}")
         traceback.print_exc()
+        log_event(
+            "[VISION_ANALYSIS] Vision analysis failed, so no vision description was produced.",
+            extra={
+                "document_id": document_id,
+                "vision_model": settings.get('multimodal_vision_model') if isinstance(settings, dict) else None,
+                "error_type": type(e).__name__,
+            },
+            level=logging.WARNING,
+        )
         return None
 
 def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_callback, group_id=None, public_workspace_id=None, mark_enhanced_citations=True):
     """Uploads the file to Azure Blob Storage."""
 
+    capture = current_extraction(document_id)
+    if capture is not None:
+        update_callback(enhanced_citations=True, status="Source retained privately for content screening")
+        return None
+
     try:
+        # The status write changes this record's etag, so it must precede the read that guards the final write.
+        update_callback(status=f"Uploading {blob_filename} to Blob Storage...")
         cosmos_container = _get_documents_container(group_id=group_id, public_workspace_id=public_workspace_id)
         current_document = cosmos_container.read_item(item=document_id, partition_key=document_id)
         storage_account_container_name = current_document.get("blob_container") or _get_blob_container_name(
@@ -6141,10 +8188,10 @@ def upload_to_blob(temp_file_path, user_id, document_id, blob_filename, update_c
 
         metadata = {k: v for k, v in metadata.items() if v is not None}
 
-        update_callback(status=f"Uploading {blob_filename} to Blob Storage...")
-
+        content_type = OFFICE_REFERENCE_MIME_TYPES.get(os.path.splitext(blob_filename)[1].lower())
+        content_options = {"content_settings": ContentSettings(content_type=content_type)} if content_type else {}
         with open(temp_file_path, "rb") as f:
-            blob_client.upload_blob(f, overwrite=True, metadata=metadata)
+            blob_client.upload_blob(f, overwrite=True, metadata=metadata, **content_options)
 
         current_document["blob_container"] = storage_account_container_name
         current_document["blob_path"] = blob_path
@@ -7142,6 +9189,9 @@ def process_txt(document_id, user_id, temp_file_path, original_filename, enable_
         with open(temp_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(content)
         words = content.split()
         num_words = len(words)
         num_chunks_estimated = math.ceil(num_words / target_words_per_chunk)
@@ -7502,95 +9552,6 @@ def process_log(document_id, user_id, temp_file_path, original_filename, enable_
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
-def process_doc(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
-    """
-    Processes legacy .doc files via OLE piece tables and .docm files via docx2txt.
-    Note: .docx files still use Document Intelligence for better formatting preservation.
-    """
-    is_group = group_id is not None
-    is_public_workspace = public_workspace_id is not None
-
-    update_callback(status=f"Processing {original_filename.split('.')[-1].upper()} file...")
-    total_chunks_saved = 0
-    total_embedding_tokens = 0
-    embedding_model_name = None
-    chunk_config = get_chunk_size_config(get_settings())
-    file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
-    target_words_per_chunk = chunk_config.get(file_ext, {}).get('value', 400)
-
-    if enable_enhanced_citations:
-        args = {
-            "temp_file_path": temp_file_path,
-            "user_id": user_id,
-            "document_id": document_id,
-            "blob_filename": original_filename,
-            "update_callback": update_callback
-        }
-
-        if is_public_workspace:
-            args["public_workspace_id"] = public_workspace_id
-        elif is_group:
-            args["group_id"] = group_id
-
-        upload_to_blob(**args)
-
-    try:
-        try:
-            text_content = extract_word_text(temp_file_path, f'.{file_ext}')
-        except Exception as e:
-            raise Exception(f"Error extracting text from {original_filename}: {e}")
-
-        if not text_content or not text_content.strip():
-            raise Exception(f"No text content extracted from {original_filename}")
-
-        # Split into words for chunking
-        words = text_content.split()
-        if not words:
-            raise Exception(f"No text content found in {original_filename}")
-
-        # Create chunks of target_words_per_chunk words
-        final_chunks = []
-        for i in range(0, len(words), target_words_per_chunk):
-            chunk_words = words[i:i + target_words_per_chunk]
-            chunk_text = " ".join(chunk_words)
-            final_chunks.append(chunk_text)
-
-        num_chunks = len(final_chunks)
-        update_callback(number_of_pages=num_chunks)
-
-        for idx, chunk_content in enumerate(final_chunks, start=1):
-            if chunk_content.strip():
-                update_callback(
-                    current_file_chunk=idx,
-                    status=f"Saving chunk {idx}/{num_chunks}..."
-                )
-                args = {
-                    "page_text_content": chunk_content,
-                    "page_number": idx,
-                    "file_name": original_filename,
-                    "user_id": user_id,
-                    "document_id": document_id
-                }
-
-                if is_public_workspace:
-                    args["public_workspace_id"] = public_workspace_id
-                elif is_group:
-                    args["group_id"] = group_id
-
-                token_usage = save_chunks(**args)
-                total_chunks_saved += 1
-
-                # Accumulate embedding tokens
-                if token_usage:
-                    total_embedding_tokens += token_usage.get('total_tokens', 0)
-                    if not embedding_model_name:
-                        embedding_model_name = token_usage.get('model_deployment_name')
-
-    except Exception as e:
-        raise Exception(f"Failed processing {original_filename}: {e}")
-
-    return total_chunks_saved, total_embedding_tokens, embedding_model_name
-
 def process_xml(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
     """Processes XML files using the consolidated token-aware XML pipeline."""
     return _process_xml_with_token_usage(
@@ -7793,9 +9754,44 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
     total_chunks_saved = 0
     total_embedding_tokens = 0
     embedding_model_name = None
-    chunk_config = get_chunk_size_config(get_settings())
+    settings = get_settings()
+    chunk_config = get_chunk_size_config(settings)
     file_ext = os.path.splitext(original_filename)[1].lower().lstrip('.')
+    dot_ext = f'.{file_ext}'
     target_words_per_chunk = chunk_config.get(file_ext, {}).get('value', 400)
+
+    office_a11y_meta = None
+    office_structural_events = []
+    try:
+        doc_title, doc_author = extract_word_metadata(temp_file_path, dot_ext)
+        doc_authors_list = parse_authors(doc_author)
+        office_a11y_meta, office_structural_events = extract_office_accessibility_metadata(
+            temp_file_path, dot_ext
+        )
+        update_fields = {'status': f"Extracted initial metadata for {file_ext.upper()} file"}
+        if doc_title or (office_a11y_meta and office_a11y_meta.get('title')):
+            update_fields['title'] = doc_title or office_a11y_meta.get('title')
+        if doc_authors_list:
+            update_fields['authors'] = doc_authors_list
+        elif doc_author:
+            update_fields['authors'] = [doc_author]
+        elif office_a11y_meta and office_a11y_meta.get('authors'):
+            update_fields['authors'] = office_a11y_meta.get('authors')
+        if office_a11y_meta:
+            if office_a11y_meta.get('subject'):
+                update_fields['abstract'] = office_a11y_meta['subject']
+            if office_a11y_meta.get('keywords'):
+                update_fields['keywords'] = office_a11y_meta['keywords']
+            if office_a11y_meta.get('language'):
+                update_fields['language'] = office_a11y_meta['language']
+            update_fields['accessibility_metadata'] = office_a11y_meta
+        update_callback(**update_fields)
+    except Exception as meta_err:
+        log_event(
+            f"[DOCUMENT_METADATA] Initial metadata warning in process_doc for {original_filename}: {type(meta_err).__name__}",
+            level=logging.WARNING,
+            debug_only=True,
+        )
 
     if enable_enhanced_citations:
         args = {
@@ -7815,37 +9811,108 @@ def process_doc(document_id, user_id, temp_file_path, original_filename, enable_
 
     try:
         try:
-            text_content = extract_word_text(temp_file_path, f'.{file_ext}')
+            text_content = extract_word_text(temp_file_path, dot_ext)
+            text_content = strip_appended_word_comments(text_content)
         except Exception as e:
             raise Exception(f"Error extracting text from {original_filename}: {e}")
 
         if not text_content or not text_content.strip():
             raise Exception(f"No text content extracted from {original_filename}")
 
-        # Split into words for chunking
-        words = text_content.split()
-        if not words:
+        final_chunks_to_save = chunk_word_file_into_pages(
+            di_pages=[{"page_number": 1, "content": text_content}],
+            chunk_size=target_words_per_chunk,
+        )
+        if not final_chunks_to_save:
             raise Exception(f"No text content found in {original_filename}")
 
-        # Create chunks of target_words_per_chunk words
-        final_chunks = []
-        for i in range(0, len(words), target_words_per_chunk):
-            chunk_words = words[i:i + target_words_per_chunk]
-            chunk_text = " ".join(chunk_words)
-            final_chunks.append(chunk_text)
+        capture = current_extraction(document_id)
+        comment_blocks, word_comment_count, comment_total_words = _build_word_comment_chunks(
+            temp_file_path, dot_ext, update_callback,
+        )
+        if comment_blocks:
+            if capture is not None:
+                for comment_block in comment_blocks:
+                    capture.add_supplement(comment_block.get("content", ""), kind="comment")
+            final_chunks_to_save, merged_comment_count, overflow_comment_blocks = (
+                _merge_embedded_images_into_chunks(
+                    final_chunks_to_save,
+                    comment_blocks,
+                    comment_total_words,
+                    settings,
+                )
+            )
+            final_chunks_to_save = _append_overflow_image_chunks(
+                final_chunks_to_save, overflow_comment_blocks
+            )
+            _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+            update_callback(
+                word_comment_count=word_comment_count,
+                word_comment_merged=merged_comment_count,
+            )
 
-        num_chunks = len(final_chunks)
+        image_blocks, embedded_image_count, embedded_image_engine, embedded_total_words = (
+            _build_office_embedded_image_chunks(temp_file_path, settings, update_callback)
+        )
+        if image_blocks:
+            if capture is not None:
+                for image_block in image_blocks:
+                    capture.add_supplement(image_block.get("content", ""), kind="figure")
+            final_chunks_to_save, merged_image_count, overflow_image_blocks = (
+                _merge_embedded_images_into_chunks(
+                    final_chunks_to_save,
+                    image_blocks,
+                    embedded_total_words,
+                    settings,
+                )
+            )
+            final_chunks_to_save = _append_overflow_image_chunks(
+                final_chunks_to_save, overflow_image_blocks
+            )
+            _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+            update_callback(
+                office_embedded_image_count=embedded_image_count,
+                office_embedded_image_merged=merged_image_count,
+                office_embedded_image_engine=embedded_image_engine,
+            )
+
+        if office_a11y_meta and office_structural_events:
+            word_a11y_blocks = build_word_chunk_accessibility_items(
+                office_a11y_meta, office_structural_events
+            )
+            if word_a11y_blocks:
+                a11y_total_words = (
+                    office_a11y_meta.get('total_body_words')
+                    or comment_total_words
+                    or embedded_total_words
+                )
+                final_chunks_to_save, _merged_a11y, overflow_a11y = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        word_a11y_blocks,
+                        a11y_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_a11y
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+
+        num_chunks = len(final_chunks_to_save)
         update_callback(number_of_pages=num_chunks)
 
-        for idx, chunk_content in enumerate(final_chunks, start=1):
+        for idx, chunk_data in enumerate(final_chunks_to_save, start=1):
+            chunk_content = str(chunk_data.get("content") or '')
+            chunk_page_number = int(chunk_data.get("page_number") or idx)
             if chunk_content.strip():
                 update_callback(
-                    current_file_chunk=idx,
+                    current_file_chunk=chunk_page_number,
                     status=f"Saving chunk {idx}/{num_chunks}..."
                 )
                 args = {
                     "page_text_content": chunk_content,
-                    "page_number": idx,
+                    "page_number": chunk_page_number,
                     "file_name": original_filename,
                     "user_id": user_id,
                     "document_id": document_id
@@ -7904,6 +9971,9 @@ def process_msg(document_id, user_id, temp_file_path, original_filename, enable_
         except Exception as e:
             raise Exception(f"Error extracting text from {original_filename}: {e}")
 
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(text_content, kind="email")
         words = text_content.split()
         if not words:
             raise Exception(f"No text content found in {original_filename}")
@@ -8002,6 +10072,9 @@ def process_html(document_id, user_id, temp_file_path, original_filename, enable
 
         # Now process the soup object as before
         text_content = soup.get_text(separator=" ", strip=True)
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(text_content, kind="html_text")
 
         # Remainder of the chunking logic stays the same...
         text_splitter = RecursiveCharacterTextSplitter(
@@ -8131,6 +10204,10 @@ def process_md(document_id, user_id, temp_file_path, original_filename, enable_e
     try:
         with open(temp_file_path, 'r', encoding='utf-8') as f:
             md_content = f.read()
+
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.add_text(md_content, kind="markdown")
 
         headers_to_split_on = [
             ("#", "Header 1"),
@@ -8520,45 +10597,44 @@ def _build_tabular_schema_summary(temp_file_path, original_filename, file_ext):
         )
 
     if file_ext in ('.xlsx', '.xls', '.xlsm'):
-        engine = 'openpyxl' if file_ext in ('.xlsx', '.xlsm') else 'xlrd'
-        excel_file = pandas.ExcelFile(temp_file_path, engine=engine)
-        visible_sheet_names = excel_file.sheet_names[:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
-        omitted_sheet_count = max(len(excel_file.sheet_names) - TABULAR_SCHEMA_SUMMARY_MAX_SHEETS, 0)
-        workbook_sections = []
-
-        for sheet_name in visible_sheet_names:
-            df_preview = excel_file.parse(
-                sheet_name,
-                keep_default_na=False,
-                dtype=str,
-                nrows=TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS,
+        with ExcelWorkbookReader(temp_file_path, extension=file_ext) as reader:
+            manifest = reader.build_manifest()
+            sheets = manifest["sheets"][:TABULAR_SCHEMA_SUMMARY_MAX_SHEETS]
+            tables = [table for sheet in sheets for table in sheet["tables"]][:20]
+            previews = reader.read_table_previews(tables, TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)
+            workbook_sections = []
+            for table in tables:
+                columns = [column["name"] for column in table["columns"]]
+                df_preview = pandas.DataFrame(
+                    [record["values"] for record in previews[table["id"]]], columns=columns,
+                )
+                compact_columns = _compact_tabular_columns(columns)
+                preview_rows = _build_compact_tabular_preview(df_preview)
+                workbook_sections.append(
+                    f"Sheet: {_compact_tabular_schema_value(table['sheet'], max_chars=80)}\n"
+                    f"Table: {_compact_tabular_schema_value(table['name'], max_chars=100)}; "
+                    f"table_id={table['id']}; range={table['range']}; "
+                    f"header_row={table['header_row']}; header_status={table['header_status']}\n"
+                    f"Columns ({len(columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
+                    f"Preview (first {len(df_preview)} data rows; not the complete dataset):\n{preview_rows}"
+                )
+            sheet_summary = ", ".join(
+                _compact_tabular_schema_value(sheet["name"], max_chars=80) for sheet in sheets
             )
-            compact_columns = _compact_tabular_columns(df_preview.columns.tolist())
-            preview_rows = _build_compact_tabular_preview(df_preview)
-            workbook_sections.append(
-                f"Sheet: {_compact_tabular_schema_value(sheet_name, max_chars=80)}\n"
-                f"Columns ({len(df_preview.columns)}): {', '.join(compact_columns) if compact_columns else 'None'}\n"
-                f"Preview (first {min(len(df_preview), TABULAR_SCHEMA_SUMMARY_MAX_PREVIEW_ROWS)} rows):\n{preview_rows}"
+            omitted = manifest["table_count"] - len(tables)
+            return (
+                f"Tabular workbook: {original_filename}\n"
+                f"Sheets ({manifest['sheet_count']}): {sheet_summary or 'None'}\n"
+                f"Tables ({manifest['table_count']}): independent table/range headers; never assume one header per sheet.\n\n"
+                + "\n\n".join(workbook_sections)
+                + (f"\n\nAdditional tables not shown in this bounded schema preview: {omitted}." if omitted else "")
+                + f"\n\n{plugin_note}"
             )
-
-        sheet_summary = ", ".join(
-            _compact_tabular_schema_value(sheet_name, max_chars=80)
-            for sheet_name in visible_sheet_names
-        )
-        if omitted_sheet_count:
-            sheet_summary += f", ... +{omitted_sheet_count} more sheets"
-
-        return (
-            f"Tabular workbook: {original_filename}\n"
-            f"Sheets ({len(excel_file.sheet_names)}): {sheet_summary if sheet_summary else 'None'}\n\n"
-            + "\n\n".join(workbook_sections)
-            + f"\n\n{plugin_note}"
-        )
 
     raise ValueError(f"Unsupported tabular file type: {file_ext}")
 
 
-def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None):
+def process_single_tabular_sheet(df, document_id, user_id, file_name, update_callback, group_id=None, public_workspace_id=None, page_number_offset=0):
     """Chunks a pandas DataFrame from a CSV or Excel sheet."""
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
@@ -8610,10 +10686,8 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
         final_chunks_content.append("".join(current_chunk_rows))
 
     num_chunks_final = len(final_chunks_content)
-    # Update total pages estimate once at the start of processing this sheet
-    # Note: This might overwrite previous updates if called multiple times for excel sheets.
-    # Consider accumulating page count in the caller if needed.
-    update_callback(number_of_pages=num_chunks_final)
+    # Keep workbook segment numbering continuous across sheets and native evidence.
+    update_callback(number_of_pages=page_number_offset + num_chunks_final)
 
     # Save chunks, prepending the header to each — use batch processing for speed
     all_chunks = []
@@ -8621,7 +10695,7 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
         chunk_with_header = header_string + chunk_rows_content
         all_chunks.append({
             "page_text_content": chunk_with_header,
-            "page_number": idx,
+            "page_number": page_number_offset + idx,
             "file_name": file_name
         })
 
@@ -8642,6 +10716,75 @@ def process_single_tabular_sheet(df, document_id, user_id, file_name, update_cal
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def _enrich_excel_image_inventory(file_path, settings, update_callback, metadata, evidence, record_sink):
+    if not settings.get("enable_office_embedded_image_analysis", True):
+        metadata["image_analysis_summary"] = {"status": "disabled", "analyzed": 0}
+        return
+    blocks, count, engine, _ = _build_office_embedded_image_chunks(
+        file_path, settings, update_callback, native_media_metadata=metadata.get("image_locations") or {},
+    )
+    metadata["image_analysis_summary"] = {
+        "status": "generated" if count else "none_analyzed", "analyzed": count, "engine": engine,
+        "limitation": "Missing analysis is not proof of absent images; configured size/format/count limits still apply.",
+    }
+    remaining = max(0, 1000000 - sum(len(item["content"]) for item in evidence))
+    for block in blocks:
+        record = {
+            "type": "image_analysis", "sheet": block.get("sheet_name") or "(workbook)",
+            "cell": block.get("cell"), "object_id": block.get("object_id"),
+            "media_part": block.get("media_part"), "placements": block.get("placements") or [],
+            "text": block["content"], "analysis_engine": engine,
+            "source_kind": "configured_image_analysis_not_saved_alt_text",
+        }
+        record_sink("image_analyses", record)
+        content = f"### Excel native inspection\n{block['content']}"
+        if len(content) <= remaining:
+            evidence.append({
+                "content": content, "sheet_name": record["sheet"], "kind": "image_analyses",
+                "location": record.get("cell") or record.get("object_id") or "",
+            })
+            remaining -= len(content)
+        else:
+            metadata["coverage_notes"].append("Image-analysis search previews reached their budget; complete generated records remain in the native inventory.")
+
+
+def _extract_excel_native_inventory(document_id, user_id, temp_file_path, file_ext, group_id=None, public_workspace_id=None, update_callback=None):
+    """Keep full native records in revision-private storage, not the parent preview."""
+    capture = current_extraction(document_id)
+    settings = get_settings()
+
+    def enrich(metadata, evidence, sink):
+        _enrich_excel_image_inventory(temp_file_path, settings, update_callback, metadata, evidence, sink)
+
+    if capture is not None:
+        if capture.artifact_storage is None:
+            raise ScreeningError(code="screening_configuration_required")
+        return persist_excel_inventory(
+            temp_file_path, file_ext, subject=capture.subject,
+            storage=capture.artifact_storage, capture=capture,
+            enrich=enrich,
+        )
+    document = get_document_record(
+        user_id, document_id, group_id=group_id, public_workspace_id=public_workspace_id,
+    )
+    if document is None:
+        raise LookupError("Document not found or access denied.")
+    client = CLIENTS.get("storage_account_office_docs_client")
+    if client is None:
+        metadata, evidence = extract_office_accessibility_metadata(temp_file_path, file_ext)
+        metadata["inventory_storage"] = {"status": "unavailable", "reason": "native_storage_not_configured"}
+        log_event(
+            "[DOCUMENT_METADATA] Full Excel inventory storage is not configured.",
+            level=logging.WARNING, extra={"document_id": document_id},
+        )
+        return metadata, evidence, None
+    return persist_excel_inventory(
+        temp_file_path, file_ext, subject=subject_from_document(document),
+        storage=ScreeningStorage(client=client, container_name=storage_account_content_screening_container_name),
+        enrich=enrich,
+    )
+
+
 def process_tabular(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes CSV, XLSX, or XLS files using pandas."""
     is_group = group_id is not None
@@ -8652,6 +10795,28 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
     total_embedding_tokens = 0
     embedding_model_name = None
 
+    native_chunks = []
+    if file_ext in ('.xlsx', '.xlsm', '.xls'):
+        native_metadata, native_evidence, inventory_reference = _extract_excel_native_inventory(
+            document_id, user_id, temp_file_path, file_ext,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+            update_callback=update_callback,
+        )
+        native_fields = {'accessibility_metadata': native_metadata}
+        if inventory_reference is not None:
+            native_fields[EXCEL_INVENTORY_FIELD] = inventory_reference
+        for field in ('title', 'authors', 'keywords', 'language'):
+            if native_metadata.get(field):
+                native_fields[field] = native_metadata[field]
+        if native_metadata.get('subject'):
+            native_fields['abstract'] = native_metadata['subject']
+        native_fields['excel_comment_count'] = native_metadata.get('observed_counts', {}).get('comments', 0)
+        update_callback(**native_fields)
+        native_chunks = build_excel_evidence_chunks(
+            native_evidence, original_filename,
+            get_embedding_safe_chunk_characters(get_settings()),
+        )
+
     # Upload the original file once if enhanced citations are enabled
     if enable_enhanced_citations:
         args = {
@@ -8661,7 +10826,6 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             "blob_filename": original_filename,
             "update_callback": update_callback
         }
-
         if is_public_workspace:
             args["public_workspace_id"] = public_workspace_id
         elif is_group:
@@ -8788,7 +10952,8 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
                         "document_id": document_id,
                         "user_id": user_id,
                         "file_name": effective_filename,
-                        "update_callback": update_callback
+                        "update_callback": update_callback,
+                        "page_number_offset": accumulated_total_chunks,
                     }
 
                     if is_public_workspace:
@@ -8813,6 +10978,31 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             update_callback(status=f"Warning: File/sheet is empty - {original_filename}", number_of_pages=0)
         except Exception as e:
             raise Exception(f"Failed processing Tabular file {original_filename}: {e}")
+
+    if native_chunks:
+        scope = {}
+        if is_public_workspace:
+            scope['public_workspace_id'] = public_workspace_id
+        elif is_group:
+            scope['group_id'] = group_id
+        for text in native_chunks:
+            token_usage = save_chunks(
+                page_text_content=text,
+                page_number=total_chunks_saved + 1,
+                file_name=original_filename,
+                user_id=user_id,
+                document_id=document_id,
+                **scope,
+            )
+            total_chunks_saved += 1
+            if token_usage:
+                total_embedding_tokens += token_usage.get('total_tokens', 0)
+                embedding_model_name = embedding_model_name or token_usage.get('model_deployment_name')
+        update_callback(
+            number_of_pages=total_chunks_saved,
+            num_chunks=total_chunks_saved,
+            status="Indexed Excel native inspection evidence",
+        )
 
     settings = get_settings()
     enable_extract_meta_data = settings.get('enable_extract_meta_data', False)
@@ -8843,6 +11033,143 @@ def process_tabular(document_id, user_id, temp_file_path, original_filename, fil
             update_callback(status=f"Processing complete (metadata extraction warning)")
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
+
+def process_onenote(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
+    """Index current OneNote typed text without losing page and section context."""
+    scope = {}
+    if public_workspace_id is not None:
+        scope["public_workspace_id"] = public_workspace_id
+    elif group_id is not None:
+        scope["group_id"] = group_id
+
+    try:
+        settings = get_settings()
+        max_file_size_bytes = int(settings.get("max_file_size_mb", 16) * 1024 * 1024)
+        chunk_config = get_chunk_size_config(settings)
+        target_words = chunk_config["txt"]["value"]
+        max_characters = get_embedding_safe_chunk_characters(settings)
+        update_callback(status="Extracting OneNote typed text and tables...")
+        extraction = extract_onenote(
+            temp_file_path, max_file_size_bytes, original_filename=original_filename
+        )
+
+        chunks = []
+        ancestors = []
+        previous_section = None
+        for source_page_number, page in enumerate(extraction.pages, start=1):
+            if previous_section != page.section_path:
+                ancestors = []
+                previous_section = page.section_path
+            while ancestors and ancestors[-1][0] >= page.level:
+                ancestors.pop()
+            page_title = " ".join(page.title.split()) or "(untitled page)"
+            page_titles = [title for _, title in ancestors] + [page_title]
+            ancestors.append((page.level, page_title))
+            if not page.text.strip():
+                continue
+
+            section_label = " / ".join(" ".join(part.split()) for part in page.section_path)
+            page_label = " / ".join(page_titles)
+            header = (
+                f"Section: {section_label}\n"
+                f"Page: {page_label}\n"
+                f"Source page: {source_page_number}\n\n"
+            )
+            available_words = target_words - count_words(header)
+            available_characters = max_characters - len(header)
+            if available_words < 1 or available_characters < 1:
+                raise OneNoteExtractionError("limit_exceeded")
+            pieces = split_text_by_word_limit(page.text, available_words)
+            pieces = split_oversized_chunks(pieces, available_characters)
+            for piece in pieces:
+                if not piece.strip():
+                    continue
+                content = f"{header}{piece}"
+                if (
+                    len(chunks) >= ONENOTE_MAX_CHUNKS
+                    or len(content) > max_characters
+                    or count_words(content) > target_words
+                ):
+                    raise OneNoteExtractionError("limit_exceeded")
+                chunks.append({
+                    "page_text_content": content,
+                    "page_number": len(chunks) + 1,
+                    "file_name": original_filename,
+                })
+        if not chunks:
+            raise OneNoteExtractionError("no_text")
+
+        # Validate the complete notebook and every chunk before any searchable writes.
+        update_callback(
+            number_of_pages=len(chunks),
+            onenote_source_page_count=len(extraction.pages),
+            onenote_section_count=extraction.sections,
+            onenote_excluded_content=extraction.excluded_content,
+            status="Indexing OneNote typed text; images, handwriting, and attachments excluded",
+        )
+        if enable_enhanced_citations:
+            upload_to_blob(
+                temp_file_path=temp_file_path,
+                user_id=user_id,
+                document_id=document_id,
+                blob_filename=original_filename,
+                update_callback=update_callback,
+                **scope,
+            )
+
+        total_chunks_saved = 0
+        total_embedding_tokens = 0
+        embedding_model_name = None
+        for start in range(0, len(chunks), 32):
+            batch = chunks[start:start + 32]
+            update_callback(
+                current_file_chunk=start + 1,
+                status=f"Indexing OneNote chunks {start + 1}-{start + len(batch)}/{len(chunks)}...",
+            )
+            token_usage = save_chunks_batch(batch, user_id, document_id, **scope)
+            total_chunks_saved += len(batch)
+            if token_usage:
+                total_embedding_tokens += token_usage.get("total_tokens", 0)
+                if not embedding_model_name:
+                    embedding_model_name = token_usage.get("model_deployment_name")
+            update_callback(num_chunks=total_chunks_saved, current_file_chunk=total_chunks_saved)
+
+        if auto_extract_metadata:
+            _run_final_metadata_extraction(
+                document_id,
+                user_id,
+                total_chunks_saved,
+                settings.get("enable_extract_meta_data", False),
+                update_callback,
+                **scope,
+            )
+        log_event(
+            "[ONENOTE_INGESTION] Indexed OneNote typed content.",
+            extra={
+                "document_id": document_id,
+                "sections": extraction.sections,
+                "source_pages": len(extraction.pages),
+                "chunks": total_chunks_saved,
+                "excluded_content": extraction.excluded_content,
+            },
+            debug_only=True,
+        )
+        return total_chunks_saved, total_embedding_tokens, embedding_model_name
+    except OneNoteExtractionError as exc:
+        log_event(
+            "[ONENOTE_INGESTION] OneNote processing could not be completed.",
+            extra={"document_id": document_id, "error_code": exc.code},
+            level=logging.WARNING,
+        )
+        raise
+    except Exception as exc:
+        log_event(
+            "[ONENOTE_INGESTION] OneNote indexing failed.",
+            extra={"document_id": document_id, "error_type": type(exc).__name__},
+            level=logging.ERROR,
+        )
+        raise OneNoteExtractionError("indexing_failed") from exc
+
 
 def process_visio(document_id, user_id, temp_file_path, original_filename, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True):
     """Processes Visio VSDX files as one searchable chunk per page."""
@@ -8938,6 +11265,99 @@ def process_visio(document_id, user_id, temp_file_path, original_filename, enabl
 
     return total_chunks_saved, total_embedding_tokens, embedding_model_name
 
+def process_office_template(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None):
+    """Retain validated native templates even when there is no narrative to index."""
+    with open(temp_file_path, "rb") as source:
+        pages, supplemental, structure = native_template_pages(source.read(), file_ext)
+    capture = current_extraction(document_id)
+    if capture is not None:
+        capture.add_text(
+            json.dumps(structure, sort_keys=True), kind="metadata",
+        )
+        # The structure is a screening-only unit and must never become synthetic RAG text.
+        capture.units[-1] = ContentUnit(
+            "office-template-structure", json.dumps(structure, sort_keys=True),
+            {"kind": "metadata", "field": "office_template_structure"},
+        )
+        capture.add_pages(pages, kind="slide" if file_ext == ".potx" else "page")
+        for position, text in enumerate(supplemental, start=1):
+            capture.add_supplement(text, kind="metadata")
+            capture.supplemental_units[-1] = ContentUnit(
+                f"office-template-package-{position}", text,
+                {"kind": "metadata", "field": "office_template_package_text"},
+            )
+    upload_to_blob(
+        temp_file_path, user_id, document_id, original_filename, update_callback,
+        group_id=group_id, public_workspace_id=public_workspace_id,
+        mark_enhanced_citations=enable_enhanced_citations,
+    )
+    chunks = [page for page in pages if page["content"].strip()]
+    settings = get_settings()
+    template_a11y_meta, template_structural_details = extract_office_accessibility_metadata(
+        temp_file_path, file_ext,
+    )
+    if file_ext == ".dotx":
+        chunk_config = get_chunk_size_config(settings)
+        chunks = chunk_word_file_into_pages(
+            di_pages=chunks, chunk_size=chunk_config.get("docx", {}).get("value", WORD_CHUNK_SIZE),
+        )
+        comment_blocks, _comment_count, comment_total_words = _build_word_comment_chunks(
+            temp_file_path, file_ext, update_callback,
+        )
+        if comment_blocks:
+            chunks, _merged_comments, comment_overflow = _merge_embedded_images_into_chunks(
+                chunks, comment_blocks, comment_total_words, settings,
+            )
+            chunks = _append_overflow_image_chunks(chunks, comment_overflow)
+            _assert_unique_chunk_page_numbers(chunks, document_id)
+        if template_a11y_meta and template_structural_details:
+            dotx_a11y_blocks = build_word_chunk_accessibility_items(
+                template_a11y_meta, template_structural_details,
+            )
+            if dotx_a11y_blocks:
+                chunks, _merged_a11y, a11y_overflow = _merge_embedded_images_into_chunks(
+                    chunks,
+                    dotx_a11y_blocks,
+                    template_a11y_meta.get('total_body_words') or comment_total_words,
+                    settings,
+                )
+                chunks = _append_overflow_image_chunks(chunks, a11y_overflow)
+                _assert_unique_chunk_page_numbers(chunks, document_id)
+    image_blocks, _image_count, _image_engine, total_body_words = _build_office_embedded_image_chunks(
+        temp_file_path, settings, update_callback,
+    )
+    if image_blocks:
+        if capture is not None:
+            for image_block in image_blocks:
+                capture.add_supplement(image_block.get("content", ""), kind="figure")
+        chunks, _merged, overflow = _merge_embedded_images_into_chunks(
+            chunks, image_blocks, total_body_words, settings,
+        )
+        chunks = _append_overflow_image_chunks(chunks, overflow)
+        _assert_unique_chunk_page_numbers(chunks, document_id)
+    total_tokens, model_name = 0, None
+    for page in chunks:
+        saved = save_chunks(
+            document_id=document_id, user_id=user_id, page_text_content=page["content"],
+            page_number=page["page_number"], file_name=original_filename,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+        )
+        if isinstance(saved, dict):
+            total_tokens += saved.get("total_tokens", 0) or 0
+            model_name = saved.get("model_deployment_name") or model_name
+    template_update_fields = {
+        "office_template_structure": structure,
+        "number_of_pages": len(chunks),
+        "status": "Native Office template retained" if chunks else "Native Office template retained - no narrative content indexed",
+    }
+    if template_a11y_meta:
+        template_update_fields["accessibility_metadata"] = template_a11y_meta
+        if template_a11y_meta.get("language"):
+            template_update_fields["language"] = template_a11y_meta["language"]
+    update_callback(**template_update_fields)
+    return len(chunks), total_tokens, model_name
+
+
 def process_di_document(document_id, user_id, temp_file_path, original_filename, file_ext, enable_enhanced_citations, update_callback, group_id=None, public_workspace_id=None, auto_extract_metadata=True, extraction_mode_override=None):
     """Processes documents supported by Azure Document Intelligence (PDF, Word, PPT, Image)."""
     is_group = group_id is not None
@@ -8959,17 +11379,34 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     is_legacy_ppt = file_ext == '.ppt'
     is_image = file_ext in tuple('.' + ext for ext in IMAGE_EXTENSIONS)
 
+    pdf_accessibility_meta = None
+    pdf_per_page_details = {}
+    office_accessibility_meta = None
+    office_structural_details = None
+
     try:
         if is_pdf:
             doc_title, doc_author, doc_subject, doc_keywords = extract_pdf_metadata(temp_file_path)
             doc_authors_list = parse_authors(doc_author)
             page_count = get_pdf_page_count(temp_file_path)
+            pdf_accessibility_meta, pdf_per_page_details = extract_pdf_accessibility_metadata(temp_file_path)
         elif is_word:
             doc_title, doc_author = extract_word_metadata(temp_file_path, file_ext)
             doc_authors_list = parse_authors(doc_author)
+            office_accessibility_meta, office_structural_details = extract_office_accessibility_metadata(
+                temp_file_path, file_ext
+            )
+            if isinstance(office_accessibility_meta, dict):
+                if not doc_subject and office_accessibility_meta.get('subject'):
+                    doc_subject = office_accessibility_meta.get('subject')
+                if not doc_keywords and office_accessibility_meta.get('keywords'):
+                    doc_keywords = office_accessibility_meta.get('keywords')
         elif is_ppt:
             doc_title, doc_author, doc_subject, doc_keywords = extract_presentation_metadata(temp_file_path, file_ext)
             doc_authors_list = parse_authors(doc_author)
+            office_accessibility_meta, office_structural_details = extract_office_accessibility_metadata(
+                temp_file_path, file_ext
+            )
 
         update_fields = {'status': "Extracted initial metadata"}
         if doc_title: update_fields['title'] = doc_title
@@ -8977,6 +11414,14 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
         elif doc_author: update_fields['authors'] = [doc_author]
         if doc_subject: update_fields['abstract'] = doc_subject
         if doc_keywords: update_fields['keywords'] = doc_keywords
+        if isinstance(pdf_accessibility_meta, dict):
+            update_fields['accessibility_metadata'] = pdf_accessibility_meta
+            if pdf_accessibility_meta.get('language'):
+                update_fields['language'] = pdf_accessibility_meta['language']
+        elif isinstance(office_accessibility_meta, dict):
+            update_fields['accessibility_metadata'] = office_accessibility_meta
+            if office_accessibility_meta.get('language'):
+                update_fields['language'] = office_accessibility_meta['language']
         update_callback(**update_fields)
 
     except Exception as e:
@@ -9085,6 +11530,9 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
     update_callback(num_file_chunks=num_file_chunks, status=f"Processing {original_filename} in {num_file_chunks} file chunk(s)")
 
     total_final_chunks_processed = 0
+    # Only this run's vision analysis may stand in for missing OCR text. A reprocessed document can
+    # still carry an older analysis on its record, which must not be indexed on its own.
+    vision_analysis_usable = False
     for idx, chunk_path in enumerate(file_paths_to_process, start=1):
         chunk_base_name, chunk_ext_loop = os.path.splitext(original_filename)
         chunk_effective_filename = original_filename
@@ -9116,6 +11564,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             update_callback(status=f"Extracting legacy Word content from {chunk_effective_filename}...")
             try:
                 extracted_text = extract_word_text(chunk_path, file_ext)
+                extracted_text = strip_appended_word_comments(extracted_text)
                 if extracted_text and extracted_text.strip():
                     di_extracted_pages = [{
                         "page_number": 1,
@@ -9149,6 +11598,7 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     extraction_mode=document_intelligence_extraction_mode,
                     extraction_engine=extraction_engine,
                     settings=settings,
+                    is_image=is_image,
                 )
                 if engine_fallback_reason:
                     extraction_engine = engine_used
@@ -9174,6 +11624,10 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
 
             except Exception as e:
                 raise Exception(f"Error extracting content from {chunk_effective_filename} with {engine_label}: {str(e)}")
+
+        capture = current_extraction(document_id)
+        if capture is not None and not is_legacy_doc:
+            capture.add_pages(di_extracted_pages, kind="slide" if is_ppt else "page")
 
         # --- Multi-Modal Vision Analysis (for images only) - Must happen BEFORE save_chunks ---
         if is_image and enable_enhanced_citations and idx == 1:  # Only run once for first chunk
@@ -9202,12 +11656,15 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                             'status': "AI vision analysis completed"
                         }
                         update_callback(**update_fields)
+                        vision_analysis_usable = _is_usable_vision_analysis(vision_analysis)
                         print(f"Vision analysis saved to document metadata and will be appended to chunk_text for AI Search indexing")
                     else:
                         print(f"Vision analysis returned no results for: {chunk_effective_filename}")
                         update_callback(status="Vision analysis completed (no results)")
 
                 except Exception as e:
+                    if capture is not None:
+                        raise ScreeningError(code="screening_vision_extraction_failed") from e
                     print(f"Warning: Error in vision analysis for {document_id}: {str(e)}")
                     traceback.print_exc()
                     # Don't fail the whole process, just update status
@@ -9230,6 +11687,28 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             except Exception as e:
                  raise Exception(f"Error chunking Word content for {chunk_effective_filename}: {str(e)}")
         elif is_pdf or is_ppt:
+            if is_pdf:
+                chunk_pdf_details = pdf_per_page_details
+                if chunk_path != temp_file_path:
+                    _, chunk_pdf_details = extract_pdf_accessibility_metadata(chunk_path)
+                di_extracted_pages, pdf_comment_count = _enrich_pdf_pages_with_comments_and_accessibility(
+                    di_extracted_pages,
+                    chunk_pdf_details,
+                    settings,
+                    capture=capture,
+                )
+                if pdf_comment_count:
+                    update_callback(pdf_comment_count=pdf_comment_count)
+            elif is_ppt and file_ext == '.pptx' and isinstance(office_structural_details, dict):
+                di_extracted_pages, pptx_comment_count = _enrich_pptx_slides_with_comments_and_accessibility(
+                    di_extracted_pages,
+                    office_structural_details,
+                    settings,
+                    capture=capture,
+                )
+                if pptx_comment_count:
+                    update_callback(pptx_comment_count=pptx_comment_count)
+
             target_key = 'pdf' if is_pdf else 'pptx'
             try:
                 target_size = int(chunk_config.get(target_key, {}).get('value', 1))
@@ -9257,10 +11736,69 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     status=f"Grouped {len(final_chunks_to_save)} chunk(s) for {chunk_effective_filename} using {target_size} page(s)/slide(s) per chunk."
                 )
         elif is_image:
-            if di_extracted_pages:
-                 if 'page_number' not in di_extracted_pages[0]: di_extracted_pages[0]['page_number'] = 1
-                 final_chunks_to_save = di_extracted_pages
-            else: final_chunks_to_save = [] # No text extracted
+            # Keep only pages with real OCR text. Layout can annotate a photo with nothing but a
+            # stray page-number comment, which would otherwise become the image's only chunk.
+            image_text_pages = [
+                page for page in di_extracted_pages
+                if isinstance(page, dict) and _has_indexable_ocr_text(page.get('content'))
+            ]
+            if image_text_pages:
+                if 'page_number' not in image_text_pages[0]:
+                    image_text_pages[0]['page_number'] = 1
+                final_chunks_to_save = image_text_pages
+            elif vision_analysis_usable:
+                # No OCR text, but the vision model described the image, so index that description
+                # on its own. save_chunks() appends and embeds the stored vision analysis.
+                final_chunks_to_save = [{
+                    'page_number': 1,
+                    'content': '',
+                    VISION_DESCRIPTION_ONLY_CHUNK_FLAG: True,
+                }]
+                log_event(
+                    "[VISION_ANALYSIS] Image had no OCR text, so its AI vision description was indexed on its own.",
+                    extra={
+                        "document_id": document_id,
+                        "file_name": chunk_effective_filename,
+                        "ocr_page_count": len(di_extracted_pages),
+                    },
+                )
+                update_callback(
+                    number_of_pages=1,
+                    status=f"No text found in image {chunk_effective_filename}; indexing its AI vision description."
+                )
+            else:
+                final_chunks_to_save = [] # No text extracted and no vision description to index
+
+        # --- Word review comment extraction (DOCX/DOC/DOCM) ---
+        # Document Intelligence and docx2txt omit Word margin comments, so comments are extracted
+        # from the package/OLE stream and merged into the chunk containing their anchored text.
+        if is_word:
+            comment_blocks, word_comment_count, comment_total_words = _build_word_comment_chunks(
+                chunk_path,
+                file_ext,
+                update_callback,
+            )
+            if comment_blocks:
+                if capture is not None:
+                    for comment_block in comment_blocks:
+                        capture.add_supplement(comment_block.get("content", ""), kind="comment")
+                final_chunks_to_save, merged_comment_count, overflow_comment_blocks = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        comment_blocks,
+                        comment_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_comment_blocks
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+                update_callback(
+                    number_of_pages=len(final_chunks_to_save),
+                    word_comment_count=word_comment_count,
+                    word_comment_merged=merged_comment_count,
+                )
 
         # --- Embedded Office image analysis (DOCX/DOC/PPTX/PPT) ---
         # Neither extraction engine describes figures inside Office files, so embedded images are
@@ -9277,6 +11815,9 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
             )
 
             if image_blocks:
+                if capture is not None:
+                    for image_block in image_blocks:
+                        capture.add_supplement(image_block.get("content", ""), kind="figure")
                 final_chunks_to_save, merged_image_count, overflow_image_blocks = (
                     _merge_embedded_images_into_chunks(
                         final_chunks_to_save,
@@ -9309,6 +11850,28 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                         status=f"Merged {merged_image_count} embedded image(s) into their source chunk."
                     )
 
+        # --- Word native accessibility & structural section blocks (DOCX/DOCM) ---
+        if is_word and isinstance(office_accessibility_meta, dict) and isinstance(office_structural_details, list) and office_structural_details:
+            word_a11y_blocks = build_word_chunk_accessibility_items(
+                office_accessibility_meta,
+                office_structural_details,
+            )
+            if word_a11y_blocks:
+                a11y_total_words = office_accessibility_meta.get('total_body_words') or 0
+                final_chunks_to_save, _merged_a11y_count, overflow_a11y_blocks = (
+                    _merge_embedded_images_into_chunks(
+                        final_chunks_to_save,
+                        word_a11y_blocks,
+                        a11y_total_words,
+                        settings,
+                    )
+                )
+                final_chunks_to_save = _append_overflow_image_chunks(
+                    final_chunks_to_save, overflow_a11y_blocks
+                )
+                _assert_unique_chunk_page_numbers(final_chunks_to_save, document_id)
+                update_callback(number_of_pages=len(final_chunks_to_save))
+
         # Save Final Chunks to Search Index
         num_final_chunks = len(final_chunks_to_save)
         if not final_chunks_to_save:
@@ -9334,7 +11897,9 @@ def process_di_document(document_id, user_id, temp_file_path, original_filename,
                     chunk_index = chunk_data.get("page_number", i + 1) # Ensure page number exists
                     chunk_content = chunk_data.get("content", "")
 
-                    if not chunk_content.strip():
+                    # A description-only image chunk has no OCR text by design; save_chunks()
+                    # supplies its text from the stored vision analysis.
+                    if not chunk_content.strip() and not chunk_data.get(VISION_DESCRIPTION_ONLY_CHUNK_FLAG):
                         print(f"Skipping empty chunk index {chunk_index} for {chunk_effective_filename}.")
                         continue
 
@@ -9468,8 +12033,30 @@ def _download_document_source_to_temp_file(document_item, user_id=None, group_id
         raise
 
 
-def process_document_reprocess_extraction_background(document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None):
+def process_document_reprocess_extraction_background(
+    document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None, *,
+    operation_guard=None, safe_errors=False,
+):
     """Extract a stored PDF or image again with an explicit Standard/Enhanced mode."""
+    if operation_guard is not None:
+        operation_guard()
+    document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    if document_requires_screening(document, get_settings()):
+        return reprocess_document(
+            subject_from_document(document), user_id,
+            normalize_document_intelligence_manual_extraction_mode(target_extraction_mode),
+        )
+    return _process_document_reprocess_extraction_background_impl(
+        document_id, user_id, target_extraction_mode,
+        group_id=group_id, public_workspace_id=public_workspace_id,
+        operation_guard=operation_guard, safe_errors=safe_errors,
+    )
+
+
+def _process_document_reprocess_extraction_background_impl(
+    document_id, user_id, target_extraction_mode, group_id=None, public_workspace_id=None, *,
+    operation_guard=None, safe_errors=False,
+):
     is_group = group_id is not None
     is_public_workspace = public_workspace_id is not None
     target_mode = normalize_document_intelligence_manual_extraction_mode(target_extraction_mode)
@@ -9486,8 +12073,12 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             args["public_workspace_id"] = public_workspace_id
         elif is_group:
             args["group_id"] = group_id
-        update_document(**args)
+        if operation_guard is not None or safe_errors:
+            _update_document_for_job(**args, operation_guard=operation_guard, safe_errors=safe_errors)
+        else:
+            update_document(**args)
 
+    chunk_tracking_token = begin_chunk_tracking()
     try:
         document_item = get_document_metadata(
             document_id=document_id,
@@ -9517,6 +12108,7 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             percentage_complete=0,
             current_file_chunk=0,
             num_chunks=0,
+            indexed_chunk_count_version=0,
             number_of_pages=0,
             document_intelligence_extraction_mode=target_mode,
             document_intelligence_extraction_mode_requested=target_mode,
@@ -9557,7 +12149,10 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             total_embedding_tokens = 0
             embedding_model_name = None
 
+        total_chunks_saved = _indexed_chunk_count_for_document(document_item)
         final_update_args = {
+            "num_chunks": total_chunks_saved,
+            "indexed_chunk_count_version": document_item.get("version") or 1,
             "number_of_pages": total_chunks_saved,
             "status": _resolve_processing_complete_status(total_chunks_saved, source_file_ext, tuple('.' + ext for ext in IMAGE_EXTENSIONS), tuple('.' + ext for ext in TABULAR_EXTENSIONS), 'disabled'),
             "percentage_complete": 100,
@@ -9572,6 +12167,9 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
         print(f"Document {document_id} extracted again successfully with {target_engine_label} {target_mode}.")
     except Exception as e:
         print(f"Error extracting document {document_id} again: {repr(e)}\nTraceback:\n{traceback.format_exc()}")
+        _update_failed_document_chunk_count(
+            document_id, user_id, update_doc_callback, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
         try:
             update_doc_callback(
                 status=f"Error changing extraction: {str(e)}",
@@ -9579,7 +12177,10 @@ def process_document_reprocess_extraction_background(document_id, user_id, targe
             )
         except Exception as update_error:
             print(f"Failed to update extraction change error status for {document_id}: {update_error}")
+        if safe_errors:
+            raise
     finally:
+        end_chunk_tracking(chunk_tracking_token)
         if temp_file_path and os.path.exists(temp_file_path):
             try:
                 os.remove(temp_file_path)
@@ -9807,6 +12408,7 @@ def process_audio_document(
 ) -> int:
     """Transcribe an audio file via Azure Speech, splitting >10 min into WAV chunks."""
 
+    capture = current_extraction(document_id)
     settings = get_settings()
     if settings.get("enable_enhanced_citations", False):
         update_callback(status="Uploading audio for enhanced citations…")
@@ -9847,6 +12449,8 @@ def process_audio_document(
             )
         else:
             raise
+
+    update_callback(num_file_chunks=1 if use_source_audio_for_fast_api else len(chunk_paths))
 
     # 4) transcribe audio
     all_phrases: List[str] = []
@@ -9890,13 +12494,27 @@ def process_audio_document(
                 done = True
 
             def recognized_cb(evt):
+                nonlocal error_occurred
                 try:
                     if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
                         all_results.append(evt.result.text)
-                        print(f"[DEBUG] Recognized: {evt.result.text}")
+                        log_event(
+                            "[CONTENT_SCREENING] Speech segment extracted.",
+                            extra={"document_id": document_id, "characters": len(evt.result.text)},
+                            debug_only=True,
+                        )
                     elif evt.result.reason == speechsdk.ResultReason.NoMatch:
                         print(f"[DEBUG] No speech recognized in segment")
                 except Exception as e:
+                    if capture is not None:
+                        error_occurred = True
+                        capture.failure_code = "screening_transcript_incomplete"
+                        log_event(
+                            "[CONTENT_SCREENING] Speech extraction callback failed.",
+                            extra={"document_id": document_id, "error_type": type(e).__name__},
+                            level=logging.ERROR,
+                        )
+                        return
                     print(f"[ERROR] Error in recognized callback: {e}")
                     # Don't fail on individual recognition errors
 
@@ -10026,6 +12644,8 @@ def process_audio_document(
 
     # 6) stitch and save transcript chunks
     full_text = ' '.join(all_phrases).strip()
+    if capture is not None:
+        capture.add_text(full_text, kind="transcript")
     words = full_text.split()
     chunk_settings = get_chunk_size_config(settings)
     chunk_size = chunk_settings.get('transcript', {}).get('value', 400)
@@ -10226,15 +12846,32 @@ def sync_chat_upload_workspace_attachment_status(document_metadata):
 
         message_metadata = message_item.setdefault('metadata', {})
         workspace_attachment = message_metadata.setdefault('workspace_attachment', {})
+        group_id = str(
+            document_metadata.get('group_id')
+            or document_metadata.get('chat_upload_group_id')
+            or workspace_attachment.get('group_id')
+            or ''
+        ).strip()
+        group_name = (
+            document_metadata.get('chat_upload_group_name')
+            or workspace_attachment.get('group_name')
+        )
+        workspace_scope = 'group' if group_id else 'personal'
+        workspace_url = (
+            f"/group_workspaces?document_id={document_id}&group_id={group_id}"
+            if group_id else f"/workspace?document_id={document_id}"
+        )
         workspace_attachment.update({
             'document_id': document_id,
             'file_name': document_metadata.get('file_name'),
             'status': document_metadata.get('status', 'Queued for processing'),
             'percentage_complete': document_metadata.get('percentage_complete', 0),
             'tags': document_metadata.get('tags', []),
-            'workspace_url': f"/workspace?document_id={document_id}",
+            'workspace_url': workspace_url,
             'conversation_url': f"/chats?conversation_id={conversation_id}",
-            'scope': 'personal',
+            'scope': workspace_scope,
+            'group_id': group_id or None,
+            **({'group_name': group_name} if group_name else {}),
             'link_state': document_metadata.get('chat_upload_link_state', 'linked'),
         })
         message_metadata['workspace_attachment'] = workspace_attachment
@@ -10264,6 +12901,7 @@ def queue_personal_workspace_upload_from_temp_file(
     extraction_mode_override=None,
     ensure_unique_file_name=False,
     unique_file_name_suffix=None,
+    origin=None,
 ):
     if not user_id:
         raise ValueError("user_id is required")
@@ -10300,6 +12938,7 @@ def queue_personal_workspace_upload_from_temp_file(
             num_file_chunks=0,
             status="Queued for processing",
             source_file_path=workspace_temp_file_path,
+            origin=origin,
         )
         document_created = True
 
@@ -10336,6 +12975,8 @@ def queue_personal_workspace_upload_from_temp_file(
             'original_filename': workspace_file_name,
             'extraction_mode_override': extraction_mode_override,
         }
+        if get_settings().get("enable_content_screening") is True:
+            prepare_document_upload(**task_kwargs)
         if hasattr(executor, 'submit_stored'):
             executor.submit_stored(
                 workspace_document_id,
@@ -10375,7 +13016,11 @@ def queue_personal_workspace_upload_from_temp_file(
             'percentage_complete': 0,
         }
     except Exception:
-        if document_created and not temp_file_queued:
+        cleanup_document = (
+            get_document_metadata(workspace_document_id, user_id)
+            if document_created and not temp_file_queued else None
+        )
+        if cleanup_document and SCREENING_FIELD not in cleanup_document:
             try:
                 cosmos_user_documents_container.delete_item(
                     item=workspace_document_id,
@@ -10411,6 +13056,7 @@ def queue_group_workspace_upload_from_temp_file(
     extraction_mode_override=None,
     ensure_unique_file_name=False,
     unique_file_name_suffix=None,
+    origin=None,
 ):
     if not user_id:
         raise ValueError("user_id is required")
@@ -10450,6 +13096,7 @@ def queue_group_workspace_upload_from_temp_file(
             status="Queued for processing",
             group_id=group_id,
             source_file_path=workspace_temp_file_path,
+            origin=origin,
         )
         document_created = True
 
@@ -10493,6 +13140,8 @@ def queue_group_workspace_upload_from_temp_file(
             'original_filename': workspace_file_name,
             'extraction_mode_override': extraction_mode_override,
         }
+        if get_settings().get("enable_content_screening") is True:
+            prepare_document_upload(**task_kwargs)
         if hasattr(executor, 'submit_stored'):
             executor.submit_stored(
                 workspace_document_id,
@@ -10533,7 +13182,11 @@ def queue_group_workspace_upload_from_temp_file(
             'percentage_complete': 0,
         }
     except Exception:
-        if document_created and not temp_file_queued:
+        cleanup_document = (
+            get_document_metadata(workspace_document_id, user_id, group_id=group_id)
+            if document_created and not temp_file_queued else None
+        )
+        if cleanup_document and SCREENING_FIELD not in cleanup_document:
             try:
                 cosmos_group_documents_container.delete_item(
                     item=workspace_document_id,
@@ -10556,57 +13209,66 @@ def queue_group_workspace_upload_from_temp_file(
         raise
 
 
-def _run_final_metadata_extraction(document_id, user_id, total_chunks_saved, enable_extract_meta_data, update_callback, group_id=None, public_workspace_id=None):
+def _run_final_metadata_extraction(
+    document_id, user_id, total_chunks_saved, enable_extract_meta_data, update_callback,
+    group_id=None, public_workspace_id=None, *, operation_guard=None, safe_errors=False,
+):
     if total_chunks_saved <= 0:
+        update_callback(metadata_extraction_status="empty" if enable_extract_meta_data else "disabled")
         return "skipped_no_chunks"
 
     if not enable_extract_meta_data:
+        update_callback(metadata_extraction_status="disabled")
         return "disabled"
 
     try:
-        update_callback(status="Extracting final metadata...")
+        update_callback(metadata_extraction_status="running")
         args = _build_document_scope_args(
             document_id,
             user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id
         )
-        document_metadata = extract_document_metadata(**args)
+        document_metadata = extract_document_metadata(
+            **args, operation_guard=operation_guard, safe_errors=safe_errors,
+        )
 
         if not document_metadata:
-            update_callback(status="Metadata extraction returned empty or failed")
+            update_callback(metadata_extraction_status="empty")
             return "returned_empty"
 
         update_fields = {
             key: value
             for key, value in document_metadata.items()
-            if value is not None and value != ""
+            if not is_effectively_empty(value)
         }
 
         if update_fields:
-            update_fields['status'] = "Final metadata extracted"
+            update_fields['metadata_extraction_status'] = "succeeded"
             update_callback(**update_fields)
             return "extracted"
 
-        update_callback(status="Final metadata extraction yielded no new info")
+        update_callback(metadata_extraction_status="empty")
         return "no_new_info"
     except Exception as metadata_error:
         log_event(
-            f"[DOCUMENT_METADATA_EXTRACTION] Error extracting final metadata for document {document_id}: {metadata_error}",
+            "[DOCUMENT_METADATA_EXTRACTION] Final metadata analysis failed.",
             extra={
                 "document_id": document_id,
                 "group_id": group_id,
-                "public_workspace_id": public_workspace_id
+                "public_workspace_id": public_workspace_id,
+                "error_type": type(metadata_error).__name__,
             },
             level=logging.WARNING,
-            exceptionTraceback=True
         )
-        update_callback(status="Processing complete (metadata extraction warning)")
+        update_callback(metadata_extraction_status="failed")
         return "warning"
 
 
 def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_extensions, tabular_extensions, metadata_extraction_result):
     if total_chunks_saved == 0:
+        if file_ext in TEMPLATE_EXTENSIONS:
+            return "Processing complete - native Office template retained; no narrative content indexed"
         if file_ext in image_extensions:
             return "Processing complete - no text found in image"
         if file_ext in tabular_extensions:
@@ -10618,7 +13280,7 @@ def _resolve_processing_complete_status(total_chunks_saved, file_ext, image_exte
     if metadata_extraction_result == "no_new_info":
         return "Processing complete - metadata extraction yielded no new info"
     if metadata_extraction_result == "returned_empty":
-        return "Processing complete - metadata extraction returned empty or failed"
+        return "Processing complete (metadata extraction warning)"
     if metadata_extraction_result == "warning":
         return "Processing complete (metadata extraction warning)"
 
@@ -10668,7 +13330,74 @@ def _process_markdown_with_ordered_dict_retry(processor_args, update_callback):
     raise RuntimeError("Markdown processing retry loop exited unexpectedly.")
 
 
-def process_document_upload_background(document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None, extraction_mode_override=None):
+def process_document_upload_background(
+    document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None,
+    extraction_mode_override=None, *, operation_guard=None, safe_errors=False,
+):
+    """Keep screened intake private until its complete, revision-bound decision."""
+    if operation_guard is not None:
+        operation_guard()
+    document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+    processor = _process_document_upload_background_impl
+    if operation_guard is not None or safe_errors:
+        processor = partial(processor, operation_guard=operation_guard, safe_errors=safe_errors)
+    if document and document.get(PUBLICATION_BINDING):
+        try:
+            should_process = begin_publication_processing(document, temp_file_path)
+        except (AzureError, OSError, ValueError, RuntimeError) as exc:
+            log_event(
+                "[SIMPLE_CHAT] Publication native processing could not start",
+                extra={"document_id": document_id, "error_type": type(exc).__name__}, level=logging.WARNING,
+            )
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            raise
+        if not should_process:
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.remove(temp_file_path)
+            return
+    if document_requires_screening(document, get_settings()):
+        return process_screened_upload(
+            document_id, user_id, temp_file_path, original_filename,
+            processor,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+            extraction_mode_override=extraction_mode_override,
+        )
+    if operation_guard is not None or safe_errors:
+        return processor(
+            document_id, user_id, temp_file_path, original_filename,
+            group_id=group_id, public_workspace_id=public_workspace_id,
+            extraction_mode_override=extraction_mode_override,
+        )
+    return _process_document_upload_background_impl(
+        document_id, user_id, temp_file_path, original_filename,
+        group_id=group_id, public_workspace_id=public_workspace_id,
+        extraction_mode_override=extraction_mode_override,
+    )
+
+
+def _publish_screened_document(document, units, scan, actor_id, *, storage):
+    from content_screening.publication import publish_document
+
+    return publish_document(document, units, scan, actor_id, storage=storage)
+
+
+def _get_screening_source_bytes(document):
+    from content_screening.publication import source_bytes
+
+    return source_bytes(document)
+
+
+def _get_screening_existing_chunks(document):
+    from content_screening.publication import existing_chunks
+
+    return existing_chunks(document)
+
+
+def _process_document_upload_background_impl(
+    document_id, user_id, temp_file_path, original_filename, group_id=None, public_workspace_id=None,
+    extraction_mode_override=None, *, operation_guard=None, safe_errors=False,
+):
     """
     Main background task dispatcher for document processing.
     Handles various file types with specific chunking and processing logic.
@@ -10689,6 +13418,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     audio_extensions = tuple('.' + ext for ext in AUDIO_EXTENSIONS)
     visio_extensions = tuple('.' + ext for ext in VISIO_EXTENSIONS)
     email_extensions = tuple('.' + ext for ext in EMAIL_EXTENSIONS)
+    onenote_extensions = tuple('.' + ext for ext in ONENOTE_EXTENSIONS)
 
     # --- Define update_document callback wrapper ---
     # This makes it easier to pass the update function to helpers without repeating args
@@ -10704,7 +13434,10 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         elif is_group:
             args["group_id"] = group_id
 
-        update_document(**args)
+        if operation_guard is not None or safe_errors:
+            _update_document_for_job(**args, operation_guard=operation_guard, safe_errors=safe_errors)
+        else:
+            update_document(**args)
 
 
     total_chunks_saved = 0
@@ -10712,6 +13445,7 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
     embedding_model_name = None
     file_ext = '' # Initialize
 
+    chunk_tracking_token = begin_chunk_tracking()
     try:
         # --- 0. Initial Setup & Validation ---
         if not temp_file_path or not os.path.exists(temp_file_path):
@@ -10728,7 +13462,10 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
         if file_size > max_file_size_bytes:
             raise ValueError(f"File exceeds maximum allowed size ({max_file_size_bytes / (1024*1024):.1f} MB).")
 
-        update_doc_callback(status=f"Processing file {original_filename}, type: {file_ext}")
+        update_doc_callback(
+            status=f"Processing file {original_filename}, type: {file_ext}",
+            num_file_chunks=1, indexed_chunk_count_version=0,
+        )
 
         # --- 1. Dispatch to appropriate handler based on file type ---
         # Note: .doc uses the shared document pipeline with OLE extraction, while .docm stays on the direct Word-text path.
@@ -10755,7 +13492,11 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             "auto_extract_metadata": False
         }
 
-        if file_ext == '.xsd':
+        if file_ext in TEMPLATE_EXTENSIONS:
+            total_chunks_saved, total_embedding_tokens, embedding_model_name = process_office_template(
+                **args,
+            )
+        elif file_ext == '.xsd':
             process_xsd(
                 document_id=document_id,
                 user_id=user_id,
@@ -10830,6 +13571,10 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 total_chunks_saved, total_embedding_tokens, embedding_model_name = result
             else:
                 total_chunks_saved = result
+        elif file_ext in onenote_extensions:
+            total_chunks_saved, total_embedding_tokens, embedding_model_name = process_onenote(
+                **{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"}
+            )
         elif file_ext in email_extensions:
             result = process_msg(**{k: v for k, v in processor_args_without_auto_metadata.items() if k != "file_ext"})
             if isinstance(result, tuple) and len(result) == 3:
@@ -10872,6 +13617,16 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             raise ValueError(f"Unsupported file type for processing: {file_ext}")
 
 
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.completed = True
+            return {"staged_units": capture.staged_count, "indexed_chunks": 0, "scan_id": capture.scan_id}
+
+        indexed_document = get_document_metadata(document_id, user_id, group_id, public_workspace_id)
+        if not indexed_document:
+            raise ValueError("The processed document is no longer available.")
+        total_chunks_saved = _indexed_chunk_count_for_document(indexed_document)
+
         # --- 2. Final Metadata Extraction and Status Update ---
         if file_ext == '.xsd':
             metadata_extraction_result = "disabled"
@@ -10883,7 +13638,9 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 enable_extract_meta_data,
                 update_doc_callback,
                 group_id=group_id,
-                public_workspace_id=public_workspace_id
+                public_workspace_id=public_workspace_id,
+                operation_guard=operation_guard,
+                safe_errors=safe_errors,
             )
 
         final_status = _resolve_processing_complete_status(
@@ -10893,12 +13650,16 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             tabular_extensions,
             metadata_extraction_result
         )
+        if file_ext in onenote_extensions:
+            final_status += " - OneNote typed text only; images, handwriting, and attachments excluded"
 
         # Final update uses the total chunks saved across all steps/sheets
         # For DI types, number_of_pages might have been updated during DI processing,
         # but let's ensure the final update reflects the *saved* chunk count accurately.
         # Also update embedding token tracking data
         final_update_args = {
+             "num_chunks": total_chunks_saved,
+             "indexed_chunk_count_version": indexed_document.get("version") or 1,
              "number_of_pages": total_chunks_saved, # Final count of SAVED chunks
              "status": final_status,
              "percentage_complete": 100,
@@ -10919,6 +13680,8 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             group_id=group_id,
             public_workspace_id=public_workspace_id
         )
+        if final_document_metadata and final_document_metadata.get(PUBLICATION_BINDING):
+            finish_publication_processing(final_document_metadata, indexed_chunks=total_chunks_saved)
         sync_chat_upload_workspace_attachment_status(final_document_metadata)
 
         print(f"Document {document_id} ({original_filename}) processed successfully with {total_chunks_saved} chunks saved and {total_embedding_tokens} embedding tokens used.")
@@ -11102,8 +13865,20 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
             # Don't fail the document processing if logging fails
 
     except Exception as e:
+        capture = current_extraction(document_id)
+        if capture is not None:
+            capture.failure_code = getattr(e, "code", "screening_extraction_failed")
+            log_event(
+                "[CONTENT_SCREENING] Private extraction failed.",
+                extra={"document_id": document_id, "error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
+            raise ScreeningError(code=capture.failure_code) from e
         error_msg = f"Processing failed: {str(e)}"
         print(f"Error processing {document_id} ({original_filename}): {error_msg}")
+        _update_failed_document_chunk_count(
+            document_id, user_id, update_doc_callback, group_id=group_id, public_workspace_id=public_workspace_id,
+        )
         # Attempt to update status to Error
         try:
             update_doc_callback(
@@ -11116,11 +13891,16 @@ def process_document_upload_background(document_id, user_id, temp_file_path, ori
                 group_id=group_id,
                 public_workspace_id=public_workspace_id
             )
+            if failed_document_metadata and failed_document_metadata.get(PUBLICATION_BINDING):
+                finish_publication_processing(failed_document_metadata, failed=True)
             sync_chat_upload_workspace_attachment_status(failed_document_metadata)
         except Exception as update_e:
             print(f"Critical Error: Failed to update document status to error for {document_id}: {update_e}")
+        if safe_errors:
+            raise
 
     finally:
+        end_chunk_tracking(chunk_tracking_token)
         # --- 3. Cleanup ---
         # Clean up the original temporary file path regardless of success or failure
         if temp_file_path and os.path.exists(temp_file_path):
@@ -11270,27 +14050,20 @@ def share_document_with_user(document_id, owner_user_id, target_user_id):
                 operation='document_shared_with_user',
             )
 
-            # Update all chunks with the new shared_user_ids
+            # A pending share grants no search access yet, so projecting it is best effort. The
+            # approval projects the whole list again before it is saved.
             try:
-                chunks = get_all_chunks(document_id, owner_user_id)
-                for chunk in chunks:
-                    chunk_id = chunk.get('id')
-                    if chunk_id:
-                        try:
-                            update_chunk_metadata(
-                                chunk_id=chunk_id,
-                                user_id=owner_user_id,
-                                group_id=None,
-                                public_workspace_id=None,
-                                document_id=document_id,
-                                shared_user_ids=shared_user_ids
-                            )
-                        except Exception as chunk_e:
-                            print(f"Warning: Failed to update chunk {chunk_id}: {chunk_e}")
-                            # Continue with other chunks
+                project_fields_to_document_chunks(
+                    document_id,
+                    {'shared_user_ids': shared_user_ids},
+                    owner_user_id,
+                )
             except Exception as e:
-                print(f"Warning: Failed to update chunks for document {document_id}: {e}")
-                # Don't fail the whole operation if chunk update fails
+                log_event(
+                    "[DOCUMENT_SEARCH_SYNC] Projecting a pending share to search chunks failed; the share is saved.",
+                    extra={'document_id': document_id, 'error_type': type(e).__name__},
+                    level=logging.WARNING,
+                )
 
             return True
 
@@ -11331,24 +14104,11 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
         if len(new_shared_user_ids) != len(shared_user_ids):
             # A revoked user must never retain search access after the API reports success.
             # Update every chunk projection before committing the authoritative Cosmos ACL.
-            chunks = get_all_chunks(document_id, actual_owner_id)
-            try:
-                for chunk in chunks:
-                    chunk_id = chunk.get('id')
-                    if not chunk_id:
-                        continue
-                    update_chunk_metadata(
-                        chunk_id=chunk_id,
-                        user_id=actual_owner_id,
-                        group_id=None,
-                        public_workspace_id=None,
-                        document_id=document_id,
-                        shared_user_ids=new_shared_user_ids
-                    )
-            except DataManagementSearchWritesFrozenError as exc:
-                raise DocumentSearchAclProjectionDeferredError(
-                    "Document access was not changed because target Search writes are temporarily frozen. Retry after the migration finishes."
-                ) from exc
+            project_document_acl_to_chunks(
+                document_id,
+                {'shared_user_ids': new_shared_user_ids},
+                actual_owner_id,
+            )
 
             document_item['shared_user_ids'] = new_shared_user_ids
             document_item['last_updated'] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -11362,7 +14122,7 @@ def unshare_document_from_user(document_id, owner_user_id, target_user_id):
 
     except CosmosResourceNotFoundError:
         return False
-    except DocumentSearchAclProjectionDeferredError:
+    except (DocumentSearchAclProjectionDeferredError, DocumentSearchAclProjectionError):
         raise
     except Exception as e:
         print(f"Error unsharing document {document_id}: {e}")
@@ -11972,6 +14732,22 @@ def get_default_tag_color(tag_name):
     return color_palette[color_index]
 
 
+class _GroupTagDefinitionPresent(Exception):
+    """The group's current copy already has the definition; carries it, so nothing is written."""
+
+    def __init__(self, definition):
+        super().__init__("The group already has this tag definition.")
+        self.definition = definition
+
+
+class _PublicTagDefinitionPresent(Exception):
+    """The public workspace's current copy already has the definition; carries it, so nothing is written."""
+
+    def __init__(self, definition):
+        super().__init__("The public workspace already has this tag definition.")
+        self.definition = definition
+
+
 def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', color=None, group_id=None, public_workspace_id=None):
     """
     Get or create a tag definition.
@@ -11995,34 +14771,94 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
     safe_color = get_safe_tag_color(color, tag_name)
 
     if workspace_type == 'group' and group_id:
-        from functions_group import find_group_by_id
+        from functions_group import (
+            GroupDocumentWriteConflict,
+            find_group_by_id,
+            update_group_document_with_etag_guard,
+        )
         group_doc = find_group_by_id(group_id)
         if not group_doc:
             return {'color': safe_color}
         tag_defs = group_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
-            tag_defs[tag_name] = {
-                'color': safe_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            group_doc['tag_definitions'] = tag_defs
-            cosmos_groups_container.upsert_item(group_doc)
+            # Added to the group's current copy, and only while that copy still lacks it:
+            # a definition added meanwhile is kept, not replaced, nothing else on the
+            # group is restored from the copy read above, and a group deleted meanwhile
+            # is not recreated. A group that keeps changing is left without it; the
+            # colour answered is the same either way.
+            created_at = datetime.now(timezone.utc).isoformat()
+
+            def add_definition(fresh):
+                fresh_defs = fresh.get('tag_definitions') or {}
+                if tag_name in fresh_defs:
+                    raise _GroupTagDefinitionPresent(fresh_defs[tag_name])
+                fresh_defs[tag_name] = {
+                    'color': safe_color,
+                    'created_at': created_at
+                }
+                fresh['tag_definitions'] = fresh_defs
+                return fresh
+
+            try:
+                group_doc = update_group_document_with_etag_guard(group_id, add_definition, cache_reason=None)
+            except _GroupTagDefinitionPresent as present:
+                group_doc = {'tag_definitions': {tag_name: present.definition}}
+            except GroupDocumentWriteConflict:
+                log_event(
+                    "[CREATE_TAG] A group tag definition was not saved because the group kept changing.",
+                    level=logging.WARNING,
+                )
+                return {'color': safe_color}
+            if not group_doc:
+                return {'color': safe_color}
+            tag_defs = group_doc.get('tag_definitions') or {}
         stored_tag_def = dict(tag_defs[tag_name])
         stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
         return stored_tag_def
     elif workspace_type == 'public' and public_workspace_id:
-        from functions_public_workspaces import find_public_workspace_by_id
+        from functions_public_workspaces import (
+            PublicWorkspaceDocumentWriteConflict,
+            find_public_workspace_by_id,
+            update_public_workspace_document_with_etag_guard,
+        )
         ws_doc = find_public_workspace_by_id(public_workspace_id)
         if not ws_doc:
             return {'color': safe_color}
         tag_defs = ws_doc.get('tag_definitions', {})
         if tag_name not in tag_defs:
-            tag_defs[tag_name] = {
-                'color': safe_color,
-                'created_at': datetime.now(timezone.utc).isoformat()
-            }
-            ws_doc['tag_definitions'] = tag_defs
-            cosmos_public_workspaces_container.upsert_item(ws_doc)
+            # Added to the workspace's current copy, and only while that copy still lacks
+            # it: a definition added meanwhile is kept, not replaced, nothing else on the
+            # workspace is restored from the copy read above, and a workspace deleted
+            # meanwhile is not recreated. A workspace that keeps changing is left without
+            # it; the colour answered is the same either way.
+            created_at = datetime.now(timezone.utc).isoformat()
+
+            def add_definition(fresh):
+                fresh_defs = fresh.get('tag_definitions') or {}
+                if tag_name in fresh_defs:
+                    raise _PublicTagDefinitionPresent(fresh_defs[tag_name])
+                fresh_defs[tag_name] = {
+                    'color': safe_color,
+                    'created_at': created_at
+                }
+                fresh['tag_definitions'] = fresh_defs
+                return fresh
+
+            try:
+                ws_doc = update_public_workspace_document_with_etag_guard(
+                    public_workspace_id, add_definition, cache_reason=None
+                )
+            except _PublicTagDefinitionPresent as present:
+                ws_doc = {'tag_definitions': {tag_name: present.definition}}
+            except PublicWorkspaceDocumentWriteConflict:
+                log_event(
+                    "[PUBLIC_DOCUMENTS] A public workspace tag definition was not saved because the workspace kept changing.",
+                    level=logging.WARNING,
+                )
+                return {'color': safe_color}
+            if not ws_doc:
+                return {'color': safe_color}
+            tag_defs = ws_doc.get('tag_definitions') or {}
         stored_tag_def = dict(tag_defs[tag_name])
         stored_tag_def['color'] = get_safe_tag_color(stored_tag_def.get('color'), tag_name)
         return stored_tag_def
@@ -12052,113 +14888,67 @@ def get_or_create_tag_definition(user_id, tag_name, workspace_type='personal', c
 
 
 def propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id=None, public_workspace_id=None):
-    """
-    Update blob metadata with document tags when enhanced citations is enabled.
-    Tags are stored as a comma-separated string in blob metadata.
+    """Mirror a document's tags into its source blob's metadata when enhanced citations is enabled.
 
-    Args:
-        document_id: Document ID
-        tags: Array of normalized tag names
-        user_id: User ID
-        group_id: Optional group ID
-        public_workspace_id: Optional public workspace ID
+    Tags are stored as a comma-separated string. The search metadata sync worker calls this after
+    it projects tags to the search chunks. Nothing reads these tags back, so the refresh is best
+    effort: it logs a failure and returns False instead of raising. The write is conditioned on the
+    blob ETag it just read, so it never overwrites the metadata of a concurrent blob replacement.
+    Returns True when the blob metadata was written.
     """
     try:
         settings = get_settings()
         if not settings.get('enable_enhanced_citations', False):
-            return
+            return False
 
-        is_group = group_id is not None
-        is_public_workspace = public_workspace_id is not None
-
-        # Read document from Cosmos DB to get file_name
-        if is_public_workspace:
+        if public_workspace_id is not None:
             cosmos_container = cosmos_public_documents_container
-        elif is_group:
+        elif group_id is not None:
             cosmos_container = cosmos_group_documents_container
         else:
             cosmos_container = cosmos_user_documents_container
 
         doc_item = cosmos_container.read_item(document_id, partition_key=document_id)
+        if (
+            (group_id is not None and doc_item.get("group_id") != group_id)
+            or (public_workspace_id is not None and doc_item.get("public_workspace_id") != public_workspace_id)
+        ):
+            return False
+        if SCREENING_FIELD in doc_item:
+            # A screened release pins its blob by ETag and content hash. Rewriting the blob's
+            # metadata would make the released file unreadable, so tags stay in Cosmos and Search.
+            return False
+        if not _has_persisted_blob_reference(doc_item) and not doc_item.get("enhanced_citations"):
+            return False
         storage_account_container_name, blob_path = get_document_blob_storage_info(
             doc_item,
             user_id=user_id,
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
-        if not blob_path:
-            print(f"Warning: No blob path found for document {document_id}, skipping blob metadata update")
-            return
-
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
-        if not blob_service_client:
-            print(f"Warning: Blob service client not available, skipping blob metadata update")
-            return
+        if not blob_path or not blob_service_client:
+            return False
 
         blob_client = blob_service_client.get_blob_client(
             container=storage_account_container_name,
             blob=blob_path
         )
-
         if not blob_client.exists():
-            print(f"Warning: Blob not found at {blob_path}, skipping metadata update")
-            return
+            return False
 
-        # Get existing metadata and update with tags
         properties = blob_client.get_blob_properties()
         existing_metadata = dict(properties.metadata) if properties.metadata else {}
         existing_metadata['document_tags'] = ','.join(tags) if tags else ''
-        blob_client.set_blob_metadata(metadata=existing_metadata)
-
-        print(f"Successfully updated blob metadata tags for document {document_id} at {blob_path}")
-
-    except Exception as e:
-        print(f"Warning: Failed to update blob metadata tags for document {document_id}: {e}")
-        # Non-fatal — tag propagation to chunks is the primary operation
-
-
-def propagate_tags_to_chunks(document_id, tags, user_id, group_id=None, public_workspace_id=None):
-    """
-    Update all chunks for a document with new tags.
-    This is called immediately after tag updates.
-
-    Args:
-        document_id: Document ID
-        tags: Array of normalized tag names
-        user_id: User ID
-        group_id: Optional group ID
-        public_workspace_id: Optional public workspace ID
-    """
-    try:
-        # Get all chunks for this document
-        chunks = get_all_chunks(document_id, user_id, group_id, public_workspace_id)
-
-        if not chunks:
-            print(f"No chunks found for document {document_id}")
-            return
-
-        # Update each chunk with new tags
-        chunk_count = 0
-        for chunk in chunks:
-            try:
-                update_chunk_metadata(
-                    chunk_id=chunk['id'],
-                    user_id=user_id,
-                    group_id=group_id,
-                    public_workspace_id=public_workspace_id,
-                    document_id=document_id,
-                    document_tags=tags
-                )
-                chunk_count += 1
-            except Exception as chunk_error:
-                print(f"Error updating chunk {chunk['id']} with tags: {chunk_error}")
-                # Continue with other chunks
-
-        print(f"Successfully propagated tags to {chunk_count} chunks for document {document_id}")
-
-        # Also update blob metadata with tags if enhanced citations is enabled
-        propagate_tags_to_blob_metadata(document_id, tags, user_id, group_id, public_workspace_id)
+        blob_client.set_blob_metadata(
+            metadata=existing_metadata, etag=properties.etag, match_condition=MatchConditions.IfNotModified,
+        )
+        return True
 
     except Exception as e:
-        print(f"Error propagating tags to chunks for document {document_id}: {e}")
-        raise
+        log_event(
+            "[DOCUMENT_SEARCH_SYNC] Document tags were saved, but the source blob's tag metadata was not refreshed.",
+            extra={"document_id": document_id, "exception_type": type(e).__name__},
+            level=logging.WARNING,
+        )
+        return False

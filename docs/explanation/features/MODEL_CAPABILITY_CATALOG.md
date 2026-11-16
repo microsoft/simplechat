@@ -10,13 +10,24 @@ response length is not the model's maximum output.
 
 **Implemented in version: 0.261.035**
 
+**Combined capability, image, and embedding integration: 0.261.122**
+
+**GPT-4o, GPT-4.1, and o-series token coverage implemented in version: 0.261.362**
+
+- Current documentation version: **0.261.362**, coordinated with the application
+  version update in `application\single_app\config.py`.
 - Application version owner: `application\single_app\config.py`.
-- Catalog data contract: **schemaVersion 3**.
-- Primary-source verification date: **2026-09-19**.
+- Catalog data contract: **schemaVersion 4**.
+- Token-capacity audit date: **2026-09-19**. Operation and reasoning source reviews
+  retain their separate September 7, 8, and 16 dates.
 - Related work: issue **#1493**, PR **#1497**.
 - The original qualitative capability resolver shipped in **0.261.014**.
+- Provider-qualified image operations were implemented in **0.261.107**.
 
-All **75 existing model IDs** have an explicit token-limit disposition. An
+All **75 originally audited model IDs** retain an explicit token-limit disposition.
+A separate **2026-10-20** audit adds token evidence to nine existing GPT-4o,
+GPT-4.1, and o-series text records. Remaining image, embedding, and reasoning-only
+records do not inherit those audits or their capacities. An
 unknown limit is a researched result, not zero, unlimited capacity, or permission
 to borrow a sibling model's limit. Existing IDs, qualitative flags, display
 metadata, and legacy aliases are retained.
@@ -28,8 +39,10 @@ metadata, and legacy aliases are retained.
 | `application\single_app\static\json\model_capabilities.json` | Maintained model records, public sources, evidence, and conditional profiles |
 | `application\single_app\static\json\schemas\model_capabilities.schema.json` | Strict Draft 2020-12 data contract |
 | `application\single_app\functions_model_capabilities.py` | Dependency-light capability and capacity resolution |
+| `application\single_app\functions_embedding_policy.py` | Validated embedding dimensions, input/batch limits, and vector-space metadata |
 | `functional_tests\test_model_capability_catalog_resolution.py` | Schema validation and qualitative resolver compatibility |
 | `functional_tests\test_model_catalog_token_evidence.py` | Exact-ID audit, provenance, profile, and rejection regressions |
+| `functional_tests\test_model_catalog_rebase_integration.py` | Audit preservation, metadata-only record boundaries, and nested lookup isolation |
 | `jsonschema` | Existing test dependency; no network lookup of schemas or sources is required |
 
 The catalog is a local static JSON asset. Maintaining evidence does not add a
@@ -89,6 +102,7 @@ literal Azure ID.
 |---|---|
 | `processesText` / `generatesText` | Accepts text / produces text |
 | `processesImages` / `generatesImages` | Accepts images / produces images |
+| `generatesEmbeddings` | Produces embedding vectors; does not imply chat or image-generation support |
 | `processesAudio` / `generatesAudio` | Accepts audio / produces audio |
 | `processesVideo` / `generatesVideo` | Accepts video / produces video |
 | `processesBinaryFiles` | Accepts uploaded files or binary document payloads |
@@ -98,15 +112,46 @@ literal Azure ID.
 | `supportsStreaming` | Supports incremental chat response delivery |
 | `reasoning` | Performs extended reasoning or thinking |
 
-All flags are required in a catalog record. A capability flag alone does not
-prove compatible request parameters, entitlement, or support for every API.
+Qualitative records describe supported behavior with boolean capability flags.
+Reasoning-only records supply policy metadata without inventing qualitative
+capabilities or numeric capacity. A capability flag alone does not prove
+compatible request parameters, entitlement, or support for every API.
+
+### Embedding operation metadata
+
+An embedding model's `embeddingPolicy` describes its default and supported
+dimensions, input and batch limits, tokenizer, model revision, document/query
+prefixes, and embedding API requirements. These are embedding-operation facts,
+not inferred text-generation token capacities. Host and exact-version policies
+remain scoped to the applicable embedding deployment.
+
+Embedding consumers call `get_model_catalog_capabilities(..., strict_identity=True)`.
+This mode prefers the actual `modelName` or `behavior_name`; otherwise it uses an
+actual deployment/name field. Only canonical catalog IDs and declared aliases
+match. Display labels, configuration IDs, arbitrary deployment suffixes, and
+inferred dated snapshots cannot supply another model's vector dimensions or policy.
+This operation-specific identity contract is separate from numeric token budgets,
+which still require verified aliases and applicable host/protocol evidence.
+
+`resolve_embedding_policy()` validates catalog data and explicit
+`embedding_config` values. Newly configured unknown models require explicit
+`dimensions` and `max_input_tokens`; the legacy migration compatibility path is
+not a default for publishing new unknown models. A dimension parameter is sent
+only when an explicit configuration and the selected API/model support it.
+
+The shared catalog retains embedding policy alongside reasoning policy, image
+profiles, and image lifecycle metadata. Indexed capability views, raw records,
+and image operation profiles are deep copies, so one consumer cannot alter another
+consumer's cached metadata.
 
 ## Token-capacity contract
 
 ### Separate quantities and applicability
 
-Root capacity fields describe the **publisher-native specification**, or a
-publisher checkpoint for open-weight models. They are not blanket claims about
+Root capacity fields describe the **publisher-native specification**, a publisher
+checkpoint for open-weight models, or an explicitly documented conservative
+allowance across known snapshots. A conservative allowance is not a claim that
+every snapshot has that exact maximum. These fields are not blanket claims about
 Azure, Vertex, custom gateways, or sovereign-cloud deployments.
 
 | Field | Meaning |
@@ -119,7 +164,7 @@ Azure, Vertex, custom gateways, or sovereign-cloud deployments.
 | `verifiedAliases` | First-party verified identifiers eligible for numeric matching |
 | `tokenLimitProfiles` | Host-, protocol-, or exact-version-specific overrides |
 
-Every model explicitly contains all three capacity fields. Each is a positive
+Every audited model explicitly contains all three capacity fields. Each is a positive
 integer or `null`, with evidence explaining its disposition. Boolean, fractional,
 integral-float, non-finite, string, zero, and negative capacities are rejected by
 the offline validator. JSON Schema treats some integral floats as integers, so
@@ -156,8 +201,10 @@ records evidence for `outputTokenAccounting`. Each evidence entry has:
 | `not-applicable` | `null`; the text-generation quantity does not apply to the modality |
 | `configuration-only` | `null`; an architectural/configuration value is recorded in the note, not promoted into usable serving capacity |
 
-Source records identify a publisher, title, public HTTPS URL, and verification
-date. Mutable checkpoint configurations are pinned to a commit revision.
+Audited source records identify a publisher, title, public HTTPS URL, and
+verification date. Historical operation and reasoning references without a
+verification date do not become verified token evidence. Mutable checkpoint
+configurations are pinned to a commit revision.
 Historical Claude sources also retain `archivedFrom`, identifying the original
 Anthropic-authored page rather than treating an archive as a third-party
 specification.
@@ -231,7 +278,13 @@ Profile interpretation is deterministic:
    offline integrity test rejects ambiguity, duplicate IDs, and dangling evidence.
 
 `modelVersions` contains exact versions, never prefix rules or an assumption
-that every future release has the newest documented limits.
+that every future release has the newest documented limits. When explicit version
+metadata is absent, the resolver can recover a version only if the selected
+numeric identity is both a `verifiedAliases` entry and exactly the model ID plus
+one of those audited version strings. A deployment suffix, display name, or
+plausible date alone cannot activate a profile. Conflicting explicit version
+metadata and an exact verified snapshot ID produce a configuration error instead
+of granting the older snapshot a newer version's allowance.
 
 Profiles can additionally declare `effectiveContextWindow`: a host/protocol
 combined ceiling distinct from advertised context. Azure GPT-5.5 Responses has
@@ -242,7 +295,7 @@ does not assert an exact all-host capacity.
 
 ## Verified coverage and important qualifications
 
-| Publisher | Existing IDs | Scope of recorded evidence |
+| Publisher | Audited IDs | Scope of recorded evidence |
 |---|---:|---|
 | OpenAI | 25 | Native limits plus Azure and exact-version profiles |
 | Anthropic | 17 | Shared context and ordinary synchronous Messages output |
@@ -250,7 +303,7 @@ does not assert an exact all-host capacity.
 | Meta | 6 | Exact publisher checkpoints and unresolved CodeLlama configuration |
 | Microsoft | 6 | Pinned Phi checkpoints and configuration-only MAI evidence |
 | xAI | 11 | Six text contexts, four non-text outputs, one unresolved voice budget |
-| **Total** | **75** | Every field has an explicit disposition |
+| **Audited subtotal** | **75** | Every field has an explicit disposition |
 
 ### OpenAI and Azure
 
@@ -286,6 +339,64 @@ does not assert an exact all-host capacity.
   with an omitted, null, or empty `modelVersion` still resolve `["none"]` for
   these exact model IDs. This does not relax latest-chat's separate requirement
   for an audited Azure version before supplying its differing capacities.
+
+### Additional GPT-4o, GPT-4.1, and o-series token audit
+
+Implemented in version: **0.261.362**. Primary sources were checked on
+**2026-10-20**, separately from the original 75-record audit and historical
+operation/reasoning reviews. No live Azure deployment is queried or changed.
+
+| Exact model IDs | Native shared context | Default catalog output allowance | Azure shared-context allowance | Azure independent input |
+|---|---:|---:|---:|---:|
+| `gpt-4o` | 128,000 | 4,096 without a verified newer snapshot | 128,000 | 128,000 |
+| `gpt-4o-mini` | 128,000 | 16,384 | 128,000 | 128,000 |
+| `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano` | 1,047,576 | 32,768 | 127,999 while hosting type is unspecified | Unknown |
+| `o1`, `o3`, `o3-mini`, `o4-mini` | 200,000 | 100,000 | 200,000 | 200,000 |
+
+Native input-only maxima remain `null`; none of the nine OpenAI model pages
+independently establishes one. Azure's input/output columns are not added to
+create a larger shared window. Accounting has separate primary-source evidence:
+OpenAI and Azure describe generation caps as including reasoning and non-visible
+formatting, not merely visible response text.
+
+GPT-4o version `2024-05-13` retains 4,096 output tokens. Exact versions
+`2024-08-06` and `2024-11-20` permit 16,384. Both explicit version metadata and
+verified snapshot IDs select those profiles. A record containing only
+`modelName: gpt-4o` and `deploymentName: gpt-4o` receives the conservative 4,096
+output allowance, rather than assuming the newest Azure snapshot. Its shared
+context is nevertheless verified at 128,000, so a 10,249-token input need not
+fall back to an unknown-model budget. A guessed snapshot or arbitrary custom
+model name still cannot borrow catalog capacities.
+
+Azure documents GPT-4.1 windows of 1,047,576, 300,000 for standard deployments,
+and 128,000 for provisioned-managed/batch deployments, with provisioned requests
+required to be **strictly below 128,000**. The conservative inclusive integer
+bound is therefore 127,999, not a different claimed model capacity. A model
+version alone cannot identify hosting type. Verified administrator context
+limits retain their existing override precedence; before increasing them, check
+the deployment type and Azure's separate large-tool-definition restrictions.
+
+The catalog schema allows streaming/reasoning flags to remain absent when they
+have not received a qualitative audit. Numeric evidence does not fabricate these
+flags. Tests continue to require the original 75 records' complete flags, and the
+nine newly audited records keep all their pre-existing capabilities unchanged.
+
+Primary references:
+
+- The model-specific [GPT-4o](https://developers.openai.com/api/docs/models/gpt-4o),
+  [GPT-4.1](https://developers.openai.com/api/docs/models/gpt-4.1), and
+  [o3](https://developers.openai.com/api/docs/models/o3) pages; the catalog retains
+  a separate model-page reference for each of the nine exact IDs.
+- [Azure model specifications](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/concepts/models-sold-directly-by-azure).
+- [OpenAI output-token accounting](https://developers.openai.com/api/docs/guides/token-counting#understand-output-token-counts)
+  and [Azure generation caps](https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/reasoning#control-costs).
+
+Offline regressions exercise the real resolver, provider aliases, exact snapshots,
+unknown/custom identities, independent ceilings, output accounting, explicit
+smaller and verified larger overrides, and schema/source integrity:
+`test_model_catalog_token_evidence.py`, `test_model_token_limit_resolution.py`,
+and `test_model_catalog_rebase_integration.py`. This audit does not promise live
+model availability, entitlement, retirement timing, or provider request success.
 
 ### Anthropic
 
@@ -476,7 +587,9 @@ For a catalog change:
 2. Verify each capacity independently against its exact primary source.
 3. Record unknowns, configuration-only evidence, host scope, and lifecycle scope.
 4. Add source registry entries, verification dates, and pinned revisions where
-   applicable. A source ID must resolve both from the model and its evidence.
+   applicable. A `tokenLimitEvidence` source ID must resolve both from the model's
+   `sourceIds` and the source registry. Reasoning-only references are retained in
+   `reasoningPolicy.sourceIds`.
 5. Add verified aliases only with first-party identity evidence.
 6. Update the explicit per-ID audit expectations and relevant profile tests.
 
@@ -485,11 +598,15 @@ Run the focused offline suites:
 ```powershell
 python -m pytest -q `
     .\functional_tests\test_model_capability_catalog_resolution.py `
-    .\functional_tests\test_model_catalog_token_evidence.py
+    .\functional_tests\test_model_catalog_token_evidence.py `
+    .\functional_tests\test_model_catalog_rebase_integration.py `
+    .\functional_tests\test_ai_connection_embedding_capabilities.py
 python .\functional_tests\test_model_capability_catalog_resolution.py
 python .\functional_tests\test_model_catalog_token_evidence.py
+python .\functional_tests\test_model_catalog_rebase_integration.py
 python -O .\functional_tests\test_model_capability_catalog_resolution.py
 python -O .\functional_tests\test_model_catalog_token_evidence.py
+python -O .\functional_tests\test_model_catalog_rebase_integration.py
 ```
 
 Coverage includes all 75 dispositions, source integrity, true positive integers,
@@ -512,3 +629,133 @@ including optimized Python; tests do not catch a failure and return `False`.
   conservative runtime accounting.
 - Catalog validation does not itself qualify an agent's selected endpoint,
   API compatibility, retrieval budget, or live provider request.
+## Provider-qualified image operations (v0.261.107)
+
+The catalog describes model behavior so SimpleChat can offer an operation before a
+user pays for an incompatible request. Image input, text output, native image output,
+and image-tool orchestration are different facts. A publisher's API documentation
+does not automatically establish the same operation on another hosting provider.
+
+Implemented in version: **0.261.107** for provider-qualified image profiles.
+Application versioning is tracked in `application/single_app/config.py`.
+
+**Dependencies:** the repository-managed JSON catalog and schema, the pure model/image
+capability helpers, and implemented image adapters. The existing vision and reasoning
+resolvers remain in place; image profiles do not replace their contracts.
+
+The catalog is not a new administrator editing page. Existing connection, default
+picker, and image-editor surfaces display the relevant server-resolved information.
+
+### Image operation records
+
+| Location or field | Purpose |
+| --- | --- |
+| `application/single_app/static/json/model_capabilities.json` | Canonical model records, generic capabilities, source references, and image operation profiles |
+| `static/json/schemas/model_capabilities.schema.json` | Catalog version and image profile validation |
+| Model `provider` | The publisher, such as OpenAI, Microsoft, or Black Forest Labs; not the saved connection's provider |
+| Model `imageProfiles` | Maps an image delivery profile (`openai`, `azure_openai`, or `foundry`) to a named operation profile |
+| Model `imageLifecycle` | Provider-specific current, preview, deprecated, or retired status |
+| `imageOperationProfiles` | Reusable API/edit/mask/options/availability facts |
+| `sources` and `sourceIds` | Official documentation supporting the facts |
+
+For example, a GPT chat model's direct OpenAI image-tool profile is distinct from a
+dedicated GPT Image model's direct OpenAI and Azure Images profiles. Reusing a
+canonical model record avoids duplicate identifiers with conflicting aliases.
+
+Image operation profiles record the implemented API (`images`, `responses`, `mai`,
+or `flux`), source-image editing, uploaded masks, supported rendering choices,
+formats, relevant limits, and cloud availability. Kontext additionally uses the
+documented `openai_images` transport variant of the Foundry FLUX integration.
+
+Generation-only and reference-editing models do not acquire uploaded-mask support
+from an inpainting description. A known image-only model does not become a text-chat
+or text-producing vision-analysis choice.
+
+### Image resolution and policy
+
+`functions_model_capabilities.py` loads the JSON once. Public model and operation
+lookups return isolated copies, including nested profiles, so a consumer cannot
+change another consumer's cached capability facts.
+
+`functions_image_capabilities.py` resolves image operations using the model and saved
+endpoint context. It identifies delivery and cloud from the configured provider/API
+and endpoint, not from the application's hosting environment or management authority.
+Known Azure endpoints cannot masquerade as direct OpenAI by selecting a generic API
+label.
+
+Image qualification applies the following boundaries:
+
+1. The connection must have an implemented image adapter.
+2. Known provider/API restrictions and lifecycle facts remain authoritative.
+3. A matching catalog profile supplies the known model's operation automatically.
+4. Unknown Custom models require a compatible explicit image operation and generation
+   declaration. Editing and masking require separate support.
+5. The connection/model must be enabled and publish the image capability before it
+   becomes a task choice.
+6. The feature switch and a valid global image default are required for execution.
+
+SimpleChat deliberately supports dedicated image models only on Azure/Foundry.
+Microsoft documents an Azure Responses image tool backed by a separate image
+deployment, but that conditional orchestration route is not integrated here.
+Publisher-level `imageGenerationTool` flags and administrator declarations cannot
+enable it. Direct OpenAI tool generation belongs in a Custom OpenAI connection.
+
+Exact identifiers, declared aliases, and valid dated snapshots are recognized.
+Arbitrary new GPT versions or suffix variants do not inherit image support from a
+name prefix. An administrator may describe a new compatible Custom model without
+waiting for a catalog release, but the description is not a live service test.
+
+### Cloud availability and residency
+
+An endpoint's cloud is independent of the host running SimpleChat. A Government-hosted
+installation can use an approved commercial Azure or direct OpenAI connection.
+That service remains commercial; the catalog does not authorize data transfers.
+
+The reviewed Government table does not establish availability of the image models
+covered by this integration. Their Government availability remains **unknown**.
+Missing documentation is not an explicit unavailability statement or a reason to
+disable every Government-hosted installation.
+
+Availability evidence, provider lifecycle, implemented capability, publication,
+credentials, quota, and live readiness are separate facts. A successful connection
+listing or text answer proves neither image generation nor mask support.
+
+### Updating image profiles
+
+Add or revise a canonical model record with source references that actually describe
+its provider/API behavior. Prefer a shared operation profile when its contract is
+identical; add a distinct profile when URL, payload, editing, mask, format, or option
+requirements differ.
+
+Do not assign a broad GPT-family image flag, copy direct OpenAI retirement dates to
+Azure, or infer Government availability from a commercial Global Standard offering.
+Do not create a provider adapter by adding data alone: an unimplemented protocol
+must not become a selectable image feature.
+
+Keep documented provider limits distinct from SimpleChat's upload/decompression
+bounds and the options the current single-image workflow actually exposes.
+For example, MAI generation uses at least 768 pixels per dimension and at most
+1,048,576 pixels in total; that is not the GPT landscape/portrait preset contract.
+
+### Image testing and validation
+
+`functional_tests/test_image_provider_capabilities.py` validates schema/profile
+references, provider differences, cloud independence, explicit metadata, lifecycle,
+masking, and rendering bounds. `test_ai_connections_capabilities.py` covers nested-copy
+isolation, publication, references, and extension contracts.
+
+`test_image_provider_sdk_http.py` exercises provider-specific request construction
+with the pinned SDK and mock HTTP. `test_image_edit_provider_operations.py` covers
+actual runtime/editor projections, operation forwarding, source edits, regeneration,
+and invalid outputs.
+
+Catalog tests do not make provider calls or certify subscription capacity. Use an
+explicitly authorized image-operation test against an existing configured service
+to establish live readiness.
+
+## Related
+
+- [Shared AI Connections](AI_CONNECTIONS_FRAMEWORK.md)
+- [Provider-aware image generation](IMAGE_GENERATION_RESPONSES_MODELS.md)
+- [Provider capability fix](../fixes/IMAGE_PROVIDER_CAPABILITIES_FIX.md)
+- [Configure AI connections](../../guides/configure-ai-connections.md)

@@ -1,0 +1,138 @@
+---
+layout: page
+title: "Screen and review workspace documents"
+description: "Inspect sensitive or manipulative extracted content, keep it out of knowledge use, and release only a reviewed version."
+section: "Guides"
+audience: user
+version: "0.261.232"
+---
+
+## What this does
+
+Content screening checks documents that people upload to a workspace, or that File Sync brings in, for configured PII, patterns, values, and optional model-evaluated criteria. A finding holds the whole document so a clean early page cannot be used while another page awaits review.
+
+**Implemented in version: 0.261.106**, tracked in `application\single_app\config.py`.
+
+Use it when a document might contain sensitive data or instructions aimed at an AI rather than a human reader. Text can enter extraction even when its appearance makes it hard to notice in the original.
+
+### What isn't screened
+
+Since **0.261.230**, documents that SimpleChat generates aren't screened. That includes files an agent saves to a workspace and chat or workflow artifacts published to a workspace. Files you attach in chat that are saved to a workspace are uploads, so they're still screened.
+
+Editing a document's title, abstract, keywords, tags or other metadata isn't screened either, and doesn't hold a document that was already released. The same applies to metadata the model generates for a document after it's released. You still can't rename a screened file to a different file type.
+
+## Configure an appropriate baseline
+
+An administrator must configure Enhanced Citations and its storage account before enabling screening. The capability is off by default.
+
+Open **Admin Settings > Security > Content Screening**. This is a separate tab from Content Safety in both the classic and V2 interfaces. You can prepare the policy before configuring Enhanced Citations; an unmet storage prerequisite does not hide the editor.
+
+After Enhanced Citations is configured, enable **Content Screening** and leave **Screen workspace uploads** selected. V2 persists these choices with **Save changes**; the classic master switch saves immediately with the current upload selection. If no baseline exists, activation creates an enabled empty policy. An existing policy is preserved, including its enabled or disabled state. You do not need to enable Azure AI Content Safety.
+
+Since **0.261.127**, separate chat-text checkpoints can reuse this baseline. Disabling upload screening permits chat-only use without Enhanced Citations, but never releases an existing document hold. See [Recheck chat content]({{ '/guides/recheck-chat-content/' | relative_url }}).
+
+You can leave the policy empty and save it without adding rules or choosing a model. New uploads follow normal processing until their effective baseline/workspace policy contains checks. They are not labeled as having passed screening. Existing held documents still require review; clearing every rule is not a way to release them.
+
+When ready, add individual rules, a starter pack, or an optional AI check, leave **Baseline policy enabled** on, and select **Save screening policy**. Policy saves remain separate from application settings saves. The saved checks apply to subsequent uploads; scan existing knowledge explicitly when it also needs inspection.
+
+Choose baseline checks that reflect the information your organization actually needs to control. A policy that treats every email address as unacceptable can create a large review queue for otherwise ordinary public documents. Use representative allowed examples and known matches when testing the rules.
+
+### Choose deterministic rules
+
+Both interfaces offer **Add literal rule**, **Add regex rule**, and **Add PII rule**. Custom rules start with a blank name and match configuration; choose the values, pattern, or built-in PII detector you actually need. Literal and regex rules support case-sensitive and whole-word matching.
+
+For a starting set, use **Starter rule pack** and **Add starter pack**. The four shared packs cover structured PII, confidentiality markings, credentials, and prompt/source-ranking manipulation. Existing starter rules are not duplicated or reset when you add the same pack again. You can edit their severity, match configuration, or enabled state.
+
+These checks run in code and do not call a model. Selecting an email pattern does not send the document to an AI service or identify every kind of personal information.
+
+### Add contextual AI checks only when needed
+
+For contextual checks, first select **Enable AI checks**, then choose one approved **Scanner model** and describe the criterion precisely. **AI starter criteria** can provide a starting instruction. A useful instruction distinguishes an instruction to manipulate source priority from an ordinary discussion of prompt injection. The content being inspected is sent to that selected model, so review its approved data routing first.
+
+The scanner, criteria, and window controls are disabled while AI checks are off. Their saved values remain available when you turn AI checks back on; turning the switch off does not clear them. This controls screening inference only, not extraction, embeddings, or other uses of models.
+
+### Delegate model permissions without enabling inference
+
+Administrators use **Models workspaces may use** to permit models for optional workspace checks. Checking several models here does not run several scanners, and the permission list can be configured while baseline AI checks are off. The baseline's saved scanner is permitted automatically and is marked separately from explicit permissions.
+
+Workspace managers can add local rules and instructions without disabling the required administrator baseline. A workspace's **Enable AI checks** switch controls only its own additional check. Required administrator AI checks still run when local AI additions are off.
+
+Read **Configured screening checks** before saving. It shows enabled deterministic and AI checks in the draft, including inherited requirements for a workspace. If the administrator baseline is disabled, local additions are inactive too. The summary is not the separate enrollment switch and does not change an existing document hold.
+
+**Policy-editor alignment implemented in version: 0.261.108**, tracked in `application\single_app\config.py`.
+
+**Enabled-empty policy configuration implemented in version: 0.261.114**, tracked in `application\single_app\config.py`. An empty enabled baseline allows enabled workspace additions to supply checks. **No active checks configured** means new uploads use normal processing when that draft is saved and no workspace checks apply. Sample testing needs an enabled rule or AI check; an empty draft is still saveable.
+
+## Inspect existing knowledge
+
+Choose the documents or workspaces to inspect. Only administrators can start an all-workspace scan across private and shared scopes.
+
+In V2, **Screening scans** in the Documents section scans the workspace you're in: your own documents in My Workspace, and, from version **0.261.174**, a group's documents for its Owner, Admins and DocumentManagers.
+
+Use the workload/progress view to distinguish queued, running, completed, flagged, incomplete, and failed documents. Queued documents remain in their previous state until their scan starts. Started documents remain held if a check cannot finish. Documents SimpleChat generated are skipped rather than scanned.
+
+Do not interpret a completed enumeration or a model timeout as evidence that every document passed. Correct the reported source, model, policy, or storage problem and resume or retry the work. Cancelling a job does not release documents that are already held.
+
+## Review a finding
+
+Open content review from the document's status or the relevant review request. A reviewer must be the personal owner or hold an Owner, Admin, or DocumentManager role in the owning group/public workspace. These reviewers can review their own uploads.
+
+Inspect the rule, explanation, complete coverage status, and source location. The extracted text is the relevant evidence for an instruction hidden by visual formatting. An ordinary document list or notification deliberately does not show the sensitive excerpt.
+
+A displayed page number represents a real source mapping. A segment, transcript range, or table coordinate is not a PDF page. If the original source is unavailable, consider that limitation before deciding whether an indexed-text snapshot is enough for your policy.
+
+## Choose the outcome
+
+| Outcome | Use it when |
+| --- | --- |
+| Approve with flags | The content is acceptable in context and you want that acceptance and warning to remain visible. Record a meaningful reason. |
+| Remove a page or segment | The whole unit should not become knowledge. Confirm which other mapped content is affected. |
+| Remove a span or change/clear data | Only a precise line, text span, or cell needs to be removed. Review the candidate diff rather than assuming every occurrence was changed. |
+| Keep held or reject | The document should not be used and you are not ready to release a replacement. |
+| Delete | The document and its retained/derived content are no longer needed. A storage failure can leave deletion pending rather than pretending cleanup succeeded. |
+
+For remediation, preview the proposed changes, create the candidate, and let its required checks complete. Approve the clean candidate explicitly. If findings remain, either remediate further or accept them with a retained flag.
+
+Refresh after a conflict. An old browser tab cannot authorize a replacement uploaded or edited after that tab loaded.
+
+## Understand the download
+
+A clean text or structured-data derivative is the approved replacement. It is not a layout-preserving edit of the original PDF or Office file.
+
+After remediation, the original stays restricted to reviewers; ordinary citations and native data tools must use the approved representation. Removing a line from extracted knowledge while leaving the original exposed as a normal download is not the intended workflow.
+
+Review original files as potentially untrusted content. Do not follow links or instructions in the document simply because they appeared in a review view.
+
+## What a hold does to earlier results
+
+Screening checks a document as it enters a workspace. Anything built from that document isn't screened or checked again, including AI replies, saved Analyze results, workflow and orchestration outputs, and generated files. So a hold stops the document from being used as an input from now on, but it doesn't take back anything already built from it.
+
+- Search, document selection, previews, downloads and opening the document from a citation are refused until review completes.
+- If the document was attached in chat, the attachment shows "Source content is unavailable pending document screening and review." in the conversation.
+- AI replies and their citation excerpts stay in the conversation and its exports. So do saved Analyze results, workflow and orchestration outputs, and generated files. Anyone who can open that conversation, workflow or run can still see them.
+
+Deleting, rejecting or screening a document again works the same way. To reflect a reviewed or replaced document, run a new search or Analyze against it.
+
+## Common problems
+
+| Symptom | Meaning and response |
+| --- | --- |
+| The model did not return a valid result | The scan is incomplete or failed. Retry after correcting the model/configuration; do not treat it as a clean scan. |
+| Enabling screening is rejected | Check Enhanced Citations storage and any configured scanner models. A policy with no checks is valid; a failed storage or settings write is not reported as saved. |
+| Screening is enabled but new uploads are not screened | The saved effective policy has no enabled checks. Add a rule, starter pack, or AI check, then save the policy. Workspace additions can supply checks under an enabled empty baseline. |
+| Admin Settings reports that the write failed | The change was not saved. Keep the draft or reload the current settings before retrying; do not assume the displayed draft is persisted. |
+| A retry looks clean but the document is still held | A previous finding still needs a human decision. |
+| The document has a warning after approval | It was approved with flags; the warning is intentional. |
+| An original is missing | Source-backed inspection or re-extraction may be unavailable. A table schema summary does not cover the underlying cell data. |
+| Scanning was disabled but a document is still held | Disabling future scans does not approve existing held content. |
+| A file an agent saved, or an artifact you published, has no screening status | By design: documents SimpleChat generates aren't screened. |
+| A published artifact waiting for approval can't be approved because it's held by screening | It was requested before generated content stopped being screened. Cancel the request and publish the artifact again. |
+| A workspace attachment is unavailable in conversation history | Its document is held, deleted, or no longer available to you. AI replies and their citations stay visible. Complete review, then attach or search the approved document again. |
+| Another person cannot open the evidence | Review access is scoped. Administrative scan permission or ordinary shared-read access is not sufficient. |
+
+## Related
+
+- [Security settings]({{ '/admin/security/' | relative_url }})
+- [Knowledge settings]({{ '/admin/knowledge/' | relative_url }})
+- [Review approval requests]({{ '/guides/review-approval-requests/' | relative_url }})
+- [Framework specification](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/CONTENT_SCREENING_FRAMEWORK.md)

@@ -2,7 +2,7 @@
 # test_chat_citation_whitespace_preservation.py
 """
 Functional test for inline citation whitespace preservation.
-Version: 0.250.229
+Version: 0.261.355
 Implemented in: 0.250.229
 
 This test ensures that parseCitations() in chat-citations.js no longer deletes the
@@ -162,9 +162,11 @@ const citationSource = fs.readFileSync(process.argv[2], 'utf8')
 const citationSandbox = {
     module: { exports: {} },
     console,
+    URL,
     document: documentStub,
     window: { addEventListener: () => {} },
 };
+vm.runInNewContext(fs.readFileSync(process.argv[5], 'utf8').replace(/^export /gm, ''), citationSandbox);
 vm.runInNewContext(citationSource + '\nmodule.exports = { parseCitations };', citationSandbox);
 const { parseCitations } = citationSandbox.module.exports;
 
@@ -176,7 +178,10 @@ const markedParse = markedSandbox.module.exports.parse;
 const cases = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
 const results = {};
 Object.keys(cases).forEach(name => {
-    const citationMarkdown = parseCitations(cases[name]);
+    const input = cases[name];
+    const citationMarkdown = typeof input === 'string'
+        ? parseCitations(input)
+        : parseCitations(input.message, input.options);
     results[name] = {
         markdown: citationMarkdown,
         html: markedParse(citationMarkdown),
@@ -191,7 +196,7 @@ def read_file_text(file_path):
         return file_handle.read()
 
 
-def run_citation_harness():
+def run_citation_harness(cases=None):
     """Execute the production parseCitations() and return markdown/HTML per case."""
     node_executable = shutil.which('node')
     if not node_executable:
@@ -204,10 +209,13 @@ def run_citation_harness():
         with open(harness_path, 'w', encoding='utf-8') as harness_file:
             harness_file.write(NODE_HARNESS)
         with open(cases_path, 'w', encoding='utf-8') as cases_file:
-            json.dump(TEST_CASES, cases_file)
+            json.dump(TEST_CASES if cases is None else cases, cases_file)
 
         completed = subprocess.run(
-            [node_executable, harness_path, CITATIONS_FILE, cases_path, MARKED_FILE],
+            [
+                node_executable, harness_path, CITATIONS_FILE, cases_path, MARKED_FILE,
+                os.path.join(CHAT_JS_DIR, 'chat-utils.js'),
+            ],
             capture_output=True,
             text=True,
             timeout=60,

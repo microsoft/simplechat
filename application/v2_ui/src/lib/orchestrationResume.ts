@@ -1,0 +1,225 @@
+// orchestrationResume.ts
+// Reading a conversation's stored runs back into the page when it opens.
+//
+// Two things happen here, and they share a fetch because they need the same answer.
+//
+// The first is history: every run a conversation has produced is loaded so the plan drawer has
+// something to show. Runs have always been written to Cosmos and the planner has always read them
+// back, but nothing in the browser ever asked for them, so a conversation opened after a reload --
+// or in a second tab, or on a different machine -- showed an empty panel for work that plainly
+// happened. Hydrating on open rather than when the drawer opens means the panel is populated the
+// moment it is unfolded, and the drawer's own fetch becomes a fallback for conversations reached
+// some other way.
+//
+// The second is the unfinished business. A plan that was proposed and never answered is stored as
+// `awaiting_approval`, and until now the only device that could act on it was the one that closed
+// the tab. Restoring the card lets the approval be picked up wherever the user actually is. The
+// server is what makes that safe: the run endpoint reads the plan from the stored record rather
+// than the request, and refuses a run whose plan has already run, so the worst case of two devices
+// holding the same card is that the slower one is told so and re-reads the conversation.
+
+import { useChatStore } from '../stores/chatStore';
+import {
+    isResumablePlanStatus,
+    selectActiveTurn,
+    selectPlan,
+    useOrchestrationStore,
+} from '../stores/orchestrationStore';
+import {
+    fetchConversationRuns, fetchOrchestrationRun, fetchRunSteps,
+    isOrchestrationRunPending, persistedRunPlan,
+} from './orchestration';
+import {
+    loadOrchestrationRecovery, reconcileOrchestrationRun, refreshOrchestrationPlanEditor,
+    resumeOrchestrationPlanning,
+} from './orchestrationController';
+import { neutralizeTimedApproval } from './orchestrationPlan';
+import type { Json } from './orchestration';
+import { hasPendingOrchestrationOutputs } from './orchestrationOutputs';
+
+/** How many runs to ask for. Matches the store's per-conversation history cap. */
+const RUN_FETCH_LIMIT = 25;
+
+/**
+ * Conversations already considered, so opening one twice does not re-fetch or re-offer.
+ *
+ * Deliberately not cleared when a conversation closes: within one page life, a conversation's
+ * stored runs are read once. Anything that happens afterwards happened in this tab, and the store
+ * already knows about it.
+ */
+const consideredConversations = new Set<string>();
+
+/** Forget what has been considered. Exists for tests and for a signed-out reset. */
+export function resetOrchestrationResume(): void {
+    consideredConversations.clear();
+}
+
+/**
+ * Load a conversation's stored runs, and restore an unanswered plan if there is one.
+ *
+ * Safe to call on every render pass for a conversation: the work is done once, and a conversation
+ * whose runs are already loaded skips straight to the resume check.
+ */
+export async function resumeOrchestrationForConversation(
+    conversationId: string,
+): Promise<void> {
+    await resumeOrchestrationPlanning(conversationId);
+    if (!conversationId || consideredConversations.has(conversationId)) {
+        return;
+    }
+    consideredConversations.add(conversationId);
+
+    const store = useOrchestrationStore.getState();
+    const status = store.hydration[conversationId] ?? 'idle';
+    if (status === 'idle' || status === 'error') {
+        store.setHydrationStatus(conversationId, 'loading');
+        try {
+            const runs = await fetchConversationRuns(conversationId, { limit: RUN_FETCH_LIMIT });
+            useOrchestrationStore.getState().hydrateConversationRuns(conversationId, runs, store.recoveryRevision);
+        } catch {
+            useOrchestrationStore.getState().setHydrationStatus(conversationId, 'error');
+            // The drawer offers a retry; a conversation whose history could not be read has no
+            // pending approval to restore either, because the record that would say so is what
+            // failed to arrive.
+            consideredConversations.delete(conversationId);
+            return;
+        }
+    } else if (status === 'loading') {
+        // The drawer got there first. It will finish the hydration; the resume check is dropped
+        // rather than racing it, and the conversation is left unconsidered so a later pass retries.
+        consideredConversations.delete(conversationId);
+        return;
+    }
+
+    // Hydration settles a run restored from storage only when the history lists it, and the
+    // server leaves out runs from an earlier orchestration version. Each such run is checked
+    // by its own id instead, so its record, or the server's refusal, settles it.
+    const listed = new Set(
+        (useOrchestrationStore.getState().hydratedHistory[conversationId] ?? []).map((entry) => entry.runId),
+    );
+    for (const run of Object.values(useOrchestrationStore.getState().inFlight)) {
+        if (run.conversationId === conversationId && run.resumed && !listed.has(run.runId)) {
+            void reconcileOrchestrationRun(conversationId, run.runId);
+        }
+    }
+
+    const newest = useOrchestrationStore.getState().hydratedHistory[conversationId]?.[0];
+    const pending = newest && isOrchestrationRunPending({ ...newest.attempt, status: newest.planStatus });
+    if (newest && (newest.planStatus === 'failed' || newest.planStatus === 'cancelled' || pending
+        || hasPendingOrchestrationOutputs(newest.attempt?.outputs))) {
+        try {
+            const record = await loadOrchestrationRecovery(conversationId, newest.runId);
+            const steps = await fetchRunSteps(newest.runId, { conversationId });
+            const current = useOrchestrationStore.getState();
+            if (record && !selectActiveTurn(current, conversationId)
+                && useChatStore.getState().activeConversationId === conversationId) {
+                // A finished run's stored plan still reads `running`; adopted as it is, the card
+                // would offer Approve for work that already ran.
+                current.adoptPersistedPlan(conversationId, newest.turnId, persistedRunPlan(record), steps);
+                current.setActiveTurn(conversationId, newest.turnId);
+            }
+            if (record && (pending || isOrchestrationRunPending(record))) {
+                current.beginRun({
+                    conversationId, turnId: newest.turnId, runId: newest.runId,
+                    planId: newest.planId, startedAt: Date.now(),
+                });
+                void reconcileOrchestrationRun(conversationId, newest.runId);
+            }
+        } catch {
+            consideredConversations.delete(conversationId);
+        }
+    }
+    await restorePendingApproval(conversationId);
+}
+
+/**
+ * Put an unanswered plan's card back, if the conversation's newest run is genuinely unanswered.
+ *
+ * Three things have to hold, and each rules out a way of resurrecting something misleading:
+ * the run must be the newest one, so an old abandoned proposal cannot jump in front of later work;
+ * this page must not already have a card up, so a live turn is never displaced; and no assistant
+ * message may follow the run's question, because one means the turn was answered -- by the other
+ * device, or by a plain chat reply after the proposal was dismissed.
+ */
+async function restorePendingApproval(conversationId: string): Promise<void> {
+    const store = useOrchestrationStore.getState();
+    if (selectActiveTurn(store, conversationId)) {
+        return;
+    }
+
+    const newest = (store.hydratedHistory[conversationId] ?? [])[0];
+    if (!newest || !isResumablePlanStatus(newest.planStatus)) {
+        return;
+    }
+    if (!newest.userMessageId) {
+        // Nothing to anchor the card to in the thread. A plan whose question cannot be found is
+        // left alone rather than floated at the bottom of an unrelated conversation.
+        return;
+    }
+    if (conversationHasReplyAfter(conversationId, newest.userMessageId)) {
+        return;
+    }
+
+    let plan: Json | null = null;
+    let steps: Awaited<ReturnType<typeof fetchRunSteps>> = [];
+    try {
+        const [record, stepRecords] = await Promise.all([
+            fetchOrchestrationRun(newest.runId, { conversationId }),
+            fetchRunSteps(newest.runId, { conversationId }),
+        ]);
+        plan = record?.plan ?? null;
+        steps = stepRecords;
+    } catch {
+        return;
+    }
+    if (!plan) {
+        return;
+    }
+
+    // Everything is re-checked after the await: the fetch is not instant, and the user may have
+    // asked something new in the meantime, which would have put a card of its own up.
+    const current = useOrchestrationStore.getState();
+    if (selectActiveTurn(current, conversationId)) {
+        return;
+    }
+    if (useChatStore.getState().activeConversationId !== conversationId) {
+        consideredConversations.delete(conversationId);
+        return;
+    }
+
+    current.adoptPersistedPlan(
+        conversationId,
+        newest.turnId,
+        neutralizeTimedApproval(plan),
+        steps,
+        { readOnly: false },
+    );
+    useOrchestrationStore.getState().setActiveTurn(conversationId, newest.turnId);
+    const restored = selectPlan(useOrchestrationStore.getState(), conversationId, newest.turnId);
+    if (restored?.edit_version) {
+        await refreshOrchestrationPlanEditor({ conversationId, turnId: newest.turnId }, newest.runId);
+    }
+}
+
+/**
+ * Whether an assistant reply follows a message in the loaded thread.
+ *
+ * A run's own question is the anchor. Anything the assistant said after it means the turn reached
+ * an answer, whatever produced it.
+ */
+function conversationHasReplyAfter(conversationId: string, userMessageId: string): boolean {
+    const chat = useChatStore.getState();
+    if (chat.activeConversationId !== conversationId) {
+        // The thread on screen is a different conversation, so it cannot be used to judge this
+        // one. Treated as answered, which errs towards showing nothing.
+        return true;
+    }
+    const index = chat.messages.findIndex((message) => message.id === userMessageId);
+    if (index < 0) {
+        // The question is not in the loaded thread. Same reasoning: no anchor, no card.
+        return true;
+    }
+    return chat.messages
+        .slice(index + 1)
+        .some((message) => message.role === 'assistant');
+}

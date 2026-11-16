@@ -8,9 +8,11 @@ Related configuration version at planning time: `application/single_app/config.p
 
 The backend source-storage mismatch described below is fixed for Development/v1 in
 **0.261.024** under [#1472](https://github.com/microsoft/simplechat/issues/1472).
+The separate React/v2 port and People-panel group-context handling are implemented
+in **0.261.106**.
 See [Group Collaboration Source Storage Fix](../fixes/GROUP_COLLABORATION_SOURCE_STORAGE_FIX.md)
-for the implemented scope and coverage. This does not implement this historical
-plan's UI wording, stale-DOM, or endpoint-selection proposals.
+for the implemented scope and coverage. Neither change implements this historical
+plan's classic-UI wording, stale-DOM, or endpoint-selection proposals in full.
 
 ## Overview
 

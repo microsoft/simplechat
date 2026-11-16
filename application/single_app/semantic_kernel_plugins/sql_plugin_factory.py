@@ -1,3 +1,4 @@
+# sql_plugin_factory.py
 """
 SQL Plugin Factory and Utilities
 Helper functions for creating and registering SQL plugins with Semantic Kernel
@@ -8,7 +9,7 @@ import os
 import json
 from .sql_schema_plugin import SQLSchemaPlugin
 from .sql_query_plugin import SQLQueryPlugin
-from .sql_odbc_utils import DEFAULT_SQL_SERVER_ODBC_DRIVER
+from .sql_odbc_utils import DEFAULT_SQL_SERVER_ODBC_DRIVER, build_sql_server_odbc_connection_string
 
 class SQLPluginFactory:
     """Factory class for creating SQL plugins with common configurations"""
@@ -219,7 +220,8 @@ class SQLPluginFactory:
         username: Optional[str] = None,
         password: Optional[str] = None,
         read_only: bool = True,
-        max_rows: int = 1000
+        max_rows: int = 1000,
+        managed_identity_client_id: Optional[str] = None,
     ) -> tuple:
         """
         Create both schema and query plugins for Azure SQL Database
@@ -228,7 +230,10 @@ class SQLPluginFactory:
             tuple: (schema_plugin, query_plugin)
         """
         if use_managed_identity:
-            connection_string = f"DRIVER={{{DEFAULT_SQL_SERVER_ODBC_DRIVER}}};SERVER={server};DATABASE={database};Authentication=ActiveDirectoryMsi"
+            connection_string = build_sql_server_odbc_connection_string(
+                server, database, auth_type="managed_identity",
+                managed_identity_client_id=managed_identity_client_id,
+            )
         else:
             connection_string = f"DRIVER={{{DEFAULT_SQL_SERVER_ODBC_DRIVER}}};SERVER={server};DATABASE={database};UID={username};PWD={password}"
         

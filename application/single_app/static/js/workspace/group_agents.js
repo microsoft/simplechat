@@ -255,6 +255,10 @@ function overrideAgentStepper(stepper) {
 
       this.initializeActionSearch(normalized);
 
+      // Resolve friendly target labels for any Call agent actions shown above,
+      // matching the base loadAvailableActions behavior this override replaces.
+      this.enrichAgentDelegationLabels(normalized);
+
       if (this.actionsToSelect && Array.isArray(this.actionsToSelect)) {
         this.setSelectedActions(this.actionsToSelect);
         this.actionsToSelect = null;

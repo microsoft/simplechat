@@ -553,6 +553,44 @@ def build_mcp_server_preconfigurations_response(
     }
 
 
+def build_mcp_preconfiguration_policy_catalog():
+    """Describe each enabled preconfiguration for the admin destination policy builder.
+
+    Destination policies name a template by id (``preconfiguration:github``). The admin
+    settings page offers these as choices so an administrator does not have to know the
+    ids, and marks the templates that only surface when a policy names them explicitly:
+    broad patterns such as ``*`` are deliberately not enough for those. Endpoints are
+    left out, because an endpoint-reviewed template needs the organization's own host
+    rather than the placeholder shipped in its definition.
+    """
+    catalog = []
+    for preconfiguration in load_mcp_server_preconfigurations():
+        preconfiguration_id = normalize_mcp_preconfiguration_id(preconfiguration.get("id"))
+        if not preconfiguration_id:
+            continue
+
+        scopes = []
+        scope_eligibility = preconfiguration.get("scopeEligibility")
+        for scope in scope_eligibility if isinstance(scope_eligibility, list) else []:
+            try:
+                normalized_scope = normalize_mcp_destination_scope(scope)
+            except McpDestinationPolicyError:
+                continue
+            if normalized_scope in MCP_VALID_PRECONFIGURATION_SCOPES and normalized_scope not in scopes:
+                scopes.append(normalized_scope)
+
+        catalog.append({
+            "id": preconfiguration_id,
+            "label": str(preconfiguration.get("displayName") or preconfiguration_id),
+            "catalog_tier": str(preconfiguration.get("catalogTier") or ""),
+            # Empty means every scope may use the template.
+            "scopes": scopes,
+            "requires_explicit_policy": bool(_requires_explicit_preconfiguration_policy(preconfiguration)),
+            "requires_endpoint_review": _coerce_bool(preconfiguration.get("requiresEndpointReview")),
+        })
+    return catalog
+
+
 def evaluate_mcp_preconfiguration_manifest_policy(
     manifest,
     scope_type=None,

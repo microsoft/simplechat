@@ -8,7 +8,8 @@ Search index for the documentation site.
 The previous index (search.json) contained title, description and keywords only.
 Because 88% of entries had no description and no page body was ever indexed,
 search was effectively a substring match against page titles. This version
-indexes real page content so queries match what readers actually read.
+indexes real page content so queries match what readers actually read. Feature
+collection pages use their central data because their generated bodies are empty.
 
 Excluded from the index:
   - Engineering notes under explanation/features and explanation/fixes. Those
@@ -24,6 +25,7 @@ Excluded from the index:
     {%- assign skip = false -%}
     {%- if item.url contains '/404' -%}{%- assign skip = true -%}{%- endif -%}
     {%- if item.url contains '/contributing/media-status' -%}{%- assign skip = true -%}{%- endif -%}
+    {%- if item.url contains '/explanation/features/' or item.url contains '/explanation/fixes/' -%}{%- assign skip = true -%}{%- endif -%}
     {%- if item.noindex -%}{%- assign skip = true -%}{%- endif -%}
 
     {%- unless skip -%}
@@ -48,6 +50,40 @@ Excluded from the index:
         "title": {{ item.title | jsonify }},
         "url": {{ item.url | relative_url | jsonify }},
         "section": {{ section | jsonify }},
+        "audience": {{ audience | jsonify }},
+        "description": {{ desc | jsonify }},
+        "body": {{ body | jsonify }}
+    }
+    {%- endunless -%}
+{%- endfor -%}
+{%- for item in site.features -%}
+    {%- unless item.noindex -%}
+        {%- assign feature = site.data.features[item.slug] -%}
+        {%- capture feature_text -%}
+            {{ feature.summary }}
+
+            {{ feature.why }}
+
+            {%- for section in feature.visual_sections %}
+
+                {{ section.heading }}
+
+                {{ section.text }}
+            {%- endfor %}
+
+            {{ item.content }}
+        {%- endcapture -%}
+        {%- assign body = feature_text | markdownify | strip_html | normalize_whitespace | truncate: 3000, '' -%}
+        {%- assign title = feature.name | default: item.title -%}
+        {%- assign desc = feature.summary | default: item.description | default: feature.why | default: title -%}
+        {%- assign audience = feature.audience | default: item.audience | default: '' -%}
+
+        {%- if first == false -%},{%- endif -%}
+        {%- assign first = false -%}
+    {
+        "title": {{ title | jsonify }},
+        "url": {{ item.url | relative_url | jsonify }},
+        "section": "Features",
         "audience": {{ audience | jsonify }},
         "description": {{ desc | jsonify }},
         "body": {{ body | jsonify }}

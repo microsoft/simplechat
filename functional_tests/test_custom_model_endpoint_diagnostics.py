@@ -1,7 +1,8 @@
+# test_custom_model_endpoint_diagnostics.py
 #!/usr/bin/env python3
 """
 Functional test for Custom model endpoint failure diagnostics.
-Version: 0.261.016
+Version: 0.261.122
 Implemented in: 0.261.016
 
 Custom endpoint errors are sanitized before reaching the browser, because an
@@ -22,6 +23,7 @@ These tests ensure that:
   * a logging failure never replaces the original error.
 """
 
+import ast
 import os
 import re
 import sys
@@ -206,9 +208,24 @@ def test_no_failure_path_discards_its_cause():
 
         # Every sanitized Custom error must go through the diagnostics helper.
         assert "build_sanitized_model_endpoint_error" in source
-        assert source.count("build_sanitized_model_endpoint_error(") >= 7, (
-            "Expected every sanitized Custom failure path to use the diagnostics helper."
-        )
+        definitions = {
+            node.name: node for node in ast.parse(source).body
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef))
+        }
+
+        def calls(node, name):
+            return any(
+                isinstance(child, ast.Call) and isinstance(child.func, ast.Name)
+                and child.func.id == name for child in ast.walk(node)
+            )
+
+        assert calls(definitions["_sanitized_custom_request_error"], "build_sanitized_model_endpoint_error")
+        for name in (
+            "_SanitizedSyncIterator", "_SanitizedAsyncIterator",
+            "sanitize_custom_async_openai_client", "OpenAIStyleChatCompletionClient",
+            "CustomAnthropicChatCompletionClient",
+        ):
+            assert calls(definitions[name], "_sanitized_custom_request_error"), name
 
         print("All Custom failure paths route through the diagnostics helper")
         return True

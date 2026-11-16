@@ -2,9 +2,10 @@
 # test_mixed_source_manifest_contracts.py
 """
 Functional test for authorized mixed-source manifest and evidence contracts.
-Version: 0.261.023
+Version: 0.261.142
 Implemented in: 0.250.062; Phase 2 request/evidence coverage added in 0.250.064;
 XSD source partition coverage added in 0.261.023
+OneNote narrative coverage ported in 0.261.142
 
 This test ensures Phase 1 of #1056 resolves requested sources once through
 current authorization boundaries, preserves ordering, partitions mixed source
@@ -356,6 +357,12 @@ def test_mixed_classification_order_and_partition():
         assert [entry["document_id"] for entry in partitions["narrative_sources"]] == [
             "personal-docx",
         ]
+
+
+def test_onenote_sources_use_narrative_processing():
+    for filename in ("notes.one", "notebook.onepkg", "NOTES.ONE", "NOTEBOOK.ONEPKG"):
+        source_kind = orchestration.classify_source_kind(filename)
+        assert source_kind == orchestration.SOURCE_KIND_NARRATIVE
 
 
 def test_xsd_summary_evidence_preserves_schema_source_kind():
@@ -998,6 +1005,7 @@ def test_manifest_diagnostics_are_aggregate_only():
 def run_tests():
     tests = [
         test_mixed_classification_order_and_partition,
+        test_onenote_sources_use_narrative_processing,
         test_duplicates_and_cross_scope_filename_identity,
         test_unresolved_and_unsupported_do_not_erase_valid_sources,
         test_personal_group_public_and_chat_authorization,

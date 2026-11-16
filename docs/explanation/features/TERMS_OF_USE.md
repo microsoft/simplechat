@@ -3,7 +3,7 @@
 ## Overview
 
 Implemented in version: **0.250.055**
-Current documentation version: **0.261.051**
+Current documentation version: **0.261.428**
 Markdown rendering implemented in version: **0.261.049**
 
 Terms of Use lets administrators require users to accept configurable terms, rules of behavior, or an entry notice before using SimpleChat. It is separate from the existing upload-focused User Agreement.
@@ -54,6 +54,8 @@ Numbers and Terms content are committed together through the existing
 conflict-protected settings store. Conflicting or failed saves cannot consume a
 revision number. If migration cannot be persisted, the application does not claim
 an uncommitted `v1`. The baseline itself does not invalidate existing acceptances.
+
+* **V2 interface** (from **0.261.287**): A request under `/v2` is gated to `/v2/terms-of-use` instead of the classic page, so V2 users stay in the V2 experience. The V2 page reads and answers the terms through `GET /api/v2/terms-of-use`, `POST /api/v2/terms-of-use/accept` and `POST /api/v2/terms-of-use/decline`, which share the classic acceptance, versioning, redirect-safety and audit logic. See [V2 Terms of Use and Approval Requests](V2_TERMS_AND_APPROVALS.md).
 
 ## Usage Instructions
 
@@ -106,6 +108,8 @@ now has its usual formatting meaning.
 * UI coverage: [Terms of Use browser tests](../../../ui_tests/test_terms_of_use_ui.py) exercise the actual template and shared Markdown filter at desktop/mobile sizes, with JavaScript disabled, safe rendering of hostile content, line breaks, scrolling, and unchanged accept/cancel POST forms.
 * Revision coverage: [settings-store concurrency tests](../../../functional_tests/test_app_settings_store_consistency.py) and [Activity Logs UI/export tests](../../../ui_tests/test_terms_of_use_activity_logs.py).
 * Related implementation: [pure configuration and revision helpers](../../../application/single_app/functions_terms_of_use_config.py), [terms template](../../../application/single_app/templates/terms_of_use.html), [shared Markdown filter](../../../application/single_app/app.py), and [application version](../../../application/single_app/config.py).
+* UI template coverage: `ui_tests/test_terms_of_use_ui.py`
+* V2 coverage: `functional_tests/test_v2_terms_and_approvals.py`, `ui_tests/test_v2_approvals_and_terms_pages.py`
 
 ## Known Limitations
 

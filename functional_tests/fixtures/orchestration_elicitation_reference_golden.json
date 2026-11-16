@@ -1,0 +1,3248 @@
+{
+  "_meta": {
+    "captured_from": "feefa33bea95697015bd8a251abb9e9c336f7ea9",
+    "function": "functions_orchestration_context.resolve_elicitation_references",
+    "note": "Captured before the shared reference core existed. Never regenerate."
+  },
+  "references_not_a_list": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Select at most 100 context references.",
+      "field": null,
+      "args": [
+        "Select at most 100 context references."
+      ],
+      "str": "Select at most 100 context references."
+    },
+    "calls": []
+  },
+  "references_none": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Select at most 100 context references.",
+      "field": null,
+      "args": [
+        "Select at most 100 context references."
+      ],
+      "str": "Select at most 100 context references."
+    },
+    "calls": []
+  },
+  "references_over_limit": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Select at most 100 context references.",
+      "field": null,
+      "args": [
+        "Select at most 100 context references."
+      ],
+      "str": "Select at most 100 context references."
+    },
+    "calls": []
+  },
+  "references_at_limit_with_duplicates": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Own report"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "references_empty": {
+    "result": [],
+    "calls": []
+  },
+  "conversation_foreign": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That conversation is no longer available.",
+      "field": null,
+      "args": [
+        "That conversation is no longer available."
+      ],
+      "str": "That conversation is no longer available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-foreign",
+          "partition_key": "conv-foreign"
+        }
+      }
+    ]
+  },
+  "conversation_missing": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That conversation is no longer available.",
+      "field": null,
+      "args": [
+        "That conversation is no longer available."
+      ],
+      "str": "That conversation is no longer available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-missing",
+          "partition_key": "conv-missing"
+        }
+      }
+    ]
+  },
+  "intruder_reads_owner_conversation": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That conversation is no longer available.",
+      "field": null,
+      "args": [
+        "That conversation is no longer available."
+      ],
+      "str": "That conversation is no longer available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_not_a_dict": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Choose a file, tag, or workspace from the context picker.",
+      "field": null,
+      "args": [
+        "Choose a file, tag, or workspace from the context picker."
+      ],
+      "str": "Choose a file, tag, or workspace from the context picker."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_extra_key": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Choose a file, tag, or workspace from the context picker.",
+      "field": null,
+      "args": [
+        "Choose a file, tag, or workspace from the context picker."
+      ],
+      "str": "Choose a file, tag, or workspace from the context picker."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_bad_kind": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The context reference is invalid.",
+      "field": null,
+      "args": [
+        "The context reference is invalid."
+      ],
+      "str": "The context reference is invalid."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_scope_not_a_dict": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The context reference is invalid.",
+      "field": null,
+      "args": [
+        "The context reference is invalid."
+      ],
+      "str": "The context reference is invalid."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_scope_extra_key": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The context scope is invalid.",
+      "field": null,
+      "args": [
+        "The context scope is invalid."
+      ],
+      "str": "The context scope is invalid."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_bad_scope_kind": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The context scope is invalid.",
+      "field": null,
+      "args": [
+        "The context scope is invalid."
+      ],
+      "str": "The context scope is invalid."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_id_not_text": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Use text of at most 512 characters.",
+      "field": null,
+      "args": [
+        "Use text of at most 512 characters."
+      ],
+      "str": "Use text of at most 512 characters."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_id_too_long": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Use text of at most 512 characters.",
+      "field": null,
+      "args": [
+        "Use text of at most 512 characters."
+      ],
+      "str": "Use text of at most 512 characters."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_id_blank": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The context reference has no identity.",
+      "field": null,
+      "args": [
+        "The context reference has no identity."
+      ],
+      "str": "The context reference has no identity."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "reference_scope_id_not_text": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Use text of at most 512 characters.",
+      "field": null,
+      "args": [
+        "Use text of at most 512 characters."
+      ],
+      "str": "Use text of at most 512 characters."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "group_reference_without_scope_id": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Select the workspace or conversation that owns this reference.",
+      "field": null,
+      "args": [
+        "Select the workspace or conversation that owns this reference."
+      ],
+      "str": "Select the workspace or conversation that owns this reference."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "chat_attachment_in_personal_scope": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Conversation attachments must use their owning conversation.",
+      "field": null,
+      "args": [
+        "Conversation attachments must use their owning conversation."
+      ],
+      "str": "Conversation attachments must use their owning conversation."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "document_in_chat_scope": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Conversation attachments must use their owning conversation.",
+      "field": null,
+      "args": [
+        "Conversation attachments must use their owning conversation."
+      ],
+      "str": "Conversation attachments must use their owning conversation."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "shape_error_after_valid_reference": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The context reference is invalid.",
+      "field": null,
+      "args": [
+        "The context reference is invalid."
+      ],
+      "str": "The context reference is invalid."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "chat_attachment_other_conversation": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Select an attachment from this conversation.",
+      "field": null,
+      "args": [
+        "Select an attachment from this conversation."
+      ],
+      "str": "Select an attachment from this conversation."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "settings_none": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That workspace capability is currently disabled.",
+      "field": null,
+      "args": [
+        "That workspace capability is currently disabled."
+      ],
+      "str": "That workspace capability is currently disabled."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "personal_disabled": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That workspace capability is currently disabled.",
+      "field": null,
+      "args": [
+        "That workspace capability is currently disabled."
+      ],
+      "str": "That workspace capability is currently disabled."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "group_disabled": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That workspace capability is currently disabled.",
+      "field": null,
+      "args": [
+        "That workspace capability is currently disabled."
+      ],
+      "str": "That workspace capability is currently disabled."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "public_disabled": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That workspace capability is currently disabled.",
+      "field": null,
+      "args": [
+        "That workspace capability is currently disabled."
+      ],
+      "str": "That workspace capability is currently disabled."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "personal_foreign_scope_id": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That personal workspace is not available.",
+      "field": null,
+      "args": [
+        "That personal workspace is not available."
+      ],
+      "str": "That personal workspace is not available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "personal_own_scope_id": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Own report"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "locked_allows_personal_and_group": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Own report"
+      },
+      {
+        "kind": "document",
+        "id": "grp-doc",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Group budget"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-locked",
+          "partition_key": "conv-locked"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv-locked",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv-locked",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv-locked",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv-locked",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "locked_rejects_public": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "This conversation is locked to different workspaces.",
+      "field": null,
+      "args": [
+        "This conversation is locked to different workspaces."
+      ],
+      "str": "This conversation is locked to different workspaces."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-locked",
+          "partition_key": "conv-locked"
+        }
+      }
+    ]
+  },
+  "locked_rejects_other_group": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "This conversation is locked to different workspaces.",
+      "field": null,
+      "args": [
+        "This conversation is locked to different workspaces."
+      ],
+      "str": "This conversation is locked to different workspaces."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-locked",
+          "partition_key": "conv-locked"
+        }
+      }
+    ]
+  },
+  "locked_context_allows_public": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "pub-doc",
+        "scope": {
+          "kind": "public",
+          "id": "public-a",
+          "name": "Company handbook"
+        },
+        "label": "Public handbook"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-locked-context",
+          "partition_key": "conv-locked-context"
+        }
+      },
+      {
+        "fn": "get_user_visible_public_workspace_ids_from_settings",
+        "arguments": {
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_public_workspace_by_id",
+        "arguments": {
+          "workspace_id": "public-a"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [
+            "public-a"
+          ],
+          "conversation_id": "conv-locked-context",
+          "doc_scope": "public",
+          "document_ids": [
+            "pub-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [
+            "public-a"
+          ],
+          "context_resolver": true,
+          "conversation_id": "conv-locked-context",
+          "doc_scope": "public",
+          "requested_sources": [
+            "pub-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "locked_context_rejects_personal": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "This conversation is locked to different workspaces.",
+      "field": null,
+      "args": [
+        "This conversation is locked to different workspaces."
+      ],
+      "str": "This conversation is locked to different workspaces."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-locked-context",
+          "partition_key": "conv-locked-context"
+        }
+      }
+    ]
+  },
+  "locked_without_contexts": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "This conversation is locked to different workspaces.",
+      "field": null,
+      "args": [
+        "This conversation is locked to different workspaces."
+      ],
+      "str": "This conversation is locked to different workspaces."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv-locked-empty",
+          "partition_key": "conv-locked-empty"
+        }
+      }
+    ]
+  },
+  "group_left": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That workspace is not available. Select another reference.",
+      "field": null,
+      "args": [
+        "That workspace is not available. Select another reference."
+      ],
+      "str": "That workspace is not available. Select another reference."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-left",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "group_gone": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That workspace is no longer available.",
+      "field": null,
+      "args": [
+        "That workspace is no longer available."
+      ],
+      "str": "That workspace is no longer available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-gone",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-gone"
+        }
+      }
+    ]
+  },
+  "public_hidden": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That public workspace is not available.",
+      "field": null,
+      "args": [
+        "That public workspace is not available."
+      ],
+      "str": "That public workspace is not available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "get_user_visible_public_workspace_ids_from_settings",
+        "arguments": {
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "public_gone": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That workspace is no longer available.",
+      "field": null,
+      "args": [
+        "That workspace is no longer available."
+      ],
+      "str": "That workspace is no longer available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "get_user_visible_public_workspace_ids_from_settings",
+        "arguments": {
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_public_workspace_by_id",
+        "arguments": {
+          "workspace_id": "public-gone"
+        }
+      }
+    ]
+  },
+  "group_checked_once_per_scope": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "grp-doc",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Group budget"
+      },
+      {
+        "kind": "document",
+        "id": "grp-doc-2",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Group roadmap"
+      },
+      {
+        "kind": "tag",
+        "id": "grp-tag",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "grp-tag"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc",
+            "grp-doc-2"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc",
+            "grp-doc-2"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": "group-a",
+          "public_workspace_id": null,
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "documents_across_workspaces": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Own report"
+      },
+      {
+        "kind": "document",
+        "id": "grp-doc",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Group budget"
+      },
+      {
+        "kind": "document",
+        "id": "pub-doc",
+        "scope": {
+          "kind": "public",
+          "id": "public-a",
+          "name": "Company handbook"
+        },
+        "label": "Public handbook"
+      },
+      {
+        "kind": "document",
+        "id": "own-2",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Second report"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "get_user_visible_public_workspace_ids_from_settings",
+        "arguments": {
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_public_workspace_by_id",
+        "arguments": {
+          "workspace_id": "public-a"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own",
+            "own-2"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own",
+            "own-2"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [
+            "public-a"
+          ],
+          "conversation_id": "conv",
+          "doc_scope": "public",
+          "document_ids": [
+            "pub-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [
+            "public-a"
+          ],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "public",
+          "requested_sources": [
+            "pub-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "duplicates_removed": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Own report"
+      },
+      {
+        "kind": "document",
+        "id": "grp-doc",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Group budget"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "same_document_in_two_groups": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is unavailable or no longer authorized. Select another file.",
+      "field": null,
+      "args": [
+        "A selected file is unavailable or no longer authorized. Select another file."
+      ],
+      "str": "A selected file is unavailable or no longer authorized. Select another file."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-b",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-b"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-b"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-b"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "label_from_file_name": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own-file-only",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "file-only.docx"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own-file-only"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own-file-only"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "label_falls_back_to_id": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own-unnamed",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "own-unnamed"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own-unnamed"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own-unnamed"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "long_display_name_truncated": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own-long-name",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own-long-name"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own-long-name"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "unknown_document": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is unavailable or no longer authorized. Select another file.",
+      "field": null,
+      "args": [
+        "A selected file is unavailable or no longer authorized. Select another file."
+      ],
+      "str": "A selected file is unavailable or no longer authorized. Select another file."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "ghost"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "ghost"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "another_users_document": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is unavailable or no longer authorized. Select another file.",
+      "field": null,
+      "args": [
+        "A selected file is unavailable or no longer authorized. Select another file."
+      ],
+      "str": "A selected file is unavailable or no longer authorized. Select another file."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "intruder-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "intruder-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "group_document_as_personal": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is unavailable or no longer authorized. Select another file.",
+      "field": null,
+      "args": [
+        "A selected file is unavailable or no longer authorized. Select another file."
+      ],
+      "str": "A selected file is unavailable or no longer authorized. Select another file."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "group_document_in_other_group": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is unavailable or no longer authorized. Select another file.",
+      "field": null,
+      "args": [
+        "A selected file is unavailable or no longer authorized. Select another file."
+      ],
+      "str": "A selected file is unavailable or no longer authorized. Select another file."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-b",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-b"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-b"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-b"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "processing_document": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.",
+      "field": null,
+      "args": [
+        "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+      ],
+      "str": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own-processing"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own-processing"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "failed_document": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.",
+      "field": null,
+      "args": [
+        "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+      ],
+      "str": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own-failed"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own-failed"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "legacy_document_without_progress": {
+    "result": [
+      {
+        "kind": "document",
+        "id": "own-legacy",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Legacy memo"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own-legacy"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own-legacy"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "unreadable_progress": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.",
+      "field": null,
+      "args": [
+        "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+      ],
+      "str": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own-bad-progress"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own-bad-progress"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "context_count_mismatch": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The selected files could not be verified. Please retry.",
+      "field": null,
+      "args": [
+        "The selected files could not be verified. Please retry."
+      ],
+      "str": "The selected files could not be verified. Please retry."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own",
+            "own-2"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "context_lookup_raises": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The selected files could not be verified. Please retry.",
+      "field": null,
+      "args": [
+        "The selected files could not be verified. Please retry."
+      ],
+      "str": "The selected files could not be verified. Please retry."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "manifest_raises": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The selected files could not be verified. Please retry.",
+      "field": null,
+      "args": [
+        "The selected files could not be verified. Please retry."
+      ],
+      "str": "The selected files could not be verified. Please retry."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "error_after_valid_document": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is unavailable or no longer authorized. Select another file.",
+      "field": null,
+      "args": [
+        "A selected file is unavailable or no longer authorized. Select another file."
+      ],
+      "str": "A selected file is unavailable or no longer authorized. Select another file."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own",
+            "ghost"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own",
+            "ghost"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "chat_attachment_ready": {
+    "result": [
+      {
+        "kind": "chat_attachment",
+        "id": "att-ready",
+        "scope": {
+          "kind": "chat",
+          "id": "conv",
+          "name": "This conversation"
+        },
+        "label": "Uploaded notes"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "document_ids": [
+            "att-ready"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "requested_sources": [
+            "att-ready"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "messages.query_items",
+        "arguments": {
+          "parameters": [
+            {
+              "name": "@document_id",
+              "value": "att-ready"
+            }
+          ],
+          "partition_key": "conv",
+          "query": "SELECT c.id, c.workspace_document_id, c.file_content_source, c.status, c.percentage_complete FROM c WHERE c.id = @document_id"
+        }
+      }
+    ]
+  },
+  "chat_attachment_workspace_wrapper": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "Select the workspace document for this upload and wait for its processing to finish.",
+      "field": null,
+      "args": [
+        "Select the workspace document for this upload and wait for its processing to finish."
+      ],
+      "str": "Select the workspace document for this upload and wait for its processing to finish."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "document_ids": [
+            "att-wrapper"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "requested_sources": [
+            "att-wrapper"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "messages.query_items",
+        "arguments": {
+          "parameters": [
+            {
+              "name": "@document_id",
+              "value": "att-wrapper"
+            }
+          ],
+          "partition_key": "conv",
+          "query": "SELECT c.id, c.workspace_document_id, c.file_content_source, c.status, c.percentage_complete FROM c WHERE c.id = @document_id"
+        }
+      }
+    ]
+  },
+  "chat_attachment_without_message": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That attachment is no longer available.",
+      "field": null,
+      "args": [
+        "That attachment is no longer available."
+      ],
+      "str": "That attachment is no longer available."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "document_ids": [
+            "att-no-row"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "requested_sources": [
+            "att-no-row"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "messages.query_items",
+        "arguments": {
+          "parameters": [
+            {
+              "name": "@document_id",
+              "value": "att-no-row"
+            }
+          ],
+          "partition_key": "conv",
+          "query": "SELECT c.id, c.workspace_document_id, c.file_content_source, c.status, c.percentage_complete FROM c WHERE c.id = @document_id"
+        }
+      }
+    ]
+  },
+  "chat_attachment_processing": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it.",
+      "field": null,
+      "args": [
+        "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+      ],
+      "str": "A selected file is still processing or failed. Wait for it to finish, retry the upload, or remove it."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "document_ids": [
+            "att-processing"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "requested_sources": [
+            "att-processing"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "messages.query_items",
+        "arguments": {
+          "parameters": [
+            {
+              "name": "@document_id",
+              "value": "att-processing"
+            }
+          ],
+          "partition_key": "conv",
+          "query": "SELECT c.id, c.workspace_document_id, c.file_content_source, c.status, c.percentage_complete FROM c WHERE c.id = @document_id"
+        }
+      }
+    ]
+  },
+  "chat_attachment_query_fails": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That attachment could not be checked. Please retry.",
+      "field": null,
+      "args": [
+        "That attachment could not be checked. Please retry."
+      ],
+      "str": "That attachment could not be checked. Please retry."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "document_ids": [
+            "att-ready"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "requested_sources": [
+            "att-ready"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "messages.query_items",
+        "arguments": {
+          "parameters": [
+            {
+              "name": "@document_id",
+              "value": "att-ready"
+            }
+          ],
+          "partition_key": "conv",
+          "query": "SELECT c.id, c.workspace_document_id, c.file_content_source, c.status, c.percentage_complete FROM c WHERE c.id = @document_id"
+        }
+      }
+    ]
+  },
+  "chat_attachment_that_is_a_workspace_document": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "A selected file is unavailable or no longer authorized. Select another file.",
+      "field": null,
+      "args": [
+        "A selected file is unavailable or no longer authorized. Select another file."
+      ],
+      "str": "A selected file is unavailable or no longer authorized. Select another file."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "chat_attachment_with_workspace_document": {
+    "result": [
+      {
+        "kind": "chat_attachment",
+        "id": "att-ready",
+        "scope": {
+          "kind": "chat",
+          "id": "conv",
+          "name": "This conversation"
+        },
+        "label": "Uploaded notes"
+      },
+      {
+        "kind": "document",
+        "id": "own",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Own report"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "document_ids": [
+            "att-ready"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "all",
+          "requested_sources": [
+            "att-ready"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "messages.query_items",
+        "arguments": {
+          "parameters": [
+            {
+              "name": "@document_id",
+              "value": "att-ready"
+            }
+          ],
+          "partition_key": "conv",
+          "query": "SELECT c.id, c.workspace_document_id, c.file_content_source, c.status, c.percentage_complete FROM c WHERE c.id = @document_id"
+        }
+      }
+    ]
+  },
+  "tags_in_each_workspace": {
+    "result": [
+      {
+        "kind": "tag",
+        "id": "review",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "review"
+      },
+      {
+        "kind": "tag",
+        "id": "grp-tag",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "grp-tag"
+      },
+      {
+        "kind": "tag",
+        "id": "pub-tag",
+        "scope": {
+          "kind": "public",
+          "id": "public-a",
+          "name": "Company handbook"
+        },
+        "label": "pub-tag"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "get_user_visible_public_workspace_ids_from_settings",
+        "arguments": {
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_public_workspace_by_id",
+        "arguments": {
+          "workspace_id": "public-a"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": null,
+          "public_workspace_id": null,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": "group-a",
+          "public_workspace_id": null,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": null,
+          "public_workspace_id": "public-a",
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "tag_missing": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That tag is no longer available in the selected workspace.",
+      "field": null,
+      "args": [
+        "That tag is no longer available in the selected workspace."
+      ],
+      "str": "That tag is no longer available in the selected workspace."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": null,
+          "public_workspace_id": null,
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "tag_case_must_match": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "That tag is no longer available in the selected workspace.",
+      "field": null,
+      "args": [
+        "That tag is no longer available in the selected workspace."
+      ],
+      "str": "That tag is no longer available in the selected workspace."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": null,
+          "public_workspace_id": null,
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "tag_lookup_raises": {
+    "error": {
+      "type": "RuntimeError",
+      "message": null,
+      "field": null,
+      "args": [
+        "tag lookup failed"
+      ],
+      "str": "tag lookup failed"
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": null,
+          "public_workspace_id": null,
+          "user_id": "owner"
+        }
+      }
+    ]
+  },
+  "personal_workspace_scope_ids": {
+    "result": [
+      {
+        "kind": "scope",
+        "id": "personal",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "My workspace"
+      },
+      {
+        "kind": "scope",
+        "id": "personal",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "My workspace"
+      },
+      {
+        "kind": "scope",
+        "id": "personal",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "My workspace"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      }
+    ]
+  },
+  "workspace_scope_id_mismatch": {
+    "error": {
+      "type": "ElicitationContextError",
+      "message": "The workspace identity does not match its scope.",
+      "field": null,
+      "args": [
+        "The workspace identity does not match its scope."
+      ],
+      "str": "The workspace identity does not match its scope."
+    },
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      }
+    ]
+  },
+  "group_and_public_workspace_scopes": {
+    "result": [
+      {
+        "kind": "scope",
+        "id": "group-a",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Finance team"
+      },
+      {
+        "kind": "scope",
+        "id": "public-a",
+        "scope": {
+          "kind": "public",
+          "id": "public-a",
+          "name": "Company handbook"
+        },
+        "label": "Company handbook"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "get_user_visible_public_workspace_ids_from_settings",
+        "arguments": {
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_public_workspace_by_id",
+        "arguments": {
+          "workspace_id": "public-a"
+        }
+      }
+    ]
+  },
+  "long_workspace_name_truncated": {
+    "result": [
+      {
+        "kind": "scope",
+        "id": "group-long",
+        "scope": {
+          "kind": "group",
+          "id": "group-long",
+          "name": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+        },
+        "label": "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-long",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-long"
+        }
+      }
+    ]
+  },
+  "mixed_order_kept": {
+    "result": [
+      {
+        "kind": "tag",
+        "id": "budget",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "budget"
+      },
+      {
+        "kind": "document",
+        "id": "grp-doc",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Group budget"
+      },
+      {
+        "kind": "scope",
+        "id": "group-a",
+        "scope": {
+          "kind": "group",
+          "id": "group-a",
+          "name": "Finance team"
+        },
+        "label": "Finance team"
+      },
+      {
+        "kind": "document",
+        "id": "own",
+        "scope": {
+          "kind": "personal",
+          "id": null,
+          "name": "My workspace"
+        },
+        "label": "Own report"
+      }
+    ],
+    "calls": [
+      {
+        "fn": "conversations.read_item",
+        "arguments": {
+          "item": "conv",
+          "partition_key": "conv"
+        }
+      },
+      {
+        "fn": "assert_group_role",
+        "arguments": {
+          "allowed_roles": [
+            "Owner",
+            "Admin",
+            "DocumentManager",
+            "User"
+          ],
+          "group_id": "group-a",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "find_group_by_id",
+        "arguments": {
+          "group_id": "group-a"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "document_ids": [
+            "grp-doc"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [
+            "group-a"
+          ],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "group",
+          "requested_sources": [
+            "grp-doc"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_document_contexts",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_id": [],
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "document_ids": [
+            "own"
+          ],
+          "include_content": false,
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "resolve_authorized_source_manifest",
+        "arguments": {
+          "active_group_ids": [],
+          "active_public_workspace_ids": [],
+          "context_resolver": true,
+          "conversation_id": "conv",
+          "doc_scope": "personal",
+          "requested_sources": [
+            "own"
+          ],
+          "selection_mode": "selected",
+          "user_id": "owner"
+        }
+      },
+      {
+        "fn": "get_workspace_tags",
+        "arguments": {
+          "group_id": null,
+          "public_workspace_id": null,
+          "user_id": "owner"
+        }
+      }
+    ]
+  }
+}

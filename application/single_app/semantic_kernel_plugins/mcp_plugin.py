@@ -25,8 +25,16 @@ from functions_mcp_operations import (
     normalize_mcp_tool_call_arguments,
     validate_mcp_tool_arguments,
 )
+from functions_mcp_tool_pinning import (
+    MCP_TOOL_FINGERPRINTS_FIELD,
+    filter_pinned_mcp_tools,
+    normalize_mcp_tool_fingerprints,
+)
 from semantic_kernel_plugins.base_plugin import BasePlugin
-from semantic_kernel_plugins.plugin_invocation_logger import plugin_function_logger
+from semantic_kernel_plugins.plugin_invocation_logger import (
+    plugin_function_logger,
+    report_plugin_invocation_failure,
+)
 
 
 class McpPlugin(BasePlugin):
@@ -43,9 +51,12 @@ class McpPlugin(BasePlugin):
         self.manifest["type"] = MCP_PLUGIN_TYPE
         self.manifest["additionalFields"] = self._additional_fields
         self._allowed_tool_names = set(self._additional_fields.get("allowed_tool_names") or [])
-        self._tools = self._filter_tools(
-            normalize_mcp_tool_metadata(self._additional_fields.get("mcp_tools", []))
+        self._fingerprints = normalize_mcp_tool_fingerprints(
+            self._additional_fields.get(MCP_TOOL_FINGERPRINTS_FIELD)
         )
+        self._tools = self._filter_tools(self._approved_tools(
+            normalize_mcp_tool_metadata(self._additional_fields.get("mcp_tools", []))
+        ))
 
     def _validate_manifest(self):
         if not isinstance(self.manifest, dict) or resolve_action_type(self.manifest) != MCP_PLUGIN_TYPE:
@@ -65,6 +76,15 @@ class McpPlugin(BasePlugin):
             if tool.get("original_name") in self._allowed_tool_names
             or tool.get("function_name") in self._allowed_tool_names
         ]
+
+    def _approved_tools(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        approved_tools, drift = filter_pinned_mcp_tools(tools, self._fingerprints)
+        if drift.get("has_drift"):
+            debug_print(
+                "[MCP_PLUGIN] Cached MCP tool metadata does not match approved fingerprints; "
+                f"changed={drift.get('changed')} new={drift.get('new')} removed={drift.get('removed')}"
+            )
+        return approved_tools
 
     @property
     def display_name(self) -> str:
@@ -135,7 +155,8 @@ class McpPlugin(BasePlugin):
             description = f"{description}\n\nInput schema: {input_schema}"
 
         async def tool_function(**kwargs):
-            return await self.call_tool(original_name, kwargs)
+            result = await self.call_tool(original_name, kwargs)
+            return self._report_tool_outcome(result)
 
         tool_function.__name__ = function_name
         tool_function.__qualname__ = f"McpPlugin.{function_name}"
@@ -150,6 +171,7 @@ class McpPlugin(BasePlugin):
             "success": True,
             "transport": self._additional_fields.get("transport"),
             "allowed_tool_names": sorted(self._allowed_tool_names),
+            "fingerprint_manifest_hash": self._fingerprints.get("manifest_hash"),
             "tool_count": len(self._tools),
             "tools": self._tools,
         }
@@ -158,6 +180,16 @@ class McpPlugin(BasePlugin):
     @kernel_function(description="Call an MCP tool by its original MCP tool name with a JSON object of arguments.")
     async def call_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
         """Call a configured MCP tool by original name."""
+        result = await self._call_tool(tool_name, arguments)
+        return self._report_tool_outcome(result)
+
+    @staticmethod
+    def _report_tool_outcome(result: dict) -> dict:
+        if result.get("success") is False:
+            report_plugin_invocation_failure(result.get("error") or "MCP tool call failed.")
+        return result
+
+    async def _call_tool(self, tool_name: str, arguments: Optional[dict] = None) -> dict:
         try:
             self._validate_manifest()
         except (ValueError, PermissionError) as exc:

@@ -107,7 +107,7 @@ For Azure Government, use the corresponding sovereign-cloud private DNS zones su
 - `privatelink.search.azure.us`
 - `privatelink.openai.azure.us`
 - `privatelink.cognitiveservices.azure.us`
-- `privatelink.vaultcore.azure.us`
+- `privatelink.vaultcore.usgovcloudapi.net`
 - `privatelink.azurecr.us`
 
 For detailed private networking guidance, see:
@@ -203,6 +203,7 @@ $param_AzureOpenAiEmbeddingModelName = ""
 $param_AzureOpenAiEmbeddingModelVersion = "" # Leave blank to use the default for the selected cloud and region.
 $param_AzureOpenAiEmbeddingDeploymentCapacity = 80
 $param_DeployVideoIndexerService = $false
+$param_VideoIndexerLocation = "" # Optional Video Indexer region. Leave blank to use $paramLocation. Set it when $paramLocation does not offer Video Indexer (for example, northcentralus); a different region gets a dedicated Video Indexer storage account there.
 $param_CustomGraphUrl = ""
 $param_CustomIdentityUrl = ""
 $param_CustomResourceManagerUrl = ""
@@ -216,6 +217,7 @@ $param_Existing_ResourceGroupName = "RG-SimpleChat-Experiemental" # Leave empty 
 
 # Private networking
 $param_EnablePrivateNetworking = $false
+$param_EnableAzureMonitorPrivateLink = $false
 $param_ExistingVirtualNetworkId = "" # Optional existing VNet resource ID to reuse.
 $param_ExistingAppServiceSubnetId = "" # Required when reusing an existing VNet for App Service regional integration.
 $param_ExistingPrivateEndpointSubnetId = "" # Required when reusing an existing VNet for private endpoints.
@@ -292,7 +294,7 @@ if ($globalWhichAzurePlatform -eq "AzureCloud") {
         cognitiveServices = "privatelink.cognitiveservices.azure.us"
         containerRegistry = "privatelink.azurecr.us"
         cosmosDb          = "privatelink.documents.azure.us"
-        keyVault          = "privatelink.vaultcore.azure.us"
+        keyVault          = "privatelink.vaultcore.usgovcloudapi.net"
         openAi            = "privatelink.openai.azure.us"
         webSites          = "privatelink.azurewebsites.us"
     }
@@ -328,7 +330,12 @@ if ($globalWhichAzurePlatform -eq "AzureCloud") {
 $paramDateTime_ScriptStart = Get-Date
 $paramDateTimeStamp = ($paramDateTime_ScriptStart).ToString("yyyy-MM-dd HH:mm:ss")
 
-$script:SupportedPrivateDnsZoneKeys = @("keyVault", "cosmosDb", "containerRegistry", "aiSearch", "blobStorage", "cognitiveServices", "openAi", "webSites")
+$script:SupportedPrivateDnsZoneKeys = @("keyVault", "cosmosDb", "containerRegistry", "aiSearch", "blobStorage", "cognitiveServices", "openAi", "webSites", "videoIndexer", "monitor", "monitorOms", "monitorOds", "monitorAgent", "monitorAdx")
+$monitorDnsNames = Get-Content (Join-Path $PSScriptRoot '../bicep/modules/privateDNSZones.json') -Raw | ConvertFrom-Json -AsHashtable
+$dnsCloud = if ($globalWhichAzurePlatform -eq 'AzureUSGovernment') { 'azureusgovernment' } else { 'azurecloud' }
+foreach ($zoneKey in @('videoIndexer', 'monitor', 'monitorOms', 'monitorOds', 'monitorAgent', 'monitorAdx')) {
+    $script:PrivateDnsZoneNames[$zoneKey] = $monitorDnsNames[$dnsCloud][$zoneKey]
+}
 $script:PrivateDnsZoneLinkSuffixes = @{
     aiSearch          = "searchService"
     blobStorage       = "storage"
@@ -338,6 +345,7 @@ $script:PrivateDnsZoneLinkSuffixes = @{
     keyVault          = "kv"
     openAi            = "openAiService"
     webSites          = "webApp"
+    videoIndexer      = "videoIndexer"
 }
 $script:UseExistingPrivateNetwork = $false
 $script:ResolvedVirtualNetworkId = ""
@@ -520,6 +528,118 @@ function Ensure-AzureCliAuthenticated {
         Write-Error "Azure CLI authentication could not be verified after login."
         exit 1
     }
+}
+
+function Ensure-KeyVaultSecretPermissions {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$VaultName,
+        [Parameter(Mandatory = $true)]
+        [string]$ResourceGroupName,
+        [Parameter(Mandatory = $true)]
+        [string[]]$PrincipalIds
+    )
+
+    $ErrorActionPreference = 'Stop'
+    foreach ($principalId in $PrincipalIds) {
+        $parsedPrincipalId = [guid]::Empty
+        if (-not [guid]::TryParse($principalId, [ref]$parsedPrincipalId) -or $parsedPrincipalId -eq [guid]::Empty) {
+            throw 'A valid application managed identity principal ID is required for Key Vault permissions.'
+        }
+    }
+    $principalIds = @($PrincipalIds | ForEach-Object { ([guid]$_).ToString() } | Select-Object -Unique)
+
+    $vaultJson = az keyvault show --name $VaultName --resource-group $ResourceGroupName `
+        --query "{id:id,rbacEnabled:properties.enableRbacAuthorization,accessPolicies:properties.accessPolicies}" `
+        --output json --only-show-errors
+    if ($LASTEXITCODE -ne 0 -or -not $vaultJson) {
+        throw "Failed to read Key Vault '$VaultName' permission configuration."
+    }
+    $vault = $vaultJson | ConvertFrom-Json -ErrorAction Stop
+    if ($vault.id -notmatch '^/subscriptions/[^/]+/resourceGroups/[^/]+/providers/Microsoft\.KeyVault/vaults/[^/]+$') {
+        throw 'Key Vault permissions require a vault resource scope.'
+    }
+    if ($null -ne $vault.rbacEnabled -and $vault.rbacEnabled -isnot [bool]) {
+        throw "Key Vault '$VaultName' returned an unknown authorization mode."
+    }
+
+    $officerRoleId = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
+    if ($vault.rbacEnabled) {
+        $readAssignments = {
+            $assignmentsJson = az role assignment list --scope $vault.id --role $officerRoleId `
+                --fill-principal-name false --fill-role-definition-name false --output json --only-show-errors
+            if ($LASTEXITCODE -ne 0 -or -not $assignmentsJson) {
+                throw "Failed to read Key Vault Secrets Officer assignments for '$VaultName'."
+            }
+            @($assignmentsJson | ConvertFrom-Json -ErrorAction Stop) | Where-Object {
+                $_.scope -ieq $vault.id -and ($_.roleDefinitionId -split '/')[-1] -ieq $officerRoleId
+            }
+        }
+        $assignments = @(& $readAssignments)
+    }
+
+    foreach ($principalId in $principalIds) {
+        if ($vault.rbacEnabled) {
+            $existing = @($assignments | Where-Object { $_.principalId -ieq $principalId })
+            $unrestricted = @($existing | Where-Object {
+                -not $_.PSObject.Properties['condition'] -or [string]::IsNullOrWhiteSpace($_.condition)
+            })
+            if (-not $unrestricted.Count) {
+                if ($existing.Count) {
+                    throw "The existing Key Vault Secrets Officer assignment for '$principalId' is conditional. Have an administrator review it; it has not been changed."
+                }
+
+                # Include the role in the stable name; never reuse a Secrets User assignment GUID.
+                $seed = "$($vault.id)|$principalId|$officerRoleId".ToLowerInvariant()
+                $hasher = [System.Security.Cryptography.SHA256]::Create()
+                try {
+                    $hash = $hasher.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($seed))
+                    $assignmentName = [guid]::new([byte[]]$hash[0..15]).ToString()
+                } finally {
+                    $hasher.Dispose()
+                }
+                az role assignment create --name $assignmentName --role $officerRoleId `
+                    --assignee-object-id $principalId --assignee-principal-type ServicePrincipal `
+                    --scope $vault.id --output none --only-show-errors
+                if ($LASTEXITCODE -ne 0) {
+                    # A concurrent/manual assignment may have won the race. Verify it, never delete it.
+                    $assignments = @(& $readAssignments)
+                    $confirmed = @($assignments | Where-Object {
+                        $_.principalId -ieq $principalId -and (
+                            -not $_.PSObject.Properties['condition'] -or [string]::IsNullOrWhiteSpace($_.condition)
+                        )
+                    })
+                    if (-not $confirmed.Count) {
+                        throw "Failed to assign Key Vault Secrets Officer to application identity '$principalId' at vault '$VaultName'."
+                    }
+                }
+            }
+        } else {
+            $policies = @($vault.accessPolicies | Where-Object {
+                $_.objectId -ieq $principalId -and (
+                    -not $_.PSObject.Properties['applicationId'] -or -not $_.applicationId
+                )
+            })
+            $existingPermissions = @($policies | ForEach-Object {
+                if ($_.permissions.PSObject.Properties['secrets']) {
+                    $_.permissions.secrets
+                }
+            })
+            $requiredPermissions = @('get', 'list', 'set', 'delete')
+            $missingPermissions = @($requiredPermissions | Where-Object { $existingPermissions -notcontains $_ })
+            if ($missingPermissions.Count) {
+                # set-policy replaces the secret permission list; retain any administrator-added rights.
+                $secretPermissions = @($existingPermissions + $requiredPermissions | Sort-Object -Unique)
+                az keyvault set-policy --name $VaultName --resource-group $ResourceGroupName `
+                    --object-id $principalId --secret-permissions $secretPermissions --output none --only-show-errors
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to set Key Vault secret permissions for application identity '$principalId' at vault '$VaultName'."
+                }
+            }
+        }
+    }
+    Write-Host "Key Vault secret permissions confirmed for the application identities at vault '$VaultName'."
 }
 
 function Resolve-ContainerImageInfo {
@@ -970,7 +1090,10 @@ function Show-PrivateNetworkingChecklist {
 
     Write-Host "`nPrivate DNS zone plan:" -ForegroundColor Yellow
     foreach ($zoneKey in $script:SupportedPrivateDnsZoneKeys) {
+        if ($zoneKey -like 'monitor*' -and -not $param_EnableAzureMonitorPrivateLink) { continue }
+        if ($zoneKey -eq 'videoIndexer' -and (-not $param_DeployVideoIndexerService -or $param_VideoIndexerArmApiVersion -ne '2025-04-01' -or $globalWhichAzurePlatform -eq 'AzureUSGovernment')) { continue }
         $zoneConfig = Get-PrivateDnsZoneConfig -ZoneKey $zoneKey
+        if ([string]::IsNullOrWhiteSpace($zoneConfig.ZoneName)) { continue }
         if ([string]::IsNullOrWhiteSpace($zoneConfig.ZoneResourceId)) {
             $zoneAction = "create in deployment resource group"
         } else {
@@ -996,6 +1119,9 @@ function Show-PrivateNetworkingChecklist {
 }
 
 function Test-PrivateNetworkingConfiguration {
+    if ($param_EnableAzureMonitorPrivateLink -and -not $param_EnablePrivateNetworking) {
+        throw 'param_EnableAzureMonitorPrivateLink requires param_EnablePrivateNetworking=true.'
+    }
     if (-not $param_EnablePrivateNetworking) {
         return
     }
@@ -1168,12 +1294,9 @@ function Ensure-PrivateEndpoint {
         if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create private endpoint '$privateEndpointName'."; exit 1 }
     }
 
-    $existingDnsZoneGroup = az network private-endpoint dns-zone-group show --resource-group $resourceGroupName --endpoint-name $privateEndpointName --name $dnsZoneGroupName --query id --output tsv 2>$null
-    if (-not $existingDnsZoneGroup) {
-        Write-Host "Associating private endpoint '$privateEndpointName' with private DNS zone '$($zoneConfig.ZoneName)'."
-        az network private-endpoint dns-zone-group create --resource-group $resourceGroupName --endpoint-name $privateEndpointName --name $dnsZoneGroupName --private-dns-zone $zoneResourceId --zone-name $zoneConfig.ZoneName | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Error "Failed to create the DNS zone group for private endpoint '$privateEndpointName'."; exit 1 }
-    }
+    Write-Host "Ensuring private endpoint '$privateEndpointName' uses private DNS zone '$($zoneConfig.ZoneName)'."
+    az network private-endpoint dns-zone-group create --resource-group $resourceGroupName --endpoint-name $privateEndpointName --name $dnsZoneGroupName --private-dns-zone $zoneResourceId --zone-name $zoneConfig.ZoneName | Out-Null
+    if ($LASTEXITCODE -ne 0) { Write-Error "Failed to reconcile the DNS zone group for private endpoint '$privateEndpointName'."; exit 1 }
 }
 
 function Update-ResourcePropertiesById {
@@ -1205,6 +1328,16 @@ function Configure-PrivateNetworkingForDeployment {
 
     Ensure-PrivateNetworkingInfrastructure
 
+    if ($param_EnableAzureMonitorPrivateLink) {
+        $subnetJson = az network vnet subnet show --ids $script:ResolvedPrivateEndpointSubnetId --output json
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to validate the AMPLS subnet.' }
+        $subnet = $subnetJson | ConvertFrom-Json
+        $prefixes = if ($subnet.addressPrefixes) { @($subnet.addressPrefixes) } else { @($subnet.addressPrefix) }
+        $supportedPrefixes = @($prefixes | Where-Object { $_ -match '^\d+\.\d+\.\d+\.\d+/(\d+)$' -and [int]$Matches[1] -le 27 })
+        if ($supportedPrefixes.Count -eq 0) { throw 'AMPLS requires an IPv4 subnet of /27 or larger; use /26 or larger when sharing with platform endpoints.' }
+        Write-Host 'AMPLS opted in: monitoring ingestion and queries will require private routing and DNS. Coordinate one AMPLS per shared DNS boundary.'
+    }
+
     Write-Host "`n=====> Configuring App Service VNet integration and web app network settings..."
     Update-ResourcePropertiesById -ResourceId $(az webapp show --name $appServiceName --resource-group $resourceGroupName --query id --output tsv) -PropertyAssignments @(
         "properties.publicNetworkAccess=Disabled",
@@ -1231,6 +1364,35 @@ function Configure-PrivateNetworkingForDeployment {
     Ensure-PrivateEndpoint -NameSuffix "storage" -ServiceResourceId $storageResourceId -GroupId "blob" -ZoneKey "blobStorage"
     Ensure-PrivateEndpoint -NameSuffix "docintel" -ServiceResourceId $docIntelResourceId -GroupId "account" -ZoneKey "cognitiveServices"
     Ensure-PrivateEndpoint -NameSuffix "webapp" -ServiceResourceId $webAppResourceId -GroupId "sites" -ZoneKey "webSites"
+
+    if ($param_DeployVideoIndexerService -and $param_VideoIndexerArmApiVersion -eq '2025-04-01' -and $globalWhichAzurePlatform -ne 'AzureUSGovernment') {
+        $videoIndexerResourceId = az resource show --resource-group $resourceGroupName --name $videoIndexerName --resource-type Microsoft.VideoIndexer/accounts --api-version $param_VideoIndexerArmApiVersion --query id -o tsv
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($videoIndexerResourceId)) { throw 'Unable to resolve Video Indexer for its private endpoint.' }
+        Ensure-PrivateEndpoint -NameSuffix 'videoIndexer' -ServiceResourceId $videoIndexerResourceId -GroupId 'account' -ZoneKey 'videoIndexer'
+    }
+
+    if ($param_EnableAzureMonitorPrivateLink) {
+        $appInsightsResourceId = az monitor app-insights component show --app $appInsightsName --resource-group $resourceGroupName --query id -o tsv
+        if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($appInsightsResourceId) -or [string]::IsNullOrWhiteSpace($logAnalyticsWorkspaceId)) { throw 'Unable to resolve monitoring resources for AMPLS.' }
+        $monitorParameters = @{
+            location = @{ value = $paramLocation }
+            appName = @{ value = $paramBaseName }
+            environment = @{ value = $paramEnvironment }
+            tags = @{ value = $tags }
+            virtualNetworkId = @{ value = $script:ResolvedVirtualNetworkId }
+            privateEndpointSubnetId = @{ value = $script:ResolvedPrivateEndpointSubnetId }
+            privateDnsZoneConfigs = @{ value = $param_PrivateDnsZoneConfigs }
+            blobStorageDnsZoneId = @{ value = (Ensure-PrivateDnsZone -ZoneKey 'blobStorage') }
+            monitoringResourceIds = @{ value = @($logAnalyticsWorkspaceId, $appInsightsResourceId) }
+        } | ConvertTo-Json -Depth 20 -Compress
+        $monitorTemplate = Join-Path $PSScriptRoot '../bicep/modules/azureMonitorPrivateNetworking.json'
+        az deployment group create --resource-group $resourceGroupName --name azureMonitorPrivateNetworking --template-file $monitorTemplate --parameters $monitorParameters | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'Failed to deploy AMPLS; monitoring public access has not been disabled.' }
+        foreach ($monitorResourceId in @($logAnalyticsWorkspaceId, $appInsightsResourceId)) {
+            az resource update --ids $monitorResourceId --set properties.publicNetworkAccessForIngestion=Disabled properties.publicNetworkAccessForQuery=Disabled | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to disable monitoring public access.' }
+        }
+    }
 
     if (-not [string]::IsNullOrWhiteSpace($OpenAiResourceId)) {
         Ensure-PrivateEndpoint -NameSuffix "openai" -ServiceResourceId $OpenAiResourceId -GroupId "account" -ZoneKey "openAi"
@@ -1276,6 +1438,15 @@ $videoIndexerName = Get-ResourceName -ResourceTypeSuffix $paramVideoIndexerSuffi
 $storageAccountName = Get-GloballyUniqueResourceName -ResourceTypeSuffix $paramStorageAccountSuffix # Storage names are strict (lowercase, no hyphens, 3-24 chars)
 if ($storageAccountName.Length -gt 24) { $storageAccountName = $storageAccountName.Substring(0, 24) }
 if ($storageAccountName.Length -lt 3) { Write-Error "Generated storage account name '$storageAccountName' is too short. Adjust base name or suffix." ; exit 1 }
+$videoIndexerLocation = if ([string]::IsNullOrWhiteSpace($param_VideoIndexerLocation)) { $paramLocation } else { $param_VideoIndexerLocation }
+$videoIndexerLocation = ($videoIndexerLocation -replace '\s', '').ToLower()
+# Video Indexer keeps its media in a storage account in its own region.
+$videoIndexerUsesDedicatedStorage = $videoIndexerLocation -ne (($paramLocation -replace '\s', '').ToLower())
+$videoIndexerStorageAccountName = Get-GloballyUniqueResourceName -ResourceTypeSuffix "vi"
+if ($videoIndexerStorageAccountName.Length -gt 24) { $videoIndexerStorageAccountName = $videoIndexerStorageAccountName.Substring(0, 24) }
+# The app identity needs generateAccessToken. Video Indexer Account Contributor is the least-privilege
+# built-in role; Contributor is used where that newer role has not been confirmed.
+$videoIndexerAppRoleName = if ($globalWhichAzurePlatform -eq "AzureCloud") { "Video Indexer Account Contributor" } else { "Contributor" }
 #$containerRegistryName = Get-GloballyUniqueResourceName -ResourceTypeSuffix $paramContainerRegistrySuffix # ACR names are strict
 $entraGroupName_Admins = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-Admins"
 $entraGroupName_Users = "$($paramBaseName)-$($paramEnvironment)-$($paramEntraGroupNameSuffix)-Users"
@@ -1517,33 +1688,49 @@ if (-not $storageAccount) {
 }
 
 
+# --- Ensure private application containers, including on an existing account ---
+$requiredStorageContainers = @(
+    'user-documents', 'group-documents', 'public-documents', 'personal-chat', 'group-chat'
+)
+$existingStorageContainersJson = az storage container-rm list --storage-account $storageAccountName `
+    --resource-group $resourceGroupName --query "[].name" --output json --only-show-errors
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to inspect application storage containers in '$storageAccountName'."
+}
+$existingStorageContainers = @($existingStorageContainersJson | ConvertFrom-Json -ErrorAction Stop)
+foreach ($containerName in $requiredStorageContainers) {
+    if ($existingStorageContainers -notcontains $containerName) {
+        az storage container-rm create --name $containerName --storage-account $storageAccountName `
+            --resource-group $resourceGroupName --public-access off --output none --only-show-errors
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to create private application storage container '$containerName'."
+        }
+        Write-Host "Created private application storage container '$containerName'."
+    }
+}
+
 # --- Create User-Assigned Managed Identity ---
 Write-Host "`n=====> Creating User-Assigned Managed Identity: $($managedIdentityName)..."
 # Check if the managed identity exists
 $identity = az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "name" --output tsv 2>$null
 if (-not $identity) {
-    az identity create --name $managedIdentityName --resource-group $resourceGroupName --location $paramLocation
-    if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create User-Assigned Managed Identity '$($managedIdentityName)'." }
-    else {
-        $managedIdentityPrincipalId = $(az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "principalId" -o tsv)
-        $managedIdentityId = $(az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "id" -o tsv)
-        Write-Host "User-Assigned Managed Identity '$($managedIdentityName)' created with Principal ID: $managedIdentityPrincipalId and Resource ID: $managedIdentityId"
-        # Example: Grant Managed Identity access to Key Vault (secrets get/list)
-        if ($keyVaultName -and $managedIdentityPrincipalId) {
-            Write-Host "=====> Granting Managed Identity '$($managedIdentityName)' access to Key Vault '$($keyVaultName)' (get/list secrets)..."
-            # Check if KV is RBAC or policy based
-            $kvRbacEnabled = $(az keyvault show --name $keyVaultName --resource-group $resourceGroupName --query "properties.enableRbacAuthorization" -o tsv)
-            if ($kvRbacEnabled -eq "true") {
-                az role assignment create --role "Key Vault Secrets User" --assignee-object-id $managedIdentityPrincipalId --scope $(az keyvault show --name $keyVaultName --resource-group $resourceGroupName --query id -o tsv) --assignee-principal-type ServicePrincipal
-                if ($LASTEXITCODE -ne 0) { Write-Error "Failed to assign 'Key Vault Secrets User' role to Managed Identity '$($managedIdentityName)' for Key Vault '$($keyVaultName)'."}
-            } else {
-                az keyvault set-policy --name $keyVaultName --resource-group $resourceGroupName --object-id $managedIdentityPrincipalId --secret-permissions get list
-                if ($LASTEXITCODE -ne 0) { Write-Error "Failed to set Key Vault policy for Managed Identity '$($managedIdentityName)' on Key Vault '$($keyVaultName)'."}
-            }
-        }
+    az identity create --name $managedIdentityName --resource-group $resourceGroupName --location $paramLocation --output none --only-show-errors
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to create User-Assigned Managed Identity '$managedIdentityName'."
     }
 } else {
     Write-Host "Managed Identity '$managedIdentityName' already exists."
+}
+
+$managedIdentityJson = az identity show --name $managedIdentityName --resource-group $resourceGroupName --output json --only-show-errors
+if ($LASTEXITCODE -ne 0 -or -not $managedIdentityJson) {
+    throw "Failed to read User-Assigned Managed Identity '$managedIdentityName'."
+}
+$managedIdentity = $managedIdentityJson | ConvertFrom-Json -ErrorAction Stop
+$managedIdentityId = $managedIdentity.id
+$managedIdentityPrincipalId = $managedIdentity.principalId
+if ([string]::IsNullOrWhiteSpace($managedIdentityId) -or [string]::IsNullOrWhiteSpace($managedIdentityPrincipalId)) {
+    throw "Managed Identity '$managedIdentityName' is missing its resource or principal ID."
 }
 
 
@@ -1574,12 +1761,6 @@ if (-not $webApp) {
         if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to create App Service '$($appServiceName)'." }
         else {
             Write-Host "App Service '$($appServiceName)' created successfully. URL: http://$($appServiceName).azurewebsites.us"
-            # Example: Assign the managed identity to the App Service
-            if ($managedIdentityId) {
-                Write-Host "Assigning Managed Identity '$($managedIdentityName)' to App Service '$($appServiceName)'..."
-                az webapp identity assign --name $appServiceName --resource-group $resourceGroupName --identities $managedIdentityId
-                if ($LASTEXITCODE -ne 0) { Write-Warning "Failed to assign Managed Identity to App Service '$($appServiceName)'."}
-            }
         }
 
         Write-Host "`n=====> Setting App Service Container Image ..."
@@ -1615,9 +1796,6 @@ if (-not $webApp) {
         # --client-secret "<your-client-secret>" `
         # --issuer "https://login.microsoftonline.us/6bc5b33e-bc05-493c-b076-8f8ce1331515/v2.0"
 
-        # Enable System Managed Identity
-        az webapp identity assign --name $appServiceName --resource-group $resourceGroupName
-
     } else {
         Write-Error "Cannot create App Service because App Service Plan '$($appServicePlanName)' was not found or failed to create."
     }
@@ -1625,6 +1803,13 @@ if (-not $webApp) {
     Write-Host "Web App '$appServiceName' already exists."
 }
 
+# --- Reconcile App Service managed identities ---
+# Run for existing apps too: a blank Key Vault client ID selects the system identity.
+az webapp identity assign --name $appServiceName --resource-group $resourceGroupName `
+    --identities '[system]' $managedIdentityId --output none --only-show-errors
+if ($LASTEXITCODE -ne 0) {
+    throw "Failed to configure the application managed identities for App Service '$appServiceName'."
+}
 
 # --- Entra App Registration ---
 Write-Host "`n=====> Creating Entra App Registration: $($appServiceName)..."
@@ -1901,16 +2086,37 @@ $searchServiceUrl = $param_AiSearch_Url -f $searchServiceName
 
 # --- Create Azure Video Indexer Service ---
 if ($param_DeployVideoIndexerService) {
-    Write-Host "`n=====> Creating Azure Video Indexer Service: $($videoIndexerName)..."
+    Write-Host "`n=====> Creating Azure Video Indexer Service: $($videoIndexerName) in $($videoIndexerLocation)..."
     $videoIndexerSubscriptionId = az account show --query id --output tsv
     $videoIndexerArmBaseUrl = $paramArmUrl.TrimEnd('/')
     $videoIndexerUri = "$videoIndexerArmBaseUrl/subscriptions/$videoIndexerSubscriptionId/resourceGroups/$resourceGroupName/providers/Microsoft.VideoIndexer/accounts/$videoIndexerName?api-version=$param_VideoIndexerArmApiVersion"
     $existingVideoIndexer = az rest --method get --uri $videoIndexerUri 2>$null | ConvertFrom-Json
 
     if (-not $existingVideoIndexer) {
+        if ($videoIndexerUsesDedicatedStorage) {
+            Write-Host "Video Indexer region '$videoIndexerLocation' differs from '$paramLocation'. Using storage account '$videoIndexerStorageAccountName' in the Video Indexer region."
+            $videoIndexerStorageResourceId = az storage account show --name $videoIndexerStorageAccountName --resource-group $resourceGroupName --query id --output tsv 2>$null
+            if (-not $videoIndexerStorageResourceId) {
+                # Only Video Indexer uses this account, and it connects as a trusted Azure service. A disabled
+                # public endpoint would also block that path, so private networking denies all other traffic instead.
+                $videoIndexerStorageDefaultAction = if ($param_EnablePrivateNetworking) { 'Deny' } else { 'Allow' }
+                $videoIndexerStorageTags = @($tags.GetEnumerator() | ForEach-Object { "$($_.Key)=$($_.Value)" })
+                $videoIndexerStorageResourceId = az storage account create --name $videoIndexerStorageAccountName --resource-group $resourceGroupName `
+                    --location $videoIndexerLocation --sku $paramStorageSku --kind StorageV2 --access-tier Hot `
+                    --allow-blob-public-access false --min-tls-version TLS1_2 --public-network-access Enabled `
+                    --default-action $videoIndexerStorageDefaultAction --bypass AzureServices `
+                    --tags $videoIndexerStorageTags --query id --output tsv
+                if ($LASTEXITCODE -ne 0 -or -not $videoIndexerStorageResourceId) {
+                    Write-Warning "Failed to create Video Indexer storage account '$($videoIndexerStorageAccountName)'."
+                }
+            }
+        } else {
+            $videoIndexerStorageResourceId = az storage account show --name $storageAccountName --resource-group $resourceGroupName --query id --output tsv
+        }
+
         $videoIndexerProperties = @{
             storageServices = @{
-                resourceId = $(az storage account show --name $storageAccountName --resource-group $resourceGroupName --query id --output tsv)
+                resourceId = $videoIndexerStorageResourceId
             }
         }
 
@@ -1930,7 +2136,7 @@ if ($param_DeployVideoIndexerService) {
         }
 
         $videoIndexerBody = @{
-            location = $paramLocation
+            location = $videoIndexerLocation
             identity = @{
                 type = 'SystemAssigned'
             }
@@ -1947,6 +2153,10 @@ if ($param_DeployVideoIndexerService) {
         }
     } else {
         Write-Host "Azure Video Indexer Service '$videoIndexerName' already exists."
+    }
+
+    if ($existingVideoIndexer) {
+        Write-Host "Configure Admin Settings > AI Video Intelligence with Resource Group '$resourceGroupName', Account Name '$videoIndexerName', Account ID '$($existingVideoIndexer.properties.accountId)', and Location '$($existingVideoIndexer.location)'."
     }
 }
 
@@ -2014,7 +2224,7 @@ Write-Host "`n`n=====> Performing RBAC Assignments ..." -ForegroundColor Yellow
 
 Write-Host "`nGetting Managed Identity Principal Id"
 $managedIdentity_PrincipalId = az identity show --name $managedIdentityName --resource-group $resourceGroupName --query "principalId" --output tsv 2>$null
-if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get Managed Identity [$managedIdentityName]." }
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($managedIdentity_PrincipalId)) { throw "Failed to get Managed Identity [$managedIdentityName]." }
 else { Write-Host "Found Managed Identity [$managedIdentityName] with Principal Id: [$managedIdentity_PrincipalId]." }
 
 Write-Host "`nGetting Entra App Registration App Id for [$appRegistrationName]"
@@ -2026,7 +2236,7 @@ else { Write-Host "Found App Registration Service Principal [$appRegistrationNam
 
 Write-Host "`nGetting App Service System Managed Identity Object Id for [$appServiceName]"
 $appService_SystemManagedIdentity_ObjectId = az webapp identity show --name $appServiceName --resource-group $resourceGroupName --query "principalId" --output tsv
-if ($LASTEXITCODE -ne 0) { Write-Error "Failed to get App Service SMI [$appServiceName]." }
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($appService_SystemManagedIdentity_ObjectId)) { throw "Failed to get App Service SMI [$appServiceName]." }
 else { Write-Host "Found App Service SMI [$appServiceName] with Principal/Object Id: [$appService_SystemManagedIdentity_ObjectId]." }
 
 
@@ -2206,7 +2416,8 @@ if ($param_DeployVideoIndexerService) {
     $videoIndexerPrincipalId = az resource show --ids $videoIndexerResourceId --api-version $param_VideoIndexerArmApiVersion --query "identity.principalId" --output tsv 2>$null
 
     if (-not [string]::IsNullOrWhiteSpace($videoIndexerPrincipalId)) {
-        $storageResourceId = az storage account show --name $storageAccountName --resource-group $resourceGroupName --query "id" --output tsv
+        # Use the storage account the Video Indexer account is actually connected to.
+        $storageResourceId = az resource show --ids $videoIndexerResourceId --api-version $param_VideoIndexerArmApiVersion --query "properties.storageServices.resourceId" --output tsv
         $assignment = az role assignment list --assignee $videoIndexerPrincipalId --scope "$storageResourceId" --query "[?roleDefinitionName=='Storage Blob Data Contributor']" --output json | ConvertFrom-Json
         if (-not $assignment) {
             az role assignment create --assignee $videoIndexerPrincipalId --role "Storage Blob Data Contributor" --scope "$storageResourceId" | Out-Null
@@ -2225,6 +2436,20 @@ if ($param_DeployVideoIndexerService) {
         }
     } else {
         Write-Warning "Azure Video Indexer principal ID could not be resolved. Skipping Video Indexer RBAC assignments."
+    }
+
+    # SimpleChat calls Video Indexer generateAccessToken with the App Service system-assigned identity.
+    if (-not [string]::IsNullOrWhiteSpace($videoIndexerResourceId) -and -not [string]::IsNullOrWhiteSpace($appService_SystemManagedIdentity_ObjectId)) {
+        $assignment = az role assignment list --assignee $appService_SystemManagedIdentity_ObjectId --scope "$videoIndexerResourceId" --query "[?roleDefinitionName=='$videoIndexerAppRoleName']" --output json | ConvertFrom-Json
+        if (-not $assignment) {
+            az role assignment create --assignee-object-id $appService_SystemManagedIdentity_ObjectId --assignee-principal-type ServicePrincipal `
+                --role "$videoIndexerAppRoleName" --scope "$videoIndexerResourceId" | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Failed to grant '$videoIndexerAppRoleName' on Video Indexer to the App Service managed identity."
+            }
+        }
+    } else {
+        Write-Warning "Azure Video Indexer or App Service identity could not be resolved. Grant the App Service managed identity '$videoIndexerAppRoleName' on the Video Indexer account manually."
     }
 }
 
@@ -2258,11 +2483,10 @@ if (-not $assignment) {
 }
 
 #-------------------------------------------------------------
-#Write-Host "Getting Key Vault: Resource ID"
+Write-Host "Reconciling Key Vault runtime secret permissions"
 #-------------------------------------------------------------
-# This is stubbed out for now. Nothing to do.
-# Maybe assign RBAC > Key Vault Administrator to > deployer ServicePrincipal in order for secrets to be created.
-# Key Vault Secrets User
+Ensure-KeyVaultSecretPermissions -VaultName $keyVaultName -ResourceGroupName $resourceGroupName `
+    -PrincipalIds @($appService_SystemManagedIdentity_ObjectId, $managedIdentity_PrincipalId)
 
 #-------------------------------------------------------------
 Write-Host "Getting Storage Account: Resource ID"

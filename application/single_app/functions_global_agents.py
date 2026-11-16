@@ -17,6 +17,7 @@ from config import cosmos_global_agents_container
 from functions_keyvault import keyvault_agent_save_helper, keyvault_agent_get_helper, keyvault_agent_delete_helper
 from functions_settings import *
 from functions_agent_payload import sanitize_agent_payload, AgentPayloadError
+from functions_agent_delegation import validate_agent_delegation_bindings
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 
 
@@ -219,6 +220,11 @@ def save_global_agent(agent_data, user_id=None):
         except Exception:
             pass
 
+        validate_agent_delegation_bindings(
+            cleaned_agent, user_id=user_id, scope_type="global", scope_id="global",
+            existing_agent=existing_agent,
+        )
+
         if existing_agent:
             cleaned_agent['created_by'] = existing_agent.get('created_by', user_id)
             cleaned_agent['created_at'] = existing_agent.get('created_at', now)
@@ -285,7 +291,12 @@ def delete_global_agent(agent_id):
     try:
         user_id = get_current_user_id()
         print(f"Deleting global agent: {agent_id}")
-        agent_dict = get_global_agent(agent_id)
+        # Read the stored references, not the UI placeholders: a masked read rebuilds the
+        # classic secret name, which misses the fresh names the V2 editor saves under.
+        agent_dict = cosmos_global_agents_container.read_item(
+            item=agent_id,
+            partition_key=agent_id
+        )
         keyvault_agent_delete_helper(agent_dict, agent_id, scope="global")
         cosmos_global_agents_container.delete_item(
             item=agent_id,

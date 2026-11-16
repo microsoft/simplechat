@@ -8,6 +8,7 @@ and chat-uploaded documents (personal-chat container).
 """
 import asyncio
 import copy
+import hashlib
 from datetime import date, datetime
 import io
 import json
@@ -15,6 +16,7 @@ import logging
 import math
 import re
 import tempfile
+import tokenize
 import warnings
 import pandas
 from azure.core import MatchConditions
@@ -22,7 +24,22 @@ from flask import g, has_request_context
 from typing import Annotated, Dict, List, Optional, Set
 from urllib.parse import urlsplit, urlunsplit
 from semantic_kernel.functions import kernel_function
+from excel_workbook_reader import (
+    EXCEL_PREVIEW_MAX_BYTES,
+    EXCEL_PREVIEW_MAX_COLUMNS,
+    EXCEL_WORKBOOK_SCHEMA_VERSION,
+    ExcelWorkbookReader,
+)
 from semantic_kernel_plugins.plugin_invocation_logger import PluginInvocationResult, plugin_function_logger
+from content_screening.access import (
+    PRIVATE_CONTAINER,
+    PROVENANCE_FIELD,
+    assert_blob_available,
+    document_provenance,
+    read_available_document_bytes,
+    resolve_available_blob_location,
+)
+from content_screening.contracts import SCREENING_FIELD, ScreeningConflictError, ScreeningError
 from functions_appinsights import log_event
 from functions_authentication import get_current_user_id
 from functions_tabular_csv_query import (
@@ -30,8 +47,8 @@ from functions_tabular_csv_query import (
     read_tabular_csv,
     validate_tabular_csv_query_expression,
 )
-from functions_group import find_group_by_id, get_user_role_in_group
-from functions_public_workspaces import get_user_visible_public_workspace_ids_from_settings
+from functions_group import assert_group_role, find_group_by_id, get_user_role_in_group
+from functions_public_workspaces import find_public_workspace_by_id, get_public_source_workspace_ids
 from config import (
     CLIENTS,
     TABULAR_EXTENSIONS,
@@ -40,6 +57,27 @@ from config import (
     storage_account_group_documents_container_name,
     storage_account_public_documents_container_name,
 )
+
+
+class TabularSelectionError(ValueError):
+    """A user-actionable selection failure, containing no storage error text."""
+
+    def __init__(self, message, *, code='table_selection_required', choices=None):
+        super().__init__(message)
+        self.public_message = message
+        self.code = code
+        self.choices = copy.deepcopy(choices or [])
+
+
+class TabularSavedValueError(ValueError):
+    """The selected operation depends on formulas without saved results."""
+
+    def __init__(self):
+        self.public_message = (
+            "Selected formula cells have no saved cached values. Recalculate and save "
+            "the workbook in Excel before computing these values."
+        )
+        super().__init__(self.public_message)
 
 
 class TabularProcessingPlugin:
@@ -121,6 +159,7 @@ class TabularProcessingPlugin:
     ROW_OUTPUT_SAFE_CHAR_LIMIT = 50000
     ROW_OUTPUT_PROTECTED_COLUMNS = (
         '_sheet',
+        '_excel_source',
         '_matched_columns',
         '_matched_values',
         '_matched_on',
@@ -128,13 +167,16 @@ class TabularProcessingPlugin:
         '_related_document_reference_values',
     )
 
-    def __init__(self):
-        self._df_cache = {}  # Per-instance cache: (container, blob_name, sheet_name) -> DataFrame
-        self._blob_data_cache = {}  # Per-instance cache: (container, blob_name) -> raw bytes
-        self._workbook_metadata_cache = {}  # Per-instance cache: (container, blob_name) -> workbook metadata
+    def __init__(self, *, authorized_user_id=None):
+        self._df_cache = {}  # Source version and explicit selection -> DataFrame
+        self._blob_data_cache = {}  # (container, blob_name, ETag) -> raw bytes
+        self._workbook_metadata_cache = {}  # (container, blob_name, ETag) -> workbook metadata
         self._blob_version_cache = {}  # Per-instance cache: (container, blob_name) -> immutable blob version metadata
         self._default_sheet_overrides = {}  # (container, blob_name) -> default sheet name
         self._resolved_blob_location_overrides = {}  # (source, filename) -> (container, blob_name)
+        self._screening_source_versions = {}
+        self._screening_user_id = authorized_user_id
+        self._last_table_reads = {}
 
     @classmethod
     def get_discovery_function_names(cls):
@@ -331,11 +373,14 @@ class TabularProcessingPlugin:
         if not normalized_group_id:
             return False
 
-        if authorized_context and normalized_group_id in set(authorized_context.get('active_group_ids') or []):
+        try:
+            assert_group_role(
+                user_id, normalized_group_id,
+                allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+            )
             return True
-
-        group_doc = find_group_by_id(normalized_group_id)
-        return bool(group_doc and get_user_role_in_group(group_doc, user_id))
+        except (LookupError, PermissionError, ValueError):
+            return False
 
     def _is_authorized_public_workspace_scope(
         self,
@@ -347,6 +392,8 @@ class TabularProcessingPlugin:
         normalized_public_workspace_id = str(public_workspace_id or '').strip()
         if not normalized_public_workspace_id:
             return False
+        if not find_public_workspace_by_id(normalized_public_workspace_id):
+            return False
 
         if authorized_context and normalized_public_workspace_id in set(
             authorized_context.get('active_public_workspace_ids') or []
@@ -354,12 +401,14 @@ class TabularProcessingPlugin:
             return True
 
         visible_public_workspace_ids = set(
-            get_user_visible_public_workspace_ids_from_settings(user_id) or []
+            get_public_source_workspace_ids(user_id) or []
         )
         return normalized_public_workspace_id in visible_public_workspace_ids
 
     def _is_authorized_blob_location(self, container_name: str, blob_path: str, authorized_context: dict) -> bool:
         """Ensure remembered blob locations still fall within the caller's authorized request scope."""
+        if str(container_name).lower() == PRIVATE_CONTAINER:
+            return False
         exact_authorized_locations = {
             (str(location[0]), str(location[1]))
             for location in authorized_context.get('authorized_blob_locations') or []
@@ -399,40 +448,86 @@ class TabularProcessingPlugin:
 
         return False
 
+    def _evict_screened_blob_cache(self, container_name, blob_name):
+        cache_key = (container_name, blob_name)
+        for cache_name in ("_blob_data_cache", "_workbook_metadata_cache", "_df_cache", "_last_table_reads"):
+            cache = getattr(self, cache_name)
+            for key in list(cache):
+                if key[:2] == cache_key:
+                    cache.pop(key, None)
+        self._blob_version_cache.pop(cache_key, None)
+        self._screening_source_versions.pop(cache_key, None)
+
+    def _assert_blob_screening_access(self, container_name, blob_name, *, purpose="native"):
+        if has_request_context():
+            context = self._get_authorized_chat_context()
+            if not self._is_authorized_blob_location(container_name, blob_name, context):
+                raise PermissionError("Tabular source is no longer authorized.")
+            user_id = context["user_id"]
+        else:
+            user_id = self._screening_user_id
+            if not user_id:
+                raise PermissionError("Tabular source authorization is required.")
+        cache_key = (container_name, blob_name)
+        try:
+            document = assert_blob_available(
+                container_name, blob_name, user_id=user_id, purpose=purpose,
+            )
+            if document is not None:
+                provenance = document_provenance(document)
+                previous = self._screening_source_versions.get(cache_key)
+                if previous is not None and previous != provenance:
+                    raise ScreeningConflictError()
+                self._screening_source_versions[cache_key] = provenance
+            return document, user_id
+        except Exception:
+            self._evict_screened_blob_cache(container_name, blob_name)
+            raise
+
     def _list_tabular_blobs(self, container_name: str, prefix: str) -> List[str]:
         """List all tabular file blobs under a given prefix."""
+        if str(container_name).lower() == PRIVATE_CONTAINER:
+            raise PermissionError("Reviewer-only storage is not available to ordinary tools.")
         client = self._get_blob_service_client()
         container_client = client.get_container_client(container_name)
         blobs = []
         for blob in container_client.list_blobs(name_starts_with=prefix):
             name_lower = blob['name'].lower()
             if any(name_lower.endswith(ext) for ext in self.SUPPORTED_EXTENSIONS):
+                try:
+                    self._assert_blob_screening_access(container_name, blob["name"], purpose="enumeration")
+                except (ScreeningError, PermissionError, LookupError):
+                    continue
                 blobs.append(blob['name'])
         return blobs
 
     def _download_tabular_blob_bytes(self, container_name: str, blob_name: str) -> bytes:
         """Download a blob once and reuse the raw bytes across sheet-aware operations."""
-        cache_key = (container_name, blob_name)
+        document, user_id = self._assert_blob_screening_access(container_name, blob_name)
+        blob_version = self._get_tabular_blob_version(container_name, blob_name, refresh=True)
+        cache_key = (container_name, blob_name, blob_version['blob_etag'])
         if cache_key in self._blob_data_cache:
             return self._blob_data_cache[cache_key]
 
+        if document is not None and SCREENING_FIELD in document:
+            _, data = read_available_document_bytes(document, user_id=user_id, purpose="native")
+            self._blob_data_cache[cache_key] = data
+            return data
+
         client = self._get_blob_service_client()
         blob_client = client.get_blob_client(container=container_name, blob=blob_name)
-        blob_version = self._get_tabular_blob_version(
-            container_name,
-            blob_name,
-            refresh=True,
-        )
         stream = blob_client.download_blob(
             etag=blob_version['blob_etag'],
             match_condition=MatchConditions.IfNotModified,
         )
         data = stream.readall()
+        self._assert_blob_screening_access(container_name, blob_name)
         self._blob_data_cache[cache_key] = data
         return data
 
     def _get_tabular_blob_version(self, container_name: str, blob_name: str, refresh: bool = False) -> dict:
         """Return the exact blob version used by this plugin instance."""
+        document, _user_id = self._assert_blob_screening_access(container_name, blob_name)
         cache_key = (container_name, blob_name)
         if not refresh and cache_key in self._blob_version_cache:
             return dict(self._blob_version_cache[cache_key])
@@ -441,7 +536,11 @@ class TabularProcessingPlugin:
             container=container_name,
             blob=blob_name,
         )
-        blob_properties = blob_client.get_blob_properties()
+        try:
+            blob_properties = blob_client.get_blob_properties()
+        except Exception:
+            self._evict_screened_blob_cache(container_name, blob_name)
+            raise
         blob_etag = getattr(blob_properties, 'etag', None)
         blob_size = getattr(blob_properties, 'size', None)
         if isinstance(blob_properties, dict):
@@ -449,11 +548,22 @@ class TabularProcessingPlugin:
             blob_size = blob_size if blob_size is not None else blob_properties.get('size')
         if not blob_etag:
             raise ValueError('Tabular source version could not be determined')
+        if document is not None and SCREENING_FIELD in document:
+            if str(blob_etag) != str(document[SCREENING_FIELD]["active_blob"]["etag"]):
+                self._evict_screened_blob_cache(container_name, blob_name)
+                raise ScreeningConflictError()
 
         blob_version = {
             'blob_etag': str(blob_etag),
             'blob_size': int(blob_size or 0),
         }
+        if document is not None:
+            blob_version[PROVENANCE_FIELD] = document_provenance(document)
+        previous = self._blob_version_cache.get(cache_key)
+        if previous is not None and previous != blob_version:
+            self._evict_screened_blob_cache(container_name, blob_name)
+            if document is not None:
+                self._screening_source_versions[cache_key] = document_provenance(document)
         self._blob_version_cache[cache_key] = blob_version
         return dict(blob_version)
 
@@ -468,7 +578,8 @@ class TabularProcessingPlugin:
 
     def _get_workbook_metadata(self, container_name: str, blob_name: str) -> dict:
         """Return workbook metadata including available sheet names for Excel files."""
-        cache_key = (container_name, blob_name)
+        blob_version = self._get_tabular_blob_version(container_name, blob_name, refresh=True)
+        cache_key = (container_name, blob_name, blob_version['blob_etag'])
         if cache_key in self._workbook_metadata_cache:
             return copy.deepcopy(self._workbook_metadata_cache[cache_key])
 
@@ -478,18 +589,29 @@ class TabularProcessingPlugin:
             'sheet_names': [],
             'sheet_count': 0,
             'default_sheet': None,
+            'blob_etag': blob_version['blob_etag'],
         }
 
         if engine:
             data = self._download_tabular_blob_bytes(container_name, blob_name)
-            excel_file = pandas.ExcelFile(io.BytesIO(data), engine=engine)
-            sheet_names = list(excel_file.sheet_names)
+            extension = '.xls' if engine == 'xlrd' else '.xlsm' if blob_name.lower().endswith('.xlsm') else '.xlsx'
+            with ExcelWorkbookReader(data, extension=extension) as reader:
+                manifest = reader.build_manifest()
+            manifest['source_sha256'] = hashlib.sha256(data).hexdigest()
+            sheet_names = [sheet['name'] for sheet in manifest['sheets']]
             metadata.update({
                 'sheet_names': sheet_names,
                 'sheet_count': len(sheet_names),
                 'default_sheet': sheet_names[0] if sheet_names else None,
+                'inspection_schema_version': EXCEL_WORKBOOK_SCHEMA_VERSION,
+                'table_count': manifest['table_count'],
+                'tables': [table for sheet in manifest['sheets'] for table in sheet['tables']],
+                'tables_by_sheet': {sheet['name']: sheet['tables'] for sheet in manifest['sheets']},
+                'coverage': manifest['coverage'],
+                'workbook_manifest': manifest,
             })
 
+        self._assert_blob_screening_access(container_name, blob_name)
         self._workbook_metadata_cache[cache_key] = copy.deepcopy(metadata)
         return copy.deepcopy(metadata)
 
@@ -500,8 +622,12 @@ class TabularProcessingPlugin:
         sheet_name: Optional[str] = None,
         sheet_index: Optional[str] = None,
         require_explicit_sheet: bool = False,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> tuple:
         """Resolve a workbook sheet selection and enforce explicit choice when required."""
+        table_id, cell_range, header_row = self._normalize_table_selectors(table_id, cell_range, header_row)
         workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
         if not workbook_metadata.get('is_workbook'):
             return None, workbook_metadata
@@ -509,6 +635,18 @@ class TabularProcessingPlugin:
         available_sheets = workbook_metadata.get('sheet_names', [])
         if not available_sheets:
             raise ValueError(f"Workbook '{blob_name}' does not contain any readable sheets.")
+        if table_id and table_id != 'all' and not sheet_name and sheet_index in (None, ''):
+            matches = [
+                table for table in workbook_metadata.get('tables') or []
+                if table['id'] == table_id or table['name'] == table_id
+            ]
+            if len(matches) != 1:
+                raise TabularSelectionError(
+                    "The requested workbook table was not found or is ambiguous.",
+                    code='table_selection_invalid',
+                    choices=self._table_choices(workbook_metadata),
+                )
+            sheet_name = matches[0]['sheet']
 
         matched_sheet_name = self._match_workbook_sheet_name(sheet_name, available_sheets)
         if matched_sheet_name:
@@ -516,9 +654,11 @@ class TabularProcessingPlugin:
 
         normalized_sheet_name = (sheet_name or '').strip()
         if normalized_sheet_name:
-            raise ValueError(
+            raise TabularSelectionError(
                 f"Sheet '{normalized_sheet_name}' was not found in workbook '{blob_name}'. "
-                f"Available sheets: {available_sheets}."
+                f"Available sheets: {available_sheets}.",
+                code='sheet_selection_invalid',
+                choices=self._table_choices(workbook_metadata),
             )
 
         normalized_sheet_index = None if sheet_index is None else str(sheet_index).strip()
@@ -542,19 +682,58 @@ class TabularProcessingPlugin:
 
         # Use pre-selected default sheet if one was set by the orchestration layer
         override_key = (container_name, blob_name)
-        if override_key in self._default_sheet_overrides:
+        if not cell_range and override_key in self._default_sheet_overrides:
             override_sheet = self._default_sheet_overrides[override_key]
             matched_override_sheet = self._match_workbook_sheet_name(override_sheet, available_sheets)
             if matched_override_sheet:
                 return matched_override_sheet, workbook_metadata
 
         if require_explicit_sheet:
-            raise ValueError(
+            raise TabularSelectionError(
                 f"Workbook '{blob_name}' has multiple sheets: {available_sheets}. "
-                "Specify sheet_name or sheet_index on analytical calls."
+                "Specify sheet_name or sheet_index on analytical calls.",
+                code='sheet_selection_required',
+                choices=self._table_choices(workbook_metadata),
             )
 
         return workbook_metadata.get('default_sheet'), workbook_metadata
+
+    @staticmethod
+    def _table_choices(workbook_metadata, sheet_name=None):
+        """Return compact choices rather than a guessed first table."""
+        return [
+            {
+                key: copy.deepcopy(table.get(key))
+                for key in ('id', 'name', 'sheet', 'range', 'header_row', 'header_status', 'row_count', 'columns')
+            }
+            for table in workbook_metadata.get('tables') or []
+            if sheet_name is None or table.get('sheet') == sheet_name
+        ]
+
+    @staticmethod
+    def _tabular_error_payload(error):
+        """Keep validation actionable without returning SDK or provider messages."""
+        log_event(
+            '[TABULAR_PROCESSING_PLUGIN] Tabular operation could not complete.',
+            level=logging.WARNING,
+            extra={'exception_type': type(error).__name__},
+        )
+        if isinstance(error, TabularSelectionError):
+            return {
+                'error': error.public_message, 'error_code': error.code,
+                'selection_required': True, 'table_choices': error.choices,
+            }
+        if isinstance(error, TabularSavedValueError):
+            return {'error': error.public_message, 'error_code': 'formula_cache_missing'}
+        if isinstance(error, (PermissionError, ScreeningError)):
+            return {
+                'error': 'This tabular source is unavailable or is no longer authorized.',
+                'error_code': 'tabular_source_unavailable',
+            }
+        return {
+            'error': 'Unable to analyze this tabular source. Check the selection, column names, and query, then try again.',
+            'error_code': 'tabular_analysis_failed',
+        }
 
     def _match_workbook_sheet_name(self, requested_sheet_name: Optional[str], available_sheets: List[str]) -> Optional[str]:
         """Match a workbook sheet name while tolerating trailing whitespace and case drift."""
@@ -623,7 +802,18 @@ class TabularProcessingPlugin:
         ]
         output_records = []
 
-        for _, row in row_frame.iterrows():
+        table = row_frame.attrs.get('excel_table')
+        if table is not None and '_excel_source' in row_frame.columns:
+            raise TabularSelectionError(
+                "The selected source uses the reserved Excel provenance field _excel_source.",
+                code='reserved_excel_column',
+            )
+        self._require_saved_values(row_frame, selected_column_names)
+        source_rows = row_frame.attrs.get('excel_row_numbers') or ()
+        source_tables = row_frame.attrs.get('excel_row_table_ids') or ()
+        source_ranges = row_frame.attrs.get('excel_table_ranges') or {}
+        source_offset = row_frame.attrs.get('excel_index_offset', 0)
+        for row_index, row in row_frame.iterrows():
             row_payload = {
                 str(column_name): row.get(column_name)
                 for column_name in selected_column_names
@@ -640,6 +830,14 @@ class TabularProcessingPlugin:
                     row_payload['_related_document_reference_values'] = merged_reference_values
                 else:
                     row_payload['_related_document_reference_values'] = related_document_reference_values
+            if table is not None:
+                ordinal = int(row_index) - source_offset
+                table_id = source_tables[ordinal] if 0 <= ordinal < len(source_tables) else table['id']
+                row_payload['_excel_source'] = {
+                    'sheet': table['sheet'], 'table_id': table_id,
+                    'range': source_ranges.get(table_id, table['range']),
+                    'row': source_rows[ordinal] if 0 <= ordinal < len(source_rows) else None,
+                }
             output_records.append(row_payload)
 
         return output_records
@@ -703,7 +901,7 @@ class TabularProcessingPlugin:
         safe_max_chars = int(max_chars or self.ROW_OUTPUT_SAFE_CHAR_LIMIT)
         requested_return_columns = self._parse_optional_column_list_argument(return_columns)
         return_columns_requested = return_columns is not None and str(return_columns).strip().casefold() not in {'', '*', 'all', 'all_columns', 'all columns'}
-        row_frame = pandas.DataFrame(list(rows or []))
+        row_frame = rows.copy() if isinstance(rows, pandas.DataFrame) else pandas.DataFrame(list(rows or []))
         total_count = max(0, int(total_row_count or 0))
 
         if row_frame.empty:
@@ -797,6 +995,9 @@ class TabularProcessingPlugin:
         max_rows: int = 100,
         start_row: int = 0,
         return_columns=None,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> Optional[str]:
         """Search for matching rows across all sheets that contain the requested column.
 
@@ -812,6 +1013,7 @@ class TabularProcessingPlugin:
             return None
 
         combined_results = []
+        parsed_return_columns = self._parse_optional_column_list_argument(return_columns)
         sheets_searched = []
         sheets_matched = []
         total_matches = 0
@@ -824,6 +1026,8 @@ class TabularProcessingPlugin:
                 container_name,
                 blob_name,
                 sheet_name=sheet,
+                require_explicit_sheet=True,
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
             )
             df = self._try_numeric_conversion(df)
 
@@ -841,6 +1045,8 @@ class TabularProcessingPlugin:
                     additional_filter_value=additional_filter_value,
                     normalize_match=normalize_match,
                 )
+            except TabularSavedValueError:
+                raise
             except (KeyError, ValueError):
                 continue
 
@@ -861,7 +1067,7 @@ class TabularProcessingPlugin:
             if remaining_capacity > 0:
                 filtered = filtered_df.iloc[skip_remaining:skip_remaining + remaining_capacity]
                 skip_remaining = 0
-                for row in filtered.to_dict(orient='records'):
+                for row in self._build_row_output_records(filtered, parsed_return_columns or list(filtered.columns)):
                     row['_sheet'] = sheet
                     combined_results.append(row)
             else:
@@ -917,6 +1123,9 @@ class TabularProcessingPlugin:
         normalize_match: bool = False,
         max_rows: int = 100,
         start_row: int = 0,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> Optional[str]:
         """Search rows across worksheets when the relevant text column is unknown or broad."""
         workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
@@ -946,6 +1155,8 @@ class TabularProcessingPlugin:
                 container_name,
                 blob_name,
                 sheet_name=sheet,
+                require_explicit_sheet=True,
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
             )
             df = self._try_numeric_conversion(df)
 
@@ -965,7 +1176,7 @@ class TabularProcessingPlugin:
                 continue
             except Exception as query_error:
                 return json.dumps({
-                    'error': f"Query/filter error: {query_error}",
+                    **self._tabular_error_payload(query_error),
                     'filename': filename,
                     'selected_sheet': 'ALL (cross-sheet search)',
                 }, indent=2, default=str)
@@ -986,7 +1197,7 @@ class TabularProcessingPlugin:
                 continue
             except ValueError as search_error:
                 return json.dumps({
-                    'error': str(search_error),
+                    **self._tabular_error_payload(search_error),
                     'filename': filename,
                     'selected_sheet': 'ALL (cross-sheet search)',
                 }, indent=2, default=str)
@@ -1077,6 +1288,9 @@ class TabularProcessingPlugin:
         normalize_match: bool = False,
         max_rows: int = 25,
         start_row: int = 0,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> Optional[str]:
         """Look up matching rows across all sheets that contain the lookup column.
 
@@ -1105,12 +1319,15 @@ class TabularProcessingPlugin:
                 container_name,
                 blob_name,
                 sheet_name=sheet,
+                require_explicit_sheet=True,
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
             )
             df = self._try_numeric_conversion(df)
 
             if lookup_column not in df.columns:
                 continue
 
+            self._require_saved_values(df, [lookup_column])
             sheets_searched.append(sheet)
             try:
                 mask = self._build_series_match_mask(
@@ -1131,6 +1348,8 @@ class TabularProcessingPlugin:
             if sheet_matches == 0:
                 continue
 
+            if target_column and target_column in df.columns:
+                self._require_saved_values(df[mask], [target_column])
             sheets_matched.append(sheet)
             total_matches += sheet_matches
             if skip_remaining >= sheet_matches:
@@ -1141,16 +1360,20 @@ class TabularProcessingPlugin:
             if remaining_capacity > 0:
                 matched_df = df[mask].iloc[skip_remaining:skip_remaining + remaining_capacity]
                 skip_remaining = 0
+                matched_records = self._build_row_output_records(matched_df, list(matched_df.columns))
                 if target_column and target_column in df.columns:
-                    for _, row in matched_df.iterrows():
-                        combined_results.append({
+                    for row in matched_records:
+                        result = {
                             '_sheet': sheet,
                             lookup_column: row[lookup_column],
                             target_column: row[target_column],
-                            '_full_row': {str(k): v for k, v in row.to_dict().items()},
-                        })
+                            '_full_row': row,
+                        }
+                        if '_excel_source' in row:
+                            result['_excel_source'] = row['_excel_source']
+                        combined_results.append(result)
                 else:
-                    for row in matched_df.to_dict(orient='records'):
+                    for row in matched_records:
                         row['_sheet'] = sheet
                         combined_results.append(row)
             else:
@@ -1194,6 +1417,9 @@ class TabularProcessingPlugin:
         max_rows: int = 100,
         start_row: int = 0,
         return_columns=None,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> Optional[str]:
         """Execute a pandas query expression across all sheets of a multi-sheet workbook.
 
@@ -1209,20 +1435,26 @@ class TabularProcessingPlugin:
             return None
 
         combined_results = []
+        parsed_return_columns = self._parse_optional_column_list_argument(return_columns)
         sheets_searched = []
         sheets_matched = []
         total_matches = 0
         query_errors = []
         skip_remaining = max(0, int(start_row or 0))
         requested_max_rows = max(1, int(max_rows or 100))
+        source_row_offset = 0
 
         for sheet in available_sheets:
             df = self._read_tabular_blob_to_dataframe(
                 container_name,
                 blob_name,
                 sheet_name=sheet,
+                require_explicit_sheet=True,
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
             )
             df = self._try_numeric_conversion(df)
+            df.index = range(source_row_offset, source_row_offset + len(df))
+            df.attrs['excel_index_offset'] = source_row_offset
 
             try:
                 result_df, _ = self._apply_query_expression_with_fallback(
@@ -1230,13 +1462,16 @@ class TabularProcessingPlugin:
                     query_expression=query_expression,
                     normalize_match=False,
                 )
+            except TabularSavedValueError:
+                raise
             except Exception as query_error:
                 query_errors.append({
                     'sheet_name': sheet,
-                    'error': str(query_error),
+                    'error': self._tabular_error_payload(query_error)['error'],
                 })
                 continue
 
+            source_row_offset += len(df)
             sheets_searched.append(sheet)
             sheet_matches = len(result_df)
             if sheet_matches == 0:
@@ -1250,7 +1485,8 @@ class TabularProcessingPlugin:
 
             remaining_capacity = max(0, requested_max_rows - len(combined_results))
             if remaining_capacity > 0:
-                for row in result_df.iloc[skip_remaining:skip_remaining + remaining_capacity].to_dict(orient='records'):
+                page = result_df.iloc[skip_remaining:skip_remaining + remaining_capacity]
+                for row in self._build_row_output_records(page, parsed_return_columns or list(page.columns)):
                     row['_sheet'] = sheet
                     combined_results.append(row)
                 skip_remaining = 0
@@ -1308,7 +1544,17 @@ class TabularProcessingPlugin:
             "total_matches": total_matches,
         }
         response_payload.update(row_page_payload)
-        return json.dumps(response_payload, indent=2, default=str)
+        return PluginInvocationResult(
+            json.dumps(response_payload, indent=2, default=str),
+            internal_metadata=self._build_tabular_generated_export_internal_metadata(
+                container_name=container_name, blob_path=blob_name, filename=filename,
+                source_function='query_tabular_data', query_expression=query_expression,
+                return_columns=return_columns, expected_row_count=total_matches,
+                sheet_names=sheets_searched,
+                include_sheet_column=True,
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
+            ),
+        )
 
     def _count_rows_across_sheets(
         self,
@@ -1323,6 +1569,9 @@ class TabularProcessingPlugin:
         additional_filter_value=None,
         query_expression: Optional[str] = None,
         normalize_match: bool = False,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> Optional[str]:
         """Count rows across all worksheets that satisfy optional filters or queries."""
         workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
@@ -1344,6 +1593,8 @@ class TabularProcessingPlugin:
                 container_name,
                 blob_name,
                 sheet_name=sheet,
+                require_explicit_sheet=True,
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
             )
             df = self._try_numeric_conversion(df)
 
@@ -1361,11 +1612,13 @@ class TabularProcessingPlugin:
                 )
             except KeyError:
                 continue
+            except TabularSavedValueError:
+                raise
             except Exception as query_error:
                 if query_expression:
                     query_errors.append({
                         'sheet_name': sheet,
-                        'error': str(query_error),
+                        'error': self._tabular_error_payload(query_error)['error'],
                     })
                 continue
 
@@ -1427,6 +1680,9 @@ class TabularProcessingPlugin:
         url_path_segments: Optional[int] = None,
         normalize_match: bool = False,
         max_values: int = 100,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> Optional[str]:
         """Return distinct values for a column across all worksheets that contain it."""
         workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
@@ -1450,6 +1706,8 @@ class TabularProcessingPlugin:
                 container_name,
                 blob_name,
                 sheet_name=sheet,
+                require_explicit_sheet=True,
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
             )
             if column not in df.columns:
                 continue
@@ -1468,16 +1726,19 @@ class TabularProcessingPlugin:
                 )
             except KeyError:
                 continue
+            except TabularSavedValueError:
+                raise
             except Exception as query_error:
                 if query_expression:
                     query_errors.append({
                         'sheet_name': sheet,
-                        'error': str(query_error),
+                        'error': self._tabular_error_payload(query_error)['error'],
                     })
                 continue
 
             sheets_searched.append(sheet)
             applied_filters = sheet_filters or applied_filters
+            self._require_saved_values(filtered_df, [column])
             sheet_distinct_values, sheet_matched_cells, sheet_extracted_matches = self._collect_distinct_display_values(
                 filtered_df[column],
                 normalize_match=normalize_match,
@@ -1566,34 +1827,49 @@ class TabularProcessingPlugin:
         max_rows: int = 100,
         start_row: int = 0,
         return_columns=None,
+        source_table_id: Optional[str] = None,
+        source_cell_range: Optional[str] = None,
+        source_header_row: Optional[int] = None,
+        target_table_id: Optional[str] = None,
+        target_cell_range: Optional[str] = None,
+        target_header_row: Optional[int] = None,
+        source_location=None,
+        target_location=None,
+        include_rows: bool = True,
     ) -> dict:
         """Evaluate a semi-join between a source cohort and a target fact worksheet."""
-        source_sheet, workbook_metadata = self._resolve_sheet_selection(
-            container_name,
-            blob_name,
+        source_container, source_blob = source_location or (container_name, blob_name)
+        target_container, target_blob = target_location or (container_name, blob_name)
+        source_sheet, source_workbook_metadata = self._resolve_sheet_selection(
+            source_container,
+            source_blob,
             sheet_name=source_sheet_name,
             sheet_index=source_sheet_index,
             require_explicit_sheet=True,
+            **self._table_selector_kwargs(source_table_id, source_cell_range, source_header_row),
         )
         target_sheet, workbook_metadata = self._resolve_sheet_selection(
-            container_name,
-            blob_name,
+            target_container,
+            target_blob,
             sheet_name=target_sheet_name,
             sheet_index=target_sheet_index,
             require_explicit_sheet=True,
+            **self._table_selector_kwargs(target_table_id, target_cell_range, target_header_row),
         )
 
         source_df = self._read_tabular_blob_to_dataframe(
-            container_name,
-            blob_name,
+            source_container,
+            source_blob,
             sheet_name=source_sheet,
             require_explicit_sheet=True,
+            **self._table_selector_kwargs(source_table_id, source_cell_range, source_header_row),
         )
         target_df = self._read_tabular_blob_to_dataframe(
-            container_name,
-            blob_name,
+            target_container,
+            target_blob,
             sheet_name=target_sheet,
             require_explicit_sheet=True,
+            **self._table_selector_kwargs(target_table_id, target_cell_range, target_header_row),
         )
 
         source_df = self._try_numeric_conversion(source_df)
@@ -1614,10 +1890,10 @@ class TabularProcessingPlugin:
         for required_column in source_required_columns:
             if required_column not in source_df.columns:
                 return self._build_missing_column_error_payload(
-                    container_name,
-                    blob_name,
+                    source_container,
+                    source_blob,
                     filename,
-                    workbook_metadata,
+                    source_workbook_metadata,
                     source_sheet,
                     required_column,
                     related_columns=[source_value_column, source_alias_column, source_filter_column],
@@ -1627,8 +1903,8 @@ class TabularProcessingPlugin:
         for required_column in target_required_columns:
             if required_column not in target_df.columns:
                 return self._build_missing_column_error_payload(
-                    container_name,
-                    blob_name,
+                    target_container,
+                    target_blob,
                     filename,
                     workbook_metadata,
                     target_sheet,
@@ -1649,10 +1925,10 @@ class TabularProcessingPlugin:
         except KeyError as missing_source_column_error:
             missing_source_column = str(missing_source_column_error).strip("'")
             return self._build_missing_column_error_payload(
-                container_name,
-                blob_name,
+                source_container,
+                source_blob,
                 filename,
-                workbook_metadata,
+                source_workbook_metadata,
                 source_sheet,
                 missing_source_column,
                 related_columns=[source_value_column, source_alias_column],
@@ -1660,9 +1936,9 @@ class TabularProcessingPlugin:
             )
         except Exception as source_filter_error:
             return {
-                'error': f"Source filter/query error on sheet '{source_sheet}': {source_filter_error}",
+                **self._tabular_error_payload(source_filter_error),
                 'filename': filename,
-                'selected_sheet': source_sheet if workbook_metadata.get('is_workbook') else None,
+                'selected_sheet': source_sheet if source_workbook_metadata.get('is_workbook') else None,
             }
 
         try:
@@ -1677,8 +1953,8 @@ class TabularProcessingPlugin:
         except KeyError as missing_target_column_error:
             missing_target_column = str(missing_target_column_error).strip("'")
             return self._build_missing_column_error_payload(
-                container_name,
-                blob_name,
+                target_container,
+                target_blob,
                 filename,
                 workbook_metadata,
                 target_sheet,
@@ -1688,11 +1964,17 @@ class TabularProcessingPlugin:
             )
         except Exception as target_filter_error:
             return {
-                'error': f"Target filter/query error on sheet '{target_sheet}': {target_filter_error}",
+                **self._tabular_error_payload(target_filter_error),
                 'filename': filename,
                 'selected_sheet': target_sheet if workbook_metadata.get('is_workbook') else None,
             }
 
+        self._require_saved_values(
+            filtered_source_df, [column for column in (source_value_column, source_alias_column) if column],
+        )
+        self._require_saved_values(
+            filtered_target_df, [column for column in (target_match_column, target_alias_column) if column],
+        )
         source_member_map = {}
         variant_to_source_keys = {}
         for _, source_row in filtered_source_df.iterrows():
@@ -1734,7 +2016,7 @@ class TabularProcessingPlugin:
 
         matched_target_rows = []
         matched_target_value_variants = set()
-        for _, target_row in filtered_target_df.iterrows():
+        for target_index, target_row in filtered_target_df.iterrows():
             target_value_variants = set()
             for column_name in [target_match_column, target_alias_column]:
                 if not column_name:
@@ -1762,12 +2044,16 @@ class TabularProcessingPlugin:
             for source_key in matched_source_keys:
                 source_member_map[source_key]['matched_target_row_count'] += 1
 
-            matched_row_payload = target_row.to_dict()
-            matched_row_payload['_matched_on'] = matched_variants[:3]
-            matched_row_payload['_matched_source_values'] = [
-                source_member_map[source_key]['display_value']
-                for source_key in matched_source_keys[:3]
-            ]
+            matched_row_payload = None
+            if include_rows:
+                row_frame = filtered_target_df.loc[[target_index]]
+                selected_columns = self._parse_optional_column_list_argument(return_columns) or list(row_frame.columns)
+                matched_row_payload = self._build_row_output_records(row_frame, selected_columns)[0]
+                matched_row_payload['_matched_on'] = matched_variants[:3]
+                matched_row_payload['_matched_source_values'] = [
+                    source_member_map[source_key]['display_value']
+                    for source_key in matched_source_keys[:3]
+                ]
             matched_target_rows.append(matched_row_payload)
 
         matched_source_values = []
@@ -1792,7 +2078,7 @@ class TabularProcessingPlugin:
 
         matched_target_row_count = len(matched_target_rows)
         start, limit = self._parse_row_page_arguments(start_row, max_rows)
-        paged_matched_target_rows = matched_target_rows[start:start + limit]
+        paged_matched_target_rows = matched_target_rows[start:start + limit] if include_rows else []
         row_page_payload = self._build_tabular_row_page_payload(
             paged_matched_target_rows,
             matched_target_row_count,
@@ -1804,6 +2090,11 @@ class TabularProcessingPlugin:
         response_payload = {
             'filename': filename,
             'selected_sheet': target_sheet if workbook_metadata.get('is_workbook') else None,
+            **self._table_result_metadata(target_df),
+            'source_selection': self._table_result_metadata(source_df),
+            'target_selection': self._table_result_metadata(target_df),
+            'source_filename': source_blob.rsplit('/', 1)[-1],
+            'target_filename': target_blob.rsplit('/', 1)[-1],
             'relationship_type': 'set_membership',
             'source_sheet': source_sheet,
             'source_value_column': source_value_column,
@@ -2272,6 +2563,7 @@ class TabularProcessingPlugin:
         else:
             resolved_search_columns = list(df.columns)
 
+        self._require_saved_values(df, resolved_search_columns)
         resolved_return_columns = [
             column_name for column_name in (requested_return_columns or [])
             if column_name in df.columns
@@ -2302,7 +2594,10 @@ class TabularProcessingPlugin:
             pass
 
         paged_matched_df = matched_df.iloc[normalized_start_row:normalized_start_row + normalized_max_rows]
-        for row_index, row in paged_matched_df.iterrows():
+        output_records = self._build_row_output_records(
+            paged_matched_df, resolved_return_columns or list(paged_matched_df.columns),
+        )
+        for (row_index, row), row_payload in zip(paged_matched_df.iterrows(), output_records):
             row_matched_columns = []
             for column_name in resolved_search_columns:
                 if not bool(column_masks[column_name].loc[row_index]):
@@ -2312,22 +2607,6 @@ class TabularProcessingPlugin:
                 if lowered_column not in seen_matched_columns:
                     seen_matched_columns.add(lowered_column)
                     matched_columns.append(column_name)
-
-            if resolved_return_columns:
-                row_payload = {
-                    column_name: row.get(column_name)
-                    for column_name in resolved_return_columns
-                }
-                related_document_reference_values = self._build_related_document_reference_values(
-                    row,
-                    excluded_columns=resolved_return_columns,
-                )
-                if related_document_reference_values:
-                    row_payload['_related_document_reference_values'] = related_document_reference_values
-            else:
-                row_payload = {
-                    str(key): value for key, value in row.to_dict().items()
-                }
 
             row_payload['_matched_columns'] = row_matched_columns
             row_payload['_matched_values'] = {
@@ -2622,6 +2901,7 @@ class TabularProcessingPlugin:
         if not query_expression:
             return df, False
 
+        self._require_saved_query_values(df, query_expression)
         try:
             return df.query(query_expression), False
         except Exception as query_error:
@@ -2693,6 +2973,7 @@ class TabularProcessingPlugin:
                 )
 
             current_filter_operator = filter_spec['operator'] or 'equals'
+            self._require_saved_values(filtered_df, [current_filter_column])
             mask = self._build_series_match_mask(
                 filtered_df[current_filter_column],
                 current_filter_operator,
@@ -2958,7 +3239,11 @@ class TabularProcessingPlugin:
             'null_counts': df.isnull().sum().to_dict(),
         }
 
-    def _build_workbook_schema_summary(self, container_name: str, blob_name: str, filename: str, preview_rows: int = 3) -> dict:
+    def _build_workbook_schema_summary(
+        self, container_name: str, blob_name: str, filename: str, preview_rows: int = 3,
+        sheet_name: Optional[str] = None, table_id: Optional[str] = None,
+        cell_range: Optional[str] = None, header_row: Optional[int] = None,
+    ) -> dict:
         """Build a workbook-aware schema summary for prompt preload and file description."""
         workbook_metadata = self._get_workbook_metadata(container_name, blob_name)
         if not workbook_metadata.get('is_workbook'):
@@ -2970,6 +3255,85 @@ class TabularProcessingPlugin:
                 'sheet_names': [],
                 'sheet_count': 0,
             })
+            return summary
+        if workbook_metadata.get('workbook_manifest'):
+            data = self._download_tabular_blob_bytes(container_name, blob_name)
+            extension = '.xls' if blob_name.lower().endswith('.xls') else '.xlsm' if blob_name.lower().endswith('.xlsm') else '.xlsx'
+            per_sheet_schemas, samples = {}, {}
+            with ExcelWorkbookReader(data, extension=extension) as reader:
+                reader.use_manifest(workbook_metadata['workbook_manifest'])
+                for name in workbook_metadata['sheet_names']:
+                    if sheet_name and name != sheet_name:
+                        continue
+                    table_schemas = []
+                    tables = workbook_metadata['tables_by_sheet'].get(name, [])
+                    if table_id or cell_range or header_row is not None:
+                        tables = self._select_excel_tables(
+                            reader, workbook_metadata, name, table_id, cell_range, header_row,
+                            require_header=False, allow_heterogeneous=True,
+                        )
+                    previews = reader.read_table_previews(tables, max_rows=max(1, min(preview_rows, 20)))
+                    for table in tables:
+                        preview_records, preview_bytes, text_truncated = [], 0, False
+                        for record in previews[table['id']]:
+                            values = []
+                            for value in record['values'][:EXCEL_PREVIEW_MAX_COLUMNS]:
+                                if isinstance(value, str) and len(value) > 4000:
+                                    value = value[:4000] + ' [preview shortened]'
+                                    text_truncated = True
+                                values.append(value)
+                            row_bytes = len(json.dumps(values, ensure_ascii=False, default=str).encode('utf-8'))
+                            if preview_bytes + row_bytes > EXCEL_PREVIEW_MAX_BYTES:
+                                break
+                            preview_records.append({'row': record['row'], 'values': values})
+                            preview_bytes += row_bytes
+                        columns = [column['name'] for column in table['columns'][:EXCEL_PREVIEW_MAX_COLUMNS]]
+                        sample = pandas.DataFrame([record['values'] for record in preview_records], columns=columns)
+                        schema = self._build_sheet_schema_summary(sample, name, preview_rows=preview_rows)
+                        schema.update({
+                            'row_count': table['row_count'], 'table_id': table['id'],
+                            'table_name': table['name'], 'table_range': table['range'],
+                            'header_row': table['header_row'], 'header_status': table['header_status'],
+                            'origin': table['origin'], 'null_counts_scope': 'preview',
+                            'selected_table': table['id'],
+                            'preview_row_numbers': [record['row'] for record in preview_records],
+                            'columns_truncated': len(table['columns']) > len(columns),
+                            'cell_text_truncated': text_truncated,
+                            'preview_limited': len(preview_records) < table['row_count'],
+                            'selection_required': table['header_status'] == 'ambiguous',
+                        })
+                        table_schemas.append(schema)
+                        if len(workbook_metadata['tables_by_sheet'].get(name, [])) == 1:
+                            samples[name] = sample
+                    per_sheet_schemas[name] = (
+                        {**table_schemas[0], 'table_count': 1, 'tables': table_schemas}
+                        if len(table_schemas) == 1 else {
+                            'selected_sheet': name, 'table_count': len(table_schemas),
+                            'tables': table_schemas, 'columns': [],
+                            'selection_required': len(table_schemas) > 1 or any(
+                                table['selection_required'] for table in table_schemas
+                            ),
+                        }
+                    )
+            relationship_metadata = self._build_workbook_relationship_metadata(samples)
+            summary = {
+                'filename': filename, 'is_workbook': True,
+                'sheet_names': workbook_metadata['sheet_names'],
+                'sheet_count': workbook_metadata['sheet_count'],
+                'table_count': workbook_metadata['table_count'], 'selected_sheet': sheet_name,
+                'per_sheet_schemas': per_sheet_schemas,
+                'sheet_role_hints': relationship_metadata.get('sheet_role_hints', {}),
+                'relationship_hints': relationship_metadata.get('relationship_hints', []),
+                'relationship_hints_scope': 'bounded table previews, not full-data validation',
+                'table_choices': self._table_choices(workbook_metadata, sheet_name),
+                'selection_required': any(
+                    schema.get('selection_required') for schema in per_sheet_schemas.values()
+                ),
+            }
+            if len(per_sheet_schemas) == 1:
+                sheet_schema = next(iter(per_sheet_schemas.values()))
+                if sheet_schema.get('table_count') == 1:
+                    summary.update(sheet_schema)
             return summary
 
         per_sheet_schemas = {}
@@ -3030,12 +3394,17 @@ class TabularProcessingPlugin:
             if normalized_exclude_sheet and sheet_name.lower() == normalized_exclude_sheet:
                 continue
 
-            dataframe = self._read_tabular_blob_to_dataframe(
-                container_name,
-                blob_name,
-                sheet_name=sheet_name,
-            )
-            normalized_columns = {str(column).strip().lower() for column in dataframe.columns}
+            if workbook_metadata.get('workbook_manifest'):
+                normalized_columns = {
+                    str(column['name']).strip().lower()
+                    for table in workbook_metadata.get('tables_by_sheet', {}).get(sheet_name, [])
+                    for column in table['columns']
+                }
+            else:
+                dataframe = self._read_tabular_blob_to_dataframe(
+                    container_name, blob_name, sheet_name=sheet_name,
+                )
+                normalized_columns = {str(column).strip().lower() for column in dataframe.columns}
             matched_columns = [
                 target_column for target_column in normalized_targets
                 if target_column in normalized_columns
@@ -3067,6 +3436,11 @@ class TabularProcessingPlugin:
             'missing_column': missing_column,
             'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
         }
+        if workbook_metadata.get('workbook_manifest'):
+            payload['candidate_tables'] = [
+                table for table in self._table_choices(workbook_metadata)
+                if any(str(column['name']).casefold() == str(missing_column).casefold() for column in table['columns'])
+            ]
 
         if workbook_metadata.get('is_workbook') and workbook_metadata.get('sheet_count', 0) > 1:
             candidate_sheets = self._find_candidate_sheets_for_columns(
@@ -3084,6 +3458,94 @@ class TabularProcessingPlugin:
 
         return payload
 
+    @staticmethod
+    def _normalize_table_selectors(table_id=None, cell_range=None, header_row=None):
+        table_id = str(table_id or '').strip() or None
+        if table_id and table_id.casefold() == 'all':
+            table_id = 'all'
+        cell_range = str(cell_range or '').strip() or None
+        if table_id and cell_range:
+            raise TabularSelectionError(
+                "Specify table_id or cell_range, not both.", code='table_selection_invalid',
+            )
+        if header_row is not None:
+            if isinstance(header_row, bool) or not str(header_row).isascii() or not str(header_row).isdigit():
+                raise TabularSelectionError(
+                    "header_row must be an actual worksheet row number or zero.",
+                    code='header_selection_invalid',
+                )
+            header_row = int(header_row)
+        if cell_range and header_row is None:
+            raise TabularSelectionError(
+                "Specify header_row for an explicit range; zero means no header.",
+                code='header_selection_required',
+            )
+        return table_id, cell_range, header_row
+
+    def _table_selector_kwargs(self, table_id=None, cell_range=None, header_row=None):
+        normalized = self._normalize_table_selectors(table_id, cell_range, header_row)
+        return {
+            key: value for key, value in zip(('table_id', 'cell_range', 'header_row'), normalized)
+            if value is not None
+        }
+
+    def _select_excel_tables(
+        self, reader, workbook_metadata, sheet_name, table_id=None, cell_range=None,
+        header_row=None, *, allow_heterogeneous=False, require_header=True,
+    ):
+        """Resolve explicit choices identically for foreground analysis and replay."""
+        table_id, cell_range, header_row = self._normalize_table_selectors(table_id, cell_range, header_row)
+        available = workbook_metadata.get('tables_by_sheet', {}).get(sheet_name, [])
+        choices = self._table_choices(workbook_metadata, sheet_name)
+        if not available and not cell_range and table_id is None:
+            return []
+        if table_id == 'all':
+            if cell_range or header_row is not None:
+                raise TabularSelectionError(
+                    "Select a single table or range for an explicit header override.",
+                    code='table_selection_invalid', choices=choices,
+                )
+            selected = [reader.select_table(table['id'], sheet_name) for table in available]
+        else:
+            if table_id is None and not cell_range and len(available) != 1:
+                raise TabularSelectionError(
+                    "This worksheet contains multiple tables. Select table_id, or an explicit cell_range and header_row.",
+                    choices=choices,
+                )
+            try:
+                selected = [reader.select_table(
+                    table_id=table_id, sheet_name=sheet_name, cell_range=cell_range, header_row=header_row,
+                )]
+            except ValueError as error:
+                raise TabularSelectionError(
+                    "The table, worksheet, range, or header selection is invalid. Choose a discovered table or a valid range.",
+                    code='table_selection_invalid', choices=choices,
+                ) from error
+        if require_header and any(table['header_status'] == 'ambiguous' for table in selected):
+            raise TabularSelectionError(
+                "The table header is ambiguous. Supply header_row using the actual worksheet row, or zero for no header.",
+                code='header_selection_required', choices=choices,
+            )
+        if not allow_heterogeneous and selected:
+            columns = [column['name'] for column in selected[0]['columns']]
+            if any([column['name'] for column in table['columns']] != columns for table in selected):
+                raise TabularSelectionError(
+                    "The selected tables have different schemas. Select one table for this analytical operation.",
+                    code='table_schema_mismatch', choices=choices,
+                )
+        return selected
+
+    @staticmethod
+    def _table_result_metadata(dataframe):
+        table = dataframe.attrs.get('excel_table')
+        if table is None:
+            return {}
+        return {
+            'selected_table': table['id'], 'table_id': table['id'],
+            'table_name': table.get('name'), 'table_range': table['range'],
+            'header_row': table.get('header_row'), 'header_status': table.get('header_status'),
+        }
+
     def _read_tabular_blob_to_dataframe(
         self,
         container_name: str,
@@ -3091,20 +3553,36 @@ class TabularProcessingPlugin:
         sheet_name: Optional[str] = None,
         sheet_index: Optional[str] = None,
         require_explicit_sheet: bool = False,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> pandas.DataFrame:
         """Download a blob and read it into a pandas DataFrame. Uses per-instance cache."""
+        self._assert_blob_screening_access(container_name, blob_name)
+        table_id, cell_range, header_row = self._normalize_table_selectors(table_id, cell_range, header_row)
         resolved_sheet_name, workbook_metadata = self._resolve_sheet_selection(
             container_name,
             blob_name,
             sheet_name=sheet_name,
             sheet_index=sheet_index,
             require_explicit_sheet=require_explicit_sheet,
+            table_id=table_id,
         )
         sheet_cache_key = resolved_sheet_name or '__default__'
-        cache_key = (container_name, blob_name, sheet_cache_key)
+        if not workbook_metadata.get('is_workbook') and any(
+            value is not None for value in (table_id, cell_range, header_row)
+        ):
+            raise TabularSelectionError(
+                "Table, range, and header selectors apply only to Excel workbooks.",
+                code='table_selection_invalid',
+            )
+        cache_key = (
+            container_name, blob_name, workbook_metadata.get('blob_etag'),
+            sheet_cache_key, table_id, cell_range, header_row,
+        )
         if cache_key in self._df_cache:
             log_event(
-                f"[TabularProcessingPlugin] Cache hit for {blob_name}"
+                f"[TABULAR_PROCESSING_PLUGIN] Cache hit for {blob_name}"
                 + (f" [{resolved_sheet_name}]" if resolved_sheet_name else ''),
                 level=logging.DEBUG,
             )
@@ -3115,34 +3593,84 @@ class TabularProcessingPlugin:
         name_lower = blob_name.lower()
         if name_lower.endswith('.csv'):
             df = read_tabular_csv(io.BytesIO(data), keep_default_na=False, dtype=str)
-        elif name_lower.endswith('.xlsx') or name_lower.endswith('.xlsm'):
-            df = pandas.read_excel(
-                io.BytesIO(data),
-                engine='openpyxl',
-                keep_default_na=False,
-                dtype=str,
-                sheet_name=resolved_sheet_name,
-            )
-        elif name_lower.endswith('.xls'):
-            df = pandas.read_excel(
-                io.BytesIO(data),
-                engine='xlrd',
-                keep_default_na=False,
-                dtype=str,
-                sheet_name=resolved_sheet_name,
-            )
+        elif self._get_excel_engine(blob_name):
+            extension = '.xls' if name_lower.endswith('.xls') else '.xlsm' if name_lower.endswith('.xlsm') else '.xlsx'
+            with ExcelWorkbookReader(data, extension=extension) as reader:
+                reader.use_manifest(workbook_metadata['workbook_manifest'])
+                selected_tables = self._select_excel_tables(
+                    reader, workbook_metadata, resolved_sheet_name, table_id, cell_range, header_row,
+                )
+                if not selected_tables:
+                    df = pandas.DataFrame()
+                else:
+                    columns = [column['name'] for column in selected_tables[0]['columns']]
+                    rows, source_rows, source_tables, missing = [], [], [], {}
+                    for table in selected_tables:
+                        for row_number, cells in reader.iter_table_rows(table):
+                            ordinal = len(rows)
+                            rows.append([
+                                '' if cell['value'] is None else str(cell['value'])
+                                for cell in cells
+                            ])
+                            source_rows.append(row_number)
+                            source_tables.append(table['id'])
+                            for column, cell in zip(columns, cells):
+                                if cell['value_status'] == 'cache_missing':
+                                    missing.setdefault(column, set()).add(ordinal)
+                    df = pandas.DataFrame(rows, columns=columns)
+                    table_context = selected_tables[0] if len(selected_tables) == 1 else {
+                        'id': 'all', 'sheet': resolved_sheet_name, 'range': 'multiple selected tables',
+                    }
+                    df.attrs.update({
+                        'excel_table': table_context, 'excel_row_numbers': tuple(source_rows),
+                        'excel_row_table_ids': tuple(source_tables),
+                        'excel_tables': copy.deepcopy(selected_tables),
+                        'excel_table_ranges': {table['id']: table['range'] for table in selected_tables},
+                        'excel_missing_formula_caches': missing,
+                    })
+                    self._last_table_reads[(container_name, blob_name, resolved_sheet_name)] = copy.deepcopy(selected_tables)
         else:
             raise ValueError(f"Unsupported tabular file type: {blob_name}")
 
         df = self._normalize_dataframe_columns(df)
+        self._assert_blob_screening_access(container_name, blob_name)
         self._df_cache[cache_key] = df
         log_event(
-            f"[TabularProcessingPlugin] Cached DataFrame for {blob_name}"
+            f"[TABULAR_PROCESSING_PLUGIN] Cached DataFrame for {blob_name}"
             + (f" [{resolved_sheet_name}]" if resolved_sheet_name else '')
             + f" ({len(df)} rows)",
             level=logging.DEBUG,
         )
         return df.copy()
+
+    @staticmethod
+    def _require_saved_values(dataframe, columns):
+        missing = dataframe.attrs.get('excel_missing_formula_caches') or {}
+        if not missing:
+            return
+        offset = dataframe.attrs.get('excel_index_offset', 0)
+        selected_indices = {int(index) - offset for index in dataframe.index}
+        for column in columns:
+            if selected_indices.intersection(missing.get(column, ())):
+                raise TabularSavedValueError()
+
+    def _require_saved_query_values(self, dataframe, query_expression):
+        """Ignore quoted literals and check the columns actually read by the query."""
+        if not query_expression or not dataframe.attrs.get('excel_missing_formula_caches'):
+            return
+        expression = str(query_expression)
+        referenced = set(re.findall(r'`([^`]+)`', expression))
+        expression = re.sub(r'`[^`]+`', ' ', expression)
+        try:
+            referenced.update(
+                token.string for token in tokenize.generate_tokens(io.StringIO(expression).readline)
+                if token.type == tokenize.NAME
+            )
+        except (tokenize.TokenError, IndentationError):
+            referenced.update(dataframe.columns)
+        self._require_saved_values(
+            dataframe, [column for column in dataframe.columns if str(column) in referenced],
+        )
 
     def _try_numeric_conversion(self, df: pandas.DataFrame) -> pandas.DataFrame:
         """Attempt to convert string columns to numeric where possible."""
@@ -3408,7 +3936,13 @@ class TabularProcessingPlugin:
 
         override = self._get_resolved_blob_location_override(source, filename)
         if override and self._is_authorized_blob_location(override[0], override[1], authorized_context):
-            return override
+            try:
+                resolved_override = resolve_available_blob_location(*override, user_id=user_id)
+                self._assert_blob_screening_access(*resolved_override)
+                return resolved_override
+            except (ScreeningError, PermissionError):
+                self._evict_screened_blob_cache(*override)
+                raise
 
         attempts = []
 
@@ -3434,8 +3968,13 @@ class TabularProcessingPlugin:
             try:
                 blob_client = client.get_blob_client(container=container, blob=blob_path)
                 if blob_client.exists():
+                    container, blob_path = resolve_available_blob_location(container, blob_path, user_id=user_id)
+                    self._assert_blob_screening_access(container, blob_path)
                     log_event(f"[TABULAR_PROCESSING_PLUGIN] Found blob at {container}/{blob_path}", level=logging.DEBUG)
                     return container, blob_path
+            except (ScreeningError, PermissionError):
+                self._evict_screened_blob_cache(container, blob_path)
+                raise
             except Exception:
                 continue
 
@@ -3455,8 +3994,13 @@ class TabularProcessingPlugin:
         group_id: Optional[str] = None,
         public_workspace_id: Optional[str] = None,
         expected_row_count: int = 0,
+        sheet_name: Optional[str] = None,
+        sheet_index: Optional[str] = None,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
     ) -> dict:
-        """Resolve an authorized, version-pinned CSV query for durable export replay."""
+        """Resolve an authorized, version-pinned table query for durable export replay."""
         container_name, blob_path = self._resolve_blob_location_with_fallback(
             user_id,
             conversation_id,
@@ -3465,6 +4009,11 @@ class TabularProcessingPlugin:
             group_id=group_id,
             public_workspace_id=public_workspace_id,
         )
+        selected_sheet, _ = self._resolve_sheet_selection(
+            container_name, blob_path, sheet_name=sheet_name, sheet_index=sheet_index,
+            require_explicit_sheet=True,
+            **self._table_selector_kwargs(table_id, cell_range, header_row),
+        )
         return self._build_generated_export_query_descriptor_from_location(
             container_name=container_name,
             blob_path=blob_path,
@@ -3472,6 +4021,9 @@ class TabularProcessingPlugin:
             query_expression=query_expression,
             return_columns=return_columns,
             expected_row_count=expected_row_count,
+            selected_sheet=selected_sheet,
+            sheet_names=[selected_sheet] if selected_sheet else None,
+            **self._table_selector_kwargs(table_id, cell_range, header_row),
         )
 
     def _build_generated_export_query_descriptor_from_location(
@@ -3486,8 +4038,14 @@ class TabularProcessingPlugin:
         source_function: str = 'query_tabular_data',
         selected_sheet: Optional[str] = None,
         sheet_names: Optional[List[str]] = None,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
+        include_sheet_column: bool = False,
+        numeric_conversion_scope: Optional[str] = None,
     ) -> dict:
         """Pin a durable query descriptor to an already-authorized blob location."""
+        document, _user_id = self._assert_blob_screening_access(container_name, blob_path)
         normalized_blob_path = str(blob_path or '').strip()
         source_format = next((
             extension.lstrip('.')
@@ -3498,7 +4056,11 @@ class TabularProcessingPlugin:
             raise ValueError('Durable source-backed generated exports require a supported tabular source')
 
         normalized_query_expression = validate_tabular_csv_query_expression(query_expression)
-        blob_version = dict(blob_version or self._get_tabular_blob_version(container_name, blob_path))
+        table_id, cell_range, header_row = self._normalize_table_selectors(table_id, cell_range, header_row)
+        current_version = self._get_tabular_blob_version(container_name, blob_path, refresh=True)
+        if blob_version and blob_version.get('blob_etag') != current_version.get('blob_etag'):
+            raise ScreeningConflictError()
+        blob_version = dict(blob_version or current_version)
         blob_etag = blob_version.get('blob_etag')
         blob_size = blob_version.get('blob_size')
 
@@ -3530,11 +4092,74 @@ class TabularProcessingPlugin:
             'return_columns': return_columns,
             'expected_row_count': max(0, int(expected_row_count or 0)),
         }
+        if document is not None:
+            descriptor[PROVENANCE_FIELD] = document_provenance(document)
         if source_format != 'csv':
+            metadata = self._get_workbook_metadata(container_name, blob_path)
+            if metadata.get('blob_etag') != blob_etag:
+                raise ScreeningConflictError()
             if not normalized_sheet_names:
-                raise ValueError('Durable workbook replay requires an explicit worksheet scope')
+                resolved_sheet, _ = self._resolve_sheet_selection(
+                    container_name, blob_path, sheet_name=selected_sheet,
+                    require_explicit_sheet=True, table_id=table_id,
+                    cell_range=cell_range, header_row=header_row,
+                )
+                normalized_sheet_names = [resolved_sheet]
+            normalized_sheet_names = [
+                self._resolve_sheet_selection(
+                    container_name, blob_path, sheet_name=name, require_explicit_sheet=True,
+                )[0] for name in normalized_sheet_names
+            ]
+            if len(set(normalized_sheet_names)) != len(normalized_sheet_names):
+                raise TabularSelectionError(
+                    "A worksheet may only appear once in a durable table selection.",
+                    code='table_selection_invalid',
+                )
+            data = self._download_tabular_blob_bytes(container_name, blob_path)
+            selections = []
+            with ExcelWorkbookReader(data, extension=f'.{source_format}') as reader:
+                reader.use_manifest(metadata['workbook_manifest'])
+                for name in normalized_sheet_names:
+                    selections.extend(self._select_excel_tables(
+                        reader, metadata, name, table_id, cell_range, header_row,
+                        allow_heterogeneous=True,
+                    ))
+            if numeric_conversion_scope is None:
+                schemas_by_sheet = {}
+                for table in selections:
+                    schemas_by_sheet.setdefault(table['sheet'], set()).add(
+                        tuple(column['name'] for column in table['columns'])
+                    )
+                numeric_conversion_scope = (
+                    'sheet' if table_id == 'all' and all(len(schemas) == 1 for schemas in schemas_by_sheet.values())
+                    else 'table'
+                )
+            if numeric_conversion_scope not in ('table', 'sheet'):
+                raise ValueError('The durable numeric conversion scope is invalid.')
+            descriptor.update({
+                'version': 2, 'selection_semantics': 'excel-tables-v2',
+                'workbook_schema_version': EXCEL_WORKBOOK_SCHEMA_VERSION,
+                'source_sha256': hashlib.sha256(data).hexdigest(),
+                'table_id': table_id, 'cell_range': cell_range, 'header_row': header_row,
+                'selected_table': selections[0]['id'] if len(selections) == 1 else table_id,
+                'table_selections': copy.deepcopy(selections),
+                'source_row_count': sum(table['row_count'] for table in selections),
+                'numeric_conversion_scope': numeric_conversion_scope,
+            })
             descriptor['selected_sheet'] = normalized_selected_sheet
             descriptor['sheet_names'] = normalized_sheet_names
+            if normalized_selected_sheet is not None:
+                descriptor['selected_sheet'] = self._match_workbook_sheet_name(
+                    normalized_selected_sheet, normalized_sheet_names,
+                )
+            descriptor['include_sheet_column'] = bool(include_sheet_column)
+            if self._get_tabular_blob_version(container_name, blob_path, refresh=True)['blob_etag'] != blob_etag:
+                raise ScreeningConflictError()
+        elif any(value is not None for value in (table_id, cell_range, header_row)):
+            raise TabularSelectionError(
+                "Table, range, and header selectors apply only to Excel workbooks.",
+                code='table_selection_invalid',
+            )
         return descriptor
 
     def _build_generated_export_column_reference(self, column_name: str) -> str:
@@ -3702,6 +4327,12 @@ class TabularProcessingPlugin:
         return_columns: Optional[str],
         expected_row_count: int,
         replay_error: Optional[str] = None,
+        selected_sheet: Optional[str] = None,
+        sheet_names: Optional[List[str]] = None,
+        table_id: Optional[str] = None,
+        cell_range: Optional[str] = None,
+        header_row: Optional[int] = None,
+        include_sheet_column: bool = False,
     ) -> dict:
         """Build source authorization plus either a replay descriptor or a safe error."""
         blob_version = self._get_tabular_blob_version(container_name, blob_path)
@@ -3713,11 +4344,13 @@ class TabularProcessingPlugin:
             ),
         }
         if replay_error:
-            internal_metadata['tabular_generated_export_source_error'] = str(replay_error)
+            internal_metadata['tabular_generated_export_source_error'] = (
+                'This operation cannot be replayed as a bounded row-local query.'
+            )
             return internal_metadata
 
-        internal_metadata['tabular_generated_export_source'] = (
-            self._build_generated_export_query_descriptor_from_location(
+        try:
+            internal_metadata['tabular_generated_export_source'] = self._build_generated_export_query_descriptor_from_location(
                 container_name=container_name,
                 blob_path=blob_path,
                 filename=filename,
@@ -3726,8 +4359,22 @@ class TabularProcessingPlugin:
                 expected_row_count=expected_row_count,
                 blob_version=blob_version,
                 source_function=source_function,
+                selected_sheet=selected_sheet, sheet_names=sheet_names,
+                include_sheet_column=include_sheet_column,
+                numeric_conversion_scope='sheet' if table_id == 'all' else 'table',
+                **self._table_selector_kwargs(table_id, cell_range, header_row),
             )
-        )
+        except TabularSelectionError:
+            raise
+        except ValueError as error:
+            log_event(
+                '[TABULAR_PROCESSING_PLUGIN] Query is not available for bounded replay.',
+                level=logging.DEBUG, debug_only=True,
+                extra={'exception_type': type(error).__name__},
+            )
+            internal_metadata['tabular_generated_export_source_error'] = (
+                'This operation cannot be replayed as a bounded row-local query.'
+            )
         return internal_metadata
 
     def _build_source_authorization_from_location(
@@ -3737,10 +4384,11 @@ class TabularProcessingPlugin:
         blob_version: Optional[dict] = None,
     ) -> dict:
         """Build exact server-only scope metadata for later worker revalidation."""
+        document, _user_id = self._assert_blob_screening_access(container_name, blob_path)
         resolved_source = self._infer_source_from_container(container_name)
         blob_parts = [part for part in str(blob_path or '').split('/') if part]
         scope_id = blob_parts[0] if resolved_source in {'group', 'public'} and blob_parts else None
-        return {
+        authorization = {
             'source': resolved_source,
             'scope_id': scope_id,
             'container': container_name,
@@ -3749,6 +4397,9 @@ class TabularProcessingPlugin:
                 'blob_etag'
             ),
         }
+        if document is not None:
+            authorization[PROVENANCE_FIELD] = document_provenance(document)
+        return authorization
 
     def _query_csv_data_in_bounded_chunks(
         self,
@@ -3761,6 +4412,7 @@ class TabularProcessingPlugin:
         max_rows,
     ) -> PluginInvocationResult:
         """Execute foreground CSV pagination through the durable replay query engine."""
+        self._assert_blob_screening_access(container_name, blob_path)
         start, limit = self._parse_row_page_arguments(start_row, max_rows)
         replay_stats = {'used_reviewer_style_fallback': False}
         matched_row_count = 0
@@ -3792,6 +4444,7 @@ class TabularProcessingPlugin:
                     page_rows.append(source_row)
                 matched_row_count += 1
 
+        self._assert_blob_screening_access(container_name, blob_path)
         response_payload = {
             'filename': filename,
             'selected_sheet': None,
@@ -3871,7 +4524,7 @@ class TabularProcessingPlugin:
                     'requested_public_workspace_id': public_workspace_id,
                 },
             )
-            return json.dumps({"error": str(exc)})
+            return json.dumps(self._tabular_error_payload(exc))
 
         user_id = authorized_context['user_id']
         conversation_id = authorized_context['conversation_id']
@@ -3898,6 +4551,8 @@ class TabularProcessingPlugin:
                         "container": storage_account_user_documents_container_name,
                         "sheet_names": workbook_metadata.get('sheet_names', []),
                         "sheet_count": workbook_metadata.get('sheet_count', 0),
+                        "table_count": workbook_metadata.get('table_count', 0),
+                        "table_choices": self._table_choices(workbook_metadata),
                     })
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing workspace blobs: {e}", level=logging.WARNING)
@@ -3920,6 +4575,8 @@ class TabularProcessingPlugin:
                         "container": storage_account_personal_chat_container_name,
                         "sheet_names": workbook_metadata.get('sheet_names', []),
                         "sheet_count": workbook_metadata.get('sheet_count', 0),
+                        "table_count": workbook_metadata.get('table_count', 0),
+                        "table_choices": self._table_choices(workbook_metadata),
                     })
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing chat blobs: {e}", level=logging.WARNING)
@@ -3943,6 +4600,8 @@ class TabularProcessingPlugin:
                             "container": storage_account_group_documents_container_name,
                             "sheet_names": workbook_metadata.get('sheet_names', []),
                             "sheet_count": workbook_metadata.get('sheet_count', 0),
+                            "table_count": workbook_metadata.get('table_count', 0),
+                            "table_choices": self._table_choices(workbook_metadata),
                         })
                 except Exception as e:
                     log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing group blobs: {e}", level=logging.WARNING)
@@ -3966,6 +4625,8 @@ class TabularProcessingPlugin:
                             "container": storage_account_public_documents_container_name,
                             "sheet_names": workbook_metadata.get('sheet_names', []),
                             "sheet_count": workbook_metadata.get('sheet_count', 0),
+                            "table_count": workbook_metadata.get('table_count', 0),
+                            "table_choices": self._table_choices(workbook_metadata),
                         })
                 except Exception as e:
                     log_event(f"[TABULAR_PROCESSING_PLUGIN] Error listing public blobs: {e}", level=logging.WARNING)
@@ -3991,6 +4652,9 @@ class TabularProcessingPlugin:
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name. Omit to discover all tables; 'all' explicitly selects same-schema tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON summary of the tabular file"]:
         """Get schema and preview of a tabular file."""
         def _sync_work():
@@ -4001,7 +4665,19 @@ class TabularProcessingPlugin:
                 )
                 workbook_metadata = self._get_workbook_metadata(container, blob_path)
 
-                if workbook_metadata.get('is_workbook') and workbook_metadata.get('sheet_count', 0) > 1 and not (sheet_name or sheet_index):
+                if workbook_metadata.get('workbook_manifest'):
+                    selected_sheet = None
+                    if sheet_name or sheet_index not in (None, '') or table_id not in (None, '', 'all') or cell_range or header_row is not None:
+                        selected_sheet, _ = self._resolve_sheet_selection(
+                            container, blob_path, sheet_name=sheet_name, sheet_index=sheet_index,
+                            require_explicit_sheet=True,
+                            **self._table_selector_kwargs(table_id, cell_range, header_row),
+                        )
+                    summary = self._build_workbook_schema_summary(
+                        container, blob_path, filename, preview_rows=5, sheet_name=selected_sheet,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
+                    )
+                elif workbook_metadata.get('is_workbook') and workbook_metadata.get('sheet_count', 0) > 1 and not (sheet_name or sheet_index):
                     summary = self._build_workbook_schema_summary(
                         container,
                         blob_path,
@@ -4015,12 +4691,14 @@ class TabularProcessingPlugin:
                         sheet_name=sheet_name,
                         sheet_index=sheet_index,
                         require_explicit_sheet=False,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     df = self._read_tabular_blob_to_dataframe(
                         container,
                         blob_path,
                         sheet_name=selected_sheet,
                         require_explicit_sheet=False,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     summary = self._build_sheet_schema_summary(df, selected_sheet, preview_rows=5)
                     summary.update({
@@ -4033,7 +4711,7 @@ class TabularProcessingPlugin:
                 return json.dumps(summary, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error describing file: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -4061,6 +4739,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum matching rows to return"] = "25",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result containing matching rows and target-column values"]:
         """Look up values from a target column for matching rows."""
         def _sync_work():
@@ -4073,7 +4754,7 @@ class TabularProcessingPlugin:
                 # When no explicit sheet_name is given, try cross-sheet search first
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and table_id in (None, '', 'all') and not cell_range and header_row is None:
                     cross_sheet_result = self._lookup_value_across_sheets(
                         container, blob_path, filename,
                         lookup_column, lookup_value, target_column,
@@ -4081,6 +4762,7 @@ class TabularProcessingPlugin:
                         normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
                         start_row=int(start_row),
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4090,12 +4772,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
@@ -4129,6 +4813,7 @@ class TabularProcessingPlugin:
                 operator = (match_operator or 'equals').strip().lower()
                 normalized_lookup_value = str(lookup_value)
 
+                self._require_saved_values(df, [lookup_column])
                 try:
                     mask = self._build_series_match_mask(
                         df[lookup_column],
@@ -4141,10 +4826,12 @@ class TabularProcessingPlugin:
 
                 start, limit = self._parse_row_page_arguments(start_row, max_rows, default_max_rows=25)
                 matched_df = df[mask]
+                self._require_saved_values(matched_df, [target_column])
                 matches = matched_df.iloc[start:start + limit]
                 response = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     "lookup_column": lookup_column,
                     "lookup_value": lookup_value,
                     "target_column": target_column,
@@ -4153,7 +4840,7 @@ class TabularProcessingPlugin:
                     "total_matches": len(matched_df),
                 }
                 response.update(self._build_tabular_row_page_payload(
-                    matches.to_dict(orient='records'),
+                    matches,
                     len(matched_df),
                     start_row=start,
                     max_rows=limit,
@@ -4165,7 +4852,7 @@ class TabularProcessingPlugin:
                 return json.dumps(response, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error looking up value: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -4199,6 +4886,9 @@ class TabularProcessingPlugin:
         max_values: Annotated[str, "Maximum distinct values to return"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result containing deterministic distinct values and counts"]:
         """Return deterministic distinct values from a worksheet or across worksheets."""
         def _sync_work():
@@ -4216,7 +4906,7 @@ class TabularProcessingPlugin:
 
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and table_id in (None, '', 'all') and not cell_range and header_row is None:
                     cross_sheet_result = self._get_distinct_values_across_sheets(
                         container,
                         blob_path,
@@ -4234,6 +4924,7 @@ class TabularProcessingPlugin:
                         url_path_segments=parsed_url_path_segments,
                         normalize_match=normalize_match_flag,
                         max_values=int(max_values),
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4244,12 +4935,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
 
                 if column not in df.columns:
@@ -4300,11 +4993,12 @@ class TabularProcessingPlugin:
                     )
                 except Exception as query_error:
                     return json.dumps({
-                        'error': f"Query/filter error: {query_error}",
+                        **self._tabular_error_payload(query_error),
                         'filename': filename,
                         'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
                     })
 
+                self._require_saved_values(filtered_df, [column])
                 distinct_display_values, matched_cell_count, extracted_match_count = self._collect_distinct_display_values(
                     filtered_df[column],
                     normalize_match=normalize_match_flag,
@@ -4318,6 +5012,7 @@ class TabularProcessingPlugin:
                 response_payload = {
                     'filename': filename,
                     'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     'column': column,
                     'filter_applied': applied_filters,
                     'normalize_match': normalize_match_flag,
@@ -4337,7 +5032,7 @@ class TabularProcessingPlugin:
                 return json.dumps(response_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error getting distinct values: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
 
         return await asyncio.to_thread(_sync_work)
 
@@ -4367,6 +5062,9 @@ class TabularProcessingPlugin:
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result containing a deterministic row count"]:
         """Count rows deterministically after optional filters or queries."""
         def _sync_work():
@@ -4379,7 +5077,7 @@ class TabularProcessingPlugin:
 
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and table_id in (None, '', 'all') and not cell_range and header_row is None:
                     cross_sheet_result = self._count_rows_across_sheets(
                         container,
                         blob_path,
@@ -4392,6 +5090,7 @@ class TabularProcessingPlugin:
                         additional_filter_value=additional_filter_value,
                         query_expression=query_expression,
                         normalize_match=normalize_match_flag,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4402,12 +5101,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
@@ -4442,14 +5143,16 @@ class TabularProcessingPlugin:
                     )
                 except Exception as query_error:
                     return json.dumps({
-                        'error': f"Query/filter error: {query_error}",
+                        **self._tabular_error_payload(query_error),
                         'filename': filename,
                         'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                        **self._table_result_metadata(df),
                     })
 
                 return json.dumps({
                     'filename': filename,
                     'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     'rows_scanned': len(df),
                     'row_count': len(filtered_df),
                     'filter_applied': applied_filters,
@@ -4457,7 +5160,7 @@ class TabularProcessingPlugin:
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error counting rows: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
 
         return await asyncio.to_thread(_sync_work)
 
@@ -4481,6 +5184,9 @@ class TabularProcessingPlugin:
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result of the aggregation"]:
         """Execute an aggregation operation on a column."""
         def _sync_work():
@@ -4495,12 +5201,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
@@ -4517,6 +5225,7 @@ class TabularProcessingPlugin:
                         )
                     )
 
+                self._require_saved_values(df, [column])
                 series = df[column]
                 op = operation.lower().strip()
 
@@ -4544,13 +5253,14 @@ class TabularProcessingPlugin:
                 return json.dumps({
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     "column": column,
                     "operation": op,
                     "result": result,
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error aggregating column: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -4582,6 +5292,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON list of matching rows"]:
         """Filter rows based on a condition."""
         def _sync_work():
@@ -4595,7 +5308,7 @@ class TabularProcessingPlugin:
                 # When no explicit sheet_name is given, try cross-sheet search first
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and table_id in (None, '', 'all') and not cell_range and header_row is None:
                     cross_sheet_result = self._filter_rows_across_sheets(
                         container,
                         blob_path,
@@ -4610,6 +5323,7 @@ class TabularProcessingPlugin:
                         max_rows=int(max_rows),
                         start_row=int(start_row),
                         return_columns=parsed_return_columns,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4619,12 +5333,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
@@ -4668,28 +5384,26 @@ class TabularProcessingPlugin:
                         )
                     )
                 except ValueError as filter_error:
-                    return json.dumps({"error": str(filter_error)})
+                    return json.dumps(self._tabular_error_payload(filter_error))
 
                 start, limit = self._parse_row_page_arguments(start_row, max_rows)
                 filtered = filtered_df.iloc[start:start + limit]
                 response_payload = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     "filter_applied": applied_filters,
                     "normalize_match": normalize_match_flag,
                     "total_matches": len(filtered_df),
                 }
                 response_payload.update(self._build_tabular_row_page_payload(
-                    filtered.to_dict(orient='records'),
+                    filtered,
                     len(filtered_df),
                     start_row=start,
                     max_rows=limit,
                     return_columns=parsed_return_columns,
                 ))
                 response_json = json.dumps(response_payload, indent=2, default=str)
-                if not str(blob_path or '').lower().endswith('.csv'):
-                    return response_json
-
                 replay_expression = None
                 replay_error = None
                 try:
@@ -4716,11 +5430,14 @@ class TabularProcessingPlugin:
                         return_columns=return_columns,
                         expected_row_count=len(filtered_df),
                         replay_error=replay_error,
+                        selected_sheet=selected_sheet,
+                        sheet_names=[selected_sheet] if selected_sheet else None,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     ),
                 )
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error filtering rows: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -4755,6 +5472,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum matching rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result containing matching rows, matched columns, and search metadata"]:
         """Search rows across one or more columns while preserving row context."""
         def _sync_work():
@@ -4769,7 +5489,7 @@ class TabularProcessingPlugin:
 
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and table_id in (None, '', 'all') and not cell_range and header_row is None:
                     cross_sheet_result = self._search_rows_across_sheets(
                         container,
                         blob_path,
@@ -4788,6 +5508,7 @@ class TabularProcessingPlugin:
                         normalize_match=normalize_match_flag,
                         max_rows=int(max_rows),
                         start_row=int(start_row),
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -4798,12 +5519,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
@@ -4844,7 +5567,7 @@ class TabularProcessingPlugin:
                     )
                 except Exception as query_error:
                     return json.dumps({
-                        'error': f"Query/filter error: {query_error}",
+                        **self._tabular_error_payload(query_error),
                         'filename': filename,
                         'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
                     })
@@ -4885,14 +5608,16 @@ class TabularProcessingPlugin:
                     )
                 except ValueError as search_error:
                     return json.dumps({
-                        'error': str(search_error),
+                        **self._tabular_error_payload(search_error),
                         'filename': filename,
                         'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                        **self._table_result_metadata(df),
                     })
 
                 response_json = json.dumps({
                     'filename': filename,
                     'selected_sheet': selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     'search_value': search_value,
                     'search_operator': search_operator,
                     'searched_columns': search_result['searched_columns'],
@@ -4908,9 +5633,6 @@ class TabularProcessingPlugin:
                     'next_start_row': search_result['next_start_row'],
                     'data': search_result['data'],
                 }, indent=2, default=str)
-                if not str(blob_path or '').lower().endswith('.csv'):
-                    return response_json
-
                 replay_expression = None
                 replay_error = None
                 try:
@@ -4941,11 +5663,14 @@ class TabularProcessingPlugin:
                         return_columns=return_columns,
                         expected_row_count=search_result['total_matches'],
                         replay_error=replay_error,
+                        selected_sheet=selected_sheet,
+                        sheet_names=[selected_sheet] if selected_sheet else None,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     ),
                 )
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error searching rows: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
 
         return await asyncio.to_thread(_sync_work)
 
@@ -4972,6 +5697,9 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result of the query"]:
         """Execute a pandas query expression against a tabular file."""
         def _sync_work():
@@ -4982,6 +5710,11 @@ class TabularProcessingPlugin:
                     group_id=group_id, public_workspace_id=public_workspace_id
                 )
                 if str(blob_path or '').lower().endswith('.csv'):
+                    if self._table_selector_kwargs(table_id, cell_range, header_row):
+                        raise TabularSelectionError(
+                            "Table, range, and header selectors apply only to Excel workbooks.",
+                            code='table_selection_invalid',
+                        )
                     return self._query_csv_data_in_bounded_chunks(
                         container_name=container,
                         blob_path=blob_path,
@@ -4994,12 +5727,13 @@ class TabularProcessingPlugin:
                 # When no explicit sheet_name is given, try cross-sheet query first
                 normalized_sheet = (sheet_name or '').strip()
                 normalized_sheet_idx = None if sheet_index is None else str(sheet_index).strip()
-                if not normalized_sheet and normalized_sheet_idx in (None, ''):
+                if not normalized_sheet and normalized_sheet_idx in (None, '') and table_id in (None, '', 'all') and not cell_range and header_row is None:
                     cross_sheet_result = self._query_tabular_data_across_sheets(
                         container, blob_path, filename, query_expression,
                         max_rows=int(max_rows),
                         start_row=int(start_row),
                         return_columns=parsed_return_columns,
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
                     )
                     if cross_sheet_result is not None:
                         return cross_sheet_result
@@ -5009,12 +5743,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
@@ -5028,45 +5764,32 @@ class TabularProcessingPlugin:
                 response_payload = {
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     "query_expression": query_expression,
                     "query_expression_fallback": used_reviewer_style_fallback,
                     "total_matches": len(result_df),
                 }
                 response_payload.update(self._build_tabular_row_page_payload(
-                    sliced_result_df.to_dict(orient='records'),
+                    sliced_result_df,
                     len(result_df),
                     start_row=start,
                     max_rows=limit,
                     return_columns=parsed_return_columns,
                 ))
                 response_json = json.dumps(response_payload, indent=2, default=str)
-                source_blob_version = self._get_tabular_blob_version(container, blob_path)
-                internal_metadata = {
-                    'tabular_source_authorization': self._build_source_authorization_from_location(
-                        container,
-                        blob_path,
-                        blob_version=source_blob_version,
-                    ),
-                }
-                if str(blob_path or '').lower().endswith('.csv'):
-                    internal_metadata['tabular_generated_export_source'] = (
-                        self._build_generated_export_query_descriptor_from_location(
-                            container_name=container,
-                            blob_path=blob_path,
-                            filename=filename,
-                            query_expression=query_expression,
-                            return_columns=return_columns,
-                            expected_row_count=len(result_df),
-                            blob_version=source_blob_version,
-                        )
-                    )
                 return PluginInvocationResult(
                     response_json,
-                    internal_metadata=internal_metadata,
+                    internal_metadata=self._build_tabular_generated_export_internal_metadata(
+                        container_name=container, blob_path=blob_path, filename=filename,
+                        source_function='query_tabular_data', query_expression=query_expression,
+                        return_columns=return_columns, expected_row_count=len(result_df),
+                        selected_sheet=selected_sheet, sheet_names=[selected_sheet],
+                        **self._table_selector_kwargs(table_id, cell_range, header_row),
+                    ),
                 )
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error querying data: {e}", level=logging.WARNING)
-                return json.dumps({"error": f"Query error: {str(e)}. Ensure column names and values are correct."})
+                return json.dumps(self._tabular_error_payload(e))
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -5105,6 +5828,16 @@ class TabularProcessingPlugin:
         max_rows: Annotated[str, "Maximum related target rows to return per page"] = "100",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        source_table_id: Annotated[str, "Optional discovered Excel table ID or name for the source cohort."] = None,
+        source_cell_range: Annotated[str, "Optional source Excel range instead of source_table_id; requires source_header_row."] = None,
+        source_header_row: Annotated[str, "Actual source worksheet header row; zero means no header."] = None,
+        target_table_id: Annotated[str, "Optional discovered Excel table ID or name for the target rows."] = None,
+        target_cell_range: Annotated[str, "Optional target Excel range instead of target_table_id; requires target_header_row."] = None,
+        target_header_row: Annotated[str, "Actual target worksheet header row; zero means no header."] = None,
+        source_filename: Annotated[str, "Optional different filename for the source cohort; defaults to filename."] = None,
+        target_filename: Annotated[str, "Optional different filename for the target rows; defaults to filename."] = None,
+        source_source: Annotated[str, "Optional source cohort storage scope: workspace, chat, group, or public. Defaults to source."] = None,
+        target_source: Annotated[str, "Optional target storage scope: workspace, chat, group, or public. Defaults to source."] = None,
     ) -> Annotated[str, "JSON result containing explainable set-membership filtering output"]:
         """Filter target rows by membership in a source-sheet cohort."""
         def _sync_work():
@@ -5113,6 +5846,14 @@ class TabularProcessingPlugin:
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
+                )
+                source_location = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, source_filename or filename, source_source or source,
+                    group_id=group_id, public_workspace_id=public_workspace_id,
+                )
+                target_location = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, target_filename or filename, target_source or source,
+                    group_id=group_id, public_workspace_id=public_workspace_id,
                 )
                 result_payload = self._evaluate_related_value_membership(
                     container,
@@ -5138,11 +5879,15 @@ class TabularProcessingPlugin:
                     max_rows=int(max_rows),
                     start_row=int(start_row),
                     return_columns=return_columns,
+                    source_table_id=source_table_id, source_cell_range=source_cell_range,
+                    source_header_row=source_header_row, target_table_id=target_table_id,
+                    target_cell_range=target_cell_range, target_header_row=target_header_row,
+                    source_location=source_location, target_location=target_location,
                 )
                 return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error filtering rows by related values: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
 
         return await asyncio.to_thread(_sync_work)
 
@@ -5179,6 +5924,16 @@ class TabularProcessingPlugin:
         source: Annotated[str, "Source: 'workspace', 'chat', 'group', or 'public'"] = "chat",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        source_table_id: Annotated[str, "Optional discovered Excel table ID or name for the source cohort."] = None,
+        source_cell_range: Annotated[str, "Optional source Excel range instead of source_table_id; requires source_header_row."] = None,
+        source_header_row: Annotated[str, "Actual source worksheet header row; zero means no header."] = None,
+        target_table_id: Annotated[str, "Optional discovered Excel table ID or name for the target rows."] = None,
+        target_cell_range: Annotated[str, "Optional target Excel range instead of target_table_id; requires target_header_row."] = None,
+        target_header_row: Annotated[str, "Actual target worksheet header row; zero means no header."] = None,
+        source_filename: Annotated[str, "Optional different filename for the source cohort; defaults to filename."] = None,
+        target_filename: Annotated[str, "Optional different filename for the target rows; defaults to filename."] = None,
+        source_source: Annotated[str, "Optional source cohort storage scope: workspace, chat, group, or public. Defaults to source."] = None,
+        target_source: Annotated[str, "Optional target storage scope: workspace, chat, group, or public. Defaults to source."] = None,
     ) -> Annotated[str, "JSON result containing an explainable relational row count"]:
         """Count target rows by membership in a source-sheet cohort."""
         def _sync_work():
@@ -5187,6 +5942,14 @@ class TabularProcessingPlugin:
                 container, blob_path = self._resolve_blob_location_with_fallback(
                     user_id, conversation_id, filename, source,
                     group_id=group_id, public_workspace_id=public_workspace_id
+                )
+                source_location = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, source_filename or filename, source_source or source,
+                    group_id=group_id, public_workspace_id=public_workspace_id,
+                )
+                target_location = self._resolve_blob_location_with_fallback(
+                    user_id, conversation_id, target_filename or filename, target_source or source,
+                    group_id=group_id, public_workspace_id=public_workspace_id,
                 )
                 result_payload = self._evaluate_related_value_membership(
                     container,
@@ -5210,6 +5973,10 @@ class TabularProcessingPlugin:
                     target_alias_column=target_alias_column,
                     normalize_match=normalize_match_flag,
                     max_rows=50,
+                    source_table_id=source_table_id, source_cell_range=source_cell_range,
+                    source_header_row=source_header_row, target_table_id=target_table_id,
+                    target_cell_range=target_cell_range, target_header_row=target_header_row,
+                    source_location=source_location, target_location=target_location, include_rows=False,
                 )
                 if 'error' not in result_payload:
                     result_payload['row_count'] = result_payload.get('matched_target_row_count', 0)
@@ -5219,7 +5986,7 @@ class TabularProcessingPlugin:
                 return json.dumps(result_payload, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error counting rows by related values: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
 
         return await asyncio.to_thread(_sync_work)
 
@@ -5248,6 +6015,9 @@ class TabularProcessingPlugin:
         sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result of the group-by aggregation"]:
         """Group by one column and aggregate another."""
         def _sync_work():
@@ -5262,12 +6032,14 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
@@ -5294,6 +6066,7 @@ class TabularProcessingPlugin:
                         "error": "Unsupported operation. Use count, sum, mean, min, max, median, or std."
                     })
 
+                self._require_saved_values(df, [group_by_column, aggregate_column])
                 grouped = df.groupby(group_by_column)[aggregate_column].agg(op)
                 grouped = grouped.dropna()
                 if grouped.empty:
@@ -5308,6 +6081,7 @@ class TabularProcessingPlugin:
                 return json.dumps({
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     "group_by": group_by_column,
                     "aggregate_column": aggregate_column,
                     "operation": op,
@@ -5318,7 +6092,7 @@ class TabularProcessingPlugin:
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error in group-by: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
         return await asyncio.to_thread(_sync_work)
 
     @kernel_function(
@@ -5349,6 +6123,9 @@ class TabularProcessingPlugin:
         sort_descending: Annotated[str, "Whether top_results should be sorted descending (true/false)"] = "true",
         group_id: Annotated[str, "Group ID (for group workspace documents)"] = None,
         public_workspace_id: Annotated[str, "Public workspace ID (for public workspace documents)"] = None,
+        table_id: Annotated[str, "Optional discovered Excel table ID or name; 'all' explicitly selects same-schema tables. Required when a worksheet has multiple tables."] = None,
+        cell_range: Annotated[str, "Optional Excel range such as A3:D100. Use instead of table_id and supply header_row."] = None,
+        header_row: Annotated[str, "Actual worksheet header row; zero means no header. Required for an explicit range or ambiguous header."] = None,
     ) -> Annotated[str, "JSON result of the datetime component grouping analysis"]:
         """Group data by a datetime component and aggregate a metric."""
         def _sync_work():
@@ -5367,22 +6144,22 @@ class TabularProcessingPlugin:
                     sheet_name=sheet_name,
                     sheet_index=sheet_index,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._read_tabular_blob_to_dataframe(
                     container,
                     blob_path,
                     sheet_name=selected_sheet,
                     require_explicit_sheet=True,
+                    **self._table_selector_kwargs(table_id, cell_range, header_row),
                 )
                 df = self._try_numeric_conversion(df)
 
                 if filter_expression:
                     try:
-                        df = df.query(filter_expression)
+                        df, _ = self._apply_query_expression_with_fallback(df, filter_expression)
                     except Exception as query_error:
-                        return json.dumps({
-                            "error": f"Filter query error: {query_error}. Ensure column names and values are correct."
-                        })
+                        return json.dumps(self._tabular_error_payload(query_error))
 
                 if datetime_column not in df.columns:
                     related_columns = [aggregate_column] if aggregate_column else []
@@ -5399,6 +6176,7 @@ class TabularProcessingPlugin:
                         )
                     )
 
+                self._require_saved_values(df, [datetime_column])
                 parsed_datetime = self._parse_datetime_like_series(df[datetime_column])
                 valid_mask = parsed_datetime.notna()
                 if not valid_mask.any():
@@ -5443,6 +6221,7 @@ class TabularProcessingPlugin:
                                 available_columns=list(filtered_df.columns),
                             )
                         )
+                    self._require_saved_values(filtered_df, [aggregate_column_name])
                     grouped = filtered_df.groupby(component_column_name)[aggregate_column_name].agg(op)
 
                 grouped = grouped.dropna()
@@ -5460,6 +6239,7 @@ class TabularProcessingPlugin:
                 return json.dumps({
                     "filename": filename,
                     "selected_sheet": selected_sheet if workbook_metadata.get('is_workbook') else None,
+                    **self._table_result_metadata(df),
                     "datetime_column": datetime_column,
                     "datetime_component": self._normalize_datetime_component(datetime_component),
                     "aggregate_column": aggregate_column_name or None,
@@ -5474,5 +6254,5 @@ class TabularProcessingPlugin:
                 }, indent=2, default=str)
             except Exception as e:
                 log_event(f"[TABULAR_PROCESSING_PLUGIN] Error in datetime component grouping: {e}", level=logging.WARNING)
-                return json.dumps({"error": str(e)})
+                return json.dumps(self._tabular_error_payload(e))
         return await asyncio.to_thread(_sync_work)

@@ -1,0 +1,26 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Call agent configuration",
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["target_agent"],
+    "properties": {
+        "target_agent": {
+            "type": "object",
+            "description": "The explicitly selected agent, resolved and authorized again when called.",
+            "additionalProperties": false,
+            "required": ["id", "scope_type", "scope_id"],
+            "properties": {
+                "id": {"type": "string", "minLength": 1, "maxLength": 1023},
+                "scope_type": {"enum": ["personal", "group", "global"]},
+                "scope_id": {"type": "string", "minLength": 1, "maxLength": 128}
+            },
+            "allOf": [
+                {
+                    "if": {"properties": {"scope_type": {"const": "global"}}},
+                    "then": {"properties": {"scope_id": {"const": "global"}}}
+                }
+            ]
+        }
+    }
+}

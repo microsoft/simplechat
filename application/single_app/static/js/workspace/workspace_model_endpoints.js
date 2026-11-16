@@ -1,4 +1,5 @@
 // workspace_model_endpoints.js
+import { mountProfilePicker } from "../admin/model_catalog_ui.js";
 
 import { showToast } from "../chat/chat-toast.js";
 import { getIconPayload, setIconPayload } from "../agents_common.js";
@@ -9,7 +10,7 @@ import {
 } from "../model_endpoint_profile_editor.js";
 import {
     createModelRoutingEditor, collectModelRouting, previewModelRoute,
-    validateModelRoutes, invalidateModelRoutingPreviews, ModelRoutingValidationError, showModelRoutingError
+    invalidateModelRoutingPreviews, ModelRoutingValidationError, showModelRoutingError
 } from "../model_routing_editor.js";
 import {
     ModelBudgetValidationError,
@@ -87,6 +88,7 @@ const modelsFetchApi = scope === "group" ? "/api/group/models/fetch" : "/api/use
 const modelsTestApi = scope === "group" ? "/api/group/models/test-model" : "/api/user/models/test-model";
 
 let workspaceEndpoints = Array.isArray(window.workspaceModelEndpoints) ? [...window.workspaceModelEndpoints] : [];
+let activeGroupId = "";
 let modalModels = [];
 let modalEndpoint = {};
 let endpointBudgetEditor = null;
@@ -897,6 +899,12 @@ function renderModalModels(models) {
             }));
         }
         wrapper.appendChild(descriptionWrapper);
+        const profileWrapper = createElement("div", "mt-2");
+        mountProfilePicker(profileWrapper, model, (value) => {
+            model.catalogProfileId = value;
+            delete model.capability_status;
+        });
+        wrapper.appendChild(profileWrapper);
         wrapper.appendChild(iconWrapper);
         wrapper.appendChild(createModelBudgetEditor(model, {
             idPrefix: getModelIconDomId(modelId, `budget-${modelIndex}`),
@@ -1201,7 +1209,9 @@ function buildEndpointPayload() {
 }
 
 async function saveEndpoint() {
-    const previousEndpoints = [...workspaceEndpoints];
+    if (saveBtn) {
+        setEndpointButtonBusy(saveBtn, true);
+    }
     try {
         const payload = buildEndpointPayload();
         if (!payload) {
@@ -1209,8 +1219,6 @@ async function saveEndpoint() {
         }
 
         const models = collectModalModels();
-        saveBtn.disabled = true;
-        await validateModelRoutes(payload, models, modelsTestApi, modelsListEl);
         const endpointId = endpointIdInput?.value || generateId();
         const existingEndpoint = workspaceEndpoints.find((endpoint) => endpoint.id === endpointId);
         const authType = payload.auth?.type || "managed_identity";
@@ -1233,19 +1241,26 @@ async function saveEndpoint() {
             has_client_secret: hasClientSecret
         };
 
-        const existingIndex = workspaceEndpoints.findIndex((endpoint) => endpoint.id === endpointId);
-        if (existingIndex >= 0) {
-            workspaceEndpoints[existingIndex] = endpointData;
-        } else {
-            workspaceEndpoints.push(endpointData);
+        const requestEndpointId = existingEndpoint ? endpointId : null;
+        const response = await fetch(endpointMutationApi(requestEndpointId), {
+            method: existingEndpoint ? "PATCH" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(endpointRequestBody(endpointData, existingEndpoint))
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.endpoint) {
+            throw new Error(result.error || "Unable to save this model connection.");
         }
-
-        await persistEndpoints();
+        const savedEndpoint = result.endpoint;
+        if (existingEndpoint) {
+            Object.assign(existingEndpoint, savedEndpoint);
+        } else {
+            workspaceEndpoints.push(savedEndpoint);
+        }
         renderEndpoints();
         endpointModal.hide();
         showToast("Endpoint saved successfully.", "success");
     } catch (error) {
-        workspaceEndpoints = previousEndpoints;
         if (error instanceof ModelRoutingValidationError) {
             showModelRoutingError(error);
             return;
@@ -1255,56 +1270,114 @@ async function saveEndpoint() {
         }
         showToast(error.message || "Failed to save endpoint.", "danger");
     } finally {
-        saveBtn.disabled = false;
+        if (saveBtn) {
+            setEndpointButtonBusy(saveBtn, false);
+        }
     }
 }
 
-async function persistEndpoints() {
-    const response = await fetch(endpointsApi, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ endpoints: workspaceEndpoints })
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) {
-        throw new Error(data.error || "Failed to save endpoints.");
+function endpointMutationApi(endpointId = null) {
+    if (scope === "group") {
+        if (!activeGroupId) {
+            throw new Error("Reload the workspace before changing a model connection.");
+        }
+        const collection = `/api/groups/${encodeURIComponent(activeGroupId)}/model-endpoints`;
+        return endpointId ? `${collection}/${encodeURIComponent(endpointId)}` : collection;
     }
-    if (Array.isArray(data.endpoints)) {
-        workspaceEndpoints = [...data.endpoints];
+    return endpointId
+        ? `${endpointsApi}/${encodeURIComponent(endpointId)}`
+        : endpointsApi;
+}
+
+function endpointRequestBody(endpoint, existingEndpoint = null) {
+    if (scope !== "group" || !existingEndpoint) {
+        return endpoint;
+    }
+    if (!existingEndpoint.revision) {
+        throw new Error("Reload the workspace before changing this model connection.");
+    }
+    return {
+        ...endpoint,
+        expected_revision: existingEndpoint.revision
+    };
+}
+
+function setEndpointButtonBusy(button, busy) {
+    if (!button) return;
+    button.disabled = busy;
+    button.setAttribute("aria-busy", String(busy));
+    const existing = button.querySelector("[data-endpoint-busy-icon]");
+    if (busy && !existing) {
+        const spinner = document.createElement("span");
+        spinner.className = "spinner-border spinner-border-sm ms-1";
+        spinner.dataset.endpointBusyIcon = "true";
+        spinner.setAttribute("aria-hidden", "true");
+        button.append(spinner);
+    } else if (!busy) {
+        existing?.remove();
     }
 }
 
-async function toggleEndpoint(endpointId) {
+async function toggleEndpoint(endpointId, button) {
     const endpoint = workspaceEndpoints.find((item) => item.id === endpointId);
     if (!endpoint) {
         return;
     }
-    const previousEnabled = endpoint.enabled;
-    endpoint.enabled = !endpoint.enabled;
+    setEndpointButtonBusy(button, true);
     try {
-        await persistEndpoints();
+        const response = await fetch(endpointMutationApi(endpointId), {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(endpointRequestBody(
+                { enabled: endpoint.enabled === false },
+                endpoint
+            ))
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.endpoint) {
+            throw new Error(result.error || "Failed to update endpoint.");
+        }
+        Object.assign(endpoint, result.endpoint);
         renderEndpoints();
     } catch (error) {
-        endpoint.enabled = previousEnabled;
         console.error("Failed to update endpoint", error);
         showToast(error.message || "Failed to update endpoint.", "danger");
+    } finally {
+        setEndpointButtonBusy(button, false);
     }
 }
 
-async function deleteEndpoint(endpointId) {
-    const previousEndpoints = workspaceEndpoints;
-    workspaceEndpoints = workspaceEndpoints.filter((item) => item.id !== endpointId);
+async function deleteEndpoint(endpointId, button) {
+    const endpoint = workspaceEndpoints.find((item) => item.id === endpointId);
+    if (!endpoint) {
+        return;
+    }
+    setEndpointButtonBusy(button, true);
     try {
-        await persistEndpoints();
+        const deleteOptions = { method: "DELETE" };
+        if (scope === "group") {
+            if (!endpoint.revision) {
+                throw new Error("Reload the workspace before deleting this model connection.");
+            }
+            deleteOptions.headers = { "Content-Type": "application/json" };
+            deleteOptions.body = JSON.stringify({ expected_revision: endpoint.revision });
+        }
+        const response = await fetch(endpointMutationApi(endpointId), deleteOptions);
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(result.error || "Failed to delete endpoint.");
+        }
+        workspaceEndpoints = workspaceEndpoints.filter((item) => item.id !== endpointId);
         renderEndpoints();
     } catch (error) {
-        workspaceEndpoints = previousEndpoints;
         console.error("Failed to delete endpoint", error);
         showToast(error.message || "Failed to delete endpoint.", "danger");
+    } finally {
+        setEndpointButtonBusy(button, false);
     }
 }
 
-function handleTableClick(event) {
+async function handleTableClick(event) {
     const target = event.target.closest("button[data-action]");
     if (!target) {
         return;
@@ -1321,11 +1394,11 @@ function handleTableClick(event) {
         return;
     }
     if (action === "toggle") {
-        toggleEndpoint(endpointId);
+        await toggleEndpoint(endpointId, target);
         return;
     }
     if (action === "delete") {
-        deleteEndpoint(endpointId);
+        await deleteEndpoint(endpointId, target);
     }
 }
 
@@ -1411,6 +1484,7 @@ async function loadEndpoints() {
             throw new Error(payload.error || "Failed to load endpoints");
         }
         workspaceEndpoints = Array.isArray(payload.endpoints) ? payload.endpoints : [];
+        activeGroupId = scope === "group" ? String(payload.group_id || "") : "";
         renderEndpoints();
     } catch (error) {
         if (isEndpointsFeatureDisabled(error)) {

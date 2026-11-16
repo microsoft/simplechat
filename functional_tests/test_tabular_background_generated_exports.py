@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for durable tabular generated-output background exports.
-Version: 0.261.046
+Version: 0.261.428
 Implemented in: 0.241.060; throughput and timeout hardening in: 0.250.070; unified durable run contract in: 0.250.128; Phase 6 rolling worker pool compatibility in: 0.250.142; safe retry reason status text in: 0.250.147; collapsed operational details in: 0.250.150; simplified completed artifact cards in: 0.250.151; balanced batches and foreground JSON/XML cards in: 0.250.152; plural artifact-set completion rendering in: 0.250.176; valid XML stream serialization in: 0.261.023
 
 Schema-v2 execution owner binding implemented in: 0.261.046
@@ -66,10 +66,16 @@ def assert_contains(source_text, needle, description):
 @pytest.mark.parametrize("context_field", ("model_context", "chunk_model_context"))
 @pytest.mark.parametrize("tampered_field", ("user_id", "scope_id"))
 def test_background_model_context_cannot_impersonate_another_owner(context_field, tampered_field):
-    node = get_function(parse_python(EXPORT_MODULE), '_authorize_tabular_export_run_execution')
+    module = parse_python(EXPORT_MODULE)
+    conversation_node = get_function(module, '_authorize_tabular_export_run_conversation')
+    node = get_function(module, '_authorize_tabular_export_run_execution')
     store = Mock(return_value={'user_id': 'owner'})
     namespace = {'cosmos_conversations_container': SimpleNamespace(read_item=store)}
-    exec(compile(ast.Module(body=[node], type_ignores=[]), str(EXPORT_MODULE), 'exec'), namespace)
+    exec(compile(
+        ast.Module(body=[conversation_node, node], type_ignores=[]),
+        str(EXPORT_MODULE),
+        'exec',
+    ), namespace)
     context = {
         'routing_schema_version': 2, 'scope_type': 'user', 'scope_id': 'owner',
         'user_id': 'owner', 'endpoint_id': 'endpoint', 'model_id': 'model',
@@ -82,9 +88,15 @@ def test_background_model_context_cannot_impersonate_another_owner(context_field
 
 
 def test_background_model_context_binds_verified_owner_without_mutating_snapshot():
-    node = get_function(parse_python(EXPORT_MODULE), '_authorize_tabular_export_run_execution')
+    module = parse_python(EXPORT_MODULE)
+    conversation_node = get_function(module, '_authorize_tabular_export_run_conversation')
+    node = get_function(module, '_authorize_tabular_export_run_execution')
     namespace = {'cosmos_conversations_container': SimpleNamespace(read_item=lambda **_kwargs: {'user_id': 'owner'})}
-    exec(compile(ast.Module(body=[node], type_ignores=[]), str(EXPORT_MODULE), 'exec'), namespace)
+    exec(compile(
+        ast.Module(body=[conversation_node, node], type_ignores=[]),
+        str(EXPORT_MODULE),
+        'exec',
+    ), namespace)
     context = {
         'routing_schema_version': 2, 'scope_type': 'global', 'scope_id': 'global',
         'endpoint_id': 'endpoint', 'model_id': 'model',
@@ -175,13 +187,16 @@ def test_export_runner_module():
 
     simplechat_operations_source = read_text(APP_ROOT / 'functions_simplechat_operations.py')
     assert_contains(simplechat_operations_source, 'artifact_idempotency_key', 'idempotent artifact key')
-    assert_contains(simplechat_operations_source, 'uuid.uuid5', 'deterministic artifact message identity')
+    assert_contains(simplechat_operations_source, 'generated_chat_artifact_address', 'shared artifact identity helper')
+    artifact_sources = read_text(APP_ROOT / 'functions_generated_artifact_sources.py')
+    assert_contains(artifact_sources, 'uuid.uuid5', 'deterministic artifact message identity')
 
 
 def test_background_xml_stream_is_well_formed_xml():
     """Validate XML background exports do not write JSON under an XML filename."""
     export_tree = parse_python(EXPORT_MODULE)
     writer_function = get_function(export_tree, '_write_ordered_output_stream')
+    records_function = get_function(export_tree, 'iter_tabular_output_records')
     xml_tag_function = get_function(export_tree, '_sanitize_generated_xml_tag_name')
     xml_row_function = get_function(export_tree, '_write_generated_xml_row')
     assert writer_function is not None
@@ -216,7 +231,7 @@ def test_background_xml_stream_is_well_formed_xml():
     exec(
         compile(
             ast.Module(
-                body=[xml_tag_function, xml_row_function, writer_function],
+                body=[xml_tag_function, xml_row_function, records_function, writer_function],
                 type_ignores=[],
             ),
             str(EXPORT_MODULE),

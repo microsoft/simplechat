@@ -1,7 +1,7 @@
 # test_workflow_model_core_capabilities.py
 """
 Functional test for Direct Model workflow core capabilities.
-Version: 0.261.045
+Version: 0.261.428
 Implemented in: 0.250.063
 Enhanced in: 0.250.064; updated in 0.250.172; schema-v2 scope context in 0.261.044
 Saved workflow context handoffs and allowlisting fixed in: 0.261.045
@@ -12,6 +12,7 @@ to a Semantic Kernel service and pass the kernel to auto-invoked core tools.
 
 import ast
 import asyncio
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,6 +24,10 @@ from semantic_kernel.contents.chat_history import ChatHistory
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER_FILE = ROOT / "application" / "single_app" / "functions_workflow_runner.py"
+sys.path.insert(0, str(RUNNER_FILE.parent))
+
+# Application imports follow the worktree module-path setup.
+from functions_workflow_context import wrap_workflow_chat_service
 
 
 class FakeKernel:
@@ -99,6 +104,7 @@ def load_model_core_helpers():
         "FunctionChoiceBehavior": FunctionChoiceBehavior,
         "Kernel": lambda: kernel,
         "PromptExecutionSettings": PromptExecutionSettings,
+        "wrap_workflow_chat_service": wrap_workflow_chat_service,
         "_add_workflow_activity_thought": lambda *args, **kwargs: None,
         "_build_agent_citations_from_invocations": lambda user_id, conversation_id: [
             {"user_id": user_id, "conversation_id": conversation_id}

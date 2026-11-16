@@ -1,9 +1,13 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'content-safety' %} show active{% endif %}" id="content-safety" role="tabpanel" aria-labelledby="content-safety-tab">
 
+                <p class="text-body-secondary">
+                    For PII, regex, literal, and model-based checks, use
+                    <a href="#content-screening" data-screening-open-settings>Security &gt; Content Screening</a>.
+                </p>
+
                  <p class="text-muted">
-                    Configure content safety, archiving, and user feedback settings. If Content Safety is enabled, user
-                    messages will be sent to the safety endpoint for analysis. If User Feedback is enabled, users will see
-                    thumbs up/down to provide feedback on AI responses.
+                    Choose whether Azure AI Content Safety checks submitted messages, AI replies, or both.
+                    Reply display and checker-failure behavior are shared with Content Screening.
                 </p>
                 <div class="card p-3 mb-3" id="content-safety-section">
                     <h5>
@@ -27,7 +31,27 @@
 
                     <div id="content_safety_settings"
                          {% if not settings.enable_content_safety %}style="display: none;"{% endif %}>
-
+                        <fieldset class="mb-3">
+                            <legend class="h6">Where to check</legend>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="enable_content_safety_chat_input"
+                                    name="enable_content_safety_chat_input"
+                                    {% if settings.enable_content_safety_chat_input|default(true) %}checked{% endif %} />
+                                <label class="form-check-label" for="enable_content_safety_chat_input">Check submitted messages with Content Safety</label>
+                            </div>
+                            <div class="form-check form-switch mb-2">
+                                <input class="form-check-input" type="checkbox" id="enable_content_safety_chat_output"
+                                    name="enable_content_safety_chat_output"
+                                    {% if settings.enable_content_safety_chat_output|default(false) %}checked{% endif %} />
+                                <label class="form-check-label" for="enable_content_safety_chat_output">Check AI replies with Content Safety</label>
+                            </div>
+                            <p class="form-text">
+                                Configure both scanners' response display and failure choices under
+                                <a href="#content-screening" data-screening-open-settings>Content Screening &gt; Chat check behavior</a>.
+                                These choices do not add full-file Azure Content Safety scans.
+                            </p>
+                            <a href="/admin/safety_violations#unchecked-chat-content">Review unchecked chat content</a>
+                        </fieldset>
 
                         <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                             <input
@@ -132,6 +156,66 @@
                             </div>
                         </div>
 
+
+                        {% set content_safety_thresholds = settings.content_safety_category_thresholds | default({}, true) %}
+                        {% macro content_safety_threshold_label(value) -%}
+                            {%- if value | int <= 2 -%}Low{%- elif value | int >= 6 -%}High{%- else -%}Medium{%- endif -%}
+                        {%- endmacro %}
+                        {% macro content_safety_threshold_help(value) -%}
+                            {%- if value | int <= 2 -%}Block Low, Medium and High{%- elif value | int >= 6 -%}Allow Low and Medium / Block High{%- else -%}Allow Low / Block Medium and High{%- endif -%}
+                        {%- endmacro %}
+                        {% set violence_threshold = content_safety_thresholds.get('Violence', 4) | int %}
+                        {% set hate_threshold = content_safety_thresholds.get('Hate', 4) | int %}
+                        {% set sexual_threshold = content_safety_thresholds.get('Sexual', 4) | int %}
+                        {% set self_harm_threshold = content_safety_thresholds.get('SelfHarm', 4) | int %}
+                        <div class="mb-3" id="content-safety-category-thresholds">
+                            <label class="form-label">Prompt Category Block Thresholds</label>
+                            <div class="table-responsive">
+                                <table class="table table-sm align-middle mb-2">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col">Category</th>
+                                            <th scope="col">Threshold</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <th scope="row">Violence</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_violence_label">{{ content_safety_threshold_label(violence_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_violence" name="content_safety_threshold_violence" min="2" max="6" step="2" value="{{ violence_threshold }}" data-threshold-label-target="content_safety_threshold_violence_label" data-threshold-help-target="content_safety_threshold_violence_help" aria-describedby="content_safety_threshold_violence_help" />
+                                                <div class="form-text" id="content_safety_threshold_violence_help">{{ content_safety_threshold_help(violence_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row">Hate</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_hate_label">{{ content_safety_threshold_label(hate_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_hate" name="content_safety_threshold_hate" min="2" max="6" step="2" value="{{ hate_threshold }}" data-threshold-label-target="content_safety_threshold_hate_label" data-threshold-help-target="content_safety_threshold_hate_help" aria-describedby="content_safety_threshold_hate_help" />
+                                                <div class="form-text" id="content_safety_threshold_hate_help">{{ content_safety_threshold_help(hate_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row">Sexual</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_sexual_label">{{ content_safety_threshold_label(sexual_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_sexual" name="content_safety_threshold_sexual" min="2" max="6" step="2" value="{{ sexual_threshold }}" data-threshold-label-target="content_safety_threshold_sexual_label" data-threshold-help-target="content_safety_threshold_sexual_help" aria-describedby="content_safety_threshold_sexual_help" />
+                                                <div class="form-text" id="content_safety_threshold_sexual_help">{{ content_safety_threshold_help(sexual_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <th scope="row">Self-harm</th>
+                                            <td>
+                                                <div class="fw-semibold" id="content_safety_threshold_self_harm_label">{{ content_safety_threshold_label(self_harm_threshold) }}</div>
+                                                <input type="range" class="form-range content-safety-category-threshold-range" id="content_safety_threshold_self_harm" name="content_safety_threshold_self_harm" min="2" max="6" step="2" value="{{ self_harm_threshold }}" data-threshold-label-target="content_safety_threshold_self_harm_label" data-threshold-help-target="content_safety_threshold_self_harm_help" aria-describedby="content_safety_threshold_self_harm_help" />
+                                                <div class="form-text" id="content_safety_threshold_self_harm_help">{{ content_safety_threshold_help(self_harm_threshold) }}</div>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="form-text">Higher threshold levels don’t override the model deployment guardrails.</div>
+                        </div>
 
                         <div class="mb-3">
                             <label for="content_safety_violation_message" class="form-label">

@@ -1,0 +1,401 @@
+# test_v2_prompt_composer_card.py
+"""
+Functional test for the attached-prompt card in the V2 composer.
+Version: 0.261.255
+Implemented in: 0.261.092
+Controlled shared editor implemented in: 0.261.096
+Frozen prompt snapshots implemented in: 0.261.096
+
+Picking a saved prompt used to paste its text into the composer. Everything below exists
+because of what that cost:
+
+  - The prompt stopped being a prompt. It could not be collapsed, taken back off, or have a
+    variable corrected without editing prose in the message box.
+  - Variables were filled once, in a modal, and flattened. `{{composer}}` -- "what you have
+    already typed" -- resolved to nothing, because picking the prompt is the first thing you do.
+  - The ordinary chat path sent no `prompt_info` at all. Only orchestration did, so a saved
+    prompt used in a normal turn left no record it had been involved.
+  - The planner was told the prompt's name and nothing else, and did not count it as a signal
+    that the user had pointed at something.
+
+This test checks UI wiring and executes the companion TypeScript against real backend
+persistence fixtures, including streaming, orchestration and shared-message snapshots.
+"""
+
+import json
+import re
+import subprocess
+import sys
+import traceback
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+APP_DIR = REPO_ROOT / "application" / "single_app"
+V2_DIR = REPO_ROOT / "application" / "v2_ui"
+V2_SRC = V2_DIR / "src"
+
+sys.path.insert(0, str(REPO_ROOT / "functional_tests"))
+
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+from test_v2_prompt_attachment_persistence import build_prompt_lifecycle_fixtures  # noqa: E402
+
+COMPOSER_TSX = V2_SRC / "components" / "chat" / "Composer.tsx"
+EDITOR_TSX = V2_SRC / "components" / "chat" / "ComposerEditor.tsx"
+COMPOSER_DRAFT_TS = V2_SRC / "lib" / "composerDraft.ts"
+CARD_TSX = V2_SRC / "components" / "chat" / "AttachedPromptCard.tsx"
+SHARED_CARD_TSX = V2_SRC / "components" / "chat" / "PromptCard.tsx"
+FIELD_TSX = V2_SRC / "components" / "prompts" / "PromptVariableField.tsx"
+MESSAGE_LIST_TSX = V2_SRC / "components" / "chat" / "MessageList.tsx"
+PROMPT_REQUEST_TS = V2_SRC / "lib" / "promptRequest.ts"
+MESSAGE_PROMPT_TS = V2_SRC / "lib" / "messagePrompt.ts"
+VARIABLE_VALUES_TS = V2_SRC / "lib" / "usePromptVariableValues.ts"
+CHAT_STORE_TS = V2_SRC / "stores" / "chatStore.ts"
+TYPES_TS = V2_SRC / "lib" / "types.ts"
+MESSAGE_TEXT_TS = V2_SRC / "lib" / "messageText.ts"
+CHATS_ROUTE = APP_DIR / "route_backend_chats.py"
+
+LOGIC_CHECK_TS = REPO_ROOT / "functional_tests" / "test_v2_prompt_composer_card_logic.ts"
+
+RETIRED_DIALOG = V2_SRC / "components" / "prompts" / "PromptVariablesDialog.tsx"
+
+
+def _read(path):
+    return path.read_text(encoding="utf-8")
+
+
+def _strip_comments(source):
+    """Remove comments so an assertion cannot be satisfied by prose describing the rule."""
+    without_blocks = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
+    return re.sub(r"(?m)^\s*//.*$", "", without_blocks)
+
+
+def test_version_is_at_least_the_implementing_release():
+    """The card and its request contract landed together in one release."""
+    print("Testing version...")
+    assert_app_version_at_least("0.261.096")
+    print("  ok  version is at or past the implementing release")
+    return True
+
+
+def test_the_prompt_is_attached_rather_than_pasted():
+    """Pasted, a prompt is indistinguishable from typing and cannot be taken back off."""
+    print("Testing attachment...")
+
+    composer = _strip_comments(_read(COMPOSER_TSX))
+    editor = _strip_comments(_read(EDITOR_TSX))
+    draft = _strip_comments(_read(COMPOSER_DRAFT_TS))
+    assert "const [draft, setDraft] = useState(createComposerDraft)" in composer, (
+        "the main composer must own its complete controlled draft"
+    )
+    assert "attachedPrompt: AttachedPrompt | null" in draft and "draft.attachedPrompt" in editor, (
+        "the shared editor must hold the prompt as part of its draft, never pasted text"
+    )
+    assert "<ComposerEditor" in composer and "draft={draft}" in composer and "onChange={setDraft}" in composer, (
+        "the main composer must mount the same controlled editor used for inline answers"
+    )
+    assert "attachPrompt(" in composer, "picking a prompt must attach it"
+    assert "insertIntoComposer(content" not in composer + editor, (
+        "prompt content must never be written into the message box"
+    )
+    assert CARD_TSX.exists(), "the attached prompt must have a card to render in"
+
+    card = _strip_comments(_read(CARD_TSX))
+    shell = _strip_comments(_read(SHARED_CARD_TSX))
+    assert "<PromptCard" in card, "draft and sent prompts must share their presentation"
+    assert "const [open, setOpen] = useState(false)" in card, "only the preview starts collapsed"
+    assert "const [variablesOpen, setVariablesOpen] = useState(true)" in card, (
+        "variable fields must be discoverable without first opening the preview"
+    )
+    assert "aria-expanded={open}" in shell, "the preview disclosure must announce its state"
+    assert "aria-expanded={variablesOpen}" in card, "the variable disclosure must announce its state"
+    assert "onRemove" in card, "an attached prompt must be removable in one action"
+    assert "useId()" in card and 'idPrefix={`${idPrefix}-var`}' in card, (
+        "prompt variable and content ids must be instance-specific when cards coexist"
+    )
+
+    print("  ok  the prompt is attached, not pasted")
+    return True
+
+
+def test_an_edit_applies_to_this_turn_only():
+    """A prompt edited in the composer must not silently rewrite the saved one."""
+    print("Testing this-turn editing...")
+
+    request = _strip_comments(_read(PROMPT_REQUEST_TS))
+    assert "editedContent ?? attached.originalContent" in request, (
+        "the edited wording must take precedence while the saved wording is kept"
+    )
+    assert "attachedPromptIsEdited" in request, "an edit must be reportable as one"
+
+    composer = _strip_comments(_read(EDITOR_TSX))
+    assert "editedContent: null" in composer, (
+        "resetting must restore the saved wording rather than a copy of it"
+    )
+    # Nothing here may reach a prompt write route: this is a turn-local change.
+    for forbidden in ("updatePrompt", "savePrompt", "/api/prompts/"):
+        assert forbidden not in _strip_comments(_read(CARD_TSX)), (
+            f"the card must not write back to the saved prompt ({forbidden})"
+        )
+
+    card = _strip_comments(_read(CARD_TSX))
+    assert "edited={edited}" in card and "Edited" in _read(SHARED_CARD_TSX), (
+        "an edited prompt must say so through the shared card"
+    )
+    assert "onResetContent" in card, "an edit must be reversible"
+
+    print("  ok  an edit is turn-local, badged and reversible")
+    return True
+
+
+def test_a_prompt_only_turn_can_be_sent():
+    """A prompt that needs no further input is already a complete message."""
+    print("Testing send gating...")
+
+    composer = _strip_comments(_read(COMPOSER_TSX))
+    # Mention chips (0.261.255) are a third thing that makes a turn sendable without typed text.
+    assert "if (!text.trim() && !attachedPrompt && !hasMentionChips)" in composer, (
+        "the send gate must not require typed text when a prompt is attached"
+    )
+    assert "(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost" in composer, (
+        "the send button must stay enabled for a prompt-only turn"
+    )
+    assert "if (!text.trim() || streaming || !canPost)" not in composer, (
+        "the old typed-text-only gate must be gone"
+    )
+
+    print("  ok  a prompt-only turn is sendable")
+    return True
+
+
+def test_the_prompt_is_resolved_against_the_message_it_was_sent_with():
+    """Resolved at pick time, `{{composer}}` is empty: nothing has been typed yet."""
+    print("Testing send-time resolution...")
+
+    composer = _strip_comments(_read(COMPOSER_TSX))
+    assert "buildComposerDraftSubmission(draft, promptContext())" in composer, (
+        "the shared submission builder must receive the live main-composer draft at send"
+    )
+    draft = _strip_comments(_read(COMPOSER_DRAFT_TS))
+    assert "resolvePromptVariableValues(parsePromptVariables(content), draft.promptValues" in draft and "composerText: draft.text" in draft, (
+        "the submission builder must resolve built-ins from the owning editor's current text"
+    )
+    assert "estimateLargeTabularRun(outgoing.message" in composer, (
+        "the large-run estimate must see the whole message, not just what was typed"
+    )
+
+    values = _strip_comments(_read(VARIABLE_VALUES_TS))
+    assert "resolvePromptVariableValues(variables, valuesRef.current, override ?? context)" in values, (
+        "preview and send must use the same live built-in/default resolution, not a mount-time snapshot"
+    )
+    assert "if (isBuiltInPromptVariable(variableKey))" in values, (
+        "a stored value must not be able to shadow a built-in"
+    )
+
+    print("  ok  the prompt is resolved at send")
+    return True
+
+
+def test_both_send_paths_report_the_prompt():
+    """The chat path reported nothing, so an ordinary turn recorded no prompt at all."""
+    print("Testing prompt_info on both paths...")
+
+    store = _strip_comments(_read(CHAT_STORE_TS))
+    assert "requestBody.prompt_info = options.promptInfo" in store, (
+        "the ordinary chat request must carry the prompt behind the message"
+    )
+    assert "promptSelectionMetadata(options.promptInfo)" in store, (
+        "the optimistic user message must carry the metadata the bubble reads, or it "
+        "renders one way and then rearranges when the server echo arrives"
+    )
+
+    composer = _strip_comments(_read(COMPOSER_TSX))
+    assert "seeds.prompt_info = promptInfo" in composer, (
+        "orchestration seeds must carry the same resolved prompt"
+    )
+    assert "buildComposerDraftSubmission(draft, promptContext())" in composer, (
+        "both paths must obtain prompt_info through the shared draft submission builder"
+    )
+    assert "buildPromptInfo({" in _strip_comments(_read(COMPOSER_DRAFT_TS)), (
+        "the draft builder must retain the existing prompt metadata contract"
+    )
+
+    types = _read(TYPES_TS)
+    assert "prompt_info?: Json;" in types, "the request type must declare the field it sends"
+
+    print("  ok  both send paths report the prompt")
+    return True
+
+
+def test_the_server_records_what_the_bubble_needs():
+    """Without user_text nothing can tell the prompt and the message apart afterwards."""
+    print("Testing stored metadata...")
+
+    for fixture in build_prompt_lifecycle_fixtures():
+        stored = fixture["stored"]["metadata"]["prompt_selection"]
+        for key in (
+            "selected_prompt_index", "selected_prompt_text", "prompt_name", "prompt_id",
+            "user_text", "original_prompt_text", "prompt_variables", "prompt_edited",
+            "template_content", "composer_text", "composer_embedded", "scope_type", "scope_name",
+        ):
+            assert key in stored, f"{fixture['path']} must persist {key}"
+        assert fixture["echo"]["metadata"]["prompt_selection"] == stored
+
+    print("  ok  the server records what the bubble needs")
+    return True
+
+
+def test_a_sent_message_shows_the_prompt_apart_from_your_words():
+    """One blob buries the question inside the standing instructions it was asked with."""
+    print("Testing sent-message rendering...")
+
+    assert MESSAGE_PROMPT_TS.exists(), "the split must live in a module that can be tested"
+
+    messages = _strip_comments(_read(MESSAGE_LIST_TSX))
+    assert "readMessagePrompt(message)" in messages, (
+        "the user bubble must try to recover the prompt behind the message"
+    )
+    assert "PromptUsedBlock" in messages, "the recovered prompt must render as its own block"
+    # Mask ranges are offsets into the whole content; splitting it would move them.
+    assert "masks.ranges.length === 0 ? readMessagePrompt(message) : null" in messages, (
+        "a masked message must not be split"
+    )
+
+    # Copy and export read the stored content, which is still the whole message. Leaving that
+    # alone is what keeps the collapsed block a display choice rather than a data loss.
+    text_module = _strip_comments(_read(MESSAGE_TEXT_TS))
+    assert "prompt_selection" not in text_module, (
+        "messageToPlainText must keep returning the full sent message"
+    )
+
+    print("  ok  the sent message shows the prompt apart from your words")
+    return True
+
+
+def test_the_fill_in_dialog_folded_into_the_card():
+    """Two surfaces filling one prompt is how the safety badges end up on only one of them."""
+    print("Testing dialog retirement...")
+
+    assert not RETIRED_DIALOG.exists(), (
+        "PromptVariablesDialog must not survive alongside the card that replaced it"
+    )
+    assert FIELD_TSX.exists(), "the shared variable field must exist"
+    assert VARIABLE_VALUES_TS.exists(), "the shared values hook must exist"
+
+    # The rules the dialog documented, now the hook's and the field's to keep.
+    values = _strip_comments(_read(VARIABLE_VALUES_TS))
+    assert "shared ? {} : recallPromptValues(promptId)" in values, (
+        "nothing may be pre-filled in a shared conversation"
+    )
+    field = _strip_comments(_read(FIELD_TSX))
+    assert "Reused" in field and "From this chat" in field, (
+        "an auto-filled value must be visibly distinct from one the reader typed"
+    )
+    assert "isResolvedBuiltIn ?" in field, "a resolved built-in must be read-only"
+
+    composer = _read(COMPOSER_TSX)
+    assert "PromptVariablesDialog" not in composer, "the retired dialog must not be referenced"
+
+    print("  ok  the dialog folded into the card without losing its rules")
+    return True
+
+
+def test_no_remote_asset_references():
+    """Browser assets are local-only; a CDN reference must not creep in."""
+    print("Testing for remote asset references...")
+
+    offenders = []
+    for path in [CARD_TSX, SHARED_CARD_TSX, FIELD_TSX, EDITOR_TSX, COMPOSER_DRAFT_TS,
+                 PROMPT_REQUEST_TS, MESSAGE_PROMPT_TS, VARIABLE_VALUES_TS]:
+        source = _strip_comments(_read(path))
+        for match in re.finditer(r"https?://[^\s'\"`)]+", source):
+            url = match.group(0)
+            if "schemas" in url or "w3.org" in url:
+                continue
+            offenders.append(f"{path.name}: {url}")
+
+    assert not offenders, f"Remote asset references are not allowed: {offenders}"
+    print("  ok  no remote asset references")
+    return True
+
+
+def test_the_typescript_logic_checks_pass():
+    """Execute client composition and recovery against actual backend persistence fixtures."""
+    print("Testing composer card logic (TypeScript)...")
+
+    assert (V2_DIR / "node_modules").exists(), (
+        "application/v2_ui/node_modules is absent; restore the existing frontend dependencies"
+    )
+
+    assert LOGIC_CHECK_TS.exists(), "The TypeScript logic checks are missing"
+
+    # functional_tests/ has no node_modules of its own, so the bundle is written where node
+    # can resolve bare imports from.
+    bundle = V2_DIR / "node_modules" / ".cache-prompt-composer-card-check.mjs"
+    try:
+        subprocess.run(
+            [
+                "npx",
+                "--no-install",
+                "esbuild",
+                str(LOGIC_CHECK_TS),
+                "--bundle",
+                "--platform=node",
+                "--format=esm",
+                "--packages=external",
+                "--jsx=automatic",
+                "--define:import.meta.env={}",
+                f"--outfile={bundle}",
+                "--log-level=error",
+            ],
+            cwd=str(V2_DIR),
+            check=True,
+            shell=(sys.platform == "win32"),
+        )
+        result = subprocess.run(
+            ["node", str(bundle), "--lifecycle-fixtures"],
+            cwd=str(V2_DIR),
+            capture_output=True,
+            text=True,
+            input=json.dumps(build_prompt_lifecycle_fixtures()),
+            shell=(sys.platform == "win32"),
+        )
+    finally:
+        if bundle.exists():
+            bundle.unlink()
+
+    if result.returncode != 0:
+        print(result.stdout)
+        print(result.stderr)
+        raise AssertionError("the TypeScript logic checks failed")
+
+    passed = result.stdout.count("  ok  ")
+    print(f"  ok  {passed} TypeScript logic checks passed")
+    return True
+
+
+if __name__ == "__main__":
+    tests = [
+        test_version_is_at_least_the_implementing_release,
+        test_the_prompt_is_attached_rather_than_pasted,
+        test_an_edit_applies_to_this_turn_only,
+        test_a_prompt_only_turn_can_be_sent,
+        test_the_prompt_is_resolved_against_the_message_it_was_sent_with,
+        test_both_send_paths_report_the_prompt,
+        test_the_server_records_what_the_bubble_needs,
+        test_a_sent_message_shows_the_prompt_apart_from_your_words,
+        test_the_fill_in_dialog_folded_into_the_card,
+        test_no_remote_asset_references,
+        test_the_typescript_logic_checks_pass,
+    ]
+
+    results = []
+    for test in tests:
+        try:
+            results.append(bool(test()))
+        except Exception as error:  # noqa: BLE001
+            print(f"  FAIL  {test.__name__}: {error}")
+            traceback.print_exc()
+            results.append(False)
+
+    print(f"\nResults: {sum(results)}/{len(results)} tests passed")
+    sys.exit(0 if all(results) else 1)

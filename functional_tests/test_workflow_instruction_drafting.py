@@ -1,11 +1,12 @@
 # test_workflow_instruction_drafting.py
 """
 Functional test for workflow instruction drafting.
-Version: 0.250.028
+Version: 0.261.061
 Implemented in: 0.250.028
 
 This test ensures workflow creation exposes a task brief, drafts workflow or task
-instructions through a gated backend endpoint, and keeps the saved task_prompt
+instructions through a gated backend endpoint, routes drafting through the
+metadata extraction model endpoint resolver, and keeps the saved task_prompt
 contract intact for existing workflow storage.
 """
 
@@ -22,15 +23,15 @@ def read_text(relative_path):
 
 def test_workflow_instruction_drafting_contract():
     """Validate workflow draft API and UI wiring."""
-    config_content = read_text("application/single_app/config.py")
     route_content = read_text("application/single_app/route_backend_workflows.py")
+    agent_route_content = read_text("application/single_app/route_backend_agents.py")
     workflow_js_content = read_text("application/single_app/static/js/workspace/workspace_workflows.js")
     voice_js_content = read_text("application/single_app/static/js/form-voice-input.js")
     workspace_template_content = read_text("application/single_app/templates/workspace.html")
     group_workspace_template_content = read_text("application/single_app/templates/group_workspaces.html")
     action_modal_content = read_text("application/single_app/templates/_plugin_modal.html")
 
-    assert_app_version_at_least("0.250.028")
+    assert_app_version_at_least("0.261.061")
     assert "@bp.route('/api/workflows/draft-instructions', methods=['POST'])" in route_content, (
         "Expected a shared workflow instruction drafting endpoint."
     )
@@ -46,8 +47,26 @@ def test_workflow_instruction_drafting_contract():
     assert "_build_workflow_instruction_messages" in route_content, (
         "Expected workflow-specific draft prompt construction."
     )
-    assert "workflow or task instructions" in route_content, (
-        "Expected the draft prompt to use workflow/task instructions language."
+    assert "workflow instructions" in route_content, (
+        "Expected the draft prompt to use workflow instructions language."
+    )
+    assert "_resolve_agent_instruction_client" in route_content, (
+        "Expected workflow drafting to use the shared instruction client resolver."
+    )
+    assert "resolve_metadata_extraction_client" in agent_route_content, (
+        "Expected instruction drafting to share the metadata extraction endpoint resolver."
+    )
+    assert "_create_agent_instruction_client" not in agent_route_content, (
+        "Instruction drafting must not keep the legacy instruction client factory."
+    )
+    assert "_resolve_agent_instruction_model" not in agent_route_content, (
+        "Instruction drafting must not keep the legacy instruction model resolver."
+    )
+    assert "settings.get('azure_openai_gpt_endpoint')" not in agent_route_content, (
+        "Instruction drafting must not create clients from the legacy global GPT endpoint."
+    )
+    assert "settings.get('azure_apim_gpt_endpoint')" not in agent_route_content, (
+        "Instruction drafting must not create clients from the legacy APIM GPT endpoint."
     )
 
     for template_content in (workspace_template_content, group_workspace_template_content):
@@ -57,7 +76,7 @@ def test_workflow_instruction_drafting_contract():
         assert 'id="workflow-draft-instructions-btn"' in template_content, (
             "Expected workflow modals to expose a Draft Workflow Instructions button."
         )
-        assert 'Workflow or Task Instructions' in template_content, (
+        assert 'Task Instructions' in template_content, (
             "Expected workflow modals to rename Task Prompt for users."
         )
         assert 'id="workflow-task-prompt"' in template_content, (
@@ -73,7 +92,7 @@ def test_workflow_instruction_drafting_contract():
     assert "existing_instructions" in workflow_js_content, (
         "Expected the workflow draft request to improve existing saved instructions when present."
     )
-    assert "task_prompt: normalizeText(workflowTaskPromptInput?.value)" in workflow_js_content, (
+    assert "task_prompt: normalizeText(tasks[0]?.instructions)" in workflow_js_content, (
         "Expected saved workflows to keep using the task_prompt payload key."
     )
 
@@ -99,3 +118,8 @@ def test_workflow_instruction_drafting_contract():
     assert 'type="hidden" id="plugin-name"' not in action_modal_content, (
         "Expected action name to be visible instead of hidden so voice input can target it."
     )
+
+
+if __name__ == "__main__":
+    test_workflow_instruction_drafting_contract()
+    print("Workflow instruction drafting contract tests passed.")

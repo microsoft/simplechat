@@ -8,6 +8,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 SOURCE_PATH = Path("docs") / "explanation" / "release_notes.md"
@@ -27,6 +28,9 @@ GENERATED_BANNER = (
     "scripts/build_release_notes_pages.py. Regenerate with: "
     "python scripts/build_release_notes_pages.py -->"
 )
+MARKDOWN_LINK_RE = re.compile(r"(?<!!)\[[^\]\n]+\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+FENCED_CODE_RE = re.compile(r"(?ms)^(```|~~~)[^\n]*\n.*?^\1[^\n]*(?:\n|$)")
+INLINE_CODE_RE = re.compile(r"(`+)[^\n]*?\1")
 
 
 @dataclass(frozen=True)
@@ -65,7 +69,34 @@ class GeneratedPage:
 
 def read_source(repo_root: Path) -> str:
     source_file = repo_root / SOURCE_PATH
-    return source_file.read_text(encoding="utf-8")
+    source = source_file.read_text(encoding="utf-8")
+    validate_source_links(source)
+    return source
+
+
+def validate_source_links(source_text: str) -> None:
+    """Reject source-relative reader URLs that break on split public pages."""
+    masked = FENCED_CODE_RE.sub(lambda match: " " * len(match.group(0)), source_text)
+    code_spans = [(match.start(), match.end()) for match in INLINE_CODE_RE.finditer(masked)]
+    invalid = []
+    for match in MARKDOWN_LINK_RE.finditer(masked):
+        if any(start <= match.start() < end for start, end in code_spans):
+            continue
+        target = match.group(1)
+        address = urlsplit(target)
+        if (
+            not address.scheme
+            and not address.netloc
+            and address.path
+            and not address.path.startswith("/")
+        ):
+            invalid.append(target)
+    if invalid:
+        examples = ", ".join(sorted(set(invalid))[:8])
+        raise ValueError(
+            "Release-note links must use published documentation URLs or verified "
+            f"repository-source permalinks, not source-relative paths: {examples}"
+        )
 
 
 def parse_release_notes(source_text: str) -> tuple[str, list[ReleaseSection]]:
@@ -187,14 +218,35 @@ def page_body_for_releases(
     return "\n\n".join(body_parts)
 
 
+def estimate_archive_page_size(releases: tuple[ReleaseSection, ...]) -> int:
+    range_label = make_range_label(releases)
+    series_title = f"Release notes {releases[0].minor_series} series"
+    range_title = f"Release notes {range_label}"
+    earlier_description = f"SimpleChat release notes for earlier versions: {range_label}."
+    range_description = f"SimpleChat release notes for {range_label}."
+    return max(
+        len(
+            make_page_content(
+                title,
+                description,
+                page_body_for_releases(title, releases),
+            ).encode("utf-8")
+        )
+        for title, description in (
+            (series_title, range_description),
+            (range_title, range_description),
+            ("Earlier releases", earlier_description),
+        )
+    )
+
+
 def chunk_releases(releases: list[ReleaseSection]) -> list[tuple[ReleaseSection, ...]]:
     chunks: list[tuple[ReleaseSection, ...]] = []
     current: list[ReleaseSection] = []
 
     for release in releases:
         candidate = [*current, release]
-        candidate_body = "\n\n".join(section.content for section in candidate)
-        candidate_size = len(candidate_body.encode("utf-8"))
+        candidate_size = estimate_archive_page_size(tuple(candidate))
         if (
             current
             and (
@@ -390,7 +442,7 @@ def check_output(expected_files: dict[Path, bytes], output_dir: Path) -> int:
     for path in sorted(existing_files - expected_paths):
         differences.append(f"extra: {path}")
     for path in sorted(expected_paths & existing_files):
-        if path.read_bytes() != expected_files[path]:
+        if path.read_bytes().replace(b"\r\n", b"\n") != expected_files[path]:
             differences.append(f"different: {path}")
 
     if differences:

@@ -72,6 +72,10 @@ Alert settings live on the workflow document:
       "enabled": true,
       "severity": "info | low | medium | high | critical",
       "delivery": "default | notify_only | popup",
+      "require_acknowledgment": true,           // stored only when true (0.261.235)
+      "sound": "once | repeat",                 // stored only when not "off" (0.261.235)
+      "size": "medium | large",                 // stored only when not "small" (0.261.235)
+      "audience": "group",                      // group workflows only, stored only when not "owner" (0.261.235)
       "scope": { "type": "final | any_task | task", "task_id": "" },
       "condition": { "type": "...", /* type specific fields */ }
     }
@@ -143,6 +147,25 @@ detail opens with a `Triggered by` section listing each matched rule, its severi
 
 One run produces at most one notification no matter how many rules match.
 
+### Pop-up options and audience
+
+From **0.261.235** a rule can also ask for acknowledgment, a sound, a size and, in a group
+workflow, the whole group as its audience. See
+[Workflow Alert Acknowledgment, Sounds, Sizes and Team Delivery](WORKFLOW_ALERT_ACKNOWLEDGMENT.md).
+
+| Field | Values | Rule |
+|---|---|---|
+| `require_acknowledgment` | `false` (default), `true` | Needs a rule that pops up |
+| `sound` | `off` (default), `once`, `repeat` | Needs a rule that pops up; `repeat` needs `require_acknowledgment` |
+| `size` | `small` (default), `medium`, `large` | Needs a rule that pops up |
+| `audience` | `owner` (default), `group` | Group workflows only; works with bell-only rules too |
+
+Unlike severity, these options don't follow the winning rule. Each takes the **strongest value any
+matched rule asked for**: any rule requiring acknowledgment makes the alert require it, and the
+loudest sound, the largest size and the widest audience apply. A louder rule that didn't ask for an
+option can't quieten it. An option that only makes sense as a pop-up also forces the delivery to
+`popup`, even when the winning rule only notifies. `every_run` mode keeps the defaults.
+
 ## Model evaluated conditions
 
 A `model_evaluation` rule holds a plain-English condition such as *"any certificate expires within
@@ -152,8 +175,10 @@ tightly bounded:
 - **One call per run at most.** Every pending model evaluated rule is batched into a single prompt
   and the model returns one JSON verdict per rule.
 - **Skipped when moot.** If a deterministic rule already matched at or above a model rule's
-  severity, that model rule cannot change the outcome and is not sent. When no model rule remains,
-  no model client is even resolved.
+  severity, that model rule cannot change the outcome and is not sent, unless it asks for a pop-up
+  option the matches don't already give (acknowledgment, a louder sound, a larger size or the whole
+  group; see [Pop-up options and audience](#pop-up-options-and-audience)). When no model rule
+  remains, no model client is even resolved.
 - **Bounded input.** The scoped output is truncated before it enters the prompt.
 - **Strict output.** The response is parsed as JSON, tolerating markdown fences and surrounding
   chatter. `alert_evaluation.on_error` decides what happens when it cannot be parsed or the call

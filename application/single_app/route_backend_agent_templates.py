@@ -21,6 +21,7 @@ from functions_agent_templates import (
     reject_agent_template,
     delete_agent_template,
     get_agent_template,
+    agent_template_submission_decision,
 )
 from functions_settings import get_settings
 
@@ -59,12 +60,9 @@ def list_public_agent_templates():
 @user_required
 def submit_agent_template():
     enabled, allow_submissions, require_approval, settings = _feature_flags()
-    if not enabled:
-        return jsonify({'error': 'Agent template gallery is disabled.'}), 403
-    if not settings.get('allow_user_agents') and not _is_admin():
-        return jsonify({'error': 'Agent creation is disabled for your workspace.'}), 403
-    if not allow_submissions and not _is_admin():
-        return jsonify({'error': 'Template submissions are disabled for users.'}), 403
+    allowed, reason = agent_template_submission_decision(settings, _is_admin())
+    if not allowed:
+        return jsonify({'error': reason}), 403
 
     data = request.get_json(silent=True) or {}
     payload = data.get('template') or data

@@ -2,7 +2,7 @@
 # test_workflow_alert_agent_signal.py
 """
 Functional test for agent raised workflow alert signals.
-Version: 0.250.213
+Version: 0.261.111
 Implemented in: 0.250.213
 
 This test ensures an agent can raise an alert signal during a workflow run, that
@@ -176,7 +176,7 @@ def test_plugin_function_is_registered_and_gated():
     assert 'def is_workflow_alert_signal_scope_active():' in runner_content
     assert 'def record_workflow_alert_signal(severity, title=\'\', reason=\'\', signal_name=\'\'):' in runner_content
     assert 'def get_workflow_alert_signals():' in runner_content
-    assert 'with workflow_alert_signal_scope(workflow, resolved_run_id):' in runner_content
+    assert 'with workflow_alert_signal_scope(workflow, resolved_run_id),' in runner_content
     assert "execution_result['agent_alert_signals'] = get_workflow_alert_signals()" in runner_content
     print("Plugin registration and gating passed.")
 

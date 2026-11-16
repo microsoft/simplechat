@@ -1,7 +1,7 @@
 # test_workflow_cancellation_controls.py
 """
 UI test for workflow cancellation controls.
-Version: 0.250.062
+Version: 0.261.111
 Implemented in: 0.250.062
 
 This test ensures personal and group workflow views expose a cancel control for
@@ -20,7 +20,14 @@ WORKSPACE_MODULE = REPO_ROOT / "application" / "single_app" / "static" / "js" / 
 ACTIVITY_MODULE = REPO_ROOT / "application" / "single_app" / "static" / "js" / "workflow" / "workflow-activity.js"
 HARNESS_ORIGIN = "http://workflow-cancellation.test"
 
-TOAST_MODULE = "export function showToast() {}"
+TOAST_MODULE = """
+export function showToast(message) {
+    const element = document.createElement('div');
+    element.setAttribute('role', 'alert');
+    element.textContent = message;
+    document.body.appendChild(element);
+}
+"""
 DOCUMENTS_MODULE = "export async function ensureDocumentPickerReady() { return null; } export function setEffectiveScopes() {}"
 VIEW_UTILS_MODULE = """
 export function escapeHtml(value) {
@@ -127,6 +134,13 @@ def _route_workspace_modules(page):
         lambda route: route.fulfill(status=200, content_type="text/javascript", body=WORKSPACE_MODULE.read_text(encoding="utf-8")),
     )
     page.route(
+        "**/static/js/agents_common.js",
+        lambda route: route.fulfill(
+            status=200, content_type="text/javascript",
+            body="export function isChatModelAvailable() { return true; }",
+        ),
+    )
+    page.route(
         "**/static/js/chat/chat-toast.js",
         lambda route: route.fulfill(status=200, content_type="text/javascript", body=TOAST_MODULE),
     )
@@ -142,19 +156,30 @@ def _route_workspace_modules(page):
 
 @pytest.mark.ui
 @pytest.mark.parametrize("scope", ["personal", "group"])
-def test_shared_workspace_cancel_control_uses_scoped_api(scope):
+@pytest.mark.parametrize("initial_state", ["running", "queued", "waiting_approval", "waiting_output", "waiting_recovery", "paused"])
+def test_shared_workspace_cancel_control_uses_scoped_api(scope, initial_state):
     """Validate active personal and group workflow rows issue scoped cancel requests."""
     playwright_sync = _require_playwright()
     expect = playwright_sync.expect
     cancel_paths = []
-    state = {"status": "running"}
+    state = {"status": "idle" if initial_state == "queued" else initial_state}
     api_base = _scope_api_base(scope)
 
     def api_handler(route):
         request = route.request
         path = urlparse(request.url).path
         if request.method == "GET" and path == api_base:
-            route.fulfill(status=200, content_type="application/json", json={"workflows": [_active_workflow(state["status"])]})
+            workflow = _active_workflow(state["status"])
+            if state["status"] == "idle":
+                workflow["active_run_id"] = ""
+            route.fulfill(status=200, content_type="application/json", json={"workflows": [workflow]})
+            return
+        if request.method == "POST" and path == f"{api_base}/workflow-active/run":
+            state["status"] = "queued"
+            route.fulfill(status=202, content_type="application/json", json={
+                "success": True, "workflow": _active_workflow("queued"),
+                "run": {"id": "run-active", "status": "queued", "durable_execution": True},
+            })
             return
         if request.method == "POST" and path == f"{api_base}/workflow-active/cancel":
             cancel_paths.append(path)
@@ -171,6 +196,8 @@ def test_shared_workspace_cancel_control_uses_scoped_api(scope):
     browser = playwright_manager.chromium.launch()
     context = browser.new_context()
     page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
     _route_workspace_modules(page)
     page.route("**/api/**", api_handler)
     page.route(
@@ -181,6 +208,11 @@ def test_shared_workspace_cancel_control_uses_scoped_api(scope):
     try:
         page.goto(f"{HARNESS_ORIGIN}/", wait_until="domcontentloaded")
         workflow_row = page.locator("#workflows-table-body tr").filter(has_text="Active Workflow")
+        if initial_state == "queued":
+            workflow_row.get_by_role("button", name="Run workflow", exact=True).click()
+            expect(page.get_by_role("alert").filter(has_text="Workflow queued.")).to_be_visible()
+            expect(page.get_by_text("Workflow run completed.", exact=True)).to_have_count(0)
+            expect(workflow_row.get_by_role("button", name="Run workflow", exact=True)).to_be_disabled()
         cancel_button = workflow_row.get_by_role("button", name="Cancel workflow run")
         expect(cancel_button).to_be_visible()
         cancel_button.click()
@@ -188,6 +220,7 @@ def test_shared_workspace_cancel_control_uses_scoped_api(scope):
         expect(workflow_row).to_contain_text("Cancelling")
         expect(workflow_row.get_by_role("button", name="Cancel workflow run")).to_be_disabled()
         assert cancel_paths == [f"{api_base}/workflow-active/cancel"]
+        assert not errors
     finally:
         context.close()
         browser.close()

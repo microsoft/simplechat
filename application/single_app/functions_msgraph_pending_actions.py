@@ -21,6 +21,7 @@ from functions_m365_pending_delivery import (
     capture_workflow_delivery, dispatch_m365_pending_delivery, notify_m365_pending_delivery,
     authorize_pending_action_conversation, authorize_pending_action_view,
     has_verified_delivery_binding, pending_delivery_fingerprint,
+    refresh_m365_sent_link,
 )
 from functions_m365_context import M365PolicyError, material_fingerprint
 from m365_interaction import M365_AUTH_INTERACTION_CODES
@@ -145,6 +146,13 @@ def sanitize_msgraph_pending_action_for_client(
     action_mode = _normalize_text(action.get('action_mode')) or MSGRAPH_PENDING_ACTION_MANUAL
     graph_resource_type = _normalize_text(action.get('graph_resource_type'))
     terminal = status in MSGRAPH_PENDING_TERMINAL_STATUSES
+    terminal = terminal or status == 'editing'
+    refresh_required = bool(action.get('review_sync_required'))
+    edit_expires = _coerce_datetime(action.get('review_edit_expires_at'))
+    expired_edit = (
+        status == 'editing' and edit_expires is not None and edit_expires.tzinfo is not None
+        and edit_expires <= _utc_now()
+    )
     due_at = _normalize_text(action.get('auto_send_at_utc'))
     can_manage = viewer_user_id is not None and viewer_user_id == action.get('user_id')
     bound = has_verified_delivery_binding(action)
@@ -188,6 +196,19 @@ def sanitize_msgraph_pending_action_for_client(
     else:
         safe_error = "This action could not be completed. Review its current status." if action.get("error") else ""
 
+    delivery = action.get('m365_execution') if isinstance(action.get('m365_execution'), dict) else {}
+    step = delivery.get('step_ref') if isinstance(delivery.get('step_ref'), dict) else {}
+    verified_origin = (
+        bound and action.get('material_fingerprint') == pending_delivery_fingerprint(action)
+        and action.get('action_mode') == MSGRAPH_PENDING_ACTION_MANUAL
+        and type(action.get('review_provenance_version')) is int and action['review_provenance_version'] == 1
+        and delivery.get('kind') == 'orchestration' and step.get('provenance_version') == 1
+        and step.get('conversation_id') == action.get('conversation_id')
+        and all(isinstance(step.get(key), str) and step[key] for key in ('run_id', 'turn_id', 'user_message_id'))
+    )
+    origin_visible = verified_origin and bool(
+        can_manage or viewer_user_id and authorize_pending_action_view(action, viewer_user_id)
+    )
     return {
         'id': action.get('id'),
         'type': MSGRAPH_PENDING_ACTION_TYPE,
@@ -203,9 +224,24 @@ def sanitize_msgraph_pending_action_for_client(
         'conversation_id': action.get('conversation_id') or '',
         'workflow_id': action.get('workflow_id') or '',
         'run_id': action.get('run_id') or '',
+        'producing_user_message_id': step['user_message_id'] if origin_visible else '',
+        'orchestration_run_id': step['run_id'] if origin_visible else '',
+        'turn_id': step['turn_id'] if origin_visible else '',
         'message_id': (action.get('graph_message_id') or '') if can_manage else '',
         'event_id': (action.get('graph_event_id') or '') if can_manage else '',
         'web_link': (action.get('web_link') or '') if can_manage else '',
+        'web_link_kind': (
+            'sent' if action.get('graph_send_strategy') == 'draft_send_v1' and status == 'sent'
+            else 'retained_draft' if graph_resource_type == 'mail' and status == 'sent'
+            else 'draft' if graph_resource_type == 'mail' else 'event'
+        ),
+        'link_pending': bool(action.get('sent_link_pending')) if can_manage else False,
+        'link_status': (
+            'pending' if action.get('sent_link_pending')
+            else 'available' if action.get('web_link') else 'unavailable'
+        ) if can_manage else 'unavailable',
+        'link_next_lookup_at': (action.get('sent_link_next_lookup_at') or '') if can_manage else '',
+        'link_lookup_deadline_at': (action.get('sent_link_lookup_deadline_at') or '') if can_manage else '',
         'created_at': action.get('created_at') or '',
         'updated_at': action.get('updated_at') or '',
         'auto_send_at_utc': due_at,
@@ -221,14 +257,17 @@ def sanitize_msgraph_pending_action_for_client(
         'delivery_note': action.get('delivery_note') or '',
         'requires_review': needs_recreation or status == 'review_required',
         'requires_recreation': needs_recreation,
+        'review_refresh_required': refresh_required,
         'review_details_required': full_review_required and include_preview,
         'review_message': (
             'This older action needs a new review. Cancel it and ask the agent to prepare it again.'
-            if needs_recreation else ''
+            if needs_recreation else 'Reopen the review to refresh and reconcile the Outlook draft.'
+            if refresh_required else ''
         ),
-        'can_approve': can_manage and bound and not needs_recreation and not terminal and not full_review_required and action_mode == MSGRAPH_PENDING_ACTION_MANUAL,
+        'can_approve': can_manage and bound and not needs_recreation and not refresh_required and not terminal and not full_review_required and action_mode == MSGRAPH_PENDING_ACTION_MANUAL,
         'can_cancel': can_manage and not terminal,
-        'can_send_now': can_manage and bound and not needs_recreation and not terminal and not full_review_required,
+        'can_edit': can_manage and bound and not needs_recreation and (status in {'pending', 'review_required'} or expired_edit) and action_mode == MSGRAPH_PENDING_ACTION_MANUAL,
+        'can_send_now': can_manage and bound and not needs_recreation and not refresh_required and not terminal and not full_review_required,
         'will_auto_send': bound and status == 'scheduled' and action_mode == MSGRAPH_PENDING_ACTION_DELAYED and bool(due_at),
     }
 
@@ -253,6 +292,7 @@ def create_msgraph_pending_action(
     graph_endpoint=MSGRAPH_DEFAULT_ENDPOINT,
     web_link='',
     m365_action_id='',
+    graph_send_strategy='',
 ):
     """Create a pending Microsoft Graph action record."""
     if operation not in {MSGRAPH_PENDING_OPERATION_SEND_MAIL, MSGRAPH_PENDING_OPERATION_CREATE_CALENDAR_INVITE}:
@@ -321,8 +361,16 @@ def create_msgraph_pending_action(
     action_record['m365_execution'] = delivery
     action_record['request_id'] = snapshot.get("request_id") or ""
     action_record['m365_notification_pending'] = action_mode == MSGRAPH_PENDING_ACTION_MANUAL
+    if action_mode == MSGRAPH_PENDING_ACTION_MANUAL:
+        action_record['review_provenance_version'] = 1
+    if graph_send_strategy:
+        if graph_send_strategy != 'draft_send_v1' or action_mode != MSGRAPH_PENDING_ACTION_MANUAL or graph_resource_type != MSGRAPH_PENDING_RESOURCE_MAIL:
+            raise ValueError('Unsupported draft send strategy.')
+        action_record['graph_send_strategy'] = graph_send_strategy
     if graph_resource_type == MSGRAPH_PENDING_RESOURCE_MAIL and action_record['graph_payload']:
         action_record['delivery_note'] = (
+            "Approval sends this Outlook draft. Outlook edits are reflected when the review is reopened."
+            if graph_send_strategy == 'draft_send_v1' else
             "Send uses the content reviewed here. The Outlook draft is retained so external edits are not overwritten."
         )
     action_record["material_fingerprint"] = pending_delivery_fingerprint(action_record)
@@ -346,6 +394,8 @@ def get_msgraph_pending_action(user_id, action_id):
             item=normalized_action_id,
             partition_key=normalized_user_id,
         )
+        if item.get('status') == 'sent' and item.get('graph_send_strategy') == 'draft_send_v1':
+            item = refresh_m365_sent_link(normalized_user_id, normalized_action_id)
         return _strip_cosmos_metadata(item)
     except exceptions.CosmosResourceNotFoundError:
         return None

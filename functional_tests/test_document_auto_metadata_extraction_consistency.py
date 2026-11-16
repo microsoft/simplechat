@@ -2,9 +2,10 @@
 # test_document_auto_metadata_extraction_consistency.py
 """
 Functional test for document auto metadata extraction consistency.
-Version: 0.250.172
+Version: 0.261.347
 Implemented in: 0.241.110
 Updated in: 0.250.172
+Updated in: 0.261.268
 
 This test ensures upload processing runs final metadata extraction consistently
 for all supported file types and preserves public workspace scope for media files.
@@ -13,7 +14,6 @@ for all supported file types and preserves public workspace scope for media file
 import ast
 import os
 import sys
-
 from test_support.versioning import assert_app_version_at_least
 
 
@@ -65,7 +65,11 @@ def test_dispatcher_owns_final_metadata_extraction():
     print('Testing centralized upload metadata extraction...')
 
     module_ast, source = parse_functions_documents()
-    dispatcher = get_function(module_ast, 'process_document_upload_background')
+    entry = get_function(module_ast, 'process_document_upload_background')
+    entry_calls = {call_name(node) for node in ast.walk(entry) if isinstance(node, ast.Call)}
+    assert 'process_screened_upload' in entry_calls
+    assert '_process_document_upload_background_impl' in entry_calls
+    dispatcher = get_function(module_ast, '_process_document_upload_background_impl')
     dispatcher_calls = [node for node in ast.walk(dispatcher) if isinstance(node, ast.Call)]
     dispatcher_call_names = [call_name(call) for call in dispatcher_calls]
 
@@ -87,9 +91,12 @@ def test_dispatcher_owns_final_metadata_extraction():
         'process_audio_document',
     }
     for processor_name in processors_with_legacy_auto_extract:
+        wrapper = {
+            'process_md': '_process_markdown_with_ordered_dict_retry',
+        }.get(processor_name, processor_name)
         processor_calls = [
             call for call in dispatcher_calls
-            if call_name(call) == processor_name
+            if call_name(call) == wrapper
         ]
         assert processor_calls, f'Dispatcher should call {processor_name}'
         assert any(
@@ -119,7 +126,7 @@ def test_final_status_preserves_metadata_outcome():
     module_ast, _ = parse_functions_documents()
     resolver = get_function(module_ast, '_resolve_processing_complete_status')
     isolated_module = ast.Module(body=[resolver], type_ignores=[])
-    namespace = {}
+    namespace = {'TEMPLATE_EXTENSIONS': ()}
     exec(compile(isolated_module, FUNCTIONS_DOCUMENTS_FILE, 'exec'), namespace)
     resolve_status = namespace['_resolve_processing_complete_status']
 
@@ -164,14 +171,21 @@ def test_public_workspace_media_scope_is_preserved():
 
     update_document = get_function(module_ast, 'update_document')
     update_calls = [node for node in ast.walk(update_document) if isinstance(node, ast.Call)]
-    get_all_chunk_calls = [call for call in update_calls if call_name(call) == 'get_all_chunks']
-    assert any(has_keyword(call, 'public_workspace_id') for call in get_all_chunk_calls), (
-        'Metadata-to-chunk sync must retrieve chunks using public scope'
+    sync_request_calls = [call for call in update_calls if call_name(call) == 'request_document_search_metadata_sync']
+    assert any(has_keyword(call, 'public_workspace_id') for call in sync_request_calls), (
+        'Metadata-to-chunk sync requests must keep public scope'
     )
-    update_chunk_calls = [call for call in update_calls if call_name(call) == 'update_chunk_metadata']
-    assert update_chunk_calls, 'Metadata-to-chunk sync should update search chunks'
-    assert '"public_workspace_id": public_workspace_id' in source, (
-        'Metadata-to-chunk sync must pass public scope into update_chunk_metadata'
+    sync_schedule_calls = [call for call in update_calls if call_name(call) == 'schedule_document_search_metadata_sync']
+    assert any(has_keyword(call, 'public_workspace_id') for call in sync_schedule_calls), (
+        'Metadata-to-chunk sync scheduling must keep public scope'
+    )
+    sync_worker = get_function(module_ast, 'run_document_search_metadata_sync')
+    projection_calls = [
+        node for node in ast.walk(sync_worker)
+        if isinstance(node, ast.Call) and call_name(node) == 'project_fields_to_document_chunks'
+    ]
+    assert any(has_keyword(call, 'public_workspace_id') for call in projection_calls), (
+        'Metadata-to-chunk sync must pass public scope into the chunk projection'
     )
 
     print('Public workspace media scope passed')
@@ -182,7 +196,7 @@ def test_config_version_bumped_for_auto_metadata_fix():
     """Verify config.py version was bumped for this fix."""
     print('Testing config version bump...')
 
-    assert_app_version_at_least("0.241.111")
+    assert_app_version_at_least('0.241.111')
 
     print('Config version bump passed')
     return True

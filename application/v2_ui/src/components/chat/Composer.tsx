@@ -1,0 +1,2433 @@
+// Composer.tsx
+// The message input surface: textarea, send/stop control, model / agent / prompt pickers
+// and the capability toggles that map onto the /api/chat/stream request fields.
+
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
+import { clsx } from 'clsx';
+import {
+    ArrowUp,
+    Bot,
+    BookmarkPlus,
+    ChevronDown,
+    FileText,
+    Gauge,
+    Globe,
+    Image as ImageIcon,
+    Link2,
+    Loader2,
+    Paperclip,
+    Reply,
+    Search,
+    ShieldCheck,
+    SlidersHorizontal,
+    Square,
+    Telescope,
+    Workflow,
+    X,
+} from 'lucide-react';
+import { currentConversationEpoch, useChatStore, type ComposerOptions } from '../../stores/chatStore';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { selectActiveTurnRunInFlight, selectPlan, useOrchestrationStore } from '../../stores/orchestrationStore';
+import { isOrchestrationRunWaiting } from '../../lib/orchestration';
+import { useCollaborationStore } from '../../stores/collaborationStore';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
+import { sendCollaborationTyping } from '../../lib/collaboration';
+import { agentSelectionKey } from '../../lib/agents';
+import { buildSelectionFields, hasResolvableAgent } from '../../lib/chatRequestSelection';
+import { modelSearchText, modelSelectionKey, findModel, type ModelCatalogEntry } from '../../lib/models';
+import { promptUrls, resolveGating } from '../../lib/composerGating';
+import { resolveDocumentScope } from '../../lib/documentScope';
+import {
+    conversationSourceDocuments, DOCUMENT_DETAILS_UNAVAILABLE,
+    documentSourceSelection, restoreDocumentSources, isDocumentSourceSelection,
+} from '../../lib/documentSourceSelection';
+import { fetchDocumentSources, fetchPersonalDocument } from '../../lib/endpoints';
+import { fetchScopedGroupDocument, fetchScopedPublicDocument } from '../../lib/documentReadAdapter';
+import { documentId } from '../../lib/documentExplorer';
+import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
+import {
+    addContextItem,
+    contextDocumentDescriptors,
+    contextDocumentIds,
+    contextFilterMode,
+    contextScopes,
+    contextTags,
+} from '../../lib/chatContext';
+import {
+    reconcileContextItems,
+} from '../../lib/chatContextTokens';
+import {
+    addConversationReference,
+    conversationReferenceRequests,
+    reconcileConversationReferences,
+} from '../../lib/conversationReferences';
+import {
+    attachPromptToDraft,
+    addComposerDraftImageReference,
+    buildComposerDraftSubmission,
+    composerDraftContextItems,
+    composerDraftHasPendingUploads,
+    composerDraftImageReferences,
+    composerDraftUnfilledVariables,
+    composerDraftUserPromptValues,
+    createComposerDraft,
+} from '../../lib/composerDraft';
+import { composerAttachmentDrafts, composerAttachmentOwner, useComposerAttachmentDraft } from '../../lib/composerAttachmentDrafts';
+import { clearChatUploadLocalPreviews } from '../../lib/chatUploads';
+import { ComposerEditor, type ComposerEditorActions } from './ComposerEditor';
+import {
+    CONTEXT_HANDOFF_PARAMS,
+    readContextHandoff,
+    resolveContextHandoff,
+    type ContextHandoffState,
+} from '../../lib/chatContextHandoff';
+import { readComposerDraftHandoff } from '../../lib/composerDraftHandoff';
+import {
+    isApprovalMode,
+    resolveOrchestrationApproval,
+} from '../../lib/orchestrationApproval';
+import {
+    cancelOrchestration,
+    hasActiveOrchestration,
+    startOrchestrationPlan,
+} from '../../lib/orchestrationController';
+import {
+    AUTO_MODEL_VALUE,
+    orchestrationModelUpdate,
+    orchestrationModelValue,
+    resolveOrchestrationModel,
+} from '../../lib/orchestrationModelRouting';
+import {
+    estimateLargeTabularRun,
+    type TabularRunEstimate,
+    type TabularRunSettings,
+} from '../../lib/tabularRunEstimate';
+import { LargeRunDialog } from './LargeRunDialog';
+import {
+    conversationParticipants,
+    extractMentionedParticipants,
+    resolveInvocationTarget,
+    sharedConversationTarget,
+    type MentionSuggestion,
+} from '../../lib/mentions';
+import { useUiStore } from '../../stores/uiStore';
+import { toast } from '../../stores/toastStore';
+import {
+    adoptConversationModeDraft,
+    conversationModes,
+    rememberConversationMode,
+} from '../../lib/conversationMode';
+import { chatWidthClass } from '../../lib/chatWidth';
+import {
+    getModelSupportedLevels,
+    reasoningModelKey,
+    resolveReasoningSelection,
+    reasoningAdjustmentMessage,
+    REASONING_LABELS,
+    type ReasoningEffortSettings,
+} from '../../lib/reasoning';
+import { Dropdown, type DropdownOption } from '../ui/Dropdown';
+import { DropdownScope } from '../ui/DropdownScope';
+import { suggestPromptName } from '../../lib/promptSlash';
+import { readPromptParam, readPromptScope } from '../../lib/conversationUrl';
+import { createPrompt } from '../../lib/workspaceApi';
+import { resolvePublicPromptForChat } from '../../lib/promptWorkbench';
+import { messageToPlainText } from '../../lib/messageText';
+import { ANALYSIS_CONTEXT_NOTICE } from '../../lib/savedAnalysis';
+import { WORKFLOW_RESULT_PLACEHOLDER } from '../../lib/workflowResults';
+import { WorkflowResultChip } from './WorkflowResultChip';
+import type { AgentOption, Json, PromptOption, WorkspaceRef } from '../../lib/types';
+import { rememberPromptValues } from '../../lib/promptVariableMemory';
+import {
+    EMPTY_PROMPT_DRAFT,
+    PromptEditorDialog,
+    type PromptDraft,
+} from '../prompts/PromptEditorDialog';
+import { AiNotice } from './AiNotice';
+import { ActionRecoveryNotice } from './ActionRecoveryNotice';
+import { requestDesktopNotificationPermission } from '../../lib/desktopNotifications';
+import { appendDictatedText, revertDictatedSegments } from '../../lib/voice';
+import { VoiceInput, type RecordingState } from './VoiceInput';
+import { WebSearchNotice } from './WebSearchNotice';
+import { ImageReferenceThumbnail } from './ImageReferenceThumbnail';
+import { useImageEditCapability } from '../../lib/imageRevisions';
+import {
+    effectiveReferenceImageLimit,
+    imageReferenceKey,
+    type ImageReferenceRequest,
+} from '../../lib/imageReferences';
+
+/** A capability toggle in the composer toolbar. */
+function ToolToggle({
+    active,
+    onClick,
+    icon,
+    label,
+    disabled = false,
+}: {
+    active: boolean;
+    onClick: () => void;
+    icon: React.ReactNode;
+    label: string;
+    disabled?: boolean;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            disabled={disabled}
+            aria-pressed={active}
+            title={label}
+            className={clsx(
+                'inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-sm transition-colors',
+                'disabled:cursor-not-allowed disabled:opacity-40',
+                active
+                    ? 'border-transparent bg-accent-soft text-accent'
+                    : 'border-edge bg-surface-1 text-text-2 hover:bg-surface-2 hover:text-text-1',
+            )}
+        >
+            {icon}
+            <span className="hidden max-w-48 truncate lg:inline">{label}</span>
+        </button>
+    );
+}
+
+function currentAttachmentOwner() {
+    const state = useChatStore.getState();
+    return composerAttachmentOwner(
+        useBootstrapStore.getState().data?.user?.id ?? '',
+        state.activeConversationId,
+        state.activeConversationKind === 'collaborative' ? 'collaborative' : 'personal',
+        currentConversationEpoch(),
+    );
+}
+
+export function Composer({ initialAgentSelection }: { initialAgentSelection?: string } = {}) {
+    const [mobileToolsOpen, setMobileToolsOpen] = useState(false);
+    const publicWorkspaceSelection = useChatStore((state) => state.publicWorkspaceSelection);
+    const setPublicWorkspaceSelection = useChatStore((state) => state.setPublicWorkspaceSelection);
+    const publicLabels = usePublicWorkspaceLabels();
+    const {
+        streaming, sendMessage, stopStreaming, activeConversationId,
+        analysisResultContext, clearAnalysisResultContext,
+        workflowResultContext, workflowResultLaunch, clearWorkflowResultContext,
+        composerImageReferences, consumeComposerImageReferences,
+        composerConversationReferences, consumeComposerConversationReferences,
+    } = useChatStore();
+    const savedAnalysis = analysisResultContext?.conversation_id === activeConversationId
+        ? analysisResultContext : null;
+    // A finished workflow run's stored result (phase 6a), bound to this chat. Opening names the
+    // moment Ask in chat is still reading the run for a new chat, when sending waits.
+    const workflowResult = workflowResultContext?.conversation_id === activeConversationId
+        ? workflowResultContext.descriptor : null;
+    const workflowResultOpening = Boolean(workflowResultLaunch) && !activeConversationId;
+    // Either kind of stored result answers the next question on its own: every other source,
+    // and orchestration, is off while one is selected.
+    const storedResult = savedAnalysis ?? workflowResult;
+    const answeringFromStoredResult = Boolean(storedResult) || workflowResultOpening;
+    // Read for the built-in prompt variables ({{last_response}} and friends) and for the name
+    // suggested when saving what is written as a prompt.
+    const messages = useChatStore((state) => state.messages);
+    const conversations = useChatStore((state) => state.conversations);
+    const bootstrap = useBootstrapStore((state) => state.data);
+    const upsertPromptInCatalog = useBootstrapStore((state) => state.upsertPromptInCatalog);
+    const refreshBootstrap = useBootstrapStore((state) => state.refresh);
+    const features = bootstrap?.features ?? {};
+    // Thresholds for the large-run confirmation. These are administrator settings rather
+    // than capability flags, so they come from the settings payload rather than `features`.
+    const tabularRunSettings = (bootstrap?.settings ?? {}) as TabularRunSettings;
+
+    // Declared here rather than beside the picker below because the `?prompt=` handoff effect
+    // resolves against it, and that effect runs before the picker's options are built.
+    const promptCatalog = useMemo(
+        () => (bootstrap?.catalogs?.prompts ?? []) as PromptOption[],
+        [bootstrap],
+    );
+    // The level chosen per model, shared with the classic interface. Read from the store
+    // rather than held here so a change made anywhere is reflected without a reload.
+    const reasoningEffortSettings = useUserSettingsStore(
+        (state) => state.settings.reasoningEffortSettings as ReasoningEffortSettings | undefined,
+    );
+    // Unlike every other preference V2 writes, this one is a map rather than a scalar, and
+    // the route stores it whole. The app renders as soon as the bootstrap resolves, which is
+    // not necessarily after the settings have arrived, so merging into a map that has not
+    // been read would replace every other model's level with the single entry just chosen.
+    const settingsLoading = useUserSettingsStore((state) => state.loading);
+    const settingsFailed = useUserSettingsStore((state) => state.error !== null);
+    const settingsLoaded = !settingsLoading && !settingsFailed;
+
+    /**
+     * Whether this is a shared conversation, and whether the reader may write in it.
+     *
+     * `can_post_messages` is the server's decision. A pending invitee can read a shared
+     * conversation but not write in it, and a group-visibility conversation grants posting
+     * with no membership record at all, so this cannot be worked out from the participant
+     * list in the browser.
+     */
+    const shared = useChatStore((state) => state.activeConversationKind === 'collaborative');
+    const loadedCollaboration = useCollaborationStore((state) => state.conversation);
+    // Only trusted when it is this conversation's membership. The participants panel used to
+    // share this slot, and an unrelated conversation's flags gating the thread on screen was
+    // exactly the failure that split them apart.
+    const collaboration =
+        loadedCollaboration?.id === activeConversationId ? loadedCollaboration : null;
+    /**
+     * Whether the reader may write here.
+     *
+     * Deny-by-default in a shared conversation: `can_post_messages` must be explicitly true,
+     * so a membership that has not loaded yet — or failed to — leaves the composer disabled
+     * rather than offering a Send button to somebody who has not joined. A personal
+     * conversation is unaffected.
+     */
+    const canPost = !shared || collaboration?.can_post_messages === true;
+    const awaitingInvite = Boolean(shared && collaboration?.can_accept_invite);
+    const checkingAccess = shared && !collaboration;
+    // Plans in a shared conversation run for the person who started it (the server serializes
+    // that person as the conversation's `user_id`); everyone else asks the assistant directly.
+    const sharedOrchestrationAllowed = Boolean(
+        shared && collaboration && bootstrap?.user?.id && collaboration.user_id === bootstrap.user.id,
+    );
+    const replyTo = useCollaborationStore((state) => state.replyTo);
+    const setReplyTo = useCollaborationStore((state) => state.setReplyTo);
+
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const editorActionsRef = useRef<ComposerEditorActions>(null);
+
+    const navigationEpoch = currentConversationEpoch();
+    const { owner, attachments, draft, setDraft, setDocumentSearch, recoverDraft } = useComposerAttachmentDraft(
+        bootstrap?.user?.id ?? '', activeConversationId, shared, navigationEpoch, currentAttachmentOwner,
+    );
+    const { text, attachedPrompt } = draft;
+    const [voiceStatus, setVoiceStatus] = useState<RecordingState>('idle');
+    const voiceBaselineRef = useRef('');
+    // A message made only of mention chips is a ping, which typing `@Name` alone always allowed.
+    const hasMentionChips = (draft.mentions?.length ?? 0) > 0;
+    const promptInstance = draft.promptInstance ?? 0;
+    const contextItems = composerDraftContextItems(draft);
+    const nonPublicReferences = contextItems.some((item) => item.scope.kind !== 'public');
+    const publicScopeConflict = Boolean(publicWorkspaceSelection)
+        && (nonPublicReferences || contextItems.some((item) => item.kind === 'scope'));
+    const imageCapability = useImageEditCapability();
+    const referenceLimit = effectiveReferenceImageLimit(imageCapability);
+    const referenceImagesAvailable = referenceLimit > 0 && !shared;
+    const draftImageReferences = composerDraftImageReferences(draft, referenceLimit);
+    // References added with "Use as reference": the only ones with no chip of their own.
+    const explicitImageReferences = (draft.imageReferences ?? []).filter((reference) =>
+        draftImageReferences.some((item) => imageReferenceKey(item) === imageReferenceKey(reference)));
+    const uploading = composerDraftHasPendingUploads(draft);
+    const uploadsBlocked = uploading || draft.uploads.some((upload) => upload.state === 'failed');
+    const uploadConversationId = attachments.uploadConversationId;
+    const previousAttachmentOwner = useRef(owner);
+    const previewAccount = useRef(owner.accountId);
+    useEffect(() => {
+        if (previewAccount.current !== owner.accountId) clearChatUploadLocalPreviews();
+        previewAccount.current = owner.accountId;
+    }, [owner.accountId]);
+    const setText: React.Dispatch<React.SetStateAction<string>> = (update) => setDraft((current) => {
+        const value = typeof update === 'function' ? update(current.text) : update;
+        return {
+            ...current,
+            text: value,
+            conversationReferences: reconcileConversationReferences(value, current.conversationReferences),
+            contextItems: reconcileContextItems(value, current.contextItems),
+        };
+    });
+    const chatWidth = useUiStore((state) => state.chatWidth);
+
+    /** Set while a prompt is waiting on its large-run confirmation. */
+    const [largeRun, setLargeRun] = useState<{
+        estimate: TabularRunEstimate;
+        outgoing: { message: string; promptInfo: Json | null };
+        draftKey: string;
+    } | null>(null);
+
+    /** Whether the Documents button's picker is open. */
+    const [pickerOpen, setPickerOpen] = useState(false);
+    const [showPromptWarning, setShowPromptWarning] = useState(false);
+    const [promptReview, setPromptReview] = useState({ instance: 0, request: 0 });
+    useEffect(() => {
+        setShowPromptWarning(false);
+        setPromptReview({ instance: 0, request: 0 });
+    }, [activeConversationId, shared]);
+    /** A prompt being saved from what is currently written, if any. */
+    const [savingDraft, setSavingDraft] = useState<PromptDraft | null>(null);
+    const [savingPrompt, setSavingPrompt] = useState(false);
+    const [saveError, setSaveError] = useState<string | null>(null);
+
+    const [manualOptions, setOptions] = useState<Omit<ComposerOptions, 'contextItems' | 'promptId' | 'documentSearch'>>({
+        webSearch: false,
+        imageGeneration: false,
+        deepResearch: false,
+        urlAccess: false,
+        agentSelection: initialAgentSelection,
+    });
+    const options = { ...manualOptions, documentSearch: attachments.documentSearch };
+    const messagesLoading = useChatStore((state) => state.messagesLoading);
+    const conversationMetadata = useChatStore((state) => state.metadata);
+    const metadataLoading = useChatStore((state) => state.metadataLoading);
+    const sourceDocuments = useMemo(
+        () => conversationSourceDocuments(activeConversationId, messages, conversationMetadata),
+        [activeConversationId, messages, conversationMetadata],
+    );
+    const [sourceMigrationError, setSourceMigrationError] = useState<string>();
+    const [sourceMigrationRetry, setSourceMigrationRetry] = useState(0);
+    useEffect(() => {
+        if (!activeConversationId || shared || messagesLoading || attachments.initialized) return;
+        const latest = [...messages].reverse().find((message) =>
+            message.role === 'user' && message.conversation_id === activeConversationId);
+        const metadata = latest?.metadata;
+        const workspaceSearch = metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+            ? metadata.workspace_search : undefined;
+        const saved = workspaceSearch && typeof workspaceSearch === 'object' && !Array.isArray(workspaceSearch)
+            && 'document_source_selection' in workspaceSearch
+            ? workspaceSearch.document_source_selection : undefined;
+        const workspaces = [
+            ...(bootstrap?.scope?.groups ?? []).map((item) => ({ kind: 'group', ...item })),
+            ...(bootstrap?.scope?.public_workspaces ?? []).map((item) => ({ kind: 'public', ...item })),
+        ];
+        composerAttachmentDrafts.initialize(
+            owner,
+            isDocumentSourceSelection(saved) ? restoreDocumentSources(saved, workspaces, sourceDocuments) : [],
+            isDocumentSourceSelection(saved) && saved.mode === 'all',
+        );
+    }, [activeConversationId, messagesLoading, messages, shared, bootstrap?.scope, owner, attachments.initialized, sourceDocuments]);
+    const missingSourceDetails = draft.contextItems.filter((item) =>
+        item.kind === 'document' && item.label === DOCUMENT_DETAILS_UNAVAILABLE);
+    const missingSourceDetailsKey = JSON.stringify(missingSourceDetails.map((item) => item.key));
+    const sourceDetailAttempts = useMemo(() => new Set<string>(), [owner]);
+    useEffect(() => {
+        if (metadataLoading || !missingSourceDetails.length) return;
+        const controller = new AbortController();
+        const hydrate = async () => {
+            const results = await Promise.allSettled(missingSourceDetails
+                .filter((item) => !sourceDetailAttempts.has(item.key)).map(async (item) => {
+                    const selection = {
+                        version: 1 as const, mode: 'selected' as const,
+                        sources: [{
+                            kind: 'document' as const, id: item.id,
+                            scope: item.scope.kind === 'personal' ? { kind: 'personal' as const }
+                                : { kind: item.scope.kind, id: item.scope.id ?? '' },
+                        }],
+                    };
+                    let named = restoreDocumentSources(selection, [item.scope], sourceDocuments)[0];
+                    if (named.label === DOCUMENT_DETAILS_UNAVAILABLE) {
+                        const document = item.scope.kind === 'personal'
+                            ? await fetchPersonalDocument(item.id, controller.signal)
+                            : item.scope.kind === 'group'
+                                ? await fetchScopedGroupDocument(item.scope.id ?? '', item.id, controller.signal)
+                                : await fetchScopedPublicDocument(item.scope.id ?? '', item.id, controller.signal);
+                        if (documentId(document) !== item.id) throw new Error('Attachment metadata does not match.');
+                        named = restoreDocumentSources(selection, [item.scope], [{
+                            document_id: item.id, title: document.title, file_name: document.file_name,
+                            scope: { type: item.scope.kind, id: item.scope.id ?? undefined },
+                        }])[0];
+                    }
+                    if (named.label === DOCUMENT_DETAILS_UNAVAILABLE) throw new Error('Attachment details are unavailable.');
+                    return { key: item.key, named };
+                }));
+            if (controller.signal.aborted) return;
+            for (const item of missingSourceDetails) sourceDetailAttempts.add(item.key);
+            const resolved = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+            if (resolved.length) setDraft((current) => ({
+                ...current,
+                contextItems: current.contextItems.map((item) => {
+                    const detail = resolved.find((result) => result.key === item.key);
+                    return detail && item.label === DOCUMENT_DETAILS_UNAVAILABLE
+                        ? { ...item, label: detail.named.label, token: detail.named.token, meta: detail.named.meta } : item;
+                }),
+            }));
+            if (results.some((result) => result.status === 'rejected')) {
+                toast.error('Could not load attachment details. Remove the unavailable source and choose it again in Documents.');
+            }
+        };
+        void hydrate();
+        return () => controller.abort();
+        // Selection changes cancel the read; keystrokes do not restart metadata requests.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [owner, missingSourceDetailsKey, sourceDocuments, metadataLoading, setDraft, sourceDetailAttempts]);
+    useEffect(() => {
+        if (!publicWorkspaceSelection || shared || messagesLoading) return;
+        const controller = new AbortController();
+        setSourceMigrationError(undefined);
+        const migrate = async () => {
+            const workspaces = [];
+            let offset: number | null = 0;
+            do {
+                const page = await fetchDocumentSources({
+                    workspace_offset: offset, conversation_id: activeConversationId ?? undefined,
+                }, controller.signal);
+                workspaces.push(...page.workspaces.filter((item) => item.kind === 'public'));
+                offset = page.workspace_next;
+            } while (offset !== null && !controller.signal.aborted);
+            if (controller.signal.aborted) return;
+            if (!workspaces.length) {
+                setSourceMigrationError('No public workspaces are available. Review your document sources before sending.');
+                return;
+            }
+            const selected = restoreDocumentSources({
+                version: 1, mode: 'selected',
+                sources: workspaces.map((item) => ({ kind: 'workspace', scope: { kind: 'public', id: item.id ?? '' } })),
+            }, workspaces);
+            setDraft((current) => ({ ...current, contextItems: selected }));
+            setDocumentSearch(false);
+            setPublicWorkspaceSelection(null);
+        };
+        void migrate().catch(() => {
+            if (!controller.signal.aborted) setSourceMigrationError('Could not load public sources. Retry before sending.');
+        });
+        return () => controller.abort();
+    }, [publicWorkspaceSelection, activeConversationId, shared, messagesLoading, sourceMigrationRetry, setPublicWorkspaceSelection, owner, setDraft, setDocumentSearch]);
+    useEffect(() => {
+        if (storedResult) {
+            setOptions((current) => ({
+                ...current, webSearch: false, imageGeneration: false,
+                deepResearch: false, urlAccess: false,
+            }));
+            setDocumentSearch(false);
+            setDraft((current) => ({ ...current, contextItems: [], conversationReferences: [] }));
+            setPickerOpen(false);
+        }
+    }, [storedResult, setDraft, setDocumentSearch]);
+
+    // A new picked/mentioned/uploaded source wins over a response that completes later.
+    const conversationReferenceIds = (draft.conversationReferences ?? []).map((item) => item.id);
+    const sourceSelectionKey = JSON.stringify([
+        contextItems.map((item) => item.key),
+        draft.uploads.map((upload) => upload.id),
+        conversationReferenceIds,
+    ]);
+    const previousSourceSelection = useRef(sourceSelectionKey);
+    useEffect(() => {
+        if (sourceSelectionKey !== previousSourceSelection.current &&
+            (contextItems.length > 0 || draft.uploads.length > 0 || conversationReferenceIds.length > 0)) {
+            clearAnalysisResultContext();
+        }
+        previousSourceSelection.current = sourceSelectionKey;
+    }, [sourceSelectionKey, contextItems.length, draft.uploads.length, conversationReferenceIds.length, clearAnalysisResultContext]);
+
+    /**
+     * Orchestration mode.
+     *
+     * The toggle only exists where the deployment has orchestration on, so `orchestrating`
+     * folds the feature flag and the bootstrap switch into the one boolean every branch below
+     * reads.
+     *
+     * On by default wherever the deployment offers it. Defaulting it off was a mistake: an
+     * administrator who switched orchestration on has already made the deliberate choice, and
+     * asking every user to find a toggle before the feature does anything is how it stays
+     * unused. Worse, the composer meanwhile keeps showing the row of capability buttons --
+     * documents, web, image, deep research -- inviting exactly the decisions the planner
+     * exists to make on the user's behalf.
+     *
+     * The toggle remains, because going back to the composer everyone already knows has to
+     * stay one click away.
+     */
+    const orchestrationConfig = bootstrap?.orchestration;
+    const orchestrationAvailable = Boolean(
+        features.enable_chat_orchestration && orchestrationConfig?.enabled,
+    );
+    const modeAccountId = bootstrap?.user?.id ?? '';
+    const modeRevision = useSyncExternalStore(conversationModes.subscribe, conversationModes.getRevision);
+    // Resolve against this render's identity/thread, never an effect's previous conversation.
+    const savedMode = useMemo(
+        () => conversationModes.read(modeAccountId, activeConversationId),
+        [modeAccountId, activeConversationId, modeRevision],
+    );
+    useEffect(() => {
+        if (savedMode.storageFailed) {
+            toast.error('Your saved mode choice could not be read in this browser. Choose your chat mode again.');
+        }
+    }, [savedMode]);
+    const orchestrating = (savedMode.choice ?? true) && orchestrationAvailable
+        && !options.agentSelection && !answeringFromStoredResult;
+    const toggleOrchestration = () => {
+        clearAnalysisResultContext();
+        const next = !orchestrating;
+        if (next) setOptions((current) => ({ ...current, agentSelection: undefined }));
+        rememberConversationMode(modeAccountId, activeConversationId, next);
+    };
+
+    // The disclosure that hides the manual controls while orchestrating. Only reachable when the
+    // administrator leaves them reachable; otherwise the planner owns every decision and there is
+    // nothing under the disclosure to open.
+    const [manualControlsOpen, setManualControlsOpen] = useState(false);
+    const manualControlsGovernable = Boolean(orchestrationConfig?.show_manual_controls);
+    // Visible inline when not orchestrating (the classic composer), and behind the disclosure
+    // when orchestrating with manual controls left reachable.
+    const manualControlsVisible =
+        !orchestrating || (manualControlsGovernable && manualControlsOpen);
+    useEffect(() => {
+        if (!manualControlsVisible) {
+            setPickerOpen(false);
+        }
+    }, [manualControlsVisible]);
+
+    /**
+     * The Orchestrate model: Auto (a model chosen per step) or one pinned model.
+     *
+     * Read from the account preference on every render rather than held in component state,
+     * which is what made the choice reset whenever the composer remounted -- leaving the chat
+     * and coming back, or opening a new chat from another page. Kept apart from the ordinary
+     * chat model: pinning one here does not change what a normal chat uses.
+     */
+    const savedModelRouting = useUserSettingsStore(
+        (state) => state.settings.orchestrationModelRouting,
+    );
+    const savedOrchestrationModel = useUserSettingsStore(
+        (state) => state.settings.orchestrationPreferredModelId,
+    );
+    const orchestrationModelChoice = resolveOrchestrationModel({
+        models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        pickerReachable: manualControlsGovernable,
+        savedRouting: savedModelRouting,
+        savedModelId: savedOrchestrationModel,
+        fallbackModel: options.modelDeployment,
+    });
+    const autoModelRouting = orchestrationModelChoice.routing === 'auto';
+    const orchestrationModel = orchestrationModelChoice.model;
+    const chooseOrchestrationModel = (value: string | undefined) => {
+        if (!value) {
+            return;
+        }
+        const preferences = useUserSettingsStore.getState();
+        preferences.update(orchestrationModelUpdate(value));
+        void preferences.flush();
+        // Choosing a model is the way out of agent mode here too, as it is in normal chat.
+        setOptions((current) => ({ ...current, agentSelection: undefined }));
+    };
+
+    const approvalPreference = useUserSettingsStore(
+        (state) => state.settings.orchestrationApprovalMode,
+    );
+    const preferencesSaving = useUserSettingsStore((state) => state.saving);
+    const preferenceSaveError = useUserSettingsStore((state) => state.saveError);
+    const approvalOverridable = Boolean(orchestrationConfig?.allow_user_approval_override);
+    const { mode: effectiveApprovalMode, invalidPreference: invalidApprovalPreference } =
+        resolveOrchestrationApproval(orchestrationConfig, approvalPreference);
+    // Bootstrap may arrive before preferences. Do not run an administrator's automatic mode
+    // while the user's saved requirement to review is still unknown.
+    const approvalBlocked = approvalOverridable && (!settingsLoaded || invalidApprovalPreference);
+    // The same wait for a pinned Orchestrate model: sending before it has loaded would quietly
+    // send the default instead. Unlike approval, a failed load does not block, because the
+    // picker shows what will be sent and the default is a safe answer.
+    const modelPreferencePending = manualControlsGovernable && settingsLoading;
+    const orchestrationBlocked = approvalBlocked || modelPreferencePending;
+    const chooseApprovalMode = (value: string | undefined) => {
+        if (!settingsLoaded || !approvalOverridable) {
+            toast.error('Your approval preference is not currently editable.');
+            return;
+        }
+        if (!isApprovalMode(value)) {
+            toast.error('Choose a valid approval mode.');
+            return;
+        }
+        const preferences = useUserSettingsStore.getState();
+        preferences.update({ orchestrationApprovalMode: value });
+        void preferences.flush();
+    };
+
+    // An agent supplies its own deployment and never receives a reasoning level, so a
+    // selection the server can actually resolve is what puts the model picker into its
+    // overridden state. Resolved against the catalog, not the raw key, so a stale selection
+    // does not silently deactivate a control that is still in force.
+    const agentActive = useMemo(
+        () =>
+            hasResolvableAgent(
+                bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                options.agentSelection,
+            ),
+        [bootstrap, options.agentSelection],
+    );
+
+    // A URL in an attached prompt is just as actionable as one typed underneath it.
+    const gatingPrompt = orchestrating
+        ? buildComposerDraftSubmission(draft, promptContext()).message
+        : text;
+    const hasPromptUrls = promptUrls(gatingPrompt).length > 0;
+    const gating = useMemo(
+        () =>
+            resolveGating({
+                prompt: gatingPrompt,
+                features: features as Record<string, unknown>,
+                webSearchActive: options.webSearch,
+                urlAccessActive: options.urlAccess,
+                imageGenerationActive: options.imageGeneration,
+                imageReferencesAvailable: referenceImagesAvailable,
+                agentActive,
+                orchestrating,
+            }),
+        [
+            gatingPrompt,
+            features,
+            options.webSearch,
+            options.urlAccess,
+            options.imageGeneration,
+            referenceImagesAvailable,
+            agentActive,
+            orchestrating,
+        ],
+    );
+    // In Orchestrate, Image asks the answer to include image proposals for approval rather
+    // than sending the prompt to the image endpoint, so it combines with every other control.
+    const imageProposalsRequested = orchestrating && options.imageGeneration && gating.showImage;
+
+    // "Use as reference" hands references over through the store, so the effect has to
+    // re-run whenever that queue fills, not only when the composer mounts.
+    useEffect(() => {
+        if (composerImageReferences.length === 0) {
+            return;
+        }
+        const references = consumeComposerImageReferences();
+        if (references.length === 0 || shared || referenceLimit <= 0) {
+            return;
+        }
+        setDraft((current) =>
+            references.reduce(
+                (next, reference) => addComposerDraftImageReference(next, reference, referenceLimit),
+                current,
+            ),
+        );
+        setOptions((current) => current.imageGeneration ? current : { ...current, imageGeneration: true });
+        textareaRef.current?.focus();
+    }, [composerImageReferences, consumeComposerImageReferences, shared, referenceLimit]);
+
+    useEffect(() => {
+        if (composerConversationReferences.length === 0) {
+            return;
+        }
+        const references = consumeComposerConversationReferences();
+        if (references.length === 0 || shared || answeringFromStoredResult) {
+            return;
+        }
+        let limitError = '';
+        setDraft((current) => {
+            let next = current.conversationReferences ?? [];
+            for (const source of references) {
+                if (source.id === activeConversationId) {
+                    continue;
+                }
+                try {
+                    next = addConversationReference(next, source, 'selection');
+                } catch (error) {
+                    limitError = error instanceof Error ? error.message : 'Could not attach conversation.';
+                }
+            }
+            return next === (current.conversationReferences ?? []) ? current : { ...current, conversationReferences: next };
+        });
+        if (limitError) {
+            toast.error(limitError);
+        }
+        textareaRef.current?.focus();
+    }, [composerConversationReferences, consumeComposerConversationReferences, shared, answeringFromStoredResult, activeConversationId]);
+
+    // No URLs means the draft no longer has a Read URLs selection. A capability losing
+    // authorization is different: keep that requirement visible for server validation.
+    useEffect(() => {
+        if (orchestrating) {
+            if (!hasPromptUrls) {
+                setOptions((current) => current.urlAccess ? { ...current, urlAccess: false } : current);
+            }
+            return;
+        }
+        setOptions((current) => {
+            const next = { ...current };
+            let changed = false;
+            if (!gating.showUrlAccess && next.urlAccess) {
+                next.urlAccess = false;
+                changed = true;
+            }
+            if (!gating.showDeepResearch && next.deepResearch) {
+                next.deepResearch = false;
+                changed = true;
+            }
+            return changed ? next : current;
+        });
+    }, [hasPromptUrls, gating.showUrlAccess, gating.showDeepResearch, orchestrating]);
+
+    // Apply the preferred model once bootstrap resolves. Stored as the same selection key the
+    // picker uses, so the full identity can be resolved from it.
+    //
+    // The bootstrap resolves `initial_model_selection` when it is fetched, so a model chosen
+    // since then is newer in the settings store than in the payload. Preferring the store is
+    // what stops a remounted composer -- leaving the chat and coming back -- from snapping back
+    // to the model that was current at startup. The payload still applies when the stored key
+    // no longer names a catalog model, since the server falls back to the deployment name.
+    // When `enable_default_model_for_new_conversations` is active, new chats start with the
+    // admin default (`initial_model_selection`) rather than the user's last remembered model.
+    const useAdminNewChatDefaults = Boolean(
+        features.enable_multi_model_endpoints
+        && features.enable_default_model_for_new_conversations,
+    );
+    const [userOverrodeNewChatDefaults, setUserOverrodeNewChatDefaults] = useState(false);
+    const previousConversationIdRef = useRef<string | null>(activeConversationId);
+
+    useEffect(() => {
+        const models = bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined;
+        const preferred = useUserSettingsStore.getState().settings.preferredModelId;
+        const remembered =
+            typeof preferred === 'string' && findModel(models, preferred) ? preferred : '';
+        const initial = bootstrap?.catalogs?.initial_model_selection;
+        const initialKey = initial ? modelSelectionKey(initial as ModelCatalogEntry) : '';
+        const key =
+            useAdminNewChatDefaults && !activeConversationId && initialKey
+                ? initialKey
+                : remembered || initialKey;
+        if (!key) {
+            return;
+        }
+        setOptions((current) =>
+            current.modelDeployment ? current : { ...current, modelDeployment: key },
+        );
+    }, [bootstrap, useAdminNewChatDefaults, activeConversationId]);
+
+    useEffect(() => {
+        const previousConversationId = previousConversationIdRef.current;
+        previousConversationIdRef.current = activeConversationId;
+        if (previousConversationId !== null && activeConversationId === null) {
+            setUserOverrodeNewChatDefaults(false);
+            setPickerOpen(false);
+            if (useAdminNewChatDefaults) {
+                const initial = bootstrap?.catalogs?.initial_model_selection;
+                const initialKey = initial ? modelSelectionKey(initial as ModelCatalogEntry) : '';
+                if (initialKey) {
+                    setOptions((current) => ({ ...current, modelDeployment: initialKey }));
+                }
+            }
+        }
+    }, [activeConversationId, bootstrap, useAdminNewChatDefaults]);
+
+    /**
+     * Tell the other participants that this person is writing.
+     *
+     * Sent as a state change rather than per keystroke — one ping when typing starts and
+     * one when it stops — because the server broadcasts every one of these to every other
+     * participant's event stream. The stop is also sent on a short idle timer, so walking
+     * away mid-sentence clears the indicator instead of leaving it up until the server's own
+     * eight-second expiry.
+     */
+    const typingRef = useRef(false);
+    const typingIdleTimer = useRef<number | null>(null);
+
+    const setTyping = (isTyping: boolean) => {
+        if (!shared || !activeConversationId || !canPost || typingRef.current === isTyping) {
+            return;
+        }
+        typingRef.current = isTyping;
+        void sendCollaborationTyping(activeConversationId, isTyping).catch(() => {
+            /* Presence is advisory; a lost ping expires on its own. */
+        });
+    };
+
+    const stopTyping = () => {
+        if (typingIdleTimer.current !== null) {
+            window.clearTimeout(typingIdleTimer.current);
+            typingIdleTimer.current = null;
+        }
+        setTyping(false);
+    };
+
+    const noteTyping = (value: string) => {
+        if (!shared) {
+            return;
+        }
+        setTyping(Boolean(value.trim()));
+        if (typingIdleTimer.current !== null) {
+            window.clearTimeout(typingIdleTimer.current);
+        }
+        typingIdleTimer.current = window.setTimeout(() => {
+            typingIdleTimer.current = null;
+            setTyping(false);
+        }, 3000);
+    };
+
+    // Leaving the conversation, or the page, must not leave a stale "is typing" behind for
+    // everybody else.
+    useEffect(
+        () => () => {
+            if (typingIdleTimer.current !== null) {
+                window.clearTimeout(typingIdleTimer.current);
+            }
+            typingRef.current = false;
+        },
+        [],
+    );
+
+    useEffect(() => {
+        typingRef.current = false;
+        const changed = previousAttachmentOwner.current.key !== owner.key
+            || previousAttachmentOwner.current.epoch !== owner.epoch;
+        previousAttachmentOwner.current = owner;
+        if (changed) {
+            setPickerOpen(false);
+            setDraft((current) => current.mentions?.length ? { ...current, mentions: [] } : current);
+        }
+    }, [owner, setDraft]);
+
+    /**
+     * Consume a prompt handed over from the workspace as `/chat?prompt=<id>`.
+     *
+     * The id is captured in a lazy state initialiser, which runs during the first render --
+     * before ChatPage's URL sync effect strips the parameter. Reading it in the effect instead
+     * would race that strip and sometimes find nothing.
+     *
+     * This deliberately does not write the URL. ChatPage is the single writer of the chat
+     * query string, and `setSearchParams` replaces the whole query from the caller's render
+     * snapshot, so a parameter removed here would simply be restored by that effect.
+     *
+     * The ref guards against StrictMode running effects twice on mount: a state flag is still
+     * false in the second invocation's closure, so the prompt would be attached twice.
+     */
+    const [searchParams, setSearchParams] = useSearchParams();
+    const location = useLocation();
+    const [linkedPromptId] = useState(() => readPromptParam(searchParams));
+    // A group prompt link carries its scope so it resolves by id *and* scope. A legacy
+    // `?prompt=<id>` link carries none and keeps resolving by id alone, exactly as before.
+    const [linkedPromptScope] = useState(() => readPromptScope(searchParams));
+    const promptLinkConsumed = useRef(false);
+    useEffect(() => {
+        if (promptLinkConsumed.current || !linkedPromptId || !bootstrap) {
+            return;
+        }
+        promptLinkConsumed.current = true;
+
+        const prompt = linkedPromptScope
+            ? promptCatalog.find(
+                  (item) =>
+                      item.id === linkedPromptId
+                      && String(item.scope_type ?? 'personal') === linkedPromptScope.kind
+                      && String(item.scope_id ?? '') === linkedPromptScope.id,
+              )
+            : promptCatalog.find((item) => item.id === linkedPromptId);
+        if (!prompt) {
+            // R4a: a public "Use in chat" link names its workspace and prompt explicitly, so a
+            // workspace hidden from the chat catalog still resolves. This fires only on a catalog
+            // miss for an explicit public link; it fetches the one prompt (reauthorized server-side
+            // by role and status, never through the visibility map), attaches its content on success,
+            // and on any failure falls back to the same "no longer available" toast, attaching
+            // nothing. It writes no catalog or visibility state, and the link is already marked
+            // consumed above, so it never replays. The group and personal paths are unchanged.
+            if (linkedPromptScope && linkedPromptScope.kind === 'public') {
+                const workspaceId = linkedPromptScope.id;
+                void resolvePublicPromptForChat(workspaceId, linkedPromptId)
+                    .then((fetched) => {
+                        attachPrompt({
+                            id: fetched.id,
+                            name: fetched.name,
+                            content: fetched.content,
+                            description: fetched.description,
+                            scope_type: 'public',
+                            scope_id: workspaceId,
+                        });
+                    })
+                    .catch(() => {
+                        toast.error('That prompt is no longer available.');
+                    });
+                return;
+            }
+            // A scoped link names its workspace so the reason is legible: a member who lost
+            // access, or a deleted prompt, should not read as "some prompt, somewhere, is gone".
+            const groupName = linkedPromptScope
+                ? promptCatalog.find(
+                      (item) =>
+                          String(item.scope_id ?? '') === linkedPromptScope.id
+                          && typeof item.scope_name === 'string' && item.scope_name,
+                  )?.scope_name
+                : undefined;
+            toast.error(
+                linkedPromptScope && linkedPromptScope.kind === 'group'
+                    ? `That prompt is no longer available in ${groupName || 'that group'}.`
+                    : 'That prompt is no longer available.',
+            );
+            return;
+        }
+        attachPrompt(prompt);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [bootstrap, promptCatalog, linkedPromptId, linkedPromptScope]);
+
+    // A model is identified by endpoint + id + provider + deployment together, so the
+    // option is keyed on `selection_key` (unique per endpoint) rather than the deployment
+    // name, which can repeat across endpoints.
+    const modelOptions: DropdownOption[] = (bootstrap?.catalogs?.models ?? []).map(
+        (model, index) => ({
+            value: modelSelectionKey(model as ModelCatalogEntry) || String(index),
+            label:
+                (model.display_name as string) ||
+                (model.deployment_name as string) ||
+                'Model',
+            searchText: modelSearchText(model),
+        }),
+    );
+
+    // The catalog record has no `selection_key` (that is a model concept), so the agent is
+    // identified by id, falling back to name for a record that somehow lacks one.
+    const agentOptions: DropdownOption[] = (bootstrap?.catalogs?.agents ?? []).map(
+        (agent, index) => ({
+            value: agentSelectionKey(agent) || String(index),
+            label: (agent.display_name as string) || (agent.name as string) || 'Agent',
+            description: agent.description as string | undefined,
+            group: agent.scope_type ? String(agent.scope_type) : undefined,
+        }),
+    );
+
+    const promptOptions: DropdownOption[] = promptCatalog.map((prompt, index) => ({
+        value: (prompt.id as string) ?? String(index),
+        label: (prompt.name as string) || 'Prompt',
+        description: prompt.description as string | undefined,
+        group: prompt.scope_type ? String(prompt.scope_type) : undefined,
+    }));
+
+    // The approval-mode choices. "After Ns" names the actual countdown so the reader knows how
+    // long a timed plan waits before it approves itself, rather than being told only that it will.
+    const approvalOptions: DropdownOption[] = [
+        { value: 'auto', label: 'Auto', description: 'Run the plan as soon as it is ready' },
+        {
+            value: 'timed',
+            label: `After ${orchestrationConfig?.timed_approval_seconds ?? 0}s`,
+            description: 'Approve automatically unless you step in',
+        },
+        { value: 'manual', label: 'Review', description: 'Wait for your approval every time' },
+    ];
+
+    // Names the agent in the model picker's tooltip. Saying which one is holding the model
+    // back is the difference between an explanation and a control that has simply gone dim.
+    const activeAgentLabel = agentActive
+        ? (agentOptions.find((option) => option.value === options.agentSelection)?.label ??
+          'the selected agent')
+        : null;
+
+    // Reasoning support is per-model, so the control appears only when the current model
+    // actually offers a choice. Resolved from the catalog record rather than the label,
+    // since the display name can be anything an administrator typed.
+    const activeModelSelection = orchestrating && !autoModelRouting
+        ? orchestrationModel || options.modelDeployment : options.modelDeployment;
+    const selectedModel = findModel(
+        bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        activeModelSelection,
+    );
+
+    // Storage identity is deliberately separate from the authorized model's policy.
+    const reasoningKey = reasoningModelKey(
+        selectedModel,
+        activeModelSelection,
+    );
+    const reasoningPolicy = selectedModel?.reasoning_capabilities;
+    const pendingLevels = useRef<ReasoningEffortSettings>({});
+    const [reasoningNotice, setReasoningNotice] = useState<{
+        key: string; message: string; effectiveEffort: string | undefined;
+    } | null>(null);
+
+    const reasoningLevels: DropdownOption[] = useMemo(() => {
+        return getModelSupportedLevels(reasoningPolicy).map((level) => ({
+            value: level,
+            label: REASONING_LABELS[level],
+        }));
+    }, [reasoningPolicy]);
+
+    // The level in effect is derived from the model and what has been stored for it, never
+    // remembered on its own. A level chosen for one model must not follow the user to
+    // another, and a model that offers no choice must not carry one into the request at all.
+    //
+    // Without a published supported policy, use model default rather than inventing levels.
+    //
+    // Agent mode is deliberately not a condition here. It hides the control and drops the
+    // level from the request in `buildSelectionFields`, which is where that rule lives; the
+    // level stays derived from the model underneath, so clearing the agent brings it back.
+    const adminDefaultReasoningEffort =
+        useAdminNewChatDefaults && !activeConversationId && !userOverrodeNewChatDefaults &&
+        typeof bootstrap?.settings?.default_reasoning_effort === 'string'
+            ? bootstrap.settings.default_reasoning_effort
+            : null;
+    const reasoningResolution = resolveReasoningSelection(
+        reasoningKey,
+        { ...reasoningEffortSettings, ...pendingLevels.current },
+        reasoningPolicy,
+        adminDefaultReasoningEffort,
+    );
+    const derivedReasoning = reasoningResolution.effective_effort ?? undefined;
+
+    useEffect(() => {
+        setOptions((current) =>
+            current.reasoningEffort === derivedReasoning
+                ? current
+                : { ...current, reasoningEffort: derivedReasoning },
+        );
+    }, [reasoningKey, derivedReasoning]);
+
+    /**
+     * Levels chosen before the stored map arrived.
+     *
+     * Held rather than written, because the map is stored whole and merging into one that
+     * has not been read would discard every other model's level. Held rather than dropped,
+     * because a preference that quietly fails to save is the defect this change is fixing.
+     * A map rather than a single entry, so choosing for two models in that window keeps both.
+     */
+    const storeReasoningLevels = (levels: ReasoningEffortSettings) => {
+        // Read at write time rather than from the render's closure, so a map that arrived
+        // between the choice and the write is merged into rather than replaced.
+        const saved = useUserSettingsStore.getState().settings
+            .reasoningEffortSettings as ReasoningEffortSettings | undefined;
+        useUserSettingsStore.getState().update({
+            reasoningEffortSettings: { ...saved, ...levels },
+        });
+    };
+
+    useEffect(() => {
+        if (!settingsLoaded || Object.keys(pendingLevels.current).length === 0) {
+            return;
+        }
+        const held = pendingLevels.current;
+        pendingLevels.current = {};
+        storeReasoningLevels(held);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [settingsLoaded]);
+
+    useEffect(() => {
+        if (!reasoningKey || !settingsLoaded || !reasoningResolution.adjustment_reason) {
+            return;
+        }
+        const message = reasoningAdjustmentMessage(
+            reasoningResolution, selectedModel?.model_name || selectedModel?.display_name,
+        );
+        setReasoningNotice((current) =>
+            current?.key === reasoningKey && current.message === message
+                ? current : { key: reasoningKey, message, effectiveEffort: derivedReasoning },
+        );
+        // Only correct entries with a known supported replacement. Unknown policies must not
+        // erase a saved preference, especially while a refreshed catalog is still arriving.
+        if (derivedReasoning && !pendingLevels.current[reasoningKey]) {
+            storeReasoningLevels({ [reasoningKey]: derivedReasoning });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [reasoningKey, reasoningResolution.requested_effort, derivedReasoning, settingsLoaded, reasoningPolicy]);
+
+    /** Store a chosen level against the current model, for both interfaces to read back. */
+    const chooseReasoningLevel = (level: string | undefined) => {
+        setUserOverrodeNewChatDefaults(true);
+        setReasoningNotice(null);
+        if (!level) {
+            // Only reachable where the control is clearable, which is where no level is
+            // stored, so there is nothing to clear but the session's own choice.
+            setOptions((current) => ({ ...current, reasoningEffort: undefined }));
+            return;
+        }
+
+        setOptions((current) => ({ ...current, reasoningEffort: level }));
+
+        // A catalog-less selection has no persistent identity to store against.
+        if (!reasoningKey) {
+            return;
+        }
+
+        if (settingsLoaded) {
+            storeReasoningLevels({ [reasoningKey]: level });
+            return;
+        }
+
+        pendingLevels.current = { ...pendingLevels.current, [reasoningKey]: level };
+        if (settingsFailed) {
+            // The map was never read, so writing would replace it. Saying so is better than
+            // a control that appears to save and does not.
+            toast.error(
+                'Your preferences could not be loaded, so this reasoning level applies to this conversation only.',
+            );
+            return;
+        }
+    };
+
+    /**
+     * Remember the chosen model.
+     *
+     * The bootstrap resolves `initial_model_selection` from these keys on the next visit;
+     * without them the composer silently falls back to the first entry in the catalog.
+     */
+    const rememberModelSelection = (selection: string | undefined) => {
+        const model = findModel(
+            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+            selection,
+        );
+        if (!model) {
+            return;
+        }
+
+        const deployment =
+            typeof model.deployment_name === 'string' ? model.deployment_name.trim() : '';
+        useUserSettingsStore.getState().update({
+            preferredModelId: modelSelectionKey(model),
+            // The server falls back to the deployment name when the selection key no longer
+            // resolves, which is what happens after an endpoint is replaced.
+            ...(deployment ? { preferredModelDeployment: deployment } : {}),
+        });
+    };
+
+    /**
+     * The message this turn will send, plus what to tell the server about the prompt behind it.
+     *
+     * Built at send rather than when the prompt was picked. That is what makes `{{composer}}`
+     * mean the message written underneath the card, and it is why editing a variable after
+     * typing changes what is actually sent instead of only what the preview shows.
+     */
+    const buildOutgoing = () => buildComposerDraftSubmission(draft, promptContext());
+    const directReferenceMode = options.imageGeneration && !orchestrating && referenceImagesAvailable;
+    const imageReferenceLimitHint = options.imageGeneration && !orchestrating && !referenceImagesAvailable
+        ? imageCapability.reason || 'The selected image model can’t use reference images.'
+        : '';
+
+    const referenceLabel = (reference: ImageReferenceRequest): string => {
+        if (reference.type === 'message') {
+            const upload = draft.uploads.find((item) =>
+                item.fileMessageId === reference.message_id
+                || item.reference?.id === reference.message_id);
+            const message = messages.find((item) => item.id === reference.message_id);
+            if (upload?.fileName || message?.filename) {
+                return String(upload?.fileName || message?.filename);
+            }
+            const metadata = (message?.metadata ?? {}) as Record<string, unknown>;
+            return message?.role === 'image' && !metadata.is_user_upload ? 'Generated image' : 'Conversation image';
+        }
+        const upload = draft.uploads.find((item) =>
+            item.reference?.kind === 'document' && item.reference.id === reference.document_id);
+        const item = draft.contextItems.find((entry) =>
+            entry.kind === 'document' && entry.id === reference.document_id);
+        return upload?.fileName || item?.meta?.fileName || item?.label || 'Workspace image';
+    };
+
+    const removeImageReference = (reference: ImageReferenceRequest) => {
+        const key = imageReferenceKey(reference);
+        setDraft((current) => ({
+            ...current,
+            uploads: current.uploads.filter((upload) => {
+                const uploadReference = composerDraftImageReferences({
+                    ...current,
+                    uploads: [upload],
+                    contextItems: [],
+                    imageReferences: [],
+                }, 1)[0];
+                return !uploadReference || imageReferenceKey(uploadReference) !== key;
+            }),
+            contextItems: current.contextItems.filter((item) => {
+                if (reference.type !== 'document' || item.kind !== 'document') {
+                    return true;
+                }
+                return item.id !== reference.document_id;
+            }),
+            imageReferences: (current.imageReferences ?? []).filter((item) =>
+                imageReferenceKey(item) !== key),
+        }));
+    };
+
+    /**
+     * Send, unless the prompt is about to start a long row-level export.
+     *
+     * The confirmation is raised before anything is sent and before the composer is cleared,
+     * so declining leaves the typed prompt exactly where it was to be edited.
+     */
+    const outgoingDraftKey = () =>
+        JSON.stringify([
+            activeConversationId, draft,
+            promptContext(), options, orchestrating,
+        ]);
+
+    const ensureCurrentDraft = () => {
+        if (composerAttachmentDrafts.canSubmit(owner, currentAttachmentOwner(), attachments.revision)) return true;
+        toast.info('The conversation or attachments changed. Review your message before sending.');
+        return false;
+    };
+
+    const submit = (allowUnfilled = false) => {
+        if (!ensureCurrentDraft()) return;
+        if (publicWorkspaceSelection && !shared) {
+            toast.error(sourceMigrationError ?? 'Public sources are still loading. Please wait before sending.');
+            return;
+        }
+        if (publicWorkspaceSelection && (!features.enable_public_workspaces || publicScopeConflict || answeringFromStoredResult || (options.imageGeneration && !orchestrating))) {
+            const recovery = options.imageGeneration && !orchestrating
+                ? 'Turn off Image, then open Documents and choose Current context.'
+                : answeringFromStoredResult
+                  ? 'Remove the saved result, then open Documents and choose Current context.'
+                  : orchestrating && !manualControlsGovernable
+                    ? 'Switch to Manual mode, then open Documents and choose Current context, or start a new chat.'
+                    : `Open ${orchestrating ? 'Manual controls, then ' : ''}Documents to clear incompatible references or choose Current context.`;
+            toast.error(`Public search needs available public sources only. ${recovery}`);
+            if (!answeringFromStoredResult && !(options.imageGeneration && !orchestrating)
+                && (!orchestrating || manualControlsGovernable)) {
+                setManualControlsOpen(true);
+                setPickerOpen(true);
+            }
+            return;
+        }
+        if (streaming || !canPost || uploadsBlocked || workflowResultOpening) {
+            return;
+        }
+        if (orchestrating && orchestrationBlocked) {
+            toast.error(
+                !approvalBlocked
+                    ? 'Your model preference is still loading.'
+                    : settingsFailed
+                      ? 'Retry loading your approval preference before sending.'
+                      : invalidApprovalPreference && settingsLoaded
+                        ? 'Choose a valid approval mode before sending.'
+                        : 'Your approval preference is still loading.',
+            );
+            return;
+        }
+        // An attached prompt is a complete message on its own, so a turn carrying one may be
+        // sent without anything typed under it.
+        if (!text.trim() && !attachedPrompt && !hasMentionChips) {
+            return;
+        }
+        if (attachedPrompt && !allowUnfilled && composerDraftUnfilledVariables(draft, promptContext()).length > 0) {
+            setShowPromptWarning(true);
+            setPromptReview((current) => ({ instance: promptInstance, request: current.request + 1 }));
+            return;
+        }
+
+        const outgoing = buildOutgoing();
+        if (!outgoing.message) {
+            return;
+        }
+        editorActionsRef.current?.cancelKnowledge();
+        setShowPromptWarning(false);
+
+        // Orchestration takes a different road entirely: the server plans the work rather than
+        // running a chat stream, so the large-run confirmation — a manual-flow concern about a
+        // tabular export the planner has not chosen — does not apply.
+        //
+        // A shared conversation applies its own rule first, exactly as manual mode does: a
+        // message that only addresses people is posted to them and never planned. Only the person
+        // who started the conversation plans in it, so anyone else's request to the assistant is
+        // answered the classic way.
+        const sharedRequest = orchestrating && shared ? sharedOrchestrationRequest(outgoing.message) : null;
+        if (orchestrating && shared && !sharedRequest) {
+            dispatch(outgoing);
+            return;
+        }
+        if (orchestrating) {
+            // Asked inside the click or key press that sent the message, because that is the
+            // only moment a browser shows its prompt. Does nothing once it has been answered.
+            void requestDesktopNotificationPermission();
+            dispatchOrchestration(outgoing.message, outgoing.promptInfo, sharedRequest);
+            if (sharedRequest) {
+                setReplyTo(null);
+            }
+            return;
+        }
+
+        // Estimated against the whole message: a prompt that asks for every row is a long run
+        // whether the request came from the card or from the box.
+        const estimate = estimateLargeTabularRun(outgoing.message, tabularRunSettings);
+        if (!storedResult && estimate.shouldConfirm) {
+            setLargeRun({ estimate, outgoing, draftKey: outgoingDraftKey() });
+            return;
+        }
+
+        dispatch(outgoing);
+    };
+
+    /**
+     * Clear the draft once it has been sent.
+     *
+     * Context belongs to this turn, whether selected independently or mentioned inline.
+     * The request carries it before clearing, so an empty next draft inherits no selections.
+     *
+     * The attached prompt goes with them, for the same reason: it belongs to the turn that was
+     * just sent, and leaving it attached would silently prepend it to the next message too.
+     */
+    const clearDraft = () => {
+        editorActionsRef.current?.cancelKnowledge();
+        setDraft(createComposerDraft());
+        setPickerOpen(false);
+        composerAttachmentDrafts.update(owner, (current) => current.uploadConversationId
+            ? { ...current, uploadConversationId: null } : current);
+        setShowPromptWarning(false);
+        setPromptReview({ instance: 0, request: 0 });
+        return composerAttachmentDrafts.read(owner).revision;
+    };
+
+    const dispatch = (outgoing: { message: string; promptInfo: Json | null }) => {
+        if (!ensureCurrentDraft()) return;
+        // Remembered only once the message is actually on its way, so a prompt that was
+        // filled in and then abandoned leaves nothing behind.
+        if (attachedPrompt && outgoing.promptInfo) {
+            rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
+        }
+        if (!activeConversationId && uploadConversationId) {
+            adoptConversationModeDraft(conversationModes.captureDraft(modeAccountId), uploadConversationId);
+            useChatStore.setState({
+                activeConversationId: uploadConversationId,
+                activeConversationKind: 'personal',
+            });
+        }
+        // Asked here rather than in `submit`, so the browser's prompt cannot land on top of
+        // the large-run confirmation; continuing from that dialog is a click too.
+        void requestDesktopNotificationPermission();
+        // `options` is read before the clear below replaces it, so the request carries the
+        // references this message was written with.
+        const sentDraft = draft;
+        const sending = sendMessage(outgoing.message, {
+            ...options,
+            publicWorkspaceSelection,
+            contextItems,
+            conversationReferences: draft.conversationReferences ?? [],
+            imageReferences: options.imageGeneration && !orchestrating ? draftImageReferences : [],
+            promptInfo: outgoing.promptInfo,
+        });
+        const clearedRevision = clearDraft();
+        void sending.then((result) => {
+            if (result === false) recoverDraft(sentDraft, clearedRevision);
+        });
+        // Sent, so the indicator other people can see must stop now rather than when the
+        // idle timer happens to fire.
+        stopTyping();
+    };
+
+    /**
+     * Assemble the seeds a plan request carries from the manual controls.
+     *
+     * These do not replace the planner's judgement, they constrain it: a document the user
+     * pinned, an agent or model they chose, a saved prompt, a supported capability.
+     * Unchecked controls are neutral, not permission denials. `buildSelectionFields`
+     * keeps the agent-XOR-model exclusivity the chat request already relies on.
+     */
+    const buildOrchestrationSeeds = (message: string, promptInfo: Json | null = null): Record<string, unknown> => {
+        const workspaces = contextScopes(contextItems);
+        const scope = resolveDocumentScope({
+            publicWorkspaceSelection,
+            activeGroupId: bootstrap?.scope?.active_group_id,
+            activePublicWorkspaceId: bootstrap?.scope?.active_public_workspace_id,
+            contextGroupIds: workspaces.groupIds,
+            contextPublicWorkspaceIds: workspaces.publicWorkspaceIds,
+        });
+
+        const seeds: Record<string, unknown> = {
+            web_search_enabled: options.webSearch,
+            ...(imageProposalsRequested ? { image_generation_enabled: true } : {}),
+            required_capabilities: [
+                // Pinned sources constrain inputs, not the operation (search, Analyze, or Compare).
+                ...(options.documentSearch || publicWorkspaceSelection ? ['document_search'] : []),
+                ...(options.webSearch ? ['web_search'] : []),
+                ...(options.deepResearch ? ['deep_research'] : []),
+                ...(options.urlAccess && promptUrls(message).length > 0 ? ['url_fetch'] : []),
+            ],
+            selected_document_ids: contextDocumentIds(contextItems),
+            // Names for those ids, so the planner can reason about "the Q3 contract" and the
+            // approval card can be read. Display only -- the server authorizes from the ids.
+            context_documents: contextDocumentDescriptors(contextItems),
+            // `resolve_seeds` reads doc_scope and the workspace ids alongside the document
+            // ids, and `seeds_are_explicit` turns the planner's candidate probe off once
+            // documents are named. Sending the ids without the scope that reaches them would
+            // suppress the probe and then find nothing.
+            ...scope,
+        };
+        const tags = contextTags(contextItems);
+        if (tags.length > 0) {
+            seeds.tags = tags;
+        }
+        // Without this a picked document beside an unrelated tag chip intersects to nothing,
+        // exactly as it did on the chat path before the same field was sent there.
+        const filterMode = contextFilterMode(contextItems);
+        if (filterMode) {
+            seeds.document_filter_mode = filterMode;
+        }
+        const sourceSelection = !shared && !publicWorkspaceSelection
+            ? documentSourceSelection(options.documentSearch, contextItems) : undefined;
+        if (sourceSelection) {
+            seeds.document_source_selection = sourceSelection;
+            for (const field of ['doc_scope', 'selected_document_ids', 'tags', 'document_filter_mode',
+                'active_group_id', 'active_group_ids', 'active_public_workspace_id', 'active_public_workspace_ids']) {
+                delete seeds[field];
+            }
+        }
+        if (options.imageGeneration && draftImageReferences.length > 0) {
+            seeds.image_references = draftImageReferences;
+        }
+        const conversationReferences = conversationReferenceRequests(draft.conversationReferences ?? []);
+        if (conversationReferences.length > 0) {
+            seeds.conversation_references = conversationReferences;
+        }
+        // An explicit @agent or @model tag says who should answer, the way it does in a shared
+        // chat: an agent tag seeds that agent, so the plan asks it rather than using its actions
+        // directly, and a model tag pins that model. A tag wins over the manual controls.
+        const tagged = resolveInvocationTarget(
+            message,
+            bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+            bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        );
+        const taggedAgent = tagged?.target_type === 'agent' ? tagged.agent_selection_key : undefined;
+        const taggedModel = tagged?.target_type === 'model' ? tagged.selection_key : undefined;
+        Object.assign(
+            seeds,
+            buildSelectionFields({
+                agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                agentSelection: taggedAgent ?? (taggedModel ? undefined : options.agentSelection),
+                modelDeployment: taggedModel ?? (orchestrationModel || options.modelDeployment),
+                reasoningEffort: options.reasoningEffort,
+            }),
+        );
+        if (autoModelRouting && !taggedModel) {
+            seeds.model_routing = 'auto';
+            for (const key of ['model_deployment', 'model_id', 'model_endpoint_id', 'model_provider', 'reasoning_effort']) {
+                delete seeds[key];
+            }
+        }
+        if (promptInfo) {
+            // Resolved by the composer rather than re-read from the catalog here: the text the
+            // planner is told about must be the text that was actually sent, variables filled
+            // and any edit for this turn included.
+            seeds.prompt_info = promptInfo;
+        }
+        return seeds;
+    };
+
+    /**
+     * Who a shared conversation's planned question addresses, or null when it isn't planned.
+     *
+     * Null when the message addresses only people, or when the reader didn't start the
+     * conversation. The plan request carries the target, mentions and reply so the server
+     * can post the question to the shared thread as it was asked.
+     */
+    const sharedOrchestrationRequest = (message: string): Record<string, unknown> | null => {
+        const target = sharedConversationTarget(message, options, {
+            agents: bootstrap?.catalogs?.agents as AgentOption[] | undefined,
+            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+        });
+        if (!target || !sharedOrchestrationAllowed) {
+            return null;
+        }
+        return {
+            invocation_target: target,
+            mentioned_participants: extractMentionedParticipants(
+                message, conversationParticipants(collaboration),
+            ),
+            ...(replyTo?.message_id ? { reply_to_message_id: replyTo.message_id } : {}),
+        };
+    };
+
+    const dispatchOrchestration = (
+        message: string,
+        promptInfo: Json | null = null,
+        sharedDetails: Record<string, unknown> | null = null,
+    ) => {
+        if (!ensureCurrentDraft()) return;
+        if (attachedPrompt && promptInfo) {
+            rememberPromptValues(attachedPrompt.id, composerDraftUserPromptValues(draft));
+        }
+        const conversationId = activeConversationId ?? uploadConversationId;
+        if (!activeConversationId && conversationId) {
+            adoptConversationModeDraft(conversationModes.captureDraft(modeAccountId), conversationId);
+            useChatStore.setState({ activeConversationId: conversationId, activeConversationKind: 'personal' });
+        }
+        void startOrchestrationPlan({
+            conversationId,
+            message,
+            approvalMode: effectiveApprovalMode,
+            // Who a shared conversation's question addressed travels with the plan request, so
+            // the server can post the question to the shared thread as it was asked.
+            seeds: { ...buildOrchestrationSeeds(message, promptInfo), ...(sharedDetails ?? {}) },
+        });
+        clearDraft();
+        stopTyping();
+    };
+
+    // A durable wait stays tracked, but does not own the composer's stream or Stop button.
+    const activePlanInFlight = useOrchestrationStore((state) => {
+        const conversationId = activeConversationId ?? '';
+        const turnId = state.activeTurns[conversationId];
+        const plan = turnId ? selectPlan(state, conversationId, turnId) : null;
+        const recovery = plan ? state.runRecovery[plan.run_id] : undefined;
+        const waiting = recovery ? isOrchestrationRunWaiting(recovery) : plan?.status === 'waiting';
+        return selectActiveTurnRunInFlight(state, conversationId) && !waiting;
+    });
+    /** Stop the visible stream's owner, not another orchestration running in the background. */
+    const handleStop = () => {
+        if (activeConversationId && (useChatStore.getState().orchestrationSurface || (!streaming && activePlanInFlight))
+            && hasActiveOrchestration(activeConversationId)) {
+            const state = useOrchestrationStore.getState();
+            const turnId = state.activeTurns[activeConversationId];
+            const runId = activePlanInFlight && turnId
+                ? selectPlan(state, activeConversationId, turnId)?.run_id : undefined;
+            void cancelOrchestration(activeConversationId, runId);
+            return;
+        }
+        stopStreaming();
+    };
+
+    /**
+     * Adopt a selection handed over from the workspace.
+     *
+     * The hand-off is captured during the first render rather than read inside the effect, for
+     * the same reason the prompt link above is: effects that rewrite the query string also run
+     * on mount, and whichever ran first would decide whether the selection survived.
+     *
+     * Mark it applied only after resolution, so effect cleanup or StrictMode cannot consume
+     * the handoff before its items arrive.
+     */
+    const [linkedHandoff] = useState(() => readContextHandoff(searchParams));
+    const [linkedHandoffState] = useState(
+        () => (location.state ?? null) as ContextHandoffState | null,
+    );
+    const handoffApplied = useRef(false);
+
+    /**
+     * Adopt text another page handed over, such as the Control Center's dashboard chat.
+     *
+     * It arrives in router state, never the URL, so nothing outside the application can put
+     * words in someone's composer. Captured during the first render like the selection hand-off,
+     * applied once, and the state is then cleared so a reload or Back does not apply it again.
+     * The person still reads, edits and sends the text.
+     */
+    const [draftHandoff] = useState(() => readComposerDraftHandoff(location.state));
+    const draftHandoffApplied = useRef(false);
+
+    useEffect(() => {
+        if (draftHandoffApplied.current || !draftHandoff) {
+            return;
+        }
+        draftHandoffApplied.current = true;
+        if (draftHandoff.newConversation) {
+            useChatStore.getState().startNewConversation();
+        }
+        setDraft((current) => ({ ...current, text: draftHandoff.text }));
+        if (draftHandoff.orchestrate && orchestrationAvailable) {
+            // The new chat uses the deployment default; a page handoff is not a saved toggle choice.
+            setOptions((current) => ({ ...current, agentSelection: undefined }));
+        }
+        setSearchParams((current) => current, { replace: true, state: null });
+        window.requestAnimationFrame(() => {
+            const textarea = textareaRef.current;
+            if (!textarea) {
+                return;
+            }
+            textarea.focus();
+            textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+        });
+    }, [draftHandoff, orchestrationAvailable, setSearchParams]);
+
+    useEffect(() => {
+        if (handoffApplied.current || !linkedHandoff || !canPost) {
+            return;
+        }
+        const controller = new AbortController();
+        void resolveContextHandoff(linkedHandoff, {
+            groups: (bootstrap?.scope?.groups ?? []) as WorkspaceRef[],
+            publicWorkspaces: (bootstrap?.scope?.public_workspaces ?? []) as WorkspaceRef[],
+            state: linkedHandoffState,
+            viewerId: bootstrap?.user.id,
+            signal: controller.signal,
+        })
+            .then((items) => {
+                if (controller.signal.aborted) {
+                    return;
+                }
+                handoffApplied.current = true;
+                setDraft((current) => ({
+                    ...current,
+                    contextItems: items.reduce(
+                        (carry, item) => addContextItem(carry, item),
+                        current.contextItems,
+                    ),
+                }));
+                // Clean up only after adoption; navigation can restart this effect.
+                setSearchParams(
+                    (current) => {
+                        const next = new URLSearchParams(current);
+                        for (const key of CONTEXT_HANDOFF_PARAMS) {
+                            next.delete(key);
+                        }
+                        return next;
+                    },
+                    { replace: true },
+                );
+                if (items.length > 0) {
+                    textareaRef.current?.focus();
+                }
+            })
+            .catch(() => {
+                if (!controller.signal.aborted) {
+                    toast.error('Could not load the selected context. Choose it again from Documents.');
+                }
+            });
+
+        return () => controller.abort();
+    }, [canPost, linkedHandoff, linkedHandoffState, setSearchParams, bootstrap?.scope, bootstrap?.user.id]);
+
+    const applySuggestion = (suggestion: MentionSuggestion) => {
+        // An "Add to this conversation" row is an action, not just a completion. Inserting
+        // the name without performing it left the row dead: the person was neither added nor
+        // mentioned, because the mention list is resolved against existing participants only
+        // and the server filters it again.
+        if (suggestion.kind === 'invite' && activeConversationId) {
+            void useCollaborationStore
+                .getState()
+                .inviteParticipants([
+                    {
+                        user_id: suggestion.user_id,
+                        display_name: suggestion.display_name,
+                        email: suggestion.email,
+                    },
+                ])
+                .then(() => {
+                    toast.success(`${suggestion.display_name} was added to this conversation.`);
+                })
+                .catch((error: unknown) => {
+                    toast.error(
+                        error instanceof Error
+                            ? error.message
+                            : `${suggestion.display_name} could not be added.`,
+                    );
+                });
+        }
+    };
+
+    /* ---------------------------------------------------------------- Saved prompts */
+
+    /**
+     * The conversation facts the built-in variables resolve from.
+     *
+     * Assembled here rather than inside the dialog because only the composer knows what has
+     * been typed but not yet sent. Nothing in this object is applied on its own: the last
+     * assistant reply is offered as a chip the reader has to click, because that reply can be
+     * quoting an uploaded document and text from a document should not become part of the next
+     * instruction without a deliberate act.
+     */
+    function promptContext() {
+        const ownMessages = messages.filter((message) => message.conversation_id === activeConversationId);
+        const lastOfRole = (role: string) =>
+            [...ownMessages].reverse().find((message) => message.role === role);
+        const assistant = lastOfRole('assistant');
+        const user = lastOfRole('user');
+        const conversation = conversations.find((item) => item.id === activeConversationId);
+
+        return {
+            userName: String(bootstrap?.user?.display_name ?? ''),
+            conversationTitle: String(conversation?.title ?? ''),
+            lastAssistantMessage: assistant ? messageToPlainText(assistant) : '',
+            lastUserMessage: user ? messageToPlainText(user) : '',
+            composerText: text,
+            selectedDocuments: contextItems.filter((item) => item.kind === 'document').map((item) => item.label),
+        }
+    };
+
+    const attachPrompt = (prompt: PromptOption) => {
+        editorActionsRef.current?.cancelKnowledge();
+        setShowPromptWarning(false);
+        setPromptReview({ instance: 0, request: 0 });
+        setDraft((current) => attachPromptToDraft(current, prompt));
+        window.requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+
+    const saveWrittenTextAsPrompt = () => {
+        const written = text.trim();
+        if (!written) {
+            return;
+        }
+        setSaveError(null);
+        setSavingDraft({
+            ...EMPTY_PROMPT_DRAFT,
+            name: suggestPromptName(written),
+            content: written,
+        });
+    };
+
+    const savePromptDraft = async () => {
+        if (!savingDraft) {
+            return;
+        }
+        setSavingPrompt(true);
+        setSaveError(null);
+        try {
+            const created = await createPrompt(savingDraft.name.trim(), savingDraft.content, {
+                description: savingDraft.description.trim(),
+            });
+            // Applied to the catalog immediately: the picker and the `/` menu read from
+            // bootstrap, and the point of saving from here is to use the prompt now.
+            upsertPromptInCatalog({
+                id: created?.id,
+                name: savingDraft.name.trim(),
+                content: savingDraft.content,
+                description: savingDraft.description.trim(),
+                scope_type: 'personal',
+            });
+            void refreshBootstrap();
+            setSavingDraft(null);
+            toast.success('Saved to your prompts');
+        } catch (error) {
+            setSaveError(
+                error instanceof Error ? error.message : 'Could not save the prompt.',
+            );
+        } finally {
+            setSavingPrompt(false);
+        }
+    };
+
+    const onPickPrompt = (promptId: string | undefined) => {
+        const prompt = bootstrap?.catalogs?.prompts?.find((item) => item.id === promptId);
+        if (prompt) {
+            attachPrompt(prompt as PromptOption);
+        } else if (promptId === undefined) {
+            editorActionsRef.current?.cancelKnowledge();
+            setDraft((current) => ({
+                ...current, attachedPrompt: null, promptValues: {}, promptAiValues: {},
+                promptInstance: (current.promptInstance ?? 0) + 1,
+            }));
+            setShowPromptWarning(false);
+            setPromptReview({ instance: 0, request: 0 });
+        } else {
+            toast.error('That prompt is no longer available.');
+        }
+    };
+
+    return (
+        <div className="chat-composer shrink-0 px-2 pb-2 md:px-4 md:pb-4">
+            {largeRun && (
+                <LargeRunDialog
+                    estimate={largeRun.estimate}
+                    onContinue={() => {
+                        setLargeRun(null);
+                        if (streaming || !canPost || uploadsBlocked) {
+                            return;
+                        }
+                        if (outgoingDraftKey() !== largeRun.draftKey) {
+                            submit();
+                            return;
+                        }
+                        dispatch(largeRun.outgoing);
+                    }}
+                    onCancel={() => setLargeRun(null)}
+                />
+            )}
+            <div className={clsx('mx-auto w-full', chatWidthClass(chatWidth))}>
+                {/* Above the input, matching the classic interface: the warning belongs
+                    next to the message it is about, not below the send button. */}
+                <WebSearchNotice active={options.webSearch} />
+                {!agentActive && !(orchestrating && autoModelRouting) && reasoningNotice?.key === reasoningKey &&
+                    reasoningNotice.effectiveEffort === derivedReasoning && (
+                    <p role="status" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">
+                        {reasoningNotice.message}
+                    </p>
+                )}
+                {imageProposalsRequested && (
+                    <p role="status" className="mb-2 rounded-xl bg-surface-sunken px-3 py-2 text-xs text-text-2">
+                        Orchestrate will plan the images you ask for and generate them when the plan runs.
+                    </p>
+                )}
+                {orchestrating && (
+                    (options.deepResearch && !gating.showDeepResearch) ||
+                    (options.webSearch && !gating.showWeb) ||
+                    (options.urlAccess && !gating.showUrlAccess)
+                ) && (
+                    <p role="status" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-xs text-warn">
+                        A selected retrieval requirement is no longer available in the current controls.
+                        It will still be sent for server validation, not silently removed.
+                        <button
+                            type="button"
+                            className="ml-2 underline"
+                            onClick={() => setOptions((current) => ({
+                                ...current,
+                                deepResearch: gating.showDeepResearch && current.deepResearch,
+                                webSearch: gating.showWeb && current.webSearch,
+                                urlAccess: gating.showUrlAccess && current.urlAccess,
+                            }))}
+                        >
+                            Clear unavailable selections
+                        </button>
+                    </p>
+                )}
+
+                {orchestrating && (approvalOverridable || manualControlsGovernable) && (
+                    <div className="space-y-1 text-xs">
+                        {approvalOverridable && (settingsLoading ? (
+                            <p role="status" className="mb-2 text-text-3">
+                                Loading your approval preference before orchestration can start...
+                            </p>
+                        ) : settingsFailed ? (
+                            <div role="alert" className="mb-2 rounded-xl bg-danger-soft px-3 py-2 text-danger">
+                                Your approval preference could not be loaded. Your draft is unchanged.
+                                <button
+                                    type="button"
+                                    onClick={() => void useUserSettingsStore.getState().load()}
+                                    className="ml-2 font-medium underline"
+                                >
+                                    Retry loading approval preference
+                                </button>
+                            </div>
+                        ) : invalidApprovalPreference ? (
+                            <p role="alert" className="mb-2 rounded-xl bg-warn-soft px-3 py-2 text-warn">
+                                Your saved approval preference is invalid. Choose an approval mode before sending.
+                            </p>
+                        ) : null)}
+                        {!approvalOverridable && modelPreferencePending && (
+                            <p role="status" className="mb-2 text-text-3">
+                                Loading your model preference before orchestration can start...
+                            </p>
+                        )}
+                        {preferencesSaving && (
+                            <p role="status" className="mb-2 text-text-3">Saving preferences...</p>
+                        )}
+                        {preferenceSaveError && (
+                            <p role="alert" className="mb-2 rounded-xl bg-danger-soft px-3 py-2 text-danger">
+                                {preferenceSaveError} Try changing the preference again.
+                            </p>
+                        )}
+                    </div>
+                )}
+
+                <div className="glass glass-edge relative rounded-2xl p-2" data-tour="composer-input">
+                    {savedAnalysis && (
+                        <div role="status" aria-live="polite" className="mb-2 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
+                            <span className="min-w-0 flex-1 text-xs text-text-2">
+                                <strong>Saved analysis selected. </strong>{ANALYSIS_CONTEXT_NOTICE}
+                            </span>
+                            <button
+                                type="button"
+                                aria-label="Remove saved analysis context"
+                                className="shrink-0 rounded-md p-1 text-text-3 hover:bg-surface-3"
+                                onClick={() => {
+                                    clearAnalysisResultContext();
+                                    textareaRef.current?.focus();
+                                }}
+                            ><X size={14} /></button>
+                        </div>
+                    )}
+                    {(workflowResult || workflowResultOpening) && (
+                        <WorkflowResultChip
+                            descriptor={workflowResult}
+                            onRemove={() => {
+                                clearWorkflowResultContext();
+                                textareaRef.current?.focus();
+                            }}
+                        />
+                    )}
+                    {replyTo && (
+                        <div className="mb-1 flex items-start gap-2 rounded-xl bg-surface-2 px-3 py-2">
+                            <Reply size={13} className="mt-0.5 shrink-0 text-text-3" />
+                            <span className="min-w-0 flex-1 text-xs text-text-2">
+                                {replyTo.display_name && (
+                                    <span className="font-medium">Replying to {replyTo.display_name}: </span>
+                                )}
+                                <span className="line-clamp-2">{replyTo.preview}</span>
+                            </span>
+                            <button
+                                type="button"
+                                onClick={() => setReplyTo(null)}
+                                aria-label="Cancel reply"
+                                className="shrink-0 rounded-md p-0.5 text-text-3 hover:bg-surface-3 hover:text-text-1"
+                            >
+                                <X size={13} />
+                            </button>
+                        </div>
+                    )}
+
+                    <ActionRecoveryNotice conversationId={activeConversationId}
+                        agentSelection={options.agentSelection} />
+                    {sourceMigrationError && publicWorkspaceSelection && <div role="alert" className="mb-2 rounded-lg bg-surface-2 p-3 text-sm text-danger">
+                        {sourceMigrationError}
+                        <button type="button" className="ml-2 underline" onClick={() => setSourceMigrationRetry((value) => value + 1)}>Retry sources</button>
+                        <button type="button" className="ml-2 underline" onClick={() => {
+                            setPublicWorkspaceSelection(null);
+                            setPickerOpen(true);
+                        }}>Choose other sources</button>
+                    </div>}
+                    <ComposerEditor
+                        publicWorkspaceSelection={publicWorkspaceSelection}
+                        documentScopeControl={!shared ? {
+                            id: 'composer-document-scope',
+                            publicEnabled: Boolean(features.enable_public_workspaces),
+                            disabled: streaming || !canPost,
+                            onChange: setPublicWorkspaceSelection,
+                            error: publicWorkspaceSelection && !features.enable_public_workspaces
+                                ? 'Public workspaces are currently disabled. Choose Current context to continue.'
+                                : publicScopeConflict
+                                  ? nonPublicReferences
+                                    ? 'Clear personal or group references, or choose Current context before sending.'
+                                    : 'Clear whole-workspace references, or choose Current context to search a selected workspace.'
+                                  : undefined,
+                        } : undefined}
+                        id="composer-input"
+                        label="Message"
+                        draft={draft}
+                        onChange={setDraft}
+                        conversationId={activeConversationId}
+                        draftOwnerKey={`${owner.key}:${owner.epoch}`}
+                        disabled={!canPost}
+                        voiceStatus={voiceStatus}
+                        rows={1}
+                        promptContext={promptContext()}
+                        actionsRef={editorActionsRef}
+                        showPromptWarning={showPromptWarning && promptReview.instance === promptInstance}
+                        submitDisabled={streaming || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
+                        promptReviewRequest={promptReview.instance === promptInstance ? promptReview.request : 0}
+                        onSendWithUnfilled={() => submit(true)}
+                        knowledgeAgent={buildSelectionFields({
+                            agents: bootstrap?.catalogs?.agents as Record<string, unknown>[] | undefined,
+                            models: bootstrap?.catalogs?.models as ModelCatalogEntry[] | undefined,
+                            agentSelection: options.agentSelection,
+                        }).agent_info}
+                        shared={shared}
+                        allowConversationReferences={!shared && !answeringFromStoredResult}
+                        textareaRef={textareaRef}
+                        fileInputRef={fileInputRef}
+                        showTools={false}
+                        uploadsDisabled={gating.uploadsDisabledByImageGeneration}
+                        referenceUploadsOnly={directReferenceMode}
+                        pickerOpen={pickerOpen && manualControlsVisible}
+                        onPickerOpenChange={(open) => {
+                            if (open) {
+                                clearAnalysisResultContext();
+                            }
+                            setPickerOpen(open);
+                            if (!open) {
+                                textareaRef.current?.focus();
+                            }
+                        }}
+                        searchAll={options.documentSearch}
+                        onToggleSearchAll={() => {
+                            clearAnalysisResultContext();
+                            if (publicWorkspaceSelection) setPublicWorkspaceSelection(null);
+                            setDocumentSearch(!options.documentSearch);
+                        }}
+                        mentionsEnabled={shared && canPost}
+                        onMentionSelected={applySuggestion}
+                        onTyping={noteTyping}
+                        onBlur={stopTyping}
+                        onEscape={() => {
+                            if (!replyTo) {
+                                return false;
+                            }
+                            setReplyTo(null);
+                            return true;
+                        }}
+                        onSubmit={() => submit()}
+                        onUploadComplete={(response, ownerConversationId) => {
+                            if (useChatStore.getState().activeConversationId !== ownerConversationId
+                                || currentConversationEpoch() !== navigationEpoch) {
+                                return;
+                            }
+                            if (response.conversation_id) {
+                                composerAttachmentDrafts.bindUploadConversation(owner, response.conversation_id);
+                            }
+                            if (ownerConversationId) {
+                                void useChatStore.getState().reloadMessages();
+                            }
+                        }}
+                        placeholder={
+                            checkingAccess
+                                ? 'Checking your access to this conversation…'
+                                : awaitingInvite
+                                  ? 'Join this conversation to reply'
+                                  : !canPost
+                                    ? 'You do not have permission to write in this conversation'
+                                    : savedAnalysis
+                                      ? 'Ask about the saved analysis…'
+                                      : workflowResult || workflowResultOpening
+                                      ? WORKFLOW_RESULT_PLACEHOLDER
+                                      : shared
+                                      ? 'Message the group, or @mention a model or agent to ask the assistant…'
+                                      : 'Send a message, or type # to add a document…'
+                        }
+                    />
+
+                    {options.imageGeneration && !shared && (!orchestrating || explicitImageReferences.length > 0) && (
+                        <div className="flex flex-wrap items-center gap-1.5 px-1 pb-1 pt-1">
+                            {/* Uploads and picked documents already have chips of their own;
+                                only references with no other chip are drawn here, while the
+                                count covers every image that will be sent. */}
+                            {explicitImageReferences.map((reference) => (
+                                <span
+                                    key={imageReferenceKey(reference)}
+                                    className="inline-flex max-w-full items-center gap-1.5 rounded-xl border border-edge bg-surface-1 px-2 py-1 text-xs text-text-2"
+                                >
+                                    <ImageReferenceThumbnail
+                                        reference={reference}
+                                        label={referenceLabel(reference)}
+                                        className="h-7 w-7"
+                                    />
+                                    <span className="max-w-40 truncate">{referenceLabel(reference)}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => removeImageReference(reference)}
+                                        aria-label={`Remove reference ${referenceLabel(reference)}`}
+                                        className="rounded p-0.5 text-text-3 hover:bg-surface-2 hover:text-text-1"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </span>
+                            ))}
+                            <span className="text-[11px] text-text-3">
+                                {orchestrating
+                                    ? 'Planned image steps can use these references'
+                                    : referenceImagesAvailable
+                                      ? `${draftImageReferences.length} / ${referenceLimit} reference images`
+                                      : imageReferenceLimitHint}
+                            </span>
+                        </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-1.5 px-1 pt-1" data-tour="composer-tools">
+                        <button type="button" aria-label="Chat tools" aria-expanded={mobileToolsOpen}
+                            aria-controls="composer-secondary-tools"
+                            onClick={() => setMobileToolsOpen((open) => !open)}
+                            className="mobile-tools-toggle flex min-h-11 min-w-0 items-center gap-2 rounded-xl px-2 text-sm text-text-2 hover:bg-surface-2 md:hidden">
+                            <SlidersHorizontal size={18} className="shrink-0" />
+                            <span className="min-w-0 truncate">{orchestrating
+                                ? `Orchestrate · ${effectiveApprovalMode}`
+                                : activeAgentLabel || modelOptions.find((model) => model.value === options.modelDeployment)?.label || 'Tools'}</span>
+                        </button>
+                        <DropdownScope mobileOpen={mobileToolsOpen} closeKey={activeConversationId}>
+                        {orchestrationAvailable && (
+                            <ToolToggle
+                                active={orchestrating}
+                                onClick={toggleOrchestration}
+                                icon={<Workflow size={15} />}
+                                label="Orchestrate"
+                            />
+                        )}
+
+                        {orchestrating && approvalOverridable && (
+                            <Dropdown
+                                floating
+                                options={approvalOptions}
+                                value={settingsLoaded && !invalidApprovalPreference ? effectiveApprovalMode : undefined}
+                                placeholder="Approval"
+                                icon={<ShieldCheck size={15} />}
+                                title="Approval mode"
+                                disabled={!settingsLoaded}
+                                onChange={chooseApprovalMode}
+                            />
+                        )}
+
+                        {/* A disclosure, not a toggle: it hides the manual controls rather than
+                            switching a capability, so it carries aria-expanded rather than the
+                            aria-pressed the capability buttons use. Offered only where the
+                            administrator leaves the controls reachable. */}
+                        {orchestrating && manualControlsGovernable && (
+                            <button
+                                type="button"
+                                onClick={() => setManualControlsOpen((open) => !open)}
+                                aria-expanded={manualControlsOpen}
+                                title="Manual controls"
+                                className={clsx(
+                                    'inline-flex h-9 items-center gap-1.5 rounded-xl border px-2.5 text-sm transition-colors',
+                                    manualControlsOpen
+                                        ? 'border-transparent bg-accent-soft text-accent'
+                                        : 'border-edge bg-surface-1 text-text-2 hover:bg-surface-2 hover:text-text-1',
+                                )}
+                            >
+                                <ChevronDown
+                                    size={15}
+                                    className={clsx(
+                                        'transition-transform',
+                                        manualControlsOpen && 'rotate-180',
+                                    )}
+                                />
+                                <span className="hidden lg:inline">Manual controls</span>
+                            </button>
+                        )}
+
+                        {manualControlsVisible && (
+                            <>
+                                {/* Hidden while generating an image: the request goes to an image
+                                    endpoint that does not take a chat model. Shown but overridden
+                                    while an agent is selected, since the agent brings its own
+                                    deployment — picking a model here is how the user gets back to
+                                    using one, so it stays usable rather than disabled. */}
+                                {gating.showModelPicker && !orchestrating && (
+                                    <Dropdown
+                                        floating
+                                        options={modelOptions}
+                                        value={options.modelDeployment}
+                                        placeholder="Model"
+                                        searchPlaceholder="Search models by name or vendor"
+                                        inactive={gating.modelPickerInactive}
+                                        title={
+                                            activeAgentLabel
+                                                ? `${activeAgentLabel} supplies its own model. Pick a model to use one instead.`
+                                                : undefined
+                                        }
+                                        onChange={(value) => {
+                                            setUserOverrodeNewChatDefaults(true);
+                                            setOptions((current) => ({
+                                                ...current,
+                                                modelDeployment: value,
+                                                // Choosing a model is the way out of agent mode. The
+                                                // two cannot both apply, and the server reads a model
+                                                // sent alongside an agent as an override of it.
+                                                agentSelection: undefined,
+                                            }));
+                                            rememberModelSelection(value);
+                                        }}
+                                    />
+                                )}
+
+                                {/* The same slot while orchestrating, where the model is also the
+                                    plan's: Auto picks one per step and is the default wherever a
+                                    connected model can be chosen that way. The choice is saved to
+                                    the account, and it lives here rather than above the input so the
+                                    toolbar does not change shape when Orchestrate is switched on. */}
+                                {gating.showModelPicker && orchestrating && (
+                                    <Dropdown
+                                        floating
+                                        options={[
+                                            ...(orchestrationModelChoice.autoAvailable
+                                                ? [{ value: AUTO_MODEL_VALUE, label: 'Auto - choose per step' }]
+                                                : []),
+                                            ...modelOptions,
+                                        ]}
+                                        value={orchestrationModelValue(orchestrationModelChoice)}
+                                        placeholder="Orchestration model"
+                                        searchPlaceholder="Search models by name or vendor"
+                                        title="Auto chooses by task, then admin priority and favorites. A specific model stays pinned."
+                                        onChange={chooseOrchestrationModel}
+                                    />
+                                )}
+
+                                {agentOptions.length > 0 && (
+                                    <Dropdown
+                                        floating
+                                        options={agentOptions}
+                                        value={options.agentSelection}
+                                        placeholder="Agent"
+                                        searchPlaceholder="Search agents"
+                                        clearable
+                                        icon={<Bot size={15} />}
+                                        onChange={(value) =>
+                                            setOptions((current) => ({
+                                                ...current,
+                                                // The model selection is kept, not cleared: it is
+                                                // simply not in force, and it comes back the moment
+                                                // the agent is cleared.
+                                                agentSelection: value,
+                                            }))
+                                        }
+                                    />
+                                )}
+
+                                {promptOptions.length > 0 && (
+                                    <Dropdown
+                                        floating
+                                        options={promptOptions}
+                                        value={attachedPrompt?.id}
+                                        placeholder="Prompt"
+                                        searchPlaceholder="Search prompts"
+                                        clearable
+                                        icon={<FileText size={15} />}
+                                        onChange={onPickPrompt}
+                                        hint={<>Tip: type <strong>/</strong> in your message to choose a prompt.</>}
+                                    />
+                                )}
+
+                                {/* Only offered once there is something to save. A prompt is wording
+                                    you have already refined, so the moment worth catching is after it
+                                    has been written, not before. */}
+                                {canPost && text.trim().length > 0 && (
+                                    <ToolToggle
+                                        active={false}
+                                        onClick={saveWrittenTextAsPrompt}
+                                        icon={<BookmarkPlus size={15} />}
+                                        label="Save as prompt"
+                                    />
+                                )}
+
+                                <span className="mx-0.5 h-6 w-px bg-edge-strong" aria-hidden="true" />
+
+                                <ToolToggle
+                                    active={options.documentSearch || contextItems.length > 0 || Boolean(publicWorkspaceSelection)}
+                                    disabled={gating.documentsDisabledByImageGeneration}
+                                    onClick={() => {
+                                        clearAnalysisResultContext();
+                                        setPickerOpen((open) => !open);
+                                    }}
+                                    icon={<Search size={15} />}
+                                    label={
+                                        `Documents${publicWorkspaceSelection
+                                            ? ` · All ${publicLabels.plural.toLowerCase()}`
+                                            : ''}${contextItems.length > 0 ? ` · ${contextItems.length}` : ''}`
+                                    }
+                                />
+
+                                {gating.showWeb && (
+                                    <ToolToggle
+                                        active={options.webSearch}
+                                        disabled={gating.disabledByImageGeneration}
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
+                                            setOptions((current) => ({
+                                                ...current,
+                                                webSearch: !current.webSearch,
+                                            }));
+                                        }}
+                                        icon={<Globe size={15} />}
+                                        label="Web"
+                                    />
+                                )}
+
+                                {/* In Orchestrate this asks the answer for image proposals to approve. */}
+                                {gating.showImage && (
+                                    <ToolToggle
+                                        active={options.imageGeneration}
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
+                                            setOptions((current) => ({
+                                                ...current,
+                                                imageGeneration: !current.imageGeneration,
+                                            }));
+                                        }}
+                                        icon={<ImageIcon size={15} />}
+                                        label="Image"
+                                    />
+                                )}
+
+                                {/* In Orchestrate this is a positive requirement, independent of Web. */}
+                                {gating.showDeepResearch && (
+                                    <ToolToggle
+                                        active={options.deepResearch}
+                                        disabled={gating.disabledByImageGeneration}
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
+                                            setOptions((current) => ({
+                                                ...current,
+                                                deepResearch: !current.deepResearch,
+                                            }));
+                                        }}
+                                        icon={<Telescope size={15} />}
+                                        label="Deep research"
+                                    />
+                                )}
+
+                                {/* Only offered when the prompt actually contains a URL. */}
+                                {gating.showUrlAccess && (
+                                    <ToolToggle
+                                        active={options.urlAccess}
+                                        disabled={gating.disabledByImageGeneration}
+                                        onClick={() => {
+                                            clearAnalysisResultContext();
+                                            setOptions((current) => ({
+                                                ...current,
+                                                urlAccess: !current.urlAccess,
+                                            }));
+                                        }}
+                                        icon={<Link2 size={15} />}
+                                        label="Read URLs"
+                                    />
+                                )}
+
+                                {/* Only shown when a reasoning level is a real choice: the selected
+                                    model has to offer one, and neither an agent nor image generation
+                                    can be in play, because neither carries the parameter. The level
+                                    is stored per model, so it survives a reload and applies to this
+                                    model alone. It is clearable only where no level is in effect —
+                                    a deployment with no model catalog — because that is the one case
+                                    where "no level" is a state to get back to. */}
+                                {gating.showReasoning && !(orchestrating && autoModelRouting) && reasoningLevels.length > 0 && (
+                                    <Dropdown
+                                        floating
+                                        options={reasoningLevels}
+                                        value={options.reasoningEffort}
+                                        placeholder="Reasoning"
+                                        clearable={!reasoningKey}
+                                        icon={<Gauge size={15} />}
+                                        onChange={chooseReasoningLevel}
+                                    />
+                                )}
+                            </>
+                        )}
+
+                        </DropdownScope>
+                        <div className="composer-primary-actions ml-auto flex shrink-0 items-center gap-1.5">
+                            {features.enable_speech_to_text_input && (
+                                <VoiceInput
+                                    disabled={!canPost}
+                                    onSessionStart={() => {
+                                        voiceBaselineRef.current = text;
+                                    }}
+                                    onStateChange={setVoiceStatus}
+                                    onCancelSession={(segments) =>
+                                        setText((current) =>
+                                            revertDictatedSegments(current, voiceBaselineRef.current, segments),
+                                        )
+                                    }
+                                    onTranscribed={(transcript) =>
+                                        setText((current) => appendDictatedText(current, transcript))
+                                    }
+                                />
+                            )}
+
+                            <button
+                                type="button"
+                                onClick={() => fileInputRef.current?.click()}
+                                data-tour="composer-attach"
+                                disabled={
+                                    !canPost ||
+                                    !gating.showFileUpload ||
+                                    gating.uploadsDisabledByImageGeneration
+                                }
+                                title={directReferenceMode ? 'Attach a reference image' : imageReferenceLimitHint || 'Attach a file'}
+                                aria-label={directReferenceMode ? 'Attach a reference image' : 'Attach a file'}
+                                className={clsx(
+                                    'inline-flex h-9 w-9 items-center justify-center rounded-xl border border-edge',
+                                    'bg-surface-1 text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1',
+                                    'disabled:cursor-not-allowed disabled:opacity-40',
+                                )}
+                            >
+                                {uploading ? (
+                                    <Loader2 size={16} className="animate-spin" />
+                                ) : (
+                                    <Paperclip size={16} />
+                                )}
+                            </button>
+
+                            {streaming || activePlanInFlight ? (
+                                <button
+                                    type="button"
+                                    onClick={handleStop}
+                                    aria-label="Stop generating"
+                                    data-tour="composer-send"
+                                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-danger-soft text-danger transition-colors hover:bg-danger hover:text-white"
+                                >
+                                    <Square size={15} className="fill-current" />
+                                </button>
+                            ) : (
+                                <button
+                                    type="button"
+                                    onClick={() => submit()}
+                                    data-tour="composer-send"
+                                    disabled={(!text.trim() && !attachedPrompt && !hasMentionChips) || !canPost || uploadsBlocked || workflowResultOpening || (orchestrating && orchestrationBlocked)}
+                                    aria-label={
+                                        shared && !streaming
+                                            ? 'Send to this conversation'
+                                            : 'Send message'
+                                    }
+                                    className={clsx(
+                                        'inline-flex h-9 w-9 items-center justify-center rounded-xl',
+                                        'bg-accent text-on-accent transition-colors hover:bg-accent-hover',
+                                        'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent',
+                                    )}
+                                >
+                                    <ArrowUp size={17} />
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </div>
+
+                <AiNotice />
+            </div>
+
+            {savingDraft ? (
+                <PromptEditorDialog
+                    draft={savingDraft}
+                    saving={savingPrompt}
+                    error={saveError}
+                    onChange={setSavingDraft}
+                    onSave={() => void savePromptDraft()}
+                    onCancel={() => {
+                        setSavingDraft(null);
+                        setSaveError(null);
+                    }}
+                />
+            ) : null}
+        </div>
+    );
+}

@@ -6,6 +6,14 @@ import base64
 from copy import deepcopy
 from datetime import UTC, datetime
 
+from functions_message_image_revisions import (
+    resolve_current_revision,
+    read_image_revisions,
+    resolve_image_message_content,
+    revision_blob_location,
+    serialize_image_revisions,
+)
+
 
 IMAGE_MESSAGE_SAFE_CONTENT_LIMIT = 1500000
 IMAGE_MESSAGE_INLINE_RESPONSE_LIMIT = 1024 * 1024
@@ -152,6 +160,32 @@ def hydrate_image_messages(items, image_url_builder=None, inline_content_limit=I
 
         message_id = str(message.get('id') or '').strip()
         metadata = message.get('metadata', {}) if isinstance(message.get('metadata'), dict) else {}
+
+        # An image with a version history is served through the endpoint, addressed by whichever
+        # version is current. Handled before the blob and chunk branches below, which both
+        # answer "where do this message's *original* bytes live" and would otherwise hand back
+        # the version the reader replaced.
+        #
+        # This applies to the original too, once a history exists. The endpoint resolves it
+        # correctly, and the stored content does not always describe it: a shared mirror holds a
+        # placeholder rather than a URL, and a legacy chunked image holds only its first chunk.
+        #
+        # The revision map is replaced with its public shape at the same time. The stored entry
+        # carries blob containers and paths, and those are storage detail that must not reach a
+        # browser.
+        revision_entry = read_image_revisions(message)
+        if revision_entry:
+            metadata['image_revisions'] = serialize_image_revisions(revision_entry)
+
+            if resolve_current_revision(revision_entry) and image_url_builder and message_id:
+                message['content'] = resolve_image_message_content(
+                    message,
+                    image_url_builder(message_id),
+                )
+                metadata.pop('is_large_image', None)
+                metadata.pop('image_size', None)
+                message['metadata'] = metadata
+                continue
 
         if is_blob_backed_image_message(message):
             if image_url_builder and message_id:

@@ -24,6 +24,8 @@ APP_ROOT = os.path.join(REPO_ROOT, 'application', 'single_app')
 if APP_ROOT not in sys.path:
     sys.path.insert(0, APP_ROOT)
 
+from test_support.versioning import assert_app_version_at_least  # noqa: E402
+
 
 CONFIG_FILE = os.path.join(APP_ROOT, 'config.py')
 FUNCTIONS_CONVERSATION_METADATA_FILE = os.path.join(APP_ROOT, 'functions_conversation_metadata.py')
@@ -103,6 +105,7 @@ def _load_metadata_helpers():
         'cosmos_conversations_container': None,
         'cosmos_collaboration_conversations_container': None,
         'get_collaboration_conversation': None,
+        'invalidate_conversation_cache_for_item': lambda *args, **kwargs: None,
     }
     exec(compile(helper_module, FUNCTIONS_CONVERSATION_METADATA_FILE, 'exec'), namespace)
     return namespace
@@ -191,11 +194,9 @@ def test_version_and_fix_documentation_alignment():
     """Config version and fix documentation must stay aligned for this fix."""
     print('Testing version and fix documentation alignment...')
 
-    version = _read_version()
     fix_doc_source = _read(FIX_DOC_FILE)
 
-    if version != '0.241.074':
-        raise AssertionError(f'Expected config VERSION to be 0.241.074, found {version}')
+    assert_app_version_at_least('0.241.074')
     if 'Fixed/Implemented in version: **0.241.074**' not in fix_doc_source:
         raise AssertionError('Fix documentation is missing the current version header.')
     if '/api/conversations/<conversation_id>/summary' not in fix_doc_source:

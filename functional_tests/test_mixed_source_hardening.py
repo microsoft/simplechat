@@ -2,8 +2,8 @@
 # test_mixed_source_hardening.py
 """
 Functional tests for mixed-source hardening, extraction, and rollout.
-Version: 0.250.167
-Implemented in: 0.250.070; direct-run telemetry isolation updated in 0.250.160; aggregate tabular parity harness coverage updated in 0.250.166
+Version: 0.261.305
+Implemented in: 0.250.070; direct-run telemetry isolation updated in 0.250.160; aggregate tabular parity harness coverage updated in 0.250.166; telemetry allowlist coverage updated in 0.261.305
 
 This test ensures Phase 6 of #1061 preserves the bounded Phase 1-5 evidence
 contracts from #1056, #1057, #1058, #1059, and #1060 under parent #1055.
@@ -1320,6 +1320,73 @@ def test_development_telemetry_is_default_off_allowlisted_and_privacy_safe():
         raise AssertionError("Source-shaped telemetry fields must be rejected")
 
 
+def _literal_dict_keys(call, keyword_name):
+    for keyword in call.keywords:
+        if keyword.arg == keyword_name and isinstance(keyword.value, ast.Dict):
+            return [key.value for key in keyword.value.keys if isinstance(key, ast.Constant)]
+    return []
+
+
+def test_every_emitted_telemetry_field_is_allowlisted():
+    """Every literal metric and dimension sent by the app must pass the allowlist."""
+    unapproved = []
+    call_count = 0
+    for path in sorted(APP_ROOT.glob("*.py")):
+        source = path.read_text(encoding="utf-8")
+        if "emit_mixed_source_telemetry(" not in source:
+            continue
+        for node in ast.walk(ast.parse(source, filename=str(path))):
+            if not isinstance(node, ast.Call):
+                continue
+            function = node.func
+            name = function.attr if isinstance(function, ast.Attribute) else getattr(function, "id", "")
+            if name != "emit_mixed_source_telemetry":
+                continue
+            call_count += 1
+            for keyword_name, allowlist in (
+                ("metrics", orchestration.MIXED_SOURCE_TELEMETRY_METRICS),
+                ("dimensions", orchestration.MIXED_SOURCE_TELEMETRY_DIMENSIONS),
+            ):
+                for key in _literal_dict_keys(node, keyword_name):
+                    if key not in allowlist:
+                        unapproved.append(f"{path.name}:{node.lineno} {keyword_name}.{key}")
+    assert call_count > 0, "Expected to find mixed-source telemetry calls."
+    assert unapproved == [], f"Telemetry fields missing from the allowlist: {unapproved}"
+
+
+def test_native_execution_and_coverage_telemetry_emit_when_enabled():
+    """Token usage and coverage telemetry must not fail a run when development telemetry is on."""
+    captured_events = []
+    original_log_event = orchestration.log_event
+    orchestration.log_event = lambda message, **kwargs: captured_events.append(kwargs)
+    settings = {"enable_mixed_source_development_telemetry": True}
+    try:
+        emitted_tokens = orchestration.emit_mixed_source_telemetry(
+            settings,
+            "native_execution",
+            "analyze",
+            metrics={
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "token_request_count": 1,
+                "request_count": 1,
+            },
+        )
+        emitted_coverage = orchestration.emit_mixed_source_coverage_telemetry(
+            settings,
+            "analyze",
+            {"requested_source_count": 1, "successful_source_count": 1, "completed_source_count": 1},
+        )
+    finally:
+        orchestration.log_event = original_log_event
+
+    assert emitted_tokens is True
+    assert emitted_coverage is True
+    assert captured_events[0]["extra"]["completion_tokens"] == 5
+    assert captured_events[1]["extra"]["xml_schema_source_count"] == 0
+
+
 if __name__ == "__main__":
     original_main_log_event = orchestration.log_event
     orchestration.log_event = lambda *args, **kwargs: None
@@ -1343,6 +1410,8 @@ if __name__ == "__main__":
         test_bounded_analyze_all_catalog_rejects_over_limit_without_truncation()
         test_analyze_all_action_is_analyze_only_and_manifest_is_fresh()
         test_development_telemetry_is_default_off_allowlisted_and_privacy_safe()
+        test_every_emitted_telemetry_field_is_allowlisted()
+        test_native_execution_and_coverage_telemetry_emit_when_enabled()
     finally:
         orchestration.log_event = original_main_log_event
     print("Mixed-source hardening functional tests passed.")

@@ -663,9 +663,14 @@ def _resolve_support_application_title(settings):
 
 
 def _apply_support_application_title(value, app_title):
-    """Replace hard-coded product naming in user-facing support metadata."""
+    """Replace hard-coded product naming in user-facing support metadata.
+
+    The product name is replaced before the ``{app_title}`` placeholder is filled
+    in, so a configured title that itself contains "SimpleChat" is not substituted
+    a second time inside the text just inserted.
+    """
     if isinstance(value, str):
-        return value.replace('{app_title}', app_title).replace('SimpleChat', app_title)
+        return value.replace('SimpleChat', app_title).replace('{app_title}', app_title)
 
     if isinstance(value, list):
         return [_apply_support_application_title(item, app_title) for item in value]
@@ -677,6 +682,20 @@ def _apply_support_application_title(value, app_title):
         }
 
     return value
+
+
+def _apply_support_application_title_to_group(feature_group, app_title):
+    """Personalize a release group's own copy, leaving its already-personalized features alone.
+
+    Applying the title to the whole group would run every feature through the
+    substitution a second time, which doubles a title containing "SimpleChat".
+    """
+    personalized = _apply_support_application_title(
+        {key: value for key, value in feature_group.items() if key != 'features'},
+        app_title,
+    )
+    personalized['features'] = feature_group.get('features', [])
+    return personalized
 
 
 _SUPPORT_RELEASE_241_FEATURE_CATALOG = [
@@ -2866,7 +2885,7 @@ def get_visible_support_latest_feature_groups(settings):
         if visible_features:
             visible_group = deepcopy(feature_group)
             visible_group['features'] = visible_features
-            visible_group = _apply_support_application_title(visible_group, app_title)
+            visible_group = _apply_support_application_title_to_group(visible_group, app_title)
             visible_groups.append(visible_group)
 
     return visible_groups
@@ -2887,9 +2906,32 @@ def get_support_latest_feature_release_groups_for_settings(settings):
             feature.update(_apply_support_application_title(feature, app_title))
             _normalize_feature_media(feature)
 
-        feature_group.update(_apply_support_application_title(feature_group, app_title))
+        feature_group.update(_apply_support_application_title_to_group(feature_group, app_title))
 
     return filtered_groups
+
+
+def get_support_latest_feature_release_groups_for_preview(settings):
+    """Return grouped user-facing latest features as users read them, with every action kept.
+
+    ``get_support_latest_feature_release_groups_for_settings`` drops each shortcut
+    whose ``requires_settings`` are off in the stored settings. An admin preview
+    needs them all instead, because it filters against the settings being edited:
+    the documentation guide buttons depend on a switch an administrator may have
+    just flipped and not yet saved.
+    """
+    preview_groups = deepcopy(_SUPPORT_LATEST_FEATURE_RELEASE_GROUPS)
+    app_title = _resolve_support_application_title(settings)
+
+    for feature_group in preview_groups:
+        for feature in feature_group.get('features', []):
+            _normalize_feature_actions(feature)
+            feature.update(_apply_support_application_title(feature, app_title))
+            _normalize_feature_media(feature)
+
+        feature_group.update(_apply_support_application_title_to_group(feature_group, app_title))
+
+    return preview_groups
 
 
 def get_admin_latest_feature_release_groups_for_settings(settings):
@@ -2907,7 +2949,7 @@ def get_admin_latest_feature_release_groups_for_settings(settings):
             feature.update(_apply_support_application_title(feature, app_title))
             _normalize_feature_media(feature)
 
-        feature_group.update(_apply_support_application_title(feature_group, app_title))
+        feature_group.update(_apply_support_application_title_to_group(feature_group, app_title))
 
     return filtered_groups
 

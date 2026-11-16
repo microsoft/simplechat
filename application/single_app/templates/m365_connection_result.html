@@ -1,0 +1,37 @@
+<!-- m365_connection_result.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex" />
+    <title>{{ title }}</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet" />
+</head>
+<body class="bg-body-tertiary">
+    <!-- Microsoft 365 sign-in result -->
+    <main class="container py-5" aria-labelledby="m365-connection-result-title">
+        <div class="row justify-content-center">
+            <div class="col-md-8 col-lg-6">
+                <section id="m365-connection-result" class="card shadow-sm">
+                    <div class="card-body p-4">
+                        <h1 id="m365-connection-result-title" class="h4 mb-3">{{ title }}</h1>
+                        <p id="m365-connection-result-message" class="mb-3" role="status" aria-live="polite">{{ message }}</p>
+                        <p id="m365-connection-result-closing" class="small text-body-secondary d-none">
+                            SimpleChat has the result. You can close this window if it stays open.
+                        </p>
+                        <div class="d-flex flex-wrap gap-2">
+                            <a id="m365-connection-result-continue" class="btn btn-primary" href="{{ continue_url }}">{{ continue_label }}</a>
+                            <button type="button" id="m365-connection-result-close" class="btn btn-outline-secondary d-none">Close window</button>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+
+    <!-- Result data for the completion script; JSON-encoded and HTML-safe -->
+    <script type="application/json" id="m365-connection-result-data">{{ result | tojson }}</script>
+    <script src="{{ url_for('static', filename='js/profile/profile-m365-connection-result.js') }}"></script>
+</body>
+</html>

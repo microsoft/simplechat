@@ -2,7 +2,7 @@
 # test_tabular_preview_json_sanitization_fix.py
 """
 Functional test for tabular preview JSON sanitization.
-Version: 0.240.030
+Version: 0.261.408
 Implemented in: 0.240.030
 
 This test ensures the enhanced citation tabular preview converts pandas null-like
@@ -131,8 +131,8 @@ def test_route_uses_serialized_preview_output_and_version_bump():
         _, source = load_preview_helpers()
 
         required_snippets = [
-            'columns, rows = _serialize_tabular_preview_table(preview)',
-            '"columns": columns,',
+            'names, rows = _serialize_tabular_preview_table(frame)',
+            'result["columns"], result["rows"] = _serialize_tabular_preview_table(frame)',
             '"rows": rows,',
         ]
         missing = [snippet for snippet in required_snippets if snippet not in source]

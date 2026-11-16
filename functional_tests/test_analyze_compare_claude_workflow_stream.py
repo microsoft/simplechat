@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Analyze/Compare Claude workflow stream support.
-Version: 0.261.045
+Version: 0.261.428
 Implemented in: 0.241.193; workflow runtime fixtures and authorization coverage updated in 0.261.045
 
 This test ensures chat and workflow document actions can resolve Claude model
@@ -31,6 +31,7 @@ CHAT_ROUTE = APP_DIR / "route_backend_chats.py"
 CONFIG = APP_DIR / "config.py"
 sys.path.insert(0, str(APP_DIR))
 
+from functions_ai_connections import AIConnectionError, require_model_capability  # noqa: E402
 from model_endpoint_clients import (  # noqa: E402
     MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
     MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
@@ -43,6 +44,7 @@ from model_endpoint_clients import (  # noqa: E402
 )
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model
 from functions_model_endpoint_urls import resolve_model_endpoint_route, routing_schema_version
+from functions_workflow_context import wrap_workflow_model_client
 
 
 PROJECT_ENDPOINT = "https://eastus2.services.ai.azure.com/api/projects/project-eastus2-dev"
@@ -88,6 +90,10 @@ def load_workflow_helpers(function_names):
         "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "keyvault_model_endpoint_get_helper": lambda endpoint, *args, **kwargs: endpoint,
         "normalize_model_endpoints": lambda endpoints: (list(endpoints or []), False),
+        "AIConnectionError": AIConnectionError,
+        "require_model_capability": require_model_capability,
+        "build_model_endpoint_identity_headers": lambda *args, **kwargs: {},
+        "wrap_workflow_model_client": wrap_workflow_model_client,
     }
     runtime, original_modules = load_model_endpoint_runtime_module()
     try:
@@ -273,7 +279,9 @@ def test_workflow_explicit_route_uses_fresh_selection_and_safe_context(scope):
         "scope_id": {"global": "global", "user": "actor", "group": "group-one"}[scope],
         "endpoint_id": "saved-endpoint", "model_id": "model",
     }
-    resolve_context.assert_called_once_with(settings, {**expected_context, "user_id": "actor"})
+    resolve_context.assert_called_once_with(
+        settings, {**expected_context, "user_id": "actor"}, authorize=True
+    )
     assert result[1:] == ("current-model", "custom", expected_context)
     build_client.assert_not_called()
     direct_result = helpers["_build_multi_endpoint_client"](
@@ -346,7 +354,7 @@ def test_chat_document_action_stream_uses_workflow_executor():
     required_markers = [
         "@bp.route('/api/chat/document-action/stream', methods=['POST'])",
         "@bp.route('/api/chat/analyze/stream', methods=['POST'])",
-        "from functions_workflow_runner import _execute_document_action_workflow",
+        "from functions_workflow_runner import (",
         "execution_result = _execute_document_action_workflow(",
     ]
     for marker in required_markers:

@@ -77,6 +77,6 @@ Validation focus:
 
 ## Known Limitations
 
-- The modal suppresses repeat display for the same alert within the current browser session, even if the user closes it without marking it read.
+- The modal suppresses repeat display for the same alert within the current browser session, even if the user closes it without marking it read. From 0.261.235, an alert whose rule requires acknowledgment is the exception: it shows again on every page load until someone acknowledges it. See `docs/explanation/features/WORKFLOW_ALERT_ACKNOWLEDGMENT.md`.
 - Only agent actions captured through the existing plugin invocation logger can contribute extra linked conversations beyond the default workflow conversation.
 - Alert delivery remains polling-based, so scheduled workflow alerts are near-real-time rather than push-driven.

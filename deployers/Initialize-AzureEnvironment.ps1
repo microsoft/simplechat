@@ -81,7 +81,13 @@ param(
     [string]$ExistingOpenAISubscriptionId,
 
     [Parameter(Mandatory = $false)]
-    [string]$AzureCloudEnvironment
+    [string]$AzureCloudEnvironment,
+
+    [Parameter(Mandatory = $false)]
+    [string]$AzdEnvironment,
+
+    [Parameter(Mandatory = $false)]
+    [switch]$ConfigureOptionalServices
 )
 
 function Write-InfoMessage {
@@ -347,6 +353,20 @@ if (($ownerAssignments | ConvertFrom-Json).Count -eq 0) {
 
 Write-Host "Current Azure cloud: $AzureCloudEnvironment"
 Write-Host "Current subscription: $subscription"
+
+# Resolve choices and fail incompatible noninteractive selections before ACR/OpenAI provisioning.
+$env:AZURE_CLOUD_ENVIRONMENT = $AzureCloudEnvironment
+$env:AZURE_SUBSCRIPTION_ID = $subscription
+$optionalArguments = @((Join-Path $PSScriptRoot 'bicep\optional_services.py'), '--preflight')
+if ($AzdEnvironment) { $optionalArguments += @('--environment', $AzdEnvironment) }
+if ($ConfigureOptionalServices) {
+    if (-not $AzdEnvironment) { throw 'ConfigureOptionalServices requires an explicit AzdEnvironment.' }
+    $optionalArguments += '--interactive'
+}
+if ($ConfigureOptionalServices -or $AzdEnvironment -or $env:WEB_SEARCH_PROVIDER -or $env:CONTENT_UNDERSTANDING_MODE) {
+    python @optionalArguments
+    if ($LASTEXITCODE -ne 0) { throw 'Optional service selection/preflight failed; no service resources were provisioned.' }
+}
 
 # Check if the ACR name is available
 $ACRNameAvailable = az acr check-name --name $ACRName -o json | ConvertFrom-Json

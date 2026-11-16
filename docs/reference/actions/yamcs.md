@@ -4,6 +4,7 @@ title: "Yamcs"
 description: "Reference for the Yamcs SimpleChat action."
 section: "Reference"
 audience: user
+version: "0.261.333"
 ---
 
 <!-- action-slug: yamcs -->
@@ -24,9 +25,14 @@ Use it for mission-control visibility. Do not use it for commanding; the plugin 
 - If the server sits behind a reverse proxy that challenges callers, the username and password that proxy expects.
 - Users also need access to the action through workspace or governance policy where applicable.
 
+
 ## Configuration overview
 
-Set Server URL, Instance, Processor, Authentication Method, credentials, Max Rows, Timeout, Verify TLS, and optional read-only archive SQL.
+Set Server URL, Instance, Processor, primary Yamcs Authentication Method, credentials, Max Rows, Timeout, Verify TLS, and optional read-only archive SQL.
+
+Reverse proxy credentials now live in **Authentication** under **Reverse proxy authentication**, not in Configuration. Turn that switch on only when a proxy in front of Yamcs challenges SimpleChat before the request reaches Yamcs. The proxy username, password, or reusable identity fields appear there when needed.
+
+Connection testing appears in **Authentication**, after both Yamcs and optional proxy credentials. The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
 
 Shared wizard steps: [Common action setup steps](../#common-action-setup-steps).
 
@@ -57,7 +63,7 @@ unsupported:
 | Access Token | No | The bearer token also needs `Authorization`. |
 
 Choosing a blocked combination is reported when you save the action and when you use
-**Test Yamcs Connection**, so the conflict surfaces before an agent depends on it.
+the Authentication connection check, so the conflict surfaces before an agent depends on it.
 
 ### Supplying the proxy credential
 
@@ -71,8 +77,37 @@ it there updates every action that points at it, so a new password does not requ
 the action. Only username and password identities appear in this list, because HTTP Basic
 authentication is always a username and password pair.
 
-An identity resolves within the workspace that owns the action. A personal action paired
-with a personal identity therefore uses that person's own credential.
+An ordinary reusable identity resolves within the workspace that owns the action.
+A personal action paired with a personal identity therefore uses that person's own
+credential; a group/global reference remains a group/global credential.
+
+### Each user's personal identity
+
+Fixed/Implemented in version: **0.261.333** (`application/single_app/config.py`).
+
+For a shared global or group action, choose **Each user's personal identity** as
+the credential source when every operator must sign in independently. Service
+and proxy sources are separate. A proxy-only deployment can keep Yamcs
+**No Authentication** and request only the user's proxy username/password.
+A directly authenticated Yamcs deployment can instead request its service
+username/password, API key, or bearer token.
+
+Chat requests the missing identity when the action is actually used. The user
+selects an existing compatible personal identity or saves a new one in the
+credential card, then chooses **Save and continue**. The shared action and agent
+are unchanged, and completed work is not replayed. This works with direct action
+orchestration as well as an agent assigned to the action.
+
+Personal credentials use configured Key Vault storage when enabled, otherwise
+existing Cosmos identity storage. They are not conversation messages. Users can
+complete this setup for an authorized shared action even when personal workspace
+authoring is disabled.
+
+Personal sources retain the proxy/service header restrictions above. Save the
+action and use it in chat to check a personal identity; ordinary draft connection
+testing cannot substitute a shared credential for it.
+
+See [Use your own credentials with a shared action]({{ '/guides/personal-action-credentials/' | relative_url }}).
 
 ## Related
 

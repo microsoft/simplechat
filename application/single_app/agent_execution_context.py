@@ -1,0 +1,292 @@
+# agent_execution_context.py
+"""Task-local identity and per-turn limits for agent execution."""
+
+from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
+from copy import deepcopy
+from dataclasses import dataclass, field, replace
+from threading import Lock
+from typing import Callable, Optional
+import uuid
+
+from functions_orchestration_execution_policy import (
+    current_orchestration_file_policy,
+    orchestration_file_policy,
+)
+from functions_orchestration_invocation_capture import (
+    OrchestrationInvocationCapture,
+    require_invocation_capture,
+)
+from public_source_policy import (
+    LEGACY_VISIBLE, current_public_source_policy, public_source_policy_context,
+)
+
+
+class AgentDelegationError(RuntimeError):
+    """A safe, attributable delegation failure."""
+
+
+class AgentExecutionCancelled(AgentDelegationError):
+    """The invoking turn was stopped; remote effects are not rolled back."""
+
+
+class AgentDelegationTimeout(AgentDelegationError, TimeoutError):
+    """A measured delegation deadline, distinct from explicit user cancellation."""
+
+
+@dataclass
+class DelegationBudget:
+    """One lock-protected budget shared by descendants, siblings and retries."""
+
+    attempts: int = 0
+    maximum: int = 10
+    root_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    records: list = field(default_factory=list)
+    _tool_invocations: list = field(default_factory=list, repr=False)
+    _authentication_requirement: Optional[Exception] = field(default=None, repr=False)
+    _authentication_published: bool = field(default=False, repr=False)
+    _drained_records: dict = field(default_factory=dict, repr=False)
+    _lock: Lock = field(default_factory=Lock, repr=False)
+
+    def consume(self):
+        with self._lock:
+            self.attempts += 1
+            if self.attempts > self.maximum:
+                raise AgentDelegationError("The agent call limit for this turn was reached.")
+
+    def record(self, record):
+        with self._lock:
+            if not any(item["invocation_id"] == record["invocation_id"] for item in self.records):
+                self.records.append(deepcopy(record))
+
+    def snapshot(self):
+        with self._lock:
+            return deepcopy(self.records)
+
+    def record_tool_invocation(self, invocation):
+        with self._lock:
+            self._tool_invocations.append(invocation)
+
+    def invocations(self):
+        with self._lock:
+            return list(self._tool_invocations)
+
+    def require_authentication(self, error):
+        with self._lock:
+            if self._authentication_requirement is None:
+                self._authentication_requirement = error
+
+    def raise_authentication_requirement(self, identity):
+        with self._lock:
+            error = self._authentication_requirement
+            publish = error is not None and not self._authentication_published
+            if publish:
+                self._authentication_published = True
+        if error is not None:
+            if publish and identity.publish_authentication_requirement:
+                identity.publish_authentication_requirement(deepcopy(getattr(error, "auth_response", {}) or {}))
+            raise error
+
+    def drain_completed_records(self, consumer_id, excluded_ids=()):
+        with self._lock:
+            drained = self._drained_records.setdefault(consumer_id, set(excluded_ids))
+            records = [
+                record for record in self.records
+                if record.get("success") and record["invocation_id"] not in drained
+            ]
+            drained.update(record["invocation_id"] for record in records)
+            return deepcopy(records)
+
+
+@dataclass(frozen=True)
+class ExecutionIdentity:
+    user_id: str
+    conversation_id: Optional[str] = None
+    bridge: Optional[Callable] = field(default=None, repr=False, compare=False)
+    roles: tuple = ()
+    email: Optional[str] = None
+    publish_authentication_requirement: Optional[Callable] = field(default=None, repr=False, compare=False)
+    public_source_policy: str = LEGACY_VISIBLE
+    supports_user_input: bool = False
+
+
+@dataclass(frozen=True)
+class AgentExecutionFrame:
+    identity: ExecutionIdentity
+    caller: dict
+    budget: DelegationBudget
+    ancestors: tuple = ()
+    depth: int = 0
+    invocation_id: Optional[str] = None
+    parent_invocation_id: Optional[str] = None
+    action_id: Optional[str] = None
+    deadline: Optional[float] = None
+    cancel_requested: Optional[Callable] = field(default=None, repr=False, compare=False)
+    orchestration_allow_generated_files: Optional[bool] = field(
+        default_factory=current_orchestration_file_policy,
+    )
+    invocation_capture: Optional[OrchestrationInvocationCapture] = field(default=None, repr=False, compare=False)
+    invocation_settings: Optional[dict] = field(default=None, repr=False, compare=False)
+
+
+_execution_frame = ContextVar("agent_execution_frame", default=None)
+_workflow_identity = ContextVar("workflow_execution_identity", default=None)
+
+
+def current_workflow_identity(user_id, conversation_id):
+    identity = _workflow_identity.get()
+    if identity is not None and (
+        identity.user_id == user_id and identity.conversation_id == conversation_id
+    ):
+        return identity
+    return None
+
+
+@contextmanager
+def workflow_identity_scope(identity):
+    """Bind a server-authorized workflow principal without persisting session claims."""
+    if type(identity) is not ExecutionIdentity or not identity.user_id or not identity.conversation_id:
+        raise PermissionError("The workflow execution identity is unavailable.")
+    token = _workflow_identity.set(identity)
+    try:
+        yield identity
+    finally:
+        _workflow_identity.reset(token)
+
+
+def current_agent_execution():
+    return _execution_frame.get()
+
+
+def execution_user_id():
+    frame = current_agent_execution()
+    return frame.identity.user_id if frame else None
+
+
+@contextmanager
+def agent_execution(frame):
+    if isinstance(frame, AgentExecutionFrame):
+        active = current_agent_execution()
+        inherited_capture = getattr(active, 'invocation_capture', None)
+        capture = require_invocation_capture(frame.invocation_capture)
+        if inherited_capture is not None:
+            if (
+                (capture is not None and capture is not inherited_capture)
+                or frame.identity.user_id != active.identity.user_id
+                or frame.identity.conversation_id != active.identity.conversation_id
+            ):
+                inherited_capture.refuse()
+            inherited_settings = getattr(active, 'invocation_settings', None)
+            if capture is not inherited_capture or frame.invocation_settings is not inherited_settings:
+                frame = replace(
+                    frame, invocation_capture=inherited_capture, invocation_settings=inherited_settings,
+                )
+    captured_policy = getattr(frame, 'orchestration_allow_generated_files', None)
+    policy = (
+        orchestration_file_policy(allow_generated_files=captured_policy)
+        if captured_policy is not None else nullcontext()
+    )
+    source_policy = (
+        public_source_policy_context(frame.identity.user_id, frame.identity.public_source_policy)
+        if isinstance(frame, AgentExecutionFrame) else nullcontext()
+    )
+    with policy, source_policy:
+        effective_policy = current_orchestration_file_policy()
+        if isinstance(frame, AgentExecutionFrame) and captured_policy is not effective_policy:
+            frame = replace(frame, orchestration_allow_generated_files=effective_policy)
+        token = _execution_frame.set(frame)
+        try:
+            yield frame
+        finally:
+            _execution_frame.reset(token)
+
+
+def capture_execution_identity(user_id, conversation_id=None, *, request_payload=None):
+    """Capture authenticated identity and admitted retrieval limits, never workspace preferences.
+
+    Flask is imported here because workers use the context types without a Flask
+    dependency. The closure creates a distinct app/request context for every
+    invocation; concurrent children never share ``g`` or a mutable session.
+    """
+    workflow_identity = current_workflow_identity(user_id, conversation_id)
+    if workflow_identity is not None:
+        return workflow_identity
+
+    from flask import current_app, g, has_request_context, request, session
+    from public_chat_scope_state import current_public_chat_scope, public_chat_scope_context
+
+    if not has_request_context():
+        return ExecutionIdentity(
+            user_id, conversation_id, public_source_policy=current_public_source_policy(user_id),
+        )
+    authenticated_user = session.get("user") or {}
+    if str(authenticated_user.get("oid") or "") != str(user_id or ""):
+        raise PermissionError("The agent execution identity is unavailable.")
+    app = current_app._get_current_object()
+    origin = request.host_url
+    identity_session = {"user": deepcopy(authenticated_user)}
+    public_scope = deepcopy(current_public_chat_scope(user_id))
+    source_policy = current_public_source_policy(user_id)
+    root_session = session._get_current_object()
+    if session.get("token_cache"):
+        identity_session["token_cache"] = session["token_cache"]
+
+    def publish_authentication_requirement(auth_response):
+        # Only the trusted OAuth scope request crosses back into the original
+        # session. Streamed consent URLs additionally re-enter a normal auth-init
+        # request because this session may already have been saved with headers.
+        # Child caches, roles and workspace preferences remain isolated.
+        scopes = auth_response.get("scopes")
+        if isinstance(scopes, (list, tuple)):
+            root_session["requested_oauth_scopes"] = list(dict.fromkeys(
+                scope.strip() for scope in scopes if isinstance(scope, str) and scope.strip()
+            ))
+
+    @contextmanager
+    def bridge(agent):
+        # An app context as well as a request context is needed to isolate g.
+        with app.app_context(), app.test_request_context(
+            "/internal/agent-execution", base_url=origin,
+            **({"json": deepcopy(request_payload)} if request_payload is not None else {}),
+        ), public_source_policy_context(user_id, source_policy):
+            session.update(deepcopy(identity_session))
+            g.conversation_id = conversation_id
+            g.request_agent_info = deepcopy(agent)
+            g.request_agent_name = agent.get("name")
+            group_id = agent.get("group_id") if agent.get("is_group") else None
+            g.authorized_chat_context = {
+                "user_id": user_id,
+                "conversation_id": conversation_id,
+                "active_group_ids": [group_id] if group_id else [],
+                "active_group_id": group_id,
+                "active_public_workspace_ids": [],
+                "active_public_workspace_id": None,
+                "fact_memory_scope_type": "group" if group_id else "personal",
+                "fact_memory_scope_id": group_id or user_id,
+            }
+            if group_id:
+                g.conversation_group_id = group_id
+            scope_context = (
+                public_chat_scope_context(
+                    user_id, public_scope["selection"], public_scope["workspace_ids"],
+                    public_scope.get("resolve_public_chat_workspace_ids"),
+                )
+                if public_scope else nullcontext()
+            )
+            with scope_context:
+                yield
+
+    return ExecutionIdentity(
+        user_id, conversation_id, bridge,
+        tuple(authenticated_user.get("roles") or ()), authenticated_user.get("preferred_username"),
+        publish_authentication_requirement,
+        public_source_policy=source_policy,
+        supports_user_input=(
+            request.headers.get("X-SimpleChat-UI") == "v2"
+            and (
+                request.path == "/api/chat/stream"
+                or request.path.startswith(("/api/v2/orchestration/", "/api/v2/user-input/"))
+                or (request.path.startswith("/api/collaboration/") and request.path.endswith("/stream"))
+            )
+        ),
+    )

@@ -1,3 +1,4 @@
+# sql_schema_plugin.py
 """
 SQL Schema Plugin for Semantic Kernel
 - Connects to various SQL databases (SQL Server, PostgreSQL, MySQL, SQLite)
@@ -6,6 +7,7 @@ SQL Schema Plugin for Semantic Kernel
 """
 
 import logging
+import os
 from typing import Dict, Any, List, Optional, Union
 from semantic_kernel_plugins.base_plugin import BasePlugin
 from semantic_kernel.functions import kernel_function
@@ -16,6 +18,10 @@ from semantic_kernel_plugins.sql_odbc_utils import (
     DEFAULT_SQL_SERVER_ODBC_DRIVER,
     build_sql_server_odbc_connection_string,
     connect_with_sql_server_odbc_fallback,
+    resolve_sql_auth_type,
+)
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SqlConnectionContext, SqlConnectionError, classify_sql_connection_error,
 )
 
 # Helper class to wrap results with metadata
@@ -40,11 +46,13 @@ class SQLSchemaPlugin(BasePlugin):
         raw_db_type = (manifest.get('database_type') or additional_fields.get('database_type', 'sqlserver')).lower()
         # Map azure_sql to sqlserver for compatibility
         self.database_type = 'sqlserver' if raw_db_type in ['azure_sql', 'azuresql'] else raw_db_type
-        manifest_auth_type = manifest.get('auth', {}).get('type', 'connection_string')
         additional_auth_type = additional_fields.get('auth_type') or additional_fields.get('identity_auth_type')
-        self.auth_type = additional_auth_type or manifest_auth_type
-        if self.auth_type == 'identity' and raw_db_type in ['azure_sql', 'azuresql']:
-            self.auth_type = 'managed_identity'
+        self.auth_type = resolve_sql_auth_type(
+            additional_auth_type, manifest.get('auth'), database_type=raw_db_type,
+        )
+        self.managed_identity_client_id = additional_fields.get(
+            'managed_identity_client_id', manifest.get('managed_identity_client_id'),
+        )
         self.server = manifest.get('server') or additional_fields.get('server')
         self.database = manifest.get('database') or additional_fields.get('database')
         self.username = manifest.get('username') or additional_fields.get('username')
@@ -114,6 +122,13 @@ class SQLSchemaPlugin(BasePlugin):
 
     def _create_connection(self):
         """Create database connection based on database type"""
+        context = SqlConnectionContext("sql_schema_connect")
+        context.configure(
+            self.database_type, connection_string_used=bool(self.connection_string),
+            auth_type=self.auth_type, username_password=bool(self.username and self.password),
+            identity_selected=bool(self.manifest.get("identity_id")), environ=os.environ,
+        )
+        context.stage = "driver_import"
         try:
             debug_print(
                 f"[SQL_SCHEMA_PLUGIN] Creating database connection database_type={self.database_type} "
@@ -128,8 +143,10 @@ class SQLSchemaPlugin(BasePlugin):
                         pyodbc.connect,
                         self.connection_string,
                         log_source="SQLSchemaPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                 else:
+                    context.stage = "configuration"
                     conn_str = build_sql_server_odbc_connection_string(
                         server=self.server,
                         database=self.database,
@@ -137,15 +154,19 @@ class SQLSchemaPlugin(BasePlugin):
                         username=self.username,
                         password=self.password,
                         auth_type=self.auth_type,
+                        managed_identity_client_id=self.managed_identity_client_id,
                     )
                     return connect_with_sql_server_odbc_fallback(
                         pyodbc.connect,
                         conn_str,
                         log_source="SQLSchemaPlugin",
+                        diagnostic_context=context, driver_module=pyodbc,
                     )
                     
             elif self.database_type == 'postgresql':
                 import psycopg2
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     return psycopg2.connect(self.connection_string)
                 else:
@@ -158,6 +179,8 @@ class SQLSchemaPlugin(BasePlugin):
                     
             elif self.database_type == 'mysql':
                 import pymysql
+                context.stage = "connect"
+                context.attempts = 1
                 if self.connection_string:
                     # Parse connection string for MySQL
                     # This is a simplified parser - you might want to use a proper URL parser
@@ -172,19 +195,19 @@ class SQLSchemaPlugin(BasePlugin):
                     
             elif self.database_type == 'sqlite':
                 import sqlite3
+                context.stage = "connect"
+                context.attempts = 1
                 database_path = self.connection_string or self.database
                 return sqlite3.connect(database_path)
                 
-        except ImportError as e:
-            debug_print(f"[SQL_SCHEMA_PLUGIN] Database driver import failed database_type={self.database_type} error={e}")
-            raise ImportError(f"Required database driver not installed for {self.database_type}: {e}")
         except Exception as e:
-            debug_print(
-                f"[SQL_SCHEMA_PLUGIN] Connection failed database_type={self.database_type} server={self.server} "
-                f"database={self.database} exception_type={type(e).__name__} message={e}"
+            diagnostic = classify_sql_connection_error(e, self.database_type)
+            log_event(
+                "[SQL_CONNECTION] SQL connection failed.",
+                level=logging.WARNING,
+                extra={**diagnostic.log_properties(), **context.log_properties(), "operation": "sql_schema_connect"},
             )
-            log_event(f"[SQL_SCHEMA_PLUGIN] Connection failed: {e}", extra={"database_type": self.database_type})
-            raise
+            raise SqlConnectionError(diagnostic) from None
 
     @property
     def display_name(self) -> str:
@@ -338,8 +361,11 @@ class SQLSchemaPlugin(BasePlugin):
                 "database_type": self.database_type,
                 "database": self.database
             })
+            error_result = {"error": error_msg}
+            if isinstance(e, SqlConnectionError):
+                error_result["error_code"] = e.diagnostic.code
             return ResultWithMetadata(
-                {"error": error_msg},
+                error_result,
                 {"source": "sql_schema_plugin", "success": False}
             )
 

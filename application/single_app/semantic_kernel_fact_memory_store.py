@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 from azure.cosmos import exceptions
 from config import cosmos_agent_facts_container
 from functions_content import generate_embedding
+from functions_appinsights import log_event
+from functions_embedding_compatibility import persist_fact_with_embedding
 
 
 MEMORY_TYPE_FACT = 'fact'
@@ -48,7 +50,8 @@ class FactMemoryStore:
 
         try:
             embedding_result = generate_embedding(str(value or '').strip())
-        except Exception:
+        except (ValueError, RuntimeError) as exc:
+            log_event("[FACT_MEMORY] Embedding could not be generated", extra={"error_type": type(exc).__name__})
             return {
                 'value_embedding': None,
                 'embedding_model': None,
@@ -78,8 +81,15 @@ class FactMemoryStore:
         return {
             'value_embedding': embedding_vector,
             'embedding_model': (token_usage or {}).get('model_deployment_name') if isinstance(token_usage, dict) else None,
+            'embedding_profile_id': getattr(embedding_vector, 'profile_id', None),
             'embedding_updated_at': datetime.now(timezone.utc).isoformat(),
         }
+
+    def _persist(self, item):
+        vector = item.get('value_embedding')
+        if vector:
+            return persist_fact_with_embedding(self.container, item, vector)
+        return self.container.upsert_item(item)
 
     def get_fact_item(self, scope_id, fact_id):
         partition_key = self.get_partition_key(scope_id)
@@ -104,7 +114,7 @@ class FactMemoryStore:
             "updated_at": now
         }
         item.update(self._build_embedding_fields(value, normalized_memory_type))
-        self.container.upsert_item(item)
+        self._persist(item)
         return self.normalize_fact_item(item)
 
 
@@ -177,7 +187,7 @@ class FactMemoryStore:
             item.update(self._build_embedding_fields(item.get('value'), item.get('memory_type')))
 
         item["updated_at"] = datetime.now(timezone.utc).isoformat()
-        self.container.upsert_item(item)
+        self._persist(item)
         return self.normalize_fact_item(item)
 
     def update_fact_embedding(self, scope_id, fact_id, value_embedding, embedding_model=None):
@@ -187,9 +197,10 @@ class FactMemoryStore:
 
         item['value_embedding'] = value_embedding
         item['embedding_model'] = embedding_model
+        item['embedding_profile_id'] = getattr(value_embedding, 'profile_id', None)
         item['embedding_updated_at'] = datetime.now(timezone.utc).isoformat()
         item['updated_at'] = datetime.now(timezone.utc).isoformat()
-        self.container.upsert_item(item)
+        self._persist(item)
         return self.normalize_fact_item(item)
 
     def delete_fact(self, scope_id, fact_id):

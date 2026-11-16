@@ -1,0 +1,599 @@
+# functions_orchestration_bootstrap.py
+"""Application-owned factories shared by web requests and scheduler continuations.
+
+Version: 0.261.369
+
+Unlike the result/rendering services, this is an application composition root.
+Import it only after config has initialized the existing clients. Registering the
+artifact factory performs no I/O; each use rebuilds current actor/source access.
+External-source identity trusts the signed-in session's app roles, like classic
+chat, and makes no Microsoft Graph calls (0.261.209). Merged documents are rendered
+from their own original files through a screening-aware reader (0.261.245). Agent
+and action steps are session-trusted: their access is rechecked on every capture,
+but their configuration is not attested (0.261.270).
+"""
+
+import hashlib
+import hmac
+from copy import deepcopy
+from threading import Lock
+
+from azure.core import MatchConditions
+from azure.core.exceptions import AzureError
+from flask import has_request_context
+
+import config
+from agent_execution_context import capture_execution_identity, current_workflow_identity
+from functions_appinsights import log_event, workflow_log_context
+from functions_generated_export_contracts import GeneratedFileExportRequest
+from functions_generated_export_registry import resolve_generated_file_export_format
+from functions_orchestration_artifacts import (
+    OrchestrationArtifactTransport,
+    OrchestrationOutputCleanupService,
+    configure_orchestration_artifact_service,
+)
+from functions_orchestration_external_configuration import (
+    OrchestrationExternalConfigurationAttestor, _read_metadata,
+)
+from functions_orchestration_external_metadata import build_external_metadata_reader
+from functions_orchestration_external_sources import (
+    SESSION_TRUSTED_CAPABILITIES, SESSION_TRUSTED_SOURCE_TYPES, OrchestrationExternalSourceProvider,
+)
+from functions_orchestration_output_store import (
+    OrchestrationOutputStore, OutputError, OutputUnavailableError,
+)
+from functions_orchestration_registry import resolve_available_capability_ids
+from functions_orchestration_result_contracts import (
+    NARRATIVE_EXPORT_PROFILES, InputBinding, ResultContractError, ResultRef, TaskResult, narrative_result_ready,
+)
+from functions_orchestration_results import ResultUnavailableError
+from functions_orchestration_runs import get_orchestration_run
+from functions_orchestration_services import OrchestrationServices
+from functions_orchestration_source_access import (
+    read_orchestration_source_metadata,
+    resolve_orchestration_source_manifest,
+)
+from functions_orchestration_source_context import (
+    SourceContextError, build_selected_source_context, source_planning_revision,
+)
+from functions_tabular_merge import TabularMergeError
+from functions_document_transform_sources import DocumentTransformSources
+from functions_settings import get_settings, get_user_settings
+from functions_simplechat_operations import (
+    delete_staged_orchestration_chat_artifact_for_user,
+    open_generated_chat_artifact_stream,
+    upload_generated_file_artifact_stream_for_user,
+)
+from functions_workflow_result_store import WorkflowResultStore, _quota_bytes
+from cosmos_document_utils import normalize_cosmos_document
+
+
+def _document_response(value):
+    """Remove an SDK mapping wrapper; leave invalid types for the owning contract to reject."""
+    return normalize_cosmos_document(value) if isinstance(value, dict) else value
+
+
+def read_owned_conversation(user_id, conversation_id, *, request_timeout=None):
+    options = {} if request_timeout is None else {
+        "connection_timeout": request_timeout, "read_timeout": request_timeout, "retry_total": 0,
+    }
+    conversation = config.cosmos_conversations_container.read_item(
+        item=conversation_id, partition_key=conversation_id, **options,
+    )
+    if (
+        conversation.get("id") != conversation_id or conversation.get("user_id") != user_id
+        or conversation.get("orchestration_deleted") or conversation.get("deleted")
+    ):
+        raise OutputUnavailableError("output_conversation_unavailable")
+    return normalize_cosmos_document(conversation)
+
+
+def private_external_configuration_digest(value):
+    """Bind private configuration revisions to the existing stable backend key."""
+    if type(value) is not bytes:
+        raise ResultContractError("external_configuration_payload_invalid")
+    key = config.SECRET_KEY
+    if type(key) is str:
+        try:
+            key = key.encode("utf-8")
+        except UnicodeError:
+            raise ResultUnavailableError("external_configuration_private_digest_required") from None
+    if (
+        type(key) is not bytes or len(key) < 32 or not key.strip()
+        or key == b"dev-secret-key-change-in-production"
+    ):
+        raise ResultUnavailableError("external_configuration_private_digest_required")
+    digest = hmac.new(
+        key, b"SimpleChat:orchestration-external-configuration:v1\x00", hashlib.sha256,
+    )
+    digest.update(value)
+    return digest.hexdigest()
+
+
+def build_external_identity_reader(actor_user_id, actor_conversation_id, *, execution_check=None):
+    """Create a lazy current-access reader for an authenticated execution principal.
+
+    Like classic chat, roles come from the signed-in session. They are captured
+    now, while the request context exists, because execution continues on a
+    worker thread. A workflow owner may instead bind an explicit task-local
+    principal reconstructed from existing server-authorized capability grants.
+    Without either principal, ordinary scheduler continuations fail closed
+    instead of restoring arbitrary saved roles.
+    Conversation ownership and Control Center restrictions are still point-read
+    on each access. Nothing calls Microsoft Graph or persists roles.
+    """
+    session_roles, session_email = None, None
+    if has_request_context() or current_workflow_identity(actor_user_id, actor_conversation_id) is not None:
+        try:
+            identity = capture_execution_identity(actor_user_id, actor_conversation_id)
+        except PermissionError:
+            identity = None
+        if identity is not None:
+            session_roles, session_email = identity.roles, identity.email
+    reader = None
+    timeout = 10.0
+
+    def authorize_conversation(*, user_id, conversation_id):
+        if user_id != actor_user_id or conversation_id != actor_conversation_id:
+            raise ResultUnavailableError("external_identity_access_denied")
+        try:
+            return read_owned_conversation(user_id, conversation_id, request_timeout=timeout)
+        except OutputUnavailableError:
+            raise ResultUnavailableError("external_identity_access_denied") from None
+
+    def read_user_settings(user_id):
+        if user_id != actor_user_id:
+            raise ResultUnavailableError("external_identity_access_denied")
+        return _document_response(config.cosmos_user_settings_container.read_item(
+            item=user_id, partition_key=user_id,
+            connection_timeout=timeout, read_timeout=timeout, retry_total=0,
+        ))
+
+    def read_identity(*, user_id, conversation_id):
+        nonlocal reader
+        if user_id != actor_user_id or conversation_id != actor_conversation_id:
+            raise ResultUnavailableError("external_identity_access_denied")
+        if reader is None:
+            # The reader is initialized only when external data is accessed.
+            from functions_orchestration_external_identity import SessionExternalIdentityReader
+
+            reader = SessionExternalIdentityReader(
+                user_id=actor_user_id, conversation_id=actor_conversation_id,
+                roles=session_roles, email=session_email,
+                authorize_conversation=authorize_conversation, read_user_settings=read_user_settings,
+                execution_check=execution_check,
+            )
+        return reader(user_id=user_id, conversation_id=conversation_id)
+
+    return read_identity
+
+
+def current_execution_identity(user_id, conversation_id, *, seeded_agent=None):
+    """Use authenticated claims only for their actor; background role gates fail closed."""
+    del seeded_agent
+    read_owned_conversation(user_id, conversation_id)
+    identity = capture_execution_identity(user_id, conversation_id)
+    return {
+        "user_roles": list(identity.roles),
+        "user_email": identity.email,
+        "user_enable_agents": True,
+    }
+
+
+def native_bridge_for_step(step, context):
+    """Bind the real compute-only bridge; discovery never submits a native job."""
+    del context
+    # Native execution dependencies are loaded only for an explicitly bound native step.
+    from functions_orchestration_native_results import (
+        build_native_orchestration_bridge,
+        validate_native_orchestration_arguments,
+    )
+
+    arguments = validate_native_orchestration_arguments(step["arguments"])
+    return build_native_orchestration_bridge(
+        native_operation=arguments["native_operation"],
+        task_type=arguments["task_type"],
+        source_policy="current",
+    )
+
+
+def _bound_render_reference(run, step, user_id):
+    inputs = step.get("inputs")
+    if type(inputs) is not dict or len(inputs) != 1:
+        raise OutputUnavailableError("output_binding_invalid")
+    value = next(iter(inputs.values()))
+    if type(value) is not dict or type(value.get("allow_partial", False)) is not bool:
+        raise OutputUnavailableError("output_binding_invalid")
+    profile = step.get("arguments", {}).get("profile")
+    if value.get("allow_partial") and profile not in NARRATIVE_EXPORT_PROFILES:
+        raise OutputUnavailableError("output_binding_invalid")
+    binding = InputBinding.from_dict(value.get("binding"))
+    if binding.existing_result is not None:
+        aliases = run.get("result_aliases") or {}
+        if binding.existing_result not in aliases:
+            raise OutputUnavailableError("output_binding_invalid")
+        reference = ResultRef.from_dict(aliases[binding.existing_result])
+    else:
+        # Recovery owns chained checkpoint provenance; bootstrap must not rediscover it.
+        from functions_orchestration_recovery import _completed_checkpoint
+
+        checkpoint = _completed_checkpoint(
+            run, binding.step_id,
+            lambda: read_owned_conversation(user_id, run["conversation_id"]),
+        )
+        task = TaskResult.from_dict(checkpoint["result"]["task_result"])
+        reference = task.output(binding.output_name)
+    if reference.completeness.status == "partial" and not (
+        value.get("allow_partial") is True and narrative_result_ready(reference, profile=profile)
+    ):
+        raise OutputUnavailableError("output_binding_invalid")
+    return reference
+
+
+def _authorize_render_output(record, *, operation, rendering_service):
+    user_id, conversation_id = record["user_id"], record["conversation_id"]
+    access = rendering_service.results.access
+    if user_id != access.user_id or conversation_id != access.conversation_id:
+        raise OutputUnavailableError("output_binding_invalid")
+    read_owned_conversation(user_id, conversation_id)
+    run = get_orchestration_run(record["run_id"], user_id, conversation_id, strict=True)
+    if not run or (run.get("plan") or {}).get("planner_contract_version") != 2:
+        raise OutputUnavailableError("output_run_unavailable")
+    step = next((
+        value for value in run["plan"]["steps"]
+        if value["step_id"] == record["producer"]["step_id"]
+    ), None)
+    if step is None or step["capability_id"] != "render_file" or step.get("enabled", True) is not True:
+        raise OutputUnavailableError("output_plan_changed")
+    settings = get_settings()
+    available = resolve_available_capability_ids(
+        settings, allowed_ids=settings.get("chat_orchestration_enabled_capabilities"),
+        candidate_ids={"render_file"}, contract_version=2,
+        request_context={"rendering_service": rendering_service},
+    )
+    if "render_file" not in available:
+        raise OutputUnavailableError("output_capability_disabled")
+    reference = _bound_render_reference(run, step, user_id)
+    if reference.to_dict() != record["source_ref"]:
+        raise OutputUnavailableError("output_binding_invalid")
+    arguments = step["arguments"]
+    options = deepcopy(arguments.get("options") or {})
+    if "columns" in options:
+        options["columns"] = tuple(options["columns"])
+    request = GeneratedFileExportRequest(
+        arguments["output_format"], arguments["profile"], **options,
+    )
+    source_kind = {
+        "records-v1": "records", "structured-v1": "structured_value",
+        "comparison-v1": "structured_value", "text-v1": "text", "markdown-v1": "markdown",
+    }.get(reference.kind)
+    entry = resolve_generated_file_export_format(request, source_kind)
+    spec = record["render_spec"]
+    if (
+        spec["output_format"] != entry.format_id or spec["profile"] != request.profile
+        or spec["columns"] != (list(request.columns) if request.columns is not None else None)
+        or spec["title"] != request.title or spec["sheet_name"] != request.sheet_name
+    ):
+        raise OutputUnavailableError("output_plan_changed")
+    return True
+
+
+def build_merge_document_reader(user_id):
+    """Read one workspace document a merged file was assembled from, with current access.
+
+    The rendering service names only the merge result's own lineage sources and checks the
+    re-assembled bytes; this reader applies the same screening-aware access as the merge.
+    """
+    def read(source):
+        # Screening-aware reads load only when a merged file is rendered.
+        from content_screening.access import read_available_document_bytes
+
+        scope = source.get("scope")
+        scope_id = source.get("scope_id")
+        _document, content = read_available_document_bytes(
+            source, user_id,
+            scope_id if scope == "group" else None,
+            scope_id if scope == "public" else None,
+            purpose="native",
+        )
+        return content
+
+    return read
+
+
+def build_selected_source_reader(user_id, *, conversation_id=None):
+    """Inspect only released bytes, bounded before download and pinned to their ETag."""
+    # Screening services require initialized config and belong at this I/O boundary.
+    from content_screening.access import (
+        get_available_blob_reference, read_available_document_bytes, strict_source_authority,
+    )
+    from content_screening.contracts import ScreeningError
+
+    def read(source, *, max_bytes):
+        scope, scope_id = source.get("scope"), source.get("scope_id")
+        group_id = scope_id if scope == "group" else None
+        public_id = scope_id if scope == "public" else None
+        stage = "source_metadata"
+
+        def trace(status, *, error=None, content_bytes=None):
+            details = {
+                **workflow_log_context(conversation_id=conversation_id),
+                "operation": "selected_source_read", "stage": stage, "status": status,
+                "max_bytes": max_bytes,
+            }
+            if error is not None:
+                details["error_type"] = type(error).__name__
+                if error.__cause__ is not None:
+                    details["reason"] = type(error.__cause__).__name__
+            if content_bytes is not None:
+                details["content_bytes"] = content_bytes
+            log_event(
+                "[ORCHESTRATION_CONTEXT] Selected source read diagnostic.",
+                extra=details, debug_only=True,
+            )
+
+        try:
+            with strict_source_authority():
+                trace("started")
+                document, container, path = get_available_blob_reference(
+                    source, user_id, group_id, public_id, purpose="native",
+                )
+                def check_revision(current):
+                    revised = {
+                        **source,
+                        "source_version": current.get("version") or current.get("source_version"),
+                        "source_revision": current.get("_etag") or current.get("updated_at") or current.get("last_updated"),
+                    }
+                    if source_planning_revision(revised) != source_planning_revision(source):
+                        raise SourceContextError("selected_source_changed")
+
+                check_revision(document)
+                stage = "blob_properties"
+                trace("started")
+                client = config.CLIENTS["storage_account_office_docs_client"].get_blob_client(
+                    container=container, blob=path,
+                )
+                properties = client.get_blob_properties(
+                    connection_timeout=5, read_timeout=5, retry_total=0,
+                )
+                if type(properties.size) is not int or properties.size < 0:
+                    raise ValueError("Invalid selected source size.")
+                if properties.size > max_bytes:
+                    raise TabularMergeError("source_too_large", "This source exceeds the planning read limit.")
+                marker = document.get("content_screening") or {}
+                active = marker.get("active_blob") or {}
+                expected_etag = active.get("etag") or properties.etag
+
+                def download(current_container, current_path, current_document):
+                    nonlocal stage
+                    stage = "blob_download"
+                    trace("started")
+                    if (current_container, current_path) != (container, path):
+                        raise ValueError("The selected source changed.")
+                    content = client.download_blob(
+                        etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+                        offset=0, length=max_bytes + 1, connection_timeout=5, read_timeout=5, retry_total=0,
+                    ).readall()
+                    stage = "source_integrity"
+                    return content
+
+                stage = "screened_source_read"
+                _document, content = read_available_document_bytes(
+                    source, user_id, group_id, public_id, purpose="native", blob_reader=download,
+                )
+                stage = "source_revision"
+                trace("started")
+                current, _container, _path = get_available_blob_reference(
+                    source, user_id, group_id, public_id, purpose="native",
+                )
+                check_revision(current)
+                trace("completed", content_bytes=len(content))
+                return content
+        except (AzureError, ScreeningError, ValueError, TypeError, LookupError, PermissionError, ConnectionError, TimeoutError) as exc:
+            trace("failed", error=exc)
+            raise
+
+    return lambda sources: build_selected_source_context(sources, read_bytes=read)
+
+
+def build_image_asset_reader(user_id, conversation_id):
+    """Read a retained generated image's bytes from its own conversation image message.
+
+    The rendering service decides which images a file may contain and verifies the digest.
+    This reader only refuses anything that is not that owner's live image message: another
+    conversation, a deleted or masked message, or a blob outside the message's own folder.
+    """
+    def read(asset):
+        read_owned_conversation(user_id, conversation_id)
+        message = config.cosmos_messages_container.read_item(
+            item=asset["message_id"], partition_key=conversation_id,
+        )
+        metadata = message.get("metadata") if isinstance(message.get("metadata"), dict) else {}
+        proposal = metadata.get("image_proposal") if isinstance(metadata.get("image_proposal"), dict) else {}
+        blob_path = str(message.get("blob_path") or "")
+        if (
+            message.get("id") != asset["message_id"] or message.get("conversation_id") != conversation_id
+            or message.get("role") != "image" or message.get("file_content_source") != "blob"
+            or metadata.get("is_deleted") or metadata.get("masked")
+            or proposal.get("visualId") != asset["asset_id"]
+            or message.get("blob_container") != config.storage_account_personal_chat_container_name
+            or not blob_path.startswith(f"{user_id}/{conversation_id}/images/{asset['message_id']}/")
+        ):
+            raise OutputUnavailableError("output_source_unavailable")
+        client = config.CLIENTS.get("storage_account_office_docs_client")
+        if client is None:
+            raise OutputUnavailableError("output_source_unavailable")
+        blob = client.get_blob_client(container=message["blob_container"], blob=blob_path)
+        if blob.get_blob_properties().size != asset["size_bytes"]:
+            raise OutputUnavailableError("output_source_changed")
+        return blob.download_blob().readall()
+
+    return read
+
+
+def build_document_transform_sources(user_id, conversation_id):
+    """Bind transform inputs to fresh document and existing generated-file authorization."""
+    # The citation boundary imports this composition root indirectly; load it only for
+    # actual reference consumption, after application bootstrap has finished.
+    def authorize_artifact(actor, cid, mid):
+        from route_enhanced_citations import _get_authorized_chat_artifact_message
+
+        return _get_authorized_chat_artifact_message(actor, cid, mid)
+
+    def read_document(document_id):
+        from content_screening.access import read_available_document_bytes, strict_source_authority
+
+        with strict_source_authority():
+            return read_available_document_bytes(document_id, user_id=user_id, purpose="native")
+
+    def list_artifacts(cid):
+        read_owned_conversation(user_id, cid)
+        return config.cosmos_messages_container.query_items(
+            query="SELECT TOP 30 * FROM c WHERE c.role = 'file' AND c.metadata.is_generated_chat_artifact = true ORDER BY c.timestamp DESC",
+            partition_key=cid,
+        )
+
+    return DocumentTransformSources(
+        user_id=user_id, conversation_id=conversation_id,
+        read_conversation=lambda cid: read_owned_conversation(user_id, cid),
+        read_document_metadata=lambda document_id: read_orchestration_source_metadata(document_id, user_id),
+        read_document_bytes=read_document, authorize_artifact=authorize_artifact,
+        open_artifact_stream=open_generated_chat_artifact_stream, list_artifacts=list_artifacts,
+    )
+
+
+def build_orchestration_services(user_id, conversation_id, *, settings=None):
+    """Supply the initialized private result, run and chat-artifact resources."""
+    read_owned_conversation(user_id, conversation_id)
+    settings = get_settings() if settings is None else settings
+    maximum_mb = settings.get("max_generated_chat_artifact_size_mb", 500)
+    if type(maximum_mb) is not int or maximum_mb < 1:
+        raise OutputError("output_limit_invalid")
+    result_store = WorkflowResultStore(
+        config.cosmos_personal_workflow_run_items_container,
+        config.CLIENTS.get("storage_account_office_docs_client"),
+        config.storage_account_personal_chat_container_name,
+        max_size_bytes=_quota_bytes(settings),
+    )
+    transport = OrchestrationArtifactTransport(
+        upload=upload_generated_file_artifact_stream_for_user,
+        read_message=lambda cid, mid: config.cosmos_messages_container.read_item(
+            item=mid, partition_key=cid,
+        ),
+        open_stream=open_generated_chat_artifact_stream,
+        delete=delete_staged_orchestration_chat_artifact_for_user,
+        blob_container=config.storage_account_personal_chat_container_name,
+    )
+    def read_conversation(cid):
+        return read_owned_conversation(user_id, cid)
+
+    def read_run(rid):
+        return get_orchestration_run(rid, user_id, conversation_id, strict=True)
+
+    def read_external_conversation(cid):
+        try:
+            return _read_metadata(read_conversation, cid)
+        except OutputUnavailableError:
+            raise ResultUnavailableError("result_external_context_unavailable") from None
+
+    attestor = OrchestrationExternalConfigurationAttestor(
+        user_id=user_id, conversation_id=conversation_id,
+        read_current_source=build_external_metadata_reader(
+            user_id, conversation_id, read_conversation=read_external_conversation,
+        ),
+        private_digest=private_external_configuration_digest,
+    )
+    provider = OrchestrationExternalSourceProvider(
+        user_id=user_id, conversation_id=conversation_id,
+        read_identity=build_external_identity_reader(user_id, conversation_id),
+        read_settings=lambda: _read_metadata(get_settings),
+        read_conversation=read_external_conversation,
+        read_run=lambda rid: _read_metadata(read_run, rid),
+        read_configuration=attestor.current,
+        configuration_admitter=attestor.for_admission,
+        acquisition_validator=attestor.validate_acquisition,
+    )
+    # The selector each session-trusted agent or action step acquired, for its admission.
+    session_selectors = {}
+    session_selectors_lock = Lock()
+
+    def capture(source_type, *, producer, settings, source=None, selector=None):
+        if source_type in SESSION_TRUSTED_SOURCE_TYPES:
+            # Agents and actions trust the signed-in session, like classic chat: each call
+            # rechecks current access, and their configuration is not captured or compared.
+            provider.preflight_session_acquisition(source_type, producer=producer, selector=selector)
+            with session_selectors_lock:
+                known = session_selectors.setdefault(producer, selector)
+            if known != selector:
+                raise ResultUnavailableError("result_external_selection_mismatch")
+            return
+        provider.preflight_gather_acquisition(
+            source_type, producer=producer, settings=settings, source=source, selector=selector,
+        )
+        attestor.capture(
+            source_type, producer=producer, settings=settings, source=source, selector=selector,
+        )
+
+    def admit(*, producer, prepared):
+        if producer.capability_id in SESSION_TRUSTED_CAPABILITIES:
+            with session_selectors_lock:
+                selector = session_selectors.get(producer)
+            if selector is None:
+                raise ResultUnavailableError("result_external_capture_required")
+        else:
+            selector = attestor.selector_for(producer)
+        # The runtime validates and installs these aliases in the facade's copied catalog.
+        return provider.admit_gather_result(producer=producer, prepared=prepared, selector=selector)
+
+    def authorize_output(record, *, operation):
+        return _authorize_render_output(
+            record, operation=operation, rendering_service=services.rendering,
+        )
+
+    transform_sources = build_document_transform_sources(user_id, conversation_id)
+    services = OrchestrationServices(
+        user_id=user_id, conversation_id=conversation_id, result_store=result_store,
+        run_container=config.cosmos_orchestration_runs_container,
+        read_conversation=read_conversation, read_run=read_run,
+        source_resolver=resolve_orchestration_source_manifest,
+        source_metadata_reader=read_orchestration_source_metadata,
+        external_source_catalog={}, external_source_authorizer=provider.authorize,
+        external_source_preflight=provider.preflight_gather_invocation,
+        external_source_admission=admit, capture_external_source_configuration=capture,
+        transport=transport, authorize_execution=authorize_output,
+        max_output_bytes=min(maximum_mb, 500) * 1024 * 1024,
+        native_bridge_for_step=native_bridge_for_step,
+        image_asset_reader=build_image_asset_reader(user_id, conversation_id),
+        document_bytes_reader=build_merge_document_reader(user_id),
+        document_transform_source_reader=transform_sources.read_reference,
+        document_transform_source_resolver=transform_sources.resolve_reference,
+        document_transform_candidate_reader=transform_sources.planning_candidates,
+        selected_source_context_reader=build_selected_source_reader(user_id, conversation_id=conversation_id),
+    )
+    return services
+
+
+def initialize_orchestration_artifact_access():
+    """Register live history/download access; deletion-only cleanup is separate."""
+    configure_orchestration_artifact_service(
+        lambda user_id, conversation_id: build_orchestration_services(user_id, conversation_id).rendering,
+    )
+
+
+def build_orchestration_cleanup_service(user_id, conversation_id):
+    """Bind deletion-only cleanup to real records without making them readable."""
+    store = OrchestrationOutputStore(
+        config.cosmos_orchestration_runs_container,
+        user_id=user_id, conversation_id=conversation_id,
+        read_conversation=lambda cid: _document_response(config.cosmos_conversations_container.read_item(
+            item=cid, partition_key=cid,
+        )),
+        read_run_tombstone=lambda rid: _document_response(config.cosmos_orchestration_run_steps_container.read_item(
+            item="checkpoint:lifecycle", partition_key=rid,
+        )),
+    )
+    return OrchestrationOutputCleanupService(
+        store, config.cosmos_messages_container,
+        config.CLIENTS.get("storage_account_office_docs_client"),
+        blob_container=config.storage_account_personal_chat_container_name,
+    )

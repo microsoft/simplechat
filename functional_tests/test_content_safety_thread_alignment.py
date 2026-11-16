@@ -2,7 +2,7 @@
 # test_content_safety_thread_alignment.py
 """
 Functional test for content safety message threading alignment.
-Version: 0.240.076
+Version: 0.261.127
 Implemented in: 0.240.076
 
 This test ensures blocked content-safety replies reuse the reserved response
@@ -23,6 +23,8 @@ STREAMING_FILE = os.path.join(
     ROOT_DIR,
     'application', 'single_app', 'static', 'js', 'chat', 'chat-streaming.js'
 )
+sys.path.insert(0, os.path.join(ROOT_DIR, "application", "single_app"))
+from functions_chat_content_checks import ChatContentDecision, blocked_chat_payload
 
 
 def read_file_content(file_path):
@@ -86,7 +88,7 @@ def test_blocked_streams_finalize_as_safety_messages():
 
     checks = {
         'blocked stream emits done payload': "'done': True" in route_content,
-        'blocked stream emits full content': "'full_content': blocked_msg_content.strip()" in route_content,
+        'blocked stream uses the shared replacement contract': "blocked_chat_payload(result," in route_content,
         'blocked stream preserves user message id': "'user_message_id': user_message_id" in route_content,
         'stream finalizer handles safety sender': "const sender = finalData.role === 'safety' || finalData.blocked ? 'safety' : 'AI';" in streaming_content,
     }
@@ -99,6 +101,12 @@ def test_blocked_streams_finalize_as_safety_messages():
             all_passed = False
 
     assert all_passed
+    result = ChatContentDecision("chat_input", "findings", "block", {}, "Message blocked.")
+    payload = blocked_chat_payload(result, conversation_id="conversation", message_id="reserved-response")
+    assert payload["done"] is True
+    assert payload["full_content"] == result.notice
+    assert payload["message_id"] == "reserved-response"
+    assert payload["role"] == "safety"
 
 
 if __name__ == '__main__':

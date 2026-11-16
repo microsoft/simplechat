@@ -2,12 +2,13 @@
 # test_file_sync_azure_blob_storage.py
 """
 Functional test for Azure Blob Storage File Sync.
-Version: 0.250.072
+Version: 0.261.172
 Implemented in: 0.250.067
 Security hardening in: 0.250.068
 Container SAS support in: 0.250.069
 Non-Key-Vault and List/Read validation fix in: 0.250.070
 Updated in: 0.250.072
+Browse entries carry the engine's canonical remote path: 0.261.172
 
 This test ensures Azure Blob Storage is wired into the shared File Sync
 pipeline for every supported workspace scope without requiring live Azure
@@ -1024,6 +1025,8 @@ def test_azure_blob_list_browse_and_stage_behavior():
             "type": "file",
             "size": 12,
             "modified_at": "2026-07-28T12:00:00+00:00",
+            # The same canonical path the engine keys the file's item by (asserted below).
+            "remote_path": "https://contosodata.blob.core.windows.net/documents/incoming/reports/summary.pdf",
         },
     ]
 
@@ -1031,6 +1034,7 @@ def test_azure_blob_list_browse_and_stage_behavior():
     assert [item["relative_path"] for item in remote_files] == ["summary.pdf", "2025/detail.docx"]
     assert remote_files[0]["remote_change_token"] == "etag-summary"
     assert remote_files[0]["remote_path"] == "https://contosodata.blob.core.windows.net/documents/incoming/reports/summary.pdf"
+    assert remote_files[0]["remote_path"] == browse_entries[1]["remote_path"]
 
     non_recursive_source = {**source, "recursive": False}
     non_recursive_files = functions["_list_azure_blobs"](non_recursive_source, config)

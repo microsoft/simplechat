@@ -1,27 +1,39 @@
 # functions_model_endpoint_urls.py
-"""Pure URL contracts; schema-v2 resolution performs no I/O or credential lookup.
+"""Pure endpoint URL contracts; route resolution performs no I/O.
 
-The Custom base/version policy is adapted from microsoft/simplechat commit
-3f896d7b6c45800c593599f3100b9aa7c7251159. Explicit routing uses strict segment
-composition instead of the source's substring replacement and operation-URL
-Exact semantics. Path segments allow ASCII unreserved characters; percent
-escapes may encode unreserved characters or spaces, never separators or '%'.
-Network authorization and DNS-pinned transport remain separate required gates.
+Schema-v2 routes use one explicit, validated segment-composition path for both
+preview and runtime dispatch. Legacy base normalization remains available for
+existing records, native providers, and callers that predate schema-v2.
 """
 
 import hashlib
-from copy import deepcopy
 import json
 import re
+from copy import deepcopy
+from typing import Any
 from urllib.parse import quote, unquote, urlencode, urlparse, urlsplit, urlunsplit
 
 from functions_model_endpoint_providers import (
+    CUSTOM_ENDPOINT_URL_MODE_API_BASE,
+    CUSTOM_ENDPOINT_URL_MODE_AUTO,
+    CUSTOM_ENDPOINT_URL_MODE_EXACT,
+    CUSTOM_ENDPOINT_URL_MODE_FULL,
+    MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS,
+    MODEL_ENDPOINT_INFERENCE_API_MESSAGES,
+    MODEL_ENDPOINT_INFERENCE_API_RESPONSES,
+    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
     URL_POLICY_AS_GIVEN,
     get_model_endpoint_provider,
     normalize_api_type_value,
+    normalize_custom_endpoint_url_mode,
 )
 from functions_model_capabilities import resolve_model_capabilities
-from model_endpoint_profiles import GENAI_MIL_CAPABILITIES, GENAI_MIL_PROFILE, get_custom_endpoint_profile
+from functions_model_endpoint_types import routing_schema_version
+from model_endpoint_profiles import (
+    GENAI_MIL_CAPABILITIES,
+    GENAI_MIL_PROFILE,
+    get_custom_endpoint_profile,
+)
 
 
 VERSION_SEGMENT = re.compile(r"v\d+(?:[a-z][a-z0-9]*)?", re.IGNORECASE)
@@ -35,9 +47,26 @@ DEFERRED_FIELDS = frozenset({
 })
 OPERATIONS = (("chat", "completions"), ("messages",), ("responses",), ("models",),
               ("embeddings",), ("images", "generations"), ("images", "edits"))
+CUSTOM_OPENAI_OPERATION_SUFFIXES = (
+    "/chat/completions", "/responses", "/models",
+    "/images/generations", "/images/edits", "/embeddings",
+)
+CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = re.compile(
+    r"^v\d+(?:[a-z][a-z0-9]*)?$", re.IGNORECASE
+)
+ROUTING_PATH_ORDER_MODEL_FIRST = "model_first"
+ROUTING_PATH_ORDER_CONNECTION_FIRST = "connection_first"
 
 
-def normalize_endpoint_text(endpoint) -> str:
+def _validation_error(message: str):
+    # The validation layer imports the pure routing helpers, so defer this
+    # exception-class lookup until a helper is actually executed.
+    from functions_model_endpoint_validation import ModelEndpointValidationError
+
+    return ModelEndpointValidationError(message)
+
+
+def normalize_endpoint_text(endpoint: Any) -> str:
     """Return a trimmed endpoint URL without a trailing slash."""
     return str(endpoint or "").strip().rstrip("/")
 
@@ -88,10 +117,6 @@ def infer_model_endpoint_protocol(provider, endpoint, deployment_name="", api_ty
     return "azure_openai"
 
 
-CUSTOM_OPENAI_OPERATION_SUFFIXES = ("/chat/completions", "/responses", "/models")
-CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN = VERSION_SEGMENT
-
-
 def normalize_openai_style_base_url(raw_endpoint) -> str:
     """Preserve the legacy Foundry URL reader for non-opted-in consumers."""
     endpoint = normalize_endpoint_text(raw_endpoint)
@@ -137,23 +162,37 @@ def normalize_custom_openai_base_url(raw_endpoint) -> str:
 
 def resolve_custom_openai_base_url(raw_endpoint, api_type="", url_mode="") -> str:
     """Retain the legacy Custom API-base entry point and its default behavior."""
-    descriptor = get_model_endpoint_provider(api_type)
-    if str(url_mode or "").strip().lower() == "exact" or (descriptor and descriptor.url_policy == URL_POLICY_AS_GIVEN):
+    descriptor = get_model_endpoint_provider(api_type or "openai")
+    if descriptor is None or descriptor.protocol != MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE:
+        raise _validation_error(
+            "This Custom API type does not use an OpenAI-compatible base URL."
+        )
+    normalized_mode = normalize_custom_endpoint_url_mode(url_mode)
+    if normalized_mode in (
+        CUSTOM_ENDPOINT_URL_MODE_EXACT,
+        CUSTOM_ENDPOINT_URL_MODE_API_BASE,
+        CUSTOM_ENDPOINT_URL_MODE_FULL,
+    ) or descriptor.url_policy == URL_POLICY_AS_GIVEN:
         endpoint = normalize_endpoint_text(raw_endpoint)
         if not endpoint:
-            raise ValueError("A Custom endpoint is required for OpenAI-compatible inference.")
+            raise _validation_error(
+                "A Custom endpoint is required for OpenAI-compatible inference."
+            )
         return endpoint.rstrip("/") + "/"
     return normalize_custom_openai_base_url(raw_endpoint)
 
 
-def normalize_anthropic_messages_url(raw_endpoint, *, direct_custom=False) -> str:
+def normalize_anthropic_messages_url(
+    raw_endpoint, *, direct_custom=False, url_mode=CUSTOM_ENDPOINT_URL_MODE_AUTO
+) -> str:
     """Retain legacy operation URLs; new routing uses the explicit resolver."""
     endpoint = normalize_endpoint_text(raw_endpoint)
     if not endpoint:
         raise ValueError("An endpoint is required for Anthropic inference.")
     lowered = endpoint.lower()
     if direct_custom:
-        if lowered.endswith("/v1/messages"):
+        mode = normalize_custom_endpoint_url_mode(url_mode)
+        if mode == CUSTOM_ENDPOINT_URL_MODE_FULL or lowered.endswith("/v1/messages"):
             return endpoint
         if lowered.endswith("/v1"):
             return endpoint.rstrip("/") + "/messages"
@@ -167,16 +206,6 @@ def normalize_anthropic_messages_url(raw_endpoint, *, direct_custom=False) -> st
     if position >= 0:
         return endpoint[:position + len("/anthropic/v1")].rstrip("/") + "/messages"
     return get_endpoint_origin(endpoint).rstrip("/") + "/anthropic/v1/messages"
-
-
-def routing_schema_version(endpoint: dict) -> int:
-    """Reject unknown schema markers instead of treating them as legacy."""
-    version = endpoint.get("routing_schema_version", 1)
-    if type(version) is not int or version not in (1, 2):
-        raise ValueError("Unsupported model routing schema version.")
-    return version
-
-
 def _text(value, label: str, *, required: bool = False, limit: int = 2048) -> str:
     if value is None and not required:
         return ""
@@ -278,6 +307,77 @@ def _credential_policy(endpoint, descriptor) -> dict:
     return {"type": "api_key", "header": header, "prefix": prefix}
 
 
+def _resolve_inference_api(endpoint: dict, model: dict, descriptor) -> str:
+    value = model.get("inference_api")
+    if value is None:
+        if "use_responses_api" in model:
+            value = (
+                MODEL_ENDPOINT_INFERENCE_API_RESPONSES
+                if model.get("use_responses_api") is True
+                else MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
+            )
+        else:
+            connection = endpoint.get("connection") or {}
+            if isinstance(connection.get("use_responses_api"), bool):
+                value = (
+                    MODEL_ENDPOINT_INFERENCE_API_RESPONSES
+                    if connection["use_responses_api"]
+                    else MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
+                )
+            elif str((connection.get("endpoint") or "")).rstrip("/").endswith("/responses"):
+                value = MODEL_ENDPOINT_INFERENCE_API_RESPONSES
+            else:
+                value = descriptor.default_inference_api
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized not in descriptor.supported_inference_apis:
+        raise ValueError(
+            f"The selected model API does not support {normalized or 'the requested'} inference operation."
+        )
+    return normalized
+
+
+def _resolve_url_mode(endpoint: dict, model: dict) -> str:
+    value = model.get("url_mode")
+    if "url_mode" not in model:
+        value = (endpoint.get("connection") or {}).get("url_mode")
+    elif value in (None, ""):
+        raise ValueError("Model URL handling is required for explicit routing.")
+    value = str(value or CUSTOM_ENDPOINT_URL_MODE_AUTO).strip().lower()
+    if value == CUSTOM_ENDPOINT_URL_MODE_EXACT:
+        return CUSTOM_ENDPOINT_URL_MODE_API_BASE
+    if value not in (
+        CUSTOM_ENDPOINT_URL_MODE_AUTO,
+        CUSTOM_ENDPOINT_URL_MODE_API_BASE,
+        CUSTOM_ENDPOINT_URL_MODE_FULL,
+    ):
+        raise ValueError(
+            "Model URL handling must be automatic, API base, or full request URL."
+        )
+    return value
+
+
+def _resolve_path_order(endpoint: dict, model: dict) -> str:
+    value = (
+        model.get("api_path_order")
+        or endpoint.get("routing_path_order")
+        or ROUTING_PATH_ORDER_MODEL_FIRST
+    )
+    if value not in (
+        ROUTING_PATH_ORDER_MODEL_FIRST,
+        ROUTING_PATH_ORDER_CONNECTION_FIRST,
+    ):
+        raise ValueError("Unsupported model API path order.")
+    return value
+
+
+def _operation_segments(inference_api: str) -> tuple[str, ...]:
+    return {
+        MODEL_ENDPOINT_INFERENCE_API_MESSAGES: ("messages",),
+        MODEL_ENDPOINT_INFERENCE_API_RESPONSES: ("responses",),
+        MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS: ("chat", "completions"),
+    }[inference_api]
+
+
 def resolve_model_endpoint_route(endpoint: dict, model: dict) -> dict:
     """Resolve an explicit saved model without fetching secrets or opening sockets.
 
@@ -295,7 +395,17 @@ against outbound policy. This function is not permission to execute a request.
     if profile not in ("custom", "aoai", "aifoundry", "new_foundry", "anthropic", "claude"):
         raise ValueError("Unsupported endpoint provider.")
     model = dict(model)
-    api_type = normalize_api_type_value(model.get("api_type"))
+    if (
+        profile == "custom"
+        and (
+            not isinstance(model.get("api_type"), str)
+            or not model["api_type"].strip()
+        )
+    ):
+        raise ValueError("Model API type is required for explicit routing.")
+    api_type = normalize_api_type_value(
+        model.get("api_type") or endpoint.get("api_type")
+    )
     custom_profile = get_custom_endpoint_profile(endpoint)
     if custom_profile == GENAI_MIL_PROFILE and api_type != "openai":
         raise ValueError("GenAI.mil supports OpenAI-compatible Chat Completions only.")
@@ -312,26 +422,49 @@ against outbound policy. This function is not permission to execute a request.
     descriptor = get_model_endpoint_provider(api_type)
     if descriptor is None:
         raise ValueError("Model API type is required and must be supported.")
-    mode = _text(model.get("url_mode"), "model URL handling", required=True).lower()
-    if mode not in ("auto", "exact"):
-        raise ValueError("Model URL handling must be auto or exact.")
-    parsed, endpoint_segments = _base_parts((endpoint.get("connection") or {}).get("endpoint"))
+    inference_api = _resolve_inference_api(endpoint, model, descriptor)
     if (
-        profile in ("aifoundry", "new_foundry") and api_type == "anthropic"
-        and parsed.hostname.endswith((".services.ai.azure.com", ".services.ai.azure.us"))
-        and endpoint_segments[:2] == ["api", "projects"]
-        and (len(endpoint_segments) == 3 or (len(endpoint_segments) == 5 and endpoint_segments[-2:] == ["openai", "v1"]))
+        custom_profile == GENAI_MIL_PROFILE
+        and inference_api != MODEL_ENDPOINT_INFERENCE_API_CHAT_COMPLETIONS
     ):
-        endpoint_segments = ["anthropic", "v1"]
+        raise ValueError("GenAI.mil supports Chat Completions only.")
+    mode = _resolve_url_mode(endpoint, model)
+    path_order = _resolve_path_order(endpoint, model)
+    parsed, endpoint_segments = _base_parts((endpoint.get("connection") or {}).get("endpoint"))
     api_path = normalize_model_api_path(model.get("api_path", ""))
-    segments = (api_path.split("/") if api_path else []) + endpoint_segments
+    api_path_segments = api_path.split("/") if api_path else []
+    native_foundry_messages = (
+        profile in ("aifoundry", "new_foundry")
+        and api_type == "anthropic"
+        and mode == CUSTOM_ENDPOINT_URL_MODE_AUTO
+    )
+    if native_foundry_messages:
+        endpoint_segments = []
+    segments = (
+        api_path_segments + endpoint_segments
+        if path_order == ROUTING_PATH_ORDER_MODEL_FIRST
+        else endpoint_segments + api_path_segments
+    )
+    if native_foundry_messages and (
+        not segments or segments[-1] != "anthropic"
+    ):
+        segments.append("anthropic")
     if sum(bool(APIM_REVISION_SEGMENT.fullmatch(segment)) for segment in segments) > 1:
         raise ValueError("Schema-v2 URLs may contain only one APIM revision selector.")
-    if any(_ends_with(segments, operation) for operation in OPERATIONS):
+    operation_segments = _operation_segments(inference_api)
+    if mode != CUSTOM_ENDPOINT_URL_MODE_FULL and any(
+        _ends_with(segments, operation) for operation in OPERATIONS
+    ):
         raise ValueError("Schema-v2 URLs must name an API base, not an operation.")
     request_model = _identifier(model, descriptor)
     version = _version(endpoint, model, api_type, descriptor)
-    if api_type == "azure_openai":
+    if mode == CUSTOM_ENDPOINT_URL_MODE_FULL:
+        if not _ends_with(segments, operation_segments):
+            raise ValueError(
+                "Full request URL mode must include the selected operation path."
+            )
+        operation_segments_in_url = operation_segments
+    elif api_type == "azure_openai":
         encoded = quote(request_model, safe="-._~")
         deployment_base = len(segments) >= 3 and segments[-3:-1] == ["openai", "deployments"]
         deployment_positions = [index for index in range(len(segments)) if segments[index:index + 2] == ["openai", "deployments"]]
@@ -342,8 +475,10 @@ against outbound policy. This function is not permission to execute a request.
         if deployment_base:
             if segments[-1] != encoded:
                 raise ValueError("The API base names a different deployment.")
-        elif mode == "exact":
-            raise ValueError("Exact deployment bases must name the selected deployment.")
+        elif mode == CUSTOM_ENDPOINT_URL_MODE_API_BASE:
+            raise ValueError(
+                "API-base mode for deployment APIs must name the selected deployment."
+            )
         elif _ends_with(segments, ("openai",)):
             segments += ["deployments", encoded]
         else:
@@ -353,14 +488,30 @@ against outbound policy. This function is not permission to execute a request.
     elif api_type == "azure_openai_v1":
         if any(segments[index:index + 2] == ["openai", "deployments"] for index in range(len(segments))):
             raise ValueError("Chat Completions v1 cannot use a deployment API base.")
-        if mode == "auto" and not _ends_with(segments, ("openai", "v1")):
+        if (
+            mode == CUSTOM_ENDPOINT_URL_MODE_AUTO
+            and not _ends_with(segments, ("openai", "v1"))
+        ):
             segments += ["v1"] if _ends_with(segments, ("openai",)) else ["openai", "v1"]
-    elif mode == "auto" and descriptor.url_policy != URL_POLICY_AS_GIVEN:
+    elif (
+        mode == CUSTOM_ENDPOINT_URL_MODE_AUTO
+        and descriptor.url_policy != URL_POLICY_AS_GIVEN
+    ):
         if not segments or not VERSION_SEGMENT.fullmatch(segments[-1]):
             segments += ["v1"]
-    base = urlunsplit((parsed.scheme, parsed.netloc, "/" + "/".join(segments), "", "")).rstrip("/") + "/"
-    operation = "messages" if descriptor.protocol == "anthropic" else "chat/completions"
-    operation_url = base + operation
+    if mode == CUSTOM_ENDPOINT_URL_MODE_FULL:
+        base_segments = segments[:-len(operation_segments_in_url)]
+        base = urlunsplit(
+            (parsed.scheme, parsed.netloc, "/" + "/".join(base_segments), "", "")
+        ).rstrip("/") + "/"
+        operation_url = urlunsplit(
+            (parsed.scheme, parsed.netloc, "/" + "/".join(segments), "", "")
+        )
+    else:
+        base = urlunsplit(
+            (parsed.scheme, parsed.netloc, "/" + "/".join(segments), "", "")
+        ).rstrip("/") + "/"
+        operation_url = base + "/".join(operation_segments)
     if api_type == "azure_openai":
         operation_url += "?" + urlencode({"api-version": version})
     if len(operation_url) > 2048:
@@ -372,6 +523,7 @@ against outbound policy. This function is not permission to execute a request.
         "profile": profile, "api_type": api_type, "protocol": descriptor.protocol,
         **({"custom_profile": custom_profile} if custom_profile else {}),
         "request_model": request_model, "api_path": api_path, "url_mode": mode,
+        "api_path_order": path_order, "inference_api": inference_api,
         "api_base": base, "operation_url": operation_url,
         "api_version": version if api_type == "azure_openai" else "",
         "anthropic_version": version if api_type == "anthropic" else "",
@@ -422,7 +574,7 @@ def normalize_model_endpoint_routing(endpoint: dict) -> dict:
         if route["model_id"] in seen_ids:
             raise ValueError("Model IDs must be unique within an endpoint.")
         seen_ids.add(route["model_id"])
-        for field in ("api_type", "api_path", "url_mode"):
+        for field in ("api_type", "api_path", "url_mode", "inference_api"):
             model[field] = route[field]
         descriptor = get_model_endpoint_provider(route["api_type"])
         field = "modelName" if descriptor.uses_model_name else "deploymentName"
@@ -430,3 +582,75 @@ def normalize_model_endpoint_routing(endpoint: dict) -> dict:
         if descriptor.version_field:
             model[descriptor.version_field] = route[descriptor.version_field]
     return normalized
+
+
+def resolve_model_inference_endpoint(
+    endpoint, *, use_responses_api=None, provider="aoai", api_type="", url_mode="", model=None,
+):
+    """Resolve the selected model's native operation without changing the saved connection."""
+    from functions_model_endpoint_validation import (
+        model_endpoint_inference_api,
+        resolve_native_foundry_chat_api,
+    )
+
+    endpoint = normalize_endpoint_text(endpoint)
+    selected_api = model_endpoint_inference_api(
+        endpoint, use_responses_api, provider=provider, model=model,
+    )
+    native_api = resolve_native_foundry_chat_api(provider, endpoint, model)
+    if native_api is not None:
+        parsed = urlparse(endpoint)
+        origin = f"{parsed.scheme}://{parsed.netloc}"
+        if native_api == "mai":
+            return f"{origin}/mai/v1"
+        if native_api == "anthropic":
+            return f"{origin}/anthropic/v1/messages"
+        project = re.match(r"^(/api/projects/[^/]+)(?:/|$)", parsed.path, re.IGNORECASE)
+        project_path = project.group(1) if project else ""
+        endpoint = f"{origin}{project_path}/openai/v1"
+    normalized_url_mode = normalize_custom_endpoint_url_mode(url_mode)
+    if normalized_url_mode == CUSTOM_ENDPOINT_URL_MODE_FULL:
+        return endpoint
+    if selected_api != MODEL_ENDPOINT_INFERENCE_API_RESPONSES:
+        return endpoint
+    if not endpoint:
+        raise _validation_error("A model inference endpoint URL is required.")
+    parsed = urlparse(endpoint)
+    if parsed.scheme not in ("https", "http") or not parsed.netloc or parsed.query or parsed.fragment or parsed.username or parsed.password:
+        raise _validation_error("Use an HTTP(S) inference API base without credentials, query parameters, or a fragment.")
+    if endpoint.lower().endswith("/responses"):
+        return endpoint
+    if str(provider).lower() == "custom":
+        return resolve_custom_openai_base_url(endpoint, api_type, url_mode) + "responses"
+    if endpoint.lower().endswith("/chat/completions"):
+        endpoint = endpoint[:-len("/chat/completions")]
+    path = parsed.path.rstrip("/")
+    if not path:
+        endpoint += "/openai/v1"
+    elif path.lower().endswith("/openai"):
+        endpoint += "/v1"
+    return endpoint.rstrip("/") + "/responses"
+
+
+def resolve_custom_azure_openai_base_url(raw_endpoint: Any, deployment_name: Any, url_mode: Any = "") -> str:
+    """Build the dated deployment API base, retaining gateway prefixes."""
+    endpoint = normalize_endpoint_text(raw_endpoint)
+    deployment = str(deployment_name or "").strip()
+    if not endpoint or not deployment:
+        raise _validation_error("Custom Azure OpenAI requires an endpoint and deployment name.")
+    if normalize_custom_endpoint_url_mode(url_mode) in (
+        CUSTOM_ENDPOINT_URL_MODE_EXACT,
+        CUSTOM_ENDPOINT_URL_MODE_API_BASE,
+        CUSTOM_ENDPOINT_URL_MODE_FULL,
+    ):
+        return endpoint + "/"
+    for suffix in CUSTOM_OPENAI_OPERATION_SUFFIXES:
+        if endpoint.lower().endswith(suffix):
+            endpoint = endpoint[:-len(suffix)].rstrip("/")
+            break
+    deployment_index = endpoint.lower().find("/openai/deployments/")
+    if deployment_index >= 0:
+        endpoint = endpoint[:deployment_index]
+    elif endpoint.lower().endswith("/openai"):
+        endpoint = endpoint[:-len("/openai")]
+    return f"{endpoint}/openai/deployments/{quote(deployment, safe='')}/"

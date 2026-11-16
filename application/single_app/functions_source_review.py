@@ -13,6 +13,7 @@ import os
 import re
 import socket
 import time
+import unicodedata
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +25,7 @@ from bs4 import BeautifulSoup
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
+from functions_orchestration_invocation_capture import require_invocation_capture
 
 
 SOURCE_REVIEW_USER_AGENT = "SimpleChat-SourceReview/1.0"
@@ -87,6 +89,7 @@ SOURCE_REVIEW_HARD_LIMITS = {
     "max_search_queries_per_turn": 8,
     "max_deep_research_query_chars": 220,
     "max_deep_research_ledger_urls": 120,
+    "max_pdf_pages": 200,
 }
 
 SAFE_CONTENT_TYPES = (
@@ -99,6 +102,7 @@ SAFE_CONTENT_TYPES = (
     "text/xml",
     "application/rss+xml",
     "application/atom+xml",
+    "application/pdf",
 )
 
 BLOCKED_HOSTNAMES = {
@@ -531,6 +535,33 @@ def get_deep_research_config(settings: Optional[Dict[str, Any]]) -> Dict[str, An
     return get_source_review_config(settings)
 
 
+def capture_research_planner_configuration(*, settings, planner_client, planner_model, invocation_capture):
+    """Attest the actual research planner constructor before planning or acquisition.
+
+    Query and link planning keep their Source Review settings; the captured policy
+    records those flags, so a later settings change is detected at admission.
+    """
+    capture = require_invocation_capture(invocation_capture)
+    if capture is None:
+        return
+
+    # These owners depend on Source Review; load them only after application initialization.
+    from functions_orchestration_external_configuration import EXTERNAL_ACQUISITION_VERSION
+    from functions_orchestration_models import OrchestrationModelError, get_planner_acquisition_configuration
+
+    try:
+        configuration = get_planner_acquisition_configuration(planner_client)
+        if type(planner_model) is not str or planner_model != configuration["deployment"]:
+            raise OrchestrationModelError()
+        source = {
+            "version": EXTERNAL_ACQUISITION_VERSION, "kind": "planner", "phase": "resolved",
+            "model": configuration,
+        }
+    except Exception as exc:
+        capture.fail(exc)
+    capture("deep_research", settings=settings, source=source)
+
+
 def get_source_review_runtime_capabilities(force_refresh: bool = False) -> Dict[str, Any]:
     """Return cached runtime support details for optional Source Review browser rendering."""
     global _SOURCE_REVIEW_RUNTIME_CAPABILITIES_CACHE
@@ -654,13 +685,19 @@ def should_auto_enable_source_review(
     return False
 
 
+def _strip_invisible_url_characters(value: Any) -> str:
+    """Remove invisible Unicode format characters (such as ZWNJ/ZWSP/BOM) from URL text."""
+    return "".join(ch for ch in str(value or "") if unicodedata.category(ch) != "Cf")
+
+
 def extract_urls_from_text(text: str) -> List[str]:
     """Extract HTTP(S) URLs from user text or model search citations."""
     if not text:
         return []
     urls = []
     seen_urls = set()
-    for match in re.finditer(r"https?://[^\s<>'\"]+", str(text)):
+    cleaned_text = _strip_invisible_url_characters(text)
+    for match in re.finditer(r"https?://[^\s<>'\"]+", cleaned_text):
         raw_url = match.group(0).strip().rstrip(".,);]}>")
         normalized_url, _ = normalize_review_url(raw_url)
         if not normalized_url:
@@ -715,11 +752,11 @@ def collect_source_review_seed_urls(
 
 def normalize_review_url(url: Any, base_url: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
     """Normalize an HTTP(S) URL and remove fragments."""
-    raw_url = str(url or "").strip()
+    raw_url = _strip_invisible_url_characters(url).strip().rstrip(".,);]}>")
     if not raw_url:
         return None, "empty_url"
     if base_url:
-        raw_url = urljoin(base_url, raw_url)
+        raw_url = urljoin(_strip_invisible_url_characters(base_url).strip(), raw_url)
     raw_url, _fragment = urldefrag(raw_url)
     parsed_url = urlparse(raw_url)
     if parsed_url.scheme.lower() not in ("http", "https"):
@@ -1189,8 +1226,11 @@ def perform_source_review(
     include_direct_user_urls: bool = True,
     url_access_authorization_prechecked: bool = False,
     additional_seed_urls: Optional[List[str]] = None,
+    invocation_capture=None,
 ) -> Dict[str, Any]:
     """Synchronously run bounded Source Review for chat routes."""
+    capture = require_invocation_capture(invocation_capture) if invocation_capture is not None else None
+    capture_kwargs = {"invocation_capture": capture} if capture is not None else {}
     try:
         return asyncio.run(perform_source_review_async(
             settings=settings,
@@ -1207,14 +1247,21 @@ def perform_source_review(
             include_direct_user_urls=include_direct_user_urls,
             url_access_authorization_prechecked=url_access_authorization_prechecked,
             additional_seed_urls=additional_seed_urls,
+            **capture_kwargs,
         ))
     except RuntimeError as runtime_error:
+        if capture is not None:
+            capture.fail(runtime_error)
         log_event(
             "[SOURCE_REVIEW] Source Review could not start because an event loop is already running.",
             extra={"conversation_id": conversation_id, "user_id": user_id, "error": str(runtime_error)},
             level=logging.WARNING,
         )
         return _empty_source_review_result(user_message, "event_loop_unavailable")
+    except Exception as exc:
+        if capture is not None:
+            capture.fail(exc)
+        raise
 
 
 async def perform_source_review_async(
@@ -1233,8 +1280,19 @@ async def perform_source_review_async(
     include_direct_user_urls: bool = True,
     url_access_authorization_prechecked: bool = False,
     additional_seed_urls: Optional[List[str]] = None,
+    invocation_capture=None,
 ) -> Dict[str, Any]:
     """Fetch, parse, and package bounded web evidence for a chat request."""
+    capture = require_invocation_capture(invocation_capture) if invocation_capture is not None else None
+
+    def capture_planner():
+        capture_research_planner_configuration(
+            settings=settings, planner_client=source_review_planner_client,
+            planner_model=source_review_planner_model, invocation_capture=capture,
+        )
+
+    if capture is not None:
+        capture_planner()
     source_settings = get_source_review_config(settings)
     direct_user_url_limit = get_url_access_max_urls(url_access_context, settings)
     if url_access_only:
@@ -1333,6 +1391,8 @@ async def perform_source_review_async(
                 continue
             visited_urls.add(current_url)
 
+            if capture is not None:
+                capture_planner()
             page_result = await _fetch_source_page(
                 session=session,
                 url=current_url,
@@ -1343,6 +1403,8 @@ async def perform_source_review_async(
                 parent_url=current_item.get("parent_url"),
                 reason=current_item.get("reason"),
             )
+            if capture is not None:
+                capture_planner()
             if page_result.get("status") == "reviewed":
                 result["pages"].append(_compact_page_for_evidence(page_result))
                 if _should_follow_links(page_result, source_settings, current_item.get("depth", 0)):
@@ -1371,6 +1433,9 @@ async def perform_source_review_async(
         int(page.get("structured_item_count") or len(page.get("structured_items") or []))
         for page in result["pages"]
     )
+    pdf_pages_total = sum(int(page.get("pdf_page_count") or 0) for page in result["pages"])
+    pdf_pages_inspected = sum(int(page.get("pdf_pages_inspected") or page.get("pdf_pages_reviewed") or 0) for page in result["pages"])
+    pdf_pages_reviewed = sum(int(page.get("pdf_pages_reviewed") or page.get("pdf_pages_inspected") or 0) for page in result["pages"])
     max_depth_reviewed = max([int(page.get("depth") or 0) for page in result["pages"]] or [0])
     planner_result = result.get("planner", {}) if isinstance(result.get("planner"), dict) else {}
     result["coverage"] = {
@@ -1396,6 +1461,15 @@ async def perform_source_review_async(
         "load_more_pages": load_more_pages,
         "load_more_clicks_succeeded": load_more_clicks_succeeded,
         "structured_items_extracted": structured_items_extracted,
+        **(
+            {
+                "pdf_pages_total": pdf_pages_total,
+                "pdf_pages_inspected": pdf_pages_inspected,
+                "pdf_pages_reviewed": pdf_pages_reviewed,
+            }
+            if pdf_pages_total > 0
+            else {}
+        ),
     }
     if not result["pages"] and result["skipped"] and not result.get("skipped_reason"):
         skipped_reasons = []
@@ -1512,7 +1586,10 @@ async def _fetch_source_page(
                     )
 
                 content_type = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
-                if not _is_supported_content_type(content_type):
+                is_pdf_url = urlparse(current_url).path.lower().endswith(".pdf")
+                if content_type in ("application/octet-stream", "binary/octet-stream") and is_pdf_url:
+                    content_type = "application/pdf"
+                if not _is_supported_content_type(content_type, url=current_url):
                     return _skipped_page(
                         current_url,
                         "unsupported_content_type",
@@ -1539,6 +1616,18 @@ async def _fetch_source_page(
                     response,
                     source_settings["source_review_max_bytes_per_page"],
                 )
+                if content_type == "application/pdf" or (
+                    is_pdf_url and raw_bytes[:1024].lstrip().startswith(b"%PDF-")
+                ):
+                    return extract_source_review_evidence_from_pdf(
+                        pdf_bytes=raw_bytes,
+                        url=current_url,
+                        user_message=user_message,
+                        truncated=truncated,
+                        depth=depth,
+                        parent_url=parent_url,
+                        reason=reason,
+                    )
                 html_text = raw_bytes.decode(_detect_encoding(response), errors="ignore")
                 page_result = _extract_page_evidence(
                     content=html_text,
@@ -1655,6 +1744,174 @@ def _extract_page_evidence(
         parent_url=parent_url,
         reason=reason,
     )
+
+
+def extract_source_review_evidence_from_pdf(
+    *,
+    pdf_bytes: bytes,
+    url: str,
+    user_message: str,
+    truncated: bool = False,
+    depth: int = 0,
+    parent_url: Optional[str] = None,
+    reason: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Extract bounded page-level text, page counts, and excerpts from a fetched PDF."""
+    if not pdf_bytes or not pdf_bytes[:1024].lstrip().startswith(b"%PDF-"):
+        return _skipped_page(
+            url,
+            "unreadable_pdf",
+            depth=depth,
+            parent_url=parent_url,
+            content_type="application/pdf",
+        )
+    try:
+        import fitz
+    except ImportError:
+        return _skipped_page(
+            url,
+            "pdf_extractor_unavailable",
+            depth=depth,
+            parent_url=parent_url,
+            content_type="application/pdf",
+        )
+
+    try:
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as document:
+            if document.needs_pass:
+                return _skipped_page(
+                    url,
+                    "password_protected_pdf",
+                    depth=depth,
+                    parent_url=parent_url,
+                    content_type="application/pdf",
+                )
+            total_pages = int(len(document))
+            max_pdf_pages = int(SOURCE_REVIEW_HARD_LIMITS.get("max_pdf_pages", 200))
+            pages_to_inspect = min(total_pages, max_pdf_pages)
+            metadata = document.metadata if isinstance(document.metadata, dict) else {}
+            meta_title = _clean_text(metadata.get("title") or "")
+            page_entries: List[Tuple[int, str]] = []
+            for page_index in range(pages_to_inspect):
+                page_number = page_index + 1
+                raw_text = document[page_index].get_text("text", sort=True) or ""
+                cleaned_page_text = _clean_text(raw_text)
+                page_entries.append((page_number, cleaned_page_text))
+    except Exception as pdf_error:
+        return _skipped_page(
+            url,
+            "unreadable_pdf",
+            depth=depth,
+            parent_url=parent_url,
+            content_type="application/pdf",
+            error=str(pdf_error)[:240],
+        )
+
+    pages_with_text = sum(1 for _page_num, page_text in page_entries if page_text)
+    first_page_heading = ""
+    for _page_num, page_text in page_entries:
+        if page_text:
+            first_page_heading = page_text[:140].strip()
+            break
+    url_filename = urlparse(url).path.rsplit("/", 1)[-1].strip()
+    title = _first_non_empty([meta_title, first_page_heading, url_filename, url])[:300]
+    labeled_pages = [
+        f"[Page {page_num} of {total_pages}] {page_text}"
+        for page_num, page_text in page_entries
+        if page_text
+    ]
+    full_text = "\n\n".join(labeled_pages)
+    published_date = _normalize_date(
+        _find_date_candidate(full_text[:3000]) or _find_date_candidate(url)
+    )
+
+    max_excerpts = int(SOURCE_REVIEW_HARD_LIMITS["max_excerpts_per_page"])
+    max_excerpt_chars = int(SOURCE_REVIEW_HARD_LIMITS["max_excerpt_chars"])
+    page_previews = [
+        f"[Page {page_num} of {total_pages}] {page_text[:180]}"
+        for page_num, page_text in page_entries
+        if page_text
+    ]
+    coverage_header = (
+        f"PDF coverage: Inspected {pages_to_inspect} of {total_pages} total page(s) "
+        f"({total_pages} total page(s); {pages_with_text} page(s) inspected with extractable text)."
+    )
+    if not labeled_pages:
+        excerpts = [
+            f"{coverage_header} No extractable text was found on the inspected PDF pages."
+        ]
+    else:
+        combined_with_header = f"{coverage_header}\n\n{full_text}"
+        if len(combined_with_header) <= max_excerpts * max_excerpt_chars:
+            excerpts = [
+                combined_with_header[offset:offset + max_excerpt_chars]
+                for offset in range(0, len(combined_with_header), max_excerpt_chars)
+            ][:max_excerpts]
+        else:
+            overview_excerpt = (
+                f"{coverage_header} Page overview: " + " | ".join(page_previews)
+            )[:max_excerpt_chars]
+            remaining_slots = max(1, max_excerpts - 1)
+            query_terms = _query_terms(user_message)
+            matched_excerpts: List[str] = []
+            for page_num, page_text in page_entries:
+                if not page_text:
+                    continue
+                lowered_page = page_text.lower()
+                for term in query_terms[:8]:
+                    idx = lowered_page.find(term)
+                    if idx < 0:
+                        continue
+                    start = max(0, idx - 400)
+                    end = min(len(page_text), idx + 900)
+                    snippet = f"[Page {page_num} of {total_pages}] {page_text[start:end].strip()}"[:max_excerpt_chars]
+                    if snippet not in matched_excerpts:
+                        matched_excerpts.append(snippet)
+                    if len(matched_excerpts) >= remaining_slots:
+                        break
+                if len(matched_excerpts) >= remaining_slots:
+                    break
+            if len(matched_excerpts) < remaining_slots:
+                for labeled_page in labeled_pages:
+                    candidate_excerpt = labeled_page[:max_excerpt_chars]
+                    if candidate_excerpt not in matched_excerpts:
+                        matched_excerpts.append(candidate_excerpt)
+                    if len(matched_excerpts) >= remaining_slots:
+                        break
+            excerpts = [overview_excerpt, *matched_excerpts[:remaining_slots]][:max_excerpts]
+
+    links = [
+        {
+            "url": extracted_url,
+            "anchor_text": extracted_url,
+            "nearby_text": "",
+            "published_date": _normalize_date(_find_date_candidate(extracted_url)),
+            "same_domain": _same_domain(url, extracted_url),
+        }
+        for extracted_url in extract_urls_from_text(full_text)
+    ]
+    return {
+        "status": "reviewed",
+        "url": url,
+        "title": title or url,
+        "published_date": published_date,
+        "content_type": "application/pdf",
+        "pdf_page_count": total_pages,
+        "pdf_pages_inspected": pages_to_inspect,
+        "pdf_pages_reviewed": pages_with_text,
+        "pdf_pages_with_text": pages_with_text,
+        "depth": depth,
+        "parent_url": parent_url,
+        "reason": reason,
+        "text_char_count": len(full_text),
+        "truncated": bool(truncated or total_pages > pages_to_inspect),
+        "excerpts": excerpts,
+        "links": _prioritize_extracted_links(_dedupe_links(links), url, user_message)[:SOURCE_REVIEW_HARD_LIMITS["max_links_per_page"]],
+        "link_count": len(links),
+        "structured_items": [],
+        "structured_item_count": 0,
+        "prompt_injection_markers": _detect_prompt_injection_markers(full_text),
+    }
 
 
 def extract_source_review_evidence_from_html(
@@ -2946,7 +3203,7 @@ def _should_follow_links(page_result: Dict[str, Any], source_settings: Dict[str,
 
 
 def _compact_page_for_evidence(page_result: Dict[str, Any]) -> Dict[str, Any]:
-    return {
+    compacted = {
         "url": page_result.get("url"),
         "title": page_result.get("title"),
         "published_date": page_result.get("published_date"),
@@ -2970,6 +3227,10 @@ def _compact_page_for_evidence(page_result: Dict[str, Any]) -> Dict[str, Any]:
         "structured_items": page_result.get("structured_items", [])[:SOURCE_REVIEW_HARD_LIMITS["max_structured_items_per_page"]],
         "structured_item_count": page_result.get("structured_item_count", 0),
     }
+    for pdf_field in ("pdf_page_count", "pdf_pages_inspected", "pdf_pages_reviewed", "pdf_pages_with_text"):
+        if page_result.get(pdf_field) is not None:
+            compacted[pdf_field] = page_result.get(pdf_field)
+    return compacted
 
 
 def _skipped_page(
@@ -3356,10 +3617,14 @@ async def _rendered_page_reaches_start_date(page: Any, requested_start_date: dat
     return _text_reaches_start_date(body_text, requested_start_date)
 
 
-def _is_supported_content_type(content_type: str) -> bool:
+def _is_supported_content_type(content_type: str, url: Optional[str] = None) -> bool:
     if not content_type:
         return True
-    return any(content_type == allowed or content_type.startswith(f"{allowed};") for allowed in SAFE_CONTENT_TYPES)
+    if any(content_type == allowed or content_type.startswith(f"{allowed};") for allowed in SAFE_CONTENT_TYPES):
+        return True
+    if content_type in ("application/octet-stream", "binary/octet-stream") and url:
+        return urlparse(str(url)).path.lower().endswith(".pdf")
+    return False
 
 
 def _detect_encoding(response: aiohttp.ClientResponse) -> str:

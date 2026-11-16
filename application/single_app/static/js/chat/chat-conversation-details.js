@@ -180,6 +180,36 @@ function renderConversationDetailsActions(metadata, conversationId) {
   actionContainer.innerHTML = actionButtons.join('');
 }
 
+function normalizeParticipantChatType(chatType, context = []) {
+  const normalizedChatType = String(chatType || '').trim();
+  if (normalizedChatType === 'personal' || normalizedChatType === 'new') {
+    return 'personal_single_user';
+  }
+  if (normalizedChatType) {
+    return normalizedChatType;
+  }
+
+  const primaryContext = Array.isArray(context)
+    ? context.find(item => item?.type === 'primary')
+    : null;
+  if (primaryContext?.scope === 'group') {
+    return 'group-single-user';
+  }
+  if (primaryContext?.scope === 'public') {
+    return 'public';
+  }
+  return 'personal_single_user';
+}
+
+function canManageLegacyConversationParticipants(metadata = {}) {
+  if (metadata.conversation_kind === 'collaborative') {
+    return false;
+  }
+
+  const chatType = normalizeParticipantChatType(metadata.chat_type, metadata.context || []);
+  return ['personal_single_user', 'group-single-user'].includes(chatType);
+}
+
 /**
  * Show conversation details in a modal
  * @param {string} conversationId - The conversation ID to show details for
@@ -277,6 +307,7 @@ function renderConversationMetadata(metadata, conversationId) {
   } = metadata;
   const safeConversationId = escapeHtml(conversationId);
   const resolvedLastUpdated = last_updated || updated_at;
+  const canInviteParticipants = can_manage_members || canManageLegacyConversationParticipants(metadata);
   
   // Organize tags by category
   const tagsByCategory = {
@@ -374,17 +405,17 @@ function renderConversationMetadata(metadata, conversationId) {
   }
 
   // Participants Section
-  if (participantRecords.length > 0 || can_manage_members || can_accept_invite) {
+  if (participantRecords.length > 0 || canInviteParticipants || can_accept_invite) {
     html += `
       <div class="col-md-6">
         <div class="card h-100">
           <div class="card-header bg-success text-white d-flex justify-content-between align-items-center gap-2 flex-wrap">
             <h6 class="mb-0"><i class="bi bi-people me-2"></i>Participants</h6>
-            ${renderCollaborationActionButtons(conversationId, metadata)}
+            ${renderCollaborationActionButtons(conversationId, { ...metadata, can_manage_members: canInviteParticipants })}
           </div>
           <div class="card-body">
             ${renderParticipantsSection(participantRecords, {
-              canManageMembers: can_manage_members,
+              canManageMembers: canInviteParticipants,
               canManageRoles: can_manage_roles,
               conversationKind: conversation_kind,
             })}

@@ -1,11 +1,17 @@
-# Group Collaboration Source Storage Fix (v0.261.024)
+# Group Collaboration Source Storage Fix (v0.261.106)
 
-Fixed in version: **0.261.024**
+Fixed in Development/v1 version: **0.261.024**
+
+Implemented in React/v2 version: **0.261.106**
 
 Related issue: [#1472](https://github.com/microsoft/simplechat/issues/1472).
+The original Development fix was merged in
+[#1473](https://github.com/microsoft/simplechat/pull/1473).
 
-The application patch version in `application\single_app\config.py` changes from
-**0.261.023** to **0.261.024** for this Development/v1 fix.
+The application patch version in `application\single_app\config.py` changed from
+**0.261.023** to **0.261.024** on Development. The separate React-branch port
+increments **0.261.105** to **0.261.106**, without merging unrelated Development
+changes or changing the React branch's version sequence.
 
 ## Issue
 
@@ -13,7 +19,7 @@ Adding the first participant to an existing group-scoped single-user conversatio
 could return `404 Conversation not found`, even while its owner could still open
 the conversation and read its history.
 
-V1 sends this invitation to the existing endpoint:
+Both interfaces send this invitation to the existing endpoint:
 
 ```text
 POST /api/collaboration/conversations/from-group/<conversation_id>/members
@@ -95,6 +101,32 @@ Cleanup continues to enforce its source ownership and backward-link guards.
   the collaboration and return 200 with `created: false`. Response fields and
   creation/invitation events are unchanged.
 
+## React v2 participant flow
+
+Group-scoped records in regular storage can identify their group only through a
+primary `context` entry. V2 previously read only top-level `group_id` and
+`scope.group_id`, so its People panel could show the local-user search instead of
+group members for these conversations.
+
+The sharing resolver now reuses the conversation badge helpers to interpret
+primary context and legacy chat types. It resolves group identity from a
+nonempty explicit group ID, then scope metadata, then primary group context.
+Secondary group knowledge and the user's globally active group are not substitutes
+for the conversation's own group identity. Personal and public conversations keep
+their respective sharing behavior, including no sharing action for a public
+conversation whose scope is known only through primary context.
+
+The People panel searches the identified group's current members. If a group
+conversation has no usable group identity, it shows an explanatory error rather
+than falling back to directory-wide candidates. A denied group-member search is
+also surfaced without a directory fallback.
+
+After a successful first invitation, the existing store flow opens the new shared
+conversation and loads its copied messages from the collaboration endpoint.
+Reopening People uses the returned shared ID and the normal member endpoint for
+subsequent invitations, rather than converting the original again. A failed
+invitation leaves the original panel target intact so the user can retry.
+
 ## Files changed
 
 - `application\single_app\functions_collaboration.py`: paired source selection,
@@ -102,7 +134,17 @@ Cleanup continues to enforce its source ownership and backward-link guards.
   invalidation.
 - `application\single_app\config.py`: application patch version.
 - `functional_tests\test_group_collaboration_source_storage_fix.py`: isolated
-  behavioral regressions using actual production helpers and the v1 route.
+  behavioral regressions using actual production helpers and the shared routes.
+- `application\v2_ui\src\lib\conversationBadges.ts` and
+  `application\v2_ui\src\lib\sharing.ts`: reuse the primary-context/type resolver
+  for participant targets without inferring storage from workspace scope.
+- `application\v2_ui\src\components\chat\ParticipantsPanel.tsx`: resolve the
+  loaded shared conversation's group and surface missing identity instead of
+  searching directory-wide.
+- `functional_tests\test_v2_shared_conversation_logic.mjs`: group-context,
+  precedence, legacy-type, and unchanged personal/public sharing cases.
+- `ui_tests\test_v2_group_participant_invites.py` and its existing browser
+  harness: real React invitations through the isolated Flask handlers.
 - `docs\explanation\features\GROUP_COLLABORATION_MEMBER_INVITE_FIX_PLAN.md`:
   distinguish this implemented backend fix from the historical UI proposals.
 
@@ -133,10 +175,31 @@ revalidation, personal conversion compatibility, lookup priority, no-mutation
 rejections, service-error responses, and manual/retention/archive cleanup that
 leaves unrelated records untouched.
 
-The new regression passes **18 tests and 106 subtests** under pytest. The combined
-conversion, participant, image-proposal, shared-AI, retention, route-policy, and
-documentation run completed with **60 tests and 106 subtests passing**, plus the
-one pre-existing uploaded-image regression failure described below.
+The original Development regression passed **18 tests and 106 subtests** under
+pytest. Its combined conversion, participant, image-proposal, shared-AI, retention,
+route-policy, and documentation run completed with **60 tests and 106 subtests
+passing**, plus the pre-existing uploaded-image regression failure described below.
+
+### React-specific coverage
+
+The React browser suite bundles the shipped People panel, message list, sharing
+resolver, and stores. Invitation writes dispatch through the real Flask conversion
+and member handlers using the existing in-memory Cosmos harness. The browser reads
+the resulting conversations and copied messages, not a prebuilt success response.
+No application configuration or live Azure data is loaded.
+
+```powershell
+node .\functional_tests\test_v2_shared_conversation_logic.mjs
+python -m pytest -q .\ui_tests\test_v2_group_participant_invites.py
+```
+
+The browser cases cover both storage layouts, group-only candidates, shared-ID
+handoff and subsequent invitations, retained transcript content, a visible 404 with
+retry, missing group identity, denied group search, and ordinary personal sharing.
+Before the frontend fix, the group-context browser case failed because the group
+search was absent; six pure-logic assertions also exposed the scope-resolution
+gaps. After the fix, all **51 shared-conversation runtime checks** and the combined
+backend/v2/retention/browser run's **43 tests and 106 subtests** pass.
 
 | Scenario | Before | After |
 | --- | --- | --- |
@@ -159,9 +222,11 @@ Owners can share affected group-scoped conversations without moving stored data
 or losing the original history. Existing group authorization and participant
 restrictions remain in place.
 
-This change is limited to the Development/v1 backend, regression coverage, and
-documentation. It makes no React/v2 implementation or parity claim and includes no
-UI wording changes, new routes/settings, deployment changes, or data migration.
+The original Development/v1 change remains a backend-only fix. The separate React
+follow-up ports that backend behavior and adds the V2 participant context handling
+and browser coverage described above. Neither change adds routes/settings,
+deployment changes, or a data migration, and the React follow-up does not change
+the classic UI.
 The broader proposals in the
 [historical group invitation plan](../features/GROUP_COLLABORATION_MEMBER_INVITE_FIX_PLAN.md)
 are not represented as completed by this fix.

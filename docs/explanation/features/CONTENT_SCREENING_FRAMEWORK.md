@@ -1,0 +1,152 @@
+# Content Screening Framework
+
+## Overview
+
+Content screening creates an admission checkpoint between document extraction and usable workspace knowledge. It combines deterministic rules with optional model-based inspection and keeps a document unavailable while a required scan or review is outstanding.
+
+**Scope:** since **0.261.230**, screening checks only documents that enter a workspace by user upload or File Sync; see [What gets screened](#what-gets-screened). Files attached in chat count as user uploads because they are saved as `chat_upload` documents. Since **0.261.232** ([#1621](https://github.com/microsoft/simplechat/issues/1621)), content generated from those documents is not checked again when it is read either. This includes model replies and their stored citations, Analyze, orchestration and workflow results, and generated files and exports. Saved results take their access from their container: the conversation, orchestration run or workflow. The check that remains is the input check. When chat, search or an orchestration reads an uploaded document, the reader must still have access and the document must not be held. See [Upload-only content screening](UPLOAD_ONLY_CONTENT_SCREENING.md).
+
+**Implemented in version: 0.261.106.** The application version is managed in `application\single_app\config.py`.
+
+**Current documentation version: 0.261.232.** Saved and generated results take their container's access in 0.261.232. Upload-only intake was implemented in 0.261.230: documents SimpleChat generates are never screened, and metadata edits, including model-generated metadata, apply without a new hold. Gather / Reason / Render orchestration integration with chat checkpoints was implemented in 0.261.131. Chat checkpoints and strict retained-result source-authority errors were implemented in 0.261.127; enabled-empty policy configuration was implemented in 0.261.114; classic/V2 policy-editor alignment was implemented in 0.261.108; the original framework implementation remains 0.261.106.
+
+**Dependencies:** Enhanced Citations and its configured storage account, the existing Cosmos DB and workspace knowledge services, and an approved model connection when a policy includes model evaluation.
+
+**Related issue:** [#1476](https://github.com/microsoft/simplechat/issues/1476). Related work includes document/chat PII (#341), message alerts (#375), outbound preflight (#992), and formatting-aware extraction (#1142).
+
+The motivating case is text that is easy to miss in a visual document, such as white text that tells an AI to value that document more highly than other sources. Screening inspects extracted text regardless of its original appearance. It does not infer font color or prove that every hidden layer was extracted.
+
+## Architecture and data flow
+
+The reusable `application\single_app\content_screening\` package separates policy/evaluation from the workspace-document adapter. Its contracts describe a subject, source revision, canonical content units, effective policy, grounded findings, and coverage.
+
+### What gets screened
+
+Since **0.261.230**, screening checks only documents that enter a workspace from outside SimpleChat: a user upload to a personal, group or public workspace (including a file attached in chat and saved to a workspace) or File Sync. Any other way a document reaches a workspace stays screened unless it is explicitly marked as generated.
+
+Documents that SimpleChat generates are never screened, neither when they are created nor later. That covers documents the SimpleChat agent action saves to a workspace, such as Markdown, Word and PowerPoint files, and chat or workflow artifacts published into a workspace. The code that creates them stores a server-managed `screening_exemption` field (`{"reason": "generated", "version": 1}`) on the new document version before the initial screening marker is chosen, so the version gets no marker. The exemption belongs to that one version: a later user upload of the same file is screened. Clients cannot set or change the field. The document API guards reject any request key that starts with `screening`, `update_document` refuses every `screening_*` field, and document responses never include it. A document that already carries a screening marker stays screened even if it also has the exemption. Scan jobs skip generated documents and record them as skipped with `screening_not_required`.
+
+New enrolled documents are held before ordinary processing is queued. Their source and extracted content are retained privately. The existing processors supply canonical pages, text, table cells, and transcript segments without embedding or publishing early chunks. Publication happens only after the complete verdict and any required human decision.
+
+The document record contains a small screening marker. Detailed evidence and canonical content live in private artifacts in the Enhanced Citations storage account; policy, scan, job, and audit metadata live in the screening repository. Normal application settings do not contain the detailed finding payload.
+
+Cosmos state is authoritative for every input read. Search projections, cached search results, native table reads, source previews, file bytes, opening a cited document and any later read of a document as an input must honor the current document decision. A stale index entry or cached snippet is not permission to read the document. Content already generated from a document is different: replies, stored citation excerpts, saved results and generated files keep their container's access and are not checked again.
+
+Release also records the exact approved Blob and content fingerprints. Restoring a document marker without its completed scan does not create a valid clearance. Since **0.261.230**, editing a released document's title, abstract, tags or other metadata keeps its clearance: the edit applies directly, is not screened, and does not start a new hold. A rename still cannot change a screened file's extension, and tag edits never rewrite the released Blob's metadata, because the release is bound to that Blob's ETag and content hash. Ordinary lists return status-only metadata when release proof is unavailable.
+
+## Policies and evaluators
+
+Administrators define a required baseline. Authorized workspace managers can add rules and instructions, but a workspace pass cannot cancel a baseline finding.
+
+An enabled policy may contain no checks. Enabling Content Screening creates an enabled empty baseline only when no policy exists, without selecting detectors or a scanner. New uploads with no effective checks follow ordinary processing without a screening marker, evidence, or a fabricated passing result. Enabled workspace additions may supply checks under an empty enabled baseline. A disabled baseline still disables additions, and persisted document holds retain their release requirements.
+
+| Evaluator | Intended use | Important limit |
+| --- | --- | --- |
+| Structured PII patterns | Identify common structured identifiers, email/phone patterns, and similar recognizable values. | Patterns are not a universal detector of names, addresses, or all regulated data. |
+| Literal values and phrases | Flag known project identifiers, restricted phrases, or organization-specific values. | Match configuration and normalization matter; inspect representative samples. |
+| Custom regex | Express organization-specific structured patterns. | Invalid expressions and execution-budget failures do not count as a clean scan. |
+| Configured model | Inspect context-dependent instructions, source-ranking manipulation, secrets, or custom sensitivity criteria. | Model findings are risk signals, not proof of malicious intent or guaranteed detection. |
+
+Model checks use configured model connections rather than an implicit classic GPT deployment. The evaluation scaffold treats source material as data and provides no tool or URL-execution capability. Responses must identify valid source units and satisfy the result schema.
+
+Policies can inspect pages, chunks, or bounded groups. Oversized units and the final tail still require coverage. A timeout, refusal, malformed result, unsupported configuration, or incomplete window does not silently become a pass.
+
+## Availability and review
+
+| State | What users can do |
+| --- | --- |
+| Pending/scanning | See safe processing status, but cannot use the content in ordinary knowledge operations. |
+| Error/incomplete | Correct the prerequisite or retry; the document stays held. |
+| Pending review | Authorized reviewers can inspect evidence and decide how to proceed. |
+| Remediating/publishing | Wait for the candidate to complete inspection and publication. |
+| Cleared | Use the document subject to its normal access and revision rules. |
+| Approved with flags | Use the document with a retained warning and recorded acceptance. |
+| Rejected/deleting/deleted | The document is not available as knowledge. |
+
+Personal owners and group/public workspace Owners, Admins, and DocumentManagers can review within their scope, including their own uploads. Permission to launch an all-workspace scan is not unrestricted permission to inspect private evidence.
+
+Reviewers can accept findings with a reason, remove a page or segment, remove an exact span, change or clear structured data, keep the document held, or delete it. Edits are checked against the content hash, source location, and review revision; stale decisions require a refresh.
+
+A clean-looking retry does not silently erase an unresolved finding. Review expiry, a disabled feature, or a changed rule is not an approval.
+
+### Input reads and the model fence
+
+The hold applies whenever chat, search or an orchestration reads a document as an input. This covers search retrieval, document selection, file bytes and previews, opening a cited document, workspace attachments in chat history, and orchestration or Analyze steps that read documents. A held document, a document the reader can no longer open, or a version change during a read still in progress is refused.
+
+Orchestration input selection uses `resolve_orchestration_source_manifest` and `read_orchestration_source_metadata` from `functions_orchestration_source_access.py`. They report typed failures inside `strict_source_authority()`. A transient authority outage raises the retryable `SourceAuthorityUnavailableError`, and a malformed or non-transient failure raises `SourceAuthorityUnverifiedError`. Neither is reported as a revoked or held document. Steps that read documents themselves call `verify_orchestration_input_sources` through `OrchestrationResultAccess.authorize_input_sources`.
+
+The additive `assert_document_available(..., strict_errors=True)` and `assert_evidence_available(..., strict_errors=True)` APIs are server-only choices, not request settings. A headless owner that catches source errors must wrap its entire source decision/model phase in `with strict_source_authority():`; nested checks retain the first failure until that operation ends. Flask requests additionally retain the existing request-local model fence. Independent operations do not share a global failure flag.
+
+A workflow run executes all its tasks inside one request context. Since **0.261.231**, each task attempt starts with an empty fence from `isolate_request_source_fence()` and restores the caller's state afterwards, so a held input blocks only its own task's model call, never a later task that reads generated output.
+
+Only `public_message`, `code`, `retryable` and `status_code` are suitable for public error responses. Do not serialize exception strings, causes or SDK diagnostics. Legacy screening/search callers outside this explicit path keep their existing fail-closed behavior.
+
+Importing the source-access contracts does not import telemetry, settings or configuration owners. Runtime failure reporting resolves `log_event` only after recording the model fence; import-order checks cover both normal and optimized Python without provider access.
+
+The model fence (`strict_source_authority`, `guard_model_callable`, `assert_current_request_sources_available`) blocks every later model call in a request or orchestration step after one of these input reads fails, even when the caller caught the error. Replaying stored replies and citations, and reading retained or saved results, never trips it.
+
+## Clean derivatives
+
+Remediation changes canonical knowledge and produces a clean text or structured-data derivative. It does not draw a box over text and call the original file redacted.
+
+Removed material must not remain in released chunk overlap, abstracts, metadata, native table inputs, previews, or citation copies. Retained originals remain reviewer-only after remediation. Ordinary tools must not fall back to those originals.
+
+For text documents, the clean download is a text representation with available source-page references. Spreadsheet derivatives preserve reviewed cell data without retaining macros, active formulas, or original formatting. Cached spreadsheet formula values can be absent if the source workbook was not recalculated and saved; screening does not execute formulas to fill them in.
+
+Page removal is offered only for a genuine page mapping. A synthetic chunk or a legacy indexed segment is identified as such rather than being presented as a physical page.
+
+## Existing workspaces and recovery
+
+Administrators can inspect selected documents/workspaces or run an all-workspace job. Workspace managers can inspect their own authorized documents.
+
+Queued documents retain their previous availability until their individual scan starts. Once started, a document stays held on findings, incomplete coverage, or errors. Jobs persist their selection, progress, leases, and work-item state so a worker restart does not imply approval.
+
+Where necessary, an existing source is extracted again to obtain canonical content. If a retained original is unavailable, an indexed-text snapshot must be labeled with its limited provenance. A tabular schema summary is not a substitute for inspecting the native table's cell data.
+
+Cancellation does not release a document already being inspected. Concurrent source changes, a new required policy, or a stale reviewer decision invalidate the old release attempt.
+
+Conversation history and exports keep AI replies, tool results and their stored citations, because they are conversation content and take the conversation's access. A workspace attachment shown in history is an input read. While its document is held, deleted or no longer accessible, the attachment is replaced with a placeholder. A remediated attachment is refreshed from the current clean representation.
+
+Automatic metadata generation uses admitted source content. Since **0.261.230**, the metadata it generates is applied to the released document directly, the same way as a user's metadata edit, without a new hold or scan.
+
+Publishing a generated artifact to a group or public workspace no longer reserves a screening scan for its destination. The destination is generated content, so it has no screening marker and its approval hands it straight to ordinary processing. A destination that was already held by screening before 0.261.230 cannot be approved; cancel that request and request publication again.
+
+## Configuration and usage
+
+`enable_content_screening` is disabled by default. Enhanced Citations and working storage are required for workspace upload screening and explicit document scans. In **0.261.127**, chat-only use can leave `enable_content_screening_workspace_uploads` off and does not require Blob storage. Review the selected model's data routing and workload before enabling model checks.
+
+Since **0.261.107**, both interfaces expose **Admin Settings > Security > Content Screening** independently of Content Safety. The V2 policy editor loads and saves the protected policy through its dedicated API, supports sample inspection and configured-model selection, and remains visible before Enhanced Citations is enabled. Main settings saves no longer report success when persistence fails.
+
+Since **0.261.108**, both editors offer explicit custom literal/regex/PII creation and the same server-defined starter packs. Re-adding a pack preserves existing rule IDs, edits, and disabled rules. Deterministic rules do not call a model.
+
+The optional **Enable AI checks** switch precedes the policy's single scanner and criteria. Turning it off disables those inputs without clearing the configuration. **Models workspaces may use** is a separate administrative allowlist, not a list of model checks to execute. The baseline scanner's implicit permission is displayed without copying it into the explicit allowlist.
+
+Configured-check summaries count enabled local and mandatory baseline rules/model checks. Disabling workspace additions does not hide required administrator AI checks; a disabled baseline makes additions inactive. Summaries describe the draft rather than the separate enrollment capability.
+
+Since **0.261.114**, enabling and saving the feature no longer requires selecting checks first. Enabled empty policies can be saved, and the summary explains that new uploads are not screened until applicable checks are added. The classic toggle persists immediately; V2 uses **Save changes**. Both editors refresh an automatically created baseline without discarding policy drafts or silently overwriting a concurrent administrator's edits. Detailed policy changes still use **Save screening policy**. Sample testing requires checks to evaluate and never describes an empty policy as a clean inspection.
+
+The **0.261.113** React V2 integration retains these controls alongside unified embedding/image connections and durable Analyze results. Sequential and isolated concurrent Analyze model calls recheck source availability while they read documents, final coverage retains screening provenance, and completed checkpoints cannot bypass a later hold for a read still in progress. Since **0.261.232**, a saved result, its responses and its exports take their access from their conversation or run and are not checked against their sources again.
+
+Use the [content-review guide]({{ '/guides/review-screened-documents/' | relative_url }}) for baseline selection, existing-workspace scans, and remediation. The capability is distinct from the existing Azure AI Content Safety chat-category feature.
+
+The shared API family is `/api/content-screening/...`; its policy, job, and review operations use authenticated Blueprints and object-level scope authorization. Detailed evidence is separate from ordinary document-list responses.
+
+## Coverage and limitations
+
+Functional coverage lives in `functional_tests\test_content_screening_*.py`, with route-policy coverage under `functional_tests\route_tests\` and classic/V2 browser workflows under `ui_tests\`.
+
+`ui_tests\test_content_screening_policy_parity.py` runs the same custom-rule, starter-pack, AI-toggle, permission, and inherited-summary workflows against both real interfaces, including narrow and desktop layouts. Logic/rendering regressions cover the V2 helpers, and the engine tests prove that saved scanner references and permission lists do not invoke disabled AI checks.
+
+Enabled-empty policy coverage also exercises first activation, save/reload without checks, later starter-pack insertion, clearing the last check, draft preservation, and concurrency. Backend coverage distinguishes unmarked new uploads with no applicable checks from previously enrolled or held documents; empty policies do not bypass review or publication proof.
+
+The core cases include a last-page finding, complete window coverage, regex deadlines, strict model responses, sticky review holds, authorization, revision conflicts, safe derivatives, and recovery from partial publication.
+
+`functional_tests\test_content_screening_upload_only_intake.py` covers upload-only intake: generated and published documents get no marker while user uploads, chat uploads and File Sync do; clients cannot set the exemption through any guarded document route; scan jobs skip generated documents; metadata edits keep a release; and model-generated metadata applies without a hold.
+
+`functional_tests\test_orchestration_source_access.py` exercises strict metadata and scope-service failures, the real mixed-source/search resolver, retained-result discovery and reopen, unchanged legacy defaults, caught-error model fences, concurrent scope isolation and network-blocked cold imports in normal and optimized Python. `test_content_screening_access.py` continues to cover the original default-mode sanitization and model-fallback fence.
+
+Since **0.261.232**, those strict failures apply to input reads only, and retained results reopen without reading their sources. `test_saved_results_container_access_chat_orchestration.py` proves that deleted, re-uploaded or held sources do not hide saved Analyze results, orchestration outputs, generated files, chat replies, stored citations or exports. It also proves that a held upload is still refused as an input, and that the fence still blocks a model call after such a read.
+
+The document adapter covers workspace knowledge, including chat files handed off to a workspace. **0.261.127** adds [chat text checkpoints]({{ '/explanation/features/CHAT_CONTENT_CHECKS/' | relative_url }}) that reuse its global baseline without changing document holds or workspace review. Since **0.261.131**, Gather / Reason / Render orchestration replies use the same output checkpoint before publication, including model-free delivery. Chat-only attachment screening, outbound web-search preflight, and agent-to-agent message inspection remain outside these checkpoints.
+
+Formatting-based hidden-text detection and layout-preserving PDF/Office redaction remain separate work. Neither regex nor a model guarantees that all sensitive information or prompt injection will be found. Previously downloaded content and requests already sent to a provider cannot be recalled. Results already generated from a document are not withdrawn when that document is later deleted, rejected or screened again. They remain visible to everyone who can open their conversation, run or workflow. Model-written content and metadata are not screened.

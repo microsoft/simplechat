@@ -1,9 +1,10 @@
 # test_tabular_model_token_budgets.py
 """
 Functional tests for scoped tabular model budgets and generation ceilings.
-Version: 0.261.046
+Version: 0.261.428
 Implemented in: 0.261.035
 Schema-v2 saved-route budget enforcement implemented in: 0.261.046
+Source checkpoint identity fixture updated in: 0.261.408
 
 The principal regressions use the shipped catalog and real shared resolver.
 Only endpoint retrieval and model I/O are replaced with in-memory boundaries;
@@ -36,7 +37,7 @@ from semantic_kernel.connectors.ai.open_ai import (
 )
 from semantic_kernel.contents.chat_history import ChatHistory as SKChatHistory
 
-from test_tabular_row_orchestration_scale import _load_performance_helpers
+from test_tabular_row_orchestration_scale import _load_contract_helpers, _load_performance_helpers
 
 # The shared standalone harness establishes the application import path first.
 from functions_model_budget_runtime import prepare_model_execution_settings
@@ -744,11 +745,15 @@ def test_large_context_threshold_and_small_input_boundary_are_preserved():
 
 def test_small_character_budget_survives_source_staging():
     helpers, _ = _load_budget_helpers()
+    contracts = _load_contract_helpers()
+    helpers['_prepare_tabular_source_rows'] = contracts['_prepare_tabular_source_rows']
     source_rows = [{'value': 'x' * 1700} for _ in range(3)]
     checkpoints = []
 
     def checkpoint(run, rows, source_scan_row_count):
-        checkpoints.append(list(rows))
+        checkpoints.append(contracts['_prepare_tabular_source_rows'](
+            rows, start_row=run.get('source_staged_rows', 0), token_namespace=run['id'],
+        ))
         run['source_staged_rows'] = run.get('source_staged_rows', 0) + len(rows)
         run['source_staged_batches'] = len(checkpoints)
         run['source_scan_row_count'] = source_scan_row_count
@@ -756,7 +761,7 @@ def test_small_character_budget_survives_source_staging():
 
     helpers.update({
         'TABULAR_EXTENSIONS': {'csv'},
-        '_iter_versioned_tabular_source_rows': lambda *args: enumerate(source_rows, start=1),
+        '_iter_versioned_tabular_source_rows': lambda *args, **kwargs: enumerate(source_rows, start=1),
         '_dump_generated_output_json': json.dumps,
         '_checkpoint_source_input_batch': checkpoint,
         '_input_blob_path': lambda *args: args[-1],
@@ -865,6 +870,7 @@ def test_schema_v2_budget_uses_saved_protocol_and_ignores_context_overrides():
         '_resolved_route': {
             'api_type': 'anthropic', 'protocol': 'anthropic',
             'request_model': 'gpt-compatible-messages',
+            'operation_url': 'https://gateway.example/v1/messages',
         },
     }
     helpers, reads = _load_budget_helpers(selected)

@@ -8,9 +8,15 @@ audience: user
 
 ## What this does
 
-**Web** grounds a single chat message in current public web results. When you turn it on and send a message, SimpleChat hands that message to an Azure AI Foundry agent your administrator configured. That agent uses the Grounding with Bing Search service to run the search and returns summarized results together with the source links. Those results are added to the context for your answer, so the model can respond with information published after its training cutoff, and you get citations you can click and verify.
+**Web** grounds a single chat message in current public results. Your administrator selects **Foundry Grounding with Bing Search** or, in V2 starting in **0.261.405**, **Microsoft Web IQ**. Foundry uses a configured agent; Web IQ retrieves passages directly. Both supply evidence and source links to the selected chat model, which writes your answer.
 
-This replaced the direct Bing search integration that Microsoft retired. The agent-based path is why an administrator has to configure a Foundry project and agent before the **Web** control appears at all.
+Foundry replaced the retired direct Bing integration. Web IQ is an alternative, not an automatic migration or fallback. Search activity and citations retain the provider used for that execution.
+
+### Web IQ News, Images, and Videos
+
+When your administrator enables them, explicit requests for news, images/photos, or videos can use the corresponding Web IQ discovery endpoints. Orchestration can select relevant types in its **Gather** plan; ordinary query-only plans remain web searches. Enabling a type does not cause every question to call it.
+
+**Text-only** Images and Videos return descriptions and titled source-page links without thumbnails or players. **With media** allows previews only for sources selected in the answer. A video hosting-page link is not automatically a playable media file. Provider captions and summaries describe discovery results; they do not mean SimpleChat viewed the image or watched/transcribed the video. Check the original source and its licensing before reusing media.
 
 {% include media.html src="workflow-web_search.png"
                       alt="Flow diagram: a prompt goes from the user through the web UI to the backend API, which decides whether web search is used. If it is, an Azure AI Foundry agent queries Bing Search and returns grounded context and citations, which are combined with workspace context in the Azure OpenAI chat completion that produces the answer."
@@ -37,17 +43,19 @@ Everything else behaves normally. Conversation history and any workspace results
 
 ### Deep Research sends more queries, but still no history
 
-[Deep Research]({{ '/guides/use-deep-research/' | relative_url }}) builds on this same search path. Instead of a single query, it plans several related queries and runs each one through the same Foundry agent.
+[Deep Research]({{ '/guides/use-deep-research/' | relative_url }}) builds on this same search path. It plans several current-message-derived queries through the selected provider. Relevant Web IQ result types share the existing discovery budget; they do not replace the bounded page reader.
 
 Those additional queries are all derived from your current message. Turning on Deep Research increases how many searches leave SimpleChat; it does not widen what they are derived from, and it does not start sending conversation history.
 
 ### Compliance boundary
 
-An administrator had to accept this notice before web search could be enabled:
+An administrator accepts the selected provider's notice before enabling search. Foundry's notice states:
 
 > When you use Grounding with Bing Search, your customer data is transferred outside of the Azure compliance boundary to the Grounding with Bing Search service. Grounding with Bing Search is not subject to the same data processing terms (including location of processing) and does not have the same compliance standards and certifications as the Azure AI Agent Service, as described in the Grounding with Bing Search TOU.
 
 If your organization has rules about what may be sent to consumer search services, those rules apply to the text you type into a web-search message.
+
+Web IQ has separate consent. Its Azure resource handles billing; retrieval still uses the public Microsoft-hosted API, not a private endpoint within your deployment. Government and custom-cloud deployments do not offer these search providers.
 
 ## Why you would use this
 
@@ -58,7 +66,7 @@ It is the wrong tool when the authoritative answer lives in your own approved fi
 ## Before you start
 
 - An administrator must enable `enable_web_search` **and** accept the data-handling consent. Both are required; the toggle alone does nothing until consent is recorded. See [Search and Extract]({{ '/admin/knowledge/' | relative_url }}).
-- An administrator must configure a Foundry project endpoint and an agent ID. If the agent is missing, SimpleChat tells you web search is unavailable rather than quietly answering from training data.
+- An administrator must finish the selected provider's connection and consent. Incomplete configuration produces a visible search failure, not a hidden provider fallback.
 - If your tenant enables the user notice, a banner appears above the composer while **Web** is active.
 
 ## Steps
@@ -93,8 +101,8 @@ If the search could not run, the assistant says so explicitly. It is instructed 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | **Web** is missing from the composer | Web search is disabled, or consent was never accepted | Ask an admin to review `enable_web_search` and the consent step. |
-| The assistant says web search is unavailable | No Foundry agent ID is configured | Ask an admin to finish the Foundry agent configuration and use the built-in test button. |
-| The assistant says the search failed | The Foundry agent call errored | Retry. If it persists, ask an admin to check the agent's credentials and role assignments. |
+| The assistant says web search is unavailable | The selected provider is incomplete, unconsented, or unavailable in this interface/cloud | Ask an admin to finish its connection and use the provider-aware test button. |
+| The assistant says the search failed | The selected provider rejected or could not complete the request | Retry. If it persists, ask an admin to check its connection, credentials, and service access. |
 | The answer ignores current information | **Web** was off when the message was sent | Turn **Web** on and resend. It applies per message. |
 | **Web** turns off in **Image** mode | Image generation disables source controls | Turn off **Image** first. |
 | The notice stopped appearing | You dismissed it earlier in this browser session | It returns in a new session. Web search is unaffected either way. |

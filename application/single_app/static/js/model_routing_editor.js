@@ -38,9 +38,14 @@ export async function previewModelRoute(endpoint, model, url, row) {
         pendingPreviews.set(output, requestId);
         output.textContent = "Resolving route...";
     }
-    const modelFields = ["id", "modelName", "deploymentName", "api_type", "api_path", "url_mode", "api_version", "anthropic_version", "responseLength"];
+    const modelFields = [
+        "id", "modelName", "deploymentName", "api_type", "inference_api",
+        "api_path", "api_path_order", "url_mode", "api_version",
+        "anthropic_version", "responseLength"
+    ];
     const payload = {
         id: endpoint.id || "", routing_schema_version: 2, preview_only: true,
+        routing_path_order: endpoint.routing_path_order || "model_first",
         provider: endpoint.provider, connection: endpoint.connection,
         ...(endpoint.profile ? { profile: endpoint.profile } : {}),
         ...projectModelBudgetMetadata(endpoint),
@@ -102,6 +107,9 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
     const editor = document.createElement("div");
     editor.className = "row g-2 mt-2";
     editor.dataset.modelRoutingEditor = "true";
+    editor.dataset.apiPathOrder = endpoint.routing_path_order
+        || model.api_path_order
+        || "model_first";
     const custom = endpoint.provider === "custom";
     const controls = {};
     const idPrefix = `routing-${++nextEditorId}`;
@@ -180,13 +188,38 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
             options.push({ ...registry[model.api_type], label: `${registry[model.api_type].label} (not supported by GenAI.mil)` });
         }
         addField("api_type", "API Type", model.api_type || "openai", options);
+        const selectedDescriptor = registry[model.api_type || "openai"];
+        const inferenceApis = selectedDescriptor?.supportedInferenceApis
+            || ["chat_completions"];
+        if (inferenceApis.length > 1) {
+            addField(
+                "inference_api",
+                "Chat API",
+                model.inference_api || selectedDescriptor?.defaultInferenceApi
+                    || "chat_completions",
+                inferenceApis.map((value) => ({
+                    value,
+                    label: value === "responses"
+                        ? "Responses"
+                        : value === "messages"
+                          ? "Messages"
+                          : "Chat Completions",
+                })),
+                "Choose the operation this model implements. Saved models keep this choice even if connection defaults change."
+            );
+        }
         addField("url_mode", "URL Handling", model.url_mode || "auto", [
-            { value: "auto", label: "Automatic (protocol default)" }, { value: "exact", label: "Exact API base" }
-        ], "Automatic composes the API base for the selected protocol. Exact preserves the configured API base, then adds the known operation. Neither requires an API Path; Exact is not an arbitrary full-request URL.");
+            { value: "auto", label: "Automatic (protocol default)" },
+            { value: "api_base", label: "Use API base as entered" },
+            { value: "full", label: "Use full request URL (advanced)" },
+            { value: "exact", label: "Legacy exact API base (preserve saved route)" },
+        ], "Automatic builds the supported API path. API base keeps the configured base and adds only the selected operation. Full request URL uses the exact operation path shown.");
     }
     addField(
         "api_path", "API Path", model.api_path, undefined,
-        "Optional additional gateway prefix, such as team/inference. It is inserted immediately after the host, before any existing endpoint path. Leave blank when no additional prefix is needed."
+        endpoint.routing_path_order === "connection_first"
+            ? "Optional model-specific path appended after the shared connection path, such as team/inference."
+            : "Legacy additional gateway prefix used before the saved connection path. Existing routes retain this position until reviewed."
     );
     if (custom) {
         addField("api_version", "API Version", model.api_version);
@@ -200,6 +233,8 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
         requestInput.parentElement.append(requestHelp);
         syncType = () => {
             const descriptor = registry[controls.api_type.value];
+            editor.dataset.defaultInferenceApi =
+                descriptor?.defaultInferenceApi || "chat_completions";
             requestLabel.textContent = descriptor?.usesModelName ? "Model Name" : "Deployment Name";
             requestHelp.textContent = descriptor?.usesModelName
                 ? "Required: the exact model identifier accepted by this API. Catalog selection never replaces an identifier you entered."
@@ -210,6 +245,23 @@ export function createModelRoutingEditor(model, { endpoint, registry, requestInp
                 controls[field].required = applicable;
                 if (applicable && !controls[field].value) {
                     controls[field].value = descriptor.defaultVersion || "";
+                }
+            }
+            const inferenceControl = controls.inference_api;
+            if (inferenceControl) {
+                const supported = descriptor?.supportedInferenceApis
+                    || ["chat_completions"];
+                inferenceControl.replaceChildren(...supported.map((value) => new Option(
+                    value === "responses"
+                        ? "Responses"
+                        : value === "messages"
+                          ? "Messages"
+                          : "Chat Completions",
+                    value
+                )));
+                if (!supported.includes(inferenceControl.value)) {
+                    inferenceControl.value =
+                        descriptor?.defaultInferenceApi || supported[0];
                 }
             }
             editor.dataset.identifierField = descriptor?.usesModelName ? "modelName" : "deploymentName";
@@ -249,6 +301,7 @@ export function collectModelRouting(row, model) {
     }
     const value = (field) => editor.querySelector(`[data-routing-field="${field}"]`)?.value.trim();
     model.api_path = value("api_path") || "";
+    model.api_path_order = editor.dataset.apiPathOrder || "model_first";
     const catalogModelId = value("catalogModelId");
     if (catalogModelId || Object.prototype.hasOwnProperty.call(model, "catalogModelId")) {
         model.catalogModelId = catalogModelId || null;
@@ -257,6 +310,9 @@ export function collectModelRouting(row, model) {
     if (apiType) {
         model.api_type = apiType;
         model.url_mode = value("url_mode");
+        model.inference_api = value("inference_api")
+            || editor.dataset.defaultInferenceApi
+            || "chat_completions";
         const requestModel = row.querySelector("input[data-request-model-for]")?.value.trim() || "";
         delete model.modelName;
         delete model.deploymentName;

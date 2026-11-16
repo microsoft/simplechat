@@ -4,8 +4,12 @@ Shared SQL Server ODBC driver utilities.
 """
 
 from typing import Any, Callable, Dict, Optional
+from uuid import UUID
 
 from functions_appinsights import log_event
+from semantic_kernel_plugins.sql_connection_diagnostics import (
+    SqlConnectionContext, SqlConnectionDiagnostic, SqlConnectionError,
+)
 
 
 DEFAULT_SQL_SERVER_ODBC_DRIVER = "ODBC Driver 18 for SQL Server"
@@ -20,6 +24,40 @@ _MISSING_DRIVER_ERROR_MARKERS = (
 )
 
 
+def resolve_sql_auth_type(
+    auth_type: Optional[str] = None,
+    auth: Optional[Dict[str, Any]] = None,
+    database_type: Optional[str] = None,
+) -> str:
+    """Resolve canonical managed identity auth before inactive SQL credential fields."""
+    auth = auth or {}
+    if auth.get("type") == "identity" and auth.get("identity") == "managed_identity":
+        return "managed_identity"
+    selected = auth_type or auth.get("type", "connection_string")
+    if selected == "identity" and database_type in {"azure_sql", "azuresql"}:
+        return "managed_identity"
+    return selected
+
+
+def _managed_identity_client_id(value: Optional[str]) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str) and len(value) <= 128:
+        selected = value.strip()
+        if not selected:
+            return ""
+        try:
+            client_id = UUID(selected)
+        except ValueError:
+            pass
+        else:
+            if client_id.int:
+                return str(client_id)
+    raise SqlConnectionError(SqlConnectionDiagnostic(
+        "sql_configuration_rejected", "sqlserver", "ValueError",
+    )) from None
+
+
 def build_sql_server_odbc_connection_string(
     server: str,
     database: str,
@@ -28,6 +66,7 @@ def build_sql_server_odbc_connection_string(
     username: Optional[str] = None,
     password: Optional[str] = None,
     auth_type: Optional[str] = None,
+    managed_identity_client_id: Optional[str] = None,
 ) -> str:
     """Build a SQL Server ODBC connection string with the current default driver."""
     selected_driver = (driver or DEFAULT_SQL_SERVER_ODBC_DRIVER).strip()
@@ -36,10 +75,13 @@ def build_sql_server_odbc_connection_string(
         conn_str += f",{port}"
     conn_str += f";DATABASE={database}"
 
-    if username and password:
-        conn_str += f";UID={username};PWD={password}"
-    elif auth_type == 'managed_identity':
+    if auth_type == 'managed_identity':
         conn_str += ";Authentication=ActiveDirectoryMsi"
+        client_id = _managed_identity_client_id(managed_identity_client_id)
+        if client_id:
+            conn_str += f";UID={client_id}"
+    elif username and password:
+        conn_str += f";UID={username};PWD={password}"
     elif auth_type == 'integrated' or not auth_type:
         conn_str += ";Trusted_Connection=yes"
 
@@ -70,9 +112,22 @@ def connect_with_sql_server_odbc_fallback(
     connection_string: str,
     connect_kwargs: Optional[Dict[str, Any]] = None,
     log_source: str = "SQLODBC",
+    diagnostic_context: Optional[SqlConnectionContext] = None,
+    driver_module: Any = None,
 ) -> Any:
     """Connect to SQL Server and retry legacy Driver 17 strings with Driver 18 if needed."""
     kwargs = connect_kwargs or {}
+    if diagnostic_context is not None:
+        installed = None
+        drivers = getattr(driver_module, "drivers", None)
+        if callable(drivers):
+            try:
+                installed = drivers()
+            except Exception:
+                diagnostic_context.properties["sql_driver_inventory"] = "unavailable"
+        diagnostic_context.observe_odbc(connection_string, installed)
+        diagnostic_context.stage = "connect"
+        diagnostic_context.attempts = 1
     try:
         return connect_callable(connection_string, **kwargs)
     except Exception as ex:
@@ -80,6 +135,14 @@ def connect_with_sql_server_odbc_fallback(
             raise
 
         fallback_connection_string = replace_legacy_sql_server_odbc_driver(connection_string)
+        if diagnostic_context is not None:
+            diagnostic_context.fallbacks = 1
+            diagnostic_context.attempts = 2
+            diagnostic_context.observe_odbc(fallback_connection_string)
+            log_event(
+                "[SQL_CONNECTION] Retrying an unavailable legacy SQL Server driver.",
+                extra=diagnostic_context.log_properties(),
+            )
         log_event(
             "[SQL_ODBC] Retrying SQL Server ODBC connection with Driver 18 after Driver 17 was unavailable.",
             extra={

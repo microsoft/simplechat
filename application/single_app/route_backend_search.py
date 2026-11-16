@@ -1,5 +1,7 @@
 # route_backend_search.py
 
+from content_screening.access import register_document_api_guards
+from content_screening.contracts import ScreeningError
 from config import *
 from functions_appinsights import log_event
 from functions_authentication import get_current_user_id, login_required, user_required
@@ -12,6 +14,8 @@ from swagger_wrapper import swagger_route, get_auth_security
 
 
 def register_route_backend_search(bp):
+    register_document_api_guards(bp)
+
     @bp.route('/api/search/documents', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -37,6 +41,8 @@ def register_route_backend_search(bp):
                 enable_file_sharing=data.get('enable_file_sharing', True),
             )
             return jsonify(payload), 200
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
         except Exception as e:
@@ -74,6 +80,8 @@ def register_route_backend_search(bp):
                 window_number=data.get('window_number'),
             )
             return jsonify(payload), 200
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except LookupError as e:
             return jsonify({'error': str(e)}), 404
         except Exception as e:
@@ -119,6 +127,8 @@ def register_route_backend_search(bp):
                 max_reduction_rounds=data.get('max_reduction_rounds'),
             )
             return jsonify(payload), 200
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         except LookupError as e:
             return jsonify({'error': str(e)}), 404
         except RuntimeError as e:

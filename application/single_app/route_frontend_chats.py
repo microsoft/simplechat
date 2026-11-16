@@ -1,12 +1,25 @@
 # route_frontend_chats.py
 
 import logging
+from content_screening.access import (
+    assert_current_request_sources_available,
+    assert_document_available,
+    build_available_document_response,
+)
+from content_screening.contracts import ScreeningError
 from config import *
+from collaboration_models import is_shared_conversation_backing
 from functions_authentication import *
 from functions_content import *
 from functions_settings import *
+from functions_chat_model_catalog import (
+    build_chat_model_catalog as _build_chat_model_catalog,
+    filter_chat_model_endpoints_by_governance as _filter_chat_model_endpoints_by_governance,
+    normalize_chat_model_value as _normalize_chat_model_value,
+)
 from functions_model_endpoint_types import resolve_model_endpoint_request_model
 from functions_agent_catalog import build_accessible_agent_catalog
+from functions_model_capabilities import resolve_model_reasoning_policy
 from functions_ai_notice import get_ai_notice_config, is_ai_notice_dismissed
 from functions_collaboration import (
     assert_user_can_participate_in_collaboration_conversation,
@@ -28,11 +41,13 @@ from functions_group import (
     check_group_status_allows_operation,
     find_group_by_id,
     get_group_model_endpoints,
+    get_optional_active_group,
     get_user_groups,
     get_user_role_in_group,
     require_active_group,
 )
 from functions_governance import ensure_governance_access
+from functions_image_formats import to_browser_image
 from functions_image_messages import build_image_message_documents
 from functions_prompts import list_all_prompts_for_scope
 from functions_public_workspaces import (
@@ -43,6 +58,7 @@ from functions_public_workspaces import (
 )
 from functions_simplechat_operations import upload_chat_image_bytes_for_user
 from functions_appinsights import log_event
+from functions_document_provenance import chat_upload_origin
 from functions_chat_bootstrap_cache import (
     build_chat_bootstrap_cache_key,
     get_cached_chat_bootstrap_payload,
@@ -395,6 +411,14 @@ def _resolve_chat_upload_context(conversation_id, user_id, current_user_info):
             item=normalized_conversation_id,
             partition_key=normalized_conversation_id,
         )
+        # Orchestrate's backing record shares its shared conversation's id; files shared in the
+        # conversation belong to its classic source conversation like any other.
+        if is_shared_conversation_backing(conversation_item):
+            return _resolve_collaboration_upload_context(
+                normalized_conversation_id,
+                user_id,
+                current_user_info,
+            )
     except CosmosResourceNotFoundError:
         try:
             return _resolve_collaboration_upload_context(
@@ -443,14 +467,14 @@ def _serialize_chat_prompt_option(prompt, *, scope_type, scope_id=None, scope_na
         'id': prompt.get('id'),
         'name': prompt.get('name', ''),
         'content': prompt.get('content', ''),
+        # Read defensively: prompts created before these fields existed do not carry them, and
+        # neither does one last saved by the classic interface, which sends name and content only.
+        'description': prompt.get('description', '') or '',
+        'is_favorite': bool(prompt.get('is_favorite', False)),
         'scope_type': scope_type,
         'scope_id': scope_id,
         'scope_name': scope_name,
     }
-
-
-def _normalize_chat_model_value(value):
-    return str(value or '').strip()
 
 
 def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
@@ -471,32 +495,14 @@ def _is_chat_agent_allowed_by_governance(user_id, agent, scope_type):
         return False
 
 
-def _filter_chat_model_endpoints_by_governance(user_id, endpoints, feature_key):
-    try:
-        ensure_governance_access(feature_key, user_id)
-    except PermissionError:
-        return []
-
-    allowed_endpoints = []
-    for endpoint in endpoints or []:
-        if not isinstance(endpoint, dict):
-            continue
-        endpoint_id = str(endpoint.get('id') or '').strip()
-        if endpoint_id:
-            try:
-                ensure_governance_access(
-                    feature_key,
-                    user_id,
-                    item_entity_type='global_endpoint',
-                    item_id=endpoint_id,
-                )
-            except PermissionError:
-                continue
-        allowed_endpoints.append(endpoint)
-    return allowed_endpoints
-
-
-def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_id=None, preferred_model_deployment=None):
+def _build_initial_chat_model_selection(
+    *,
+    chat_model_options,
+    preferred_model_id=None,
+    preferred_model_deployment=None,
+    default_model_selection=None,
+    use_admin_default=False,
+):
     scope_order = {
         'global': 0,
         'personal': 1,
@@ -532,6 +538,10 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
         return {
             'selection_key': selection_key,
             'model_id': model_id,
+            'model_name': _normalize_chat_model_value(option.get('model_name')),
+            'reasoning_capabilities': resolve_model_reasoning_policy(
+                option.get('model_name') or deployment_name
+            ),
             'display_name': display_name,
             'request_model': request_model,
             'deployment_name': deployment_name,
@@ -574,6 +584,16 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
     normalized_preferred_model_id = _normalize_chat_model_value(preferred_model_id)
     normalized_preferred_model_deployment = _normalize_chat_model_value(preferred_model_deployment)
 
+    if use_admin_default and isinstance(default_model_selection, dict):
+        default_endpoint_id = _normalize_chat_model_value(default_model_selection.get('endpoint_id'))
+        default_model_id = _normalize_chat_model_value(default_model_selection.get('model_id'))
+        if default_endpoint_id and default_model_id:
+            for option in sorted_options:
+                endpoint_id = _normalize_chat_model_value(option.get('endpoint_id'))
+                model_id = _normalize_chat_model_value(option.get('model_id'))
+                if endpoint_id == default_endpoint_id and model_id == default_model_id:
+                    return serialize_option(option)
+
     if normalized_preferred_model_id:
         for option in sorted_options:
             selection_key = _normalize_chat_model_value(option.get('selection_key'))
@@ -593,7 +613,14 @@ def _build_initial_chat_model_selection(*, chat_model_options, preferred_model_i
             ):
                 return serialize_option(option)
 
-    return serialize_option(sorted_options[0])
+    # Legacy/APIM clients historically use the configured first deployment, not
+    # alphabetical order.
+    default_option = (
+        valid_options[0]
+        if not any(option.get('scope_type') for option in valid_options)
+        else sorted_options[0]
+    )
+    return serialize_option(default_option)
 
 
 def _build_chat_model_catalog(*, user_id, settings, user_settings_dict, user_groups_raw):
@@ -759,6 +786,22 @@ def _ensure_public_chat_workspace_visible(user_id, request_args, user_settings_d
 
 
 def register_route_frontend_chats(bp):
+    @bp.after_request
+    def protect_legacy_document_preview(response):
+        if str(request.endpoint or "").rsplit(".", 1)[-1] not in {"view_pdf", "view_document"}:
+            return response
+        try:
+            assert_current_request_sources_available()
+        except ScreeningError as error:
+            response = jsonify({"error": error.public_message, "error_code": error.code})
+            response.status_code = error.status_code
+        except (PermissionError, LookupError):
+            response = jsonify({"error": "Document not found or access denied."})
+            response.status_code = 404
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers.pop("ETag", None)
+        return response
+
     @bp.route('/chats', methods=['GET'])
     @swagger_route(security=get_auth_security())
     @login_required
@@ -769,6 +812,7 @@ def register_route_frontend_chats(bp):
             return redirect(url_for('frontend_authentication.login'))
 
         settings = get_settings()
+        active_group_id = get_optional_active_group(user_id)
         user_settings = get_user_settings(user_id)
         user_settings_dict = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
         _ensure_public_chat_workspace_visible(user_id, request.args, user_settings_dict)
@@ -825,7 +869,6 @@ def register_route_frontend_chats(bp):
             public_settings.get("enable_desktop_notifications", False)
             and user_settings_dict.get("desktopNotificationsEnabled", True)
         )
-        active_group_id = user_settings_dict.get("activeGroupOid", "")
         active_group_name = ""
         if active_group_id:
             group_doc = find_group_by_id(active_group_id)
@@ -850,8 +893,8 @@ def register_route_frontend_chats(bp):
                     multi_endpoint_models.append({
                         "id": model.get("id"),
                         "display_name": model.get("displayName") or model.get("deploymentName") or model.get("modelName") or "",
-                        "request_model": resolve_model_endpoint_request_model(endpoint, model, use_model_routing=True),
-                        "deployment_name": model.get("deploymentName") or "",
+                        "request_model": resolve_model_endpoint_request_model(endpoint, model),
+                        "deployment_name": resolve_model_endpoint_request_model(endpoint, model),
                         "endpoint_id": endpoint.get("id"),
                         "provider": endpoint.get("provider"),
                         "icon": model.get("icon") if isinstance(model.get("icon"), dict) else {}
@@ -967,6 +1010,11 @@ def register_route_frontend_chats(bp):
             chat_model_options=chat_model_options,
             preferred_model_id=user_settings_dict.get('preferredModelId'),
             preferred_model_deployment=user_settings_dict.get('preferredModelDeployment'),
+            default_model_selection=settings.get('default_model_selection', {}),
+            use_admin_default=bool(
+                enable_multi_model_endpoints
+                and settings.get('enable_default_model_for_new_conversations', False)
+            ),
         )
 
         return render_template(
@@ -1128,6 +1176,12 @@ def register_route_frontend_chats(bp):
 
         workspace_document_info = None
         workspace_upload_scope = 'group' if group_upload_target else 'personal'
+        # Built only from the authorized conversation and the server-generated message id.
+        chat_document_origin = chat_upload_origin(
+            conversation_id=conversation_id,
+            message_id=file_message_id,
+            collaboration_conversation_id=(collaboration_conversation or {}).get('id'),
+        )
         workspace_upload_enabled = _is_setting_enabled(settings.get('enable_group_workspaces', False)) if group_upload_target else _is_setting_enabled(settings.get('enable_user_workspace', False))
         workspace_upload_supported = file_ext_nodot in CHAT_WORKSPACE_UPLOAD_EXTENSIONS and allowed_file(original_filename)
 
@@ -1192,6 +1246,7 @@ def register_route_frontend_chats(bp):
                         copy_source_file=True,
                         ensure_unique_file_name=True,
                         unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
+                        origin=chat_document_origin,
                     )
                     workspace_document_info['scope'] = 'group'
                     workspace_document_info['group_name'] = group_upload_target.get('name')
@@ -1227,6 +1282,7 @@ def register_route_frontend_chats(bp):
                         copy_source_file=True,
                         ensure_unique_file_name=True,
                         unique_file_name_suffix=file_message_id.rsplit('_file_', 1)[-1],
+                        origin=chat_document_origin,
                     )
                     workspace_document_info['scope'] = 'personal'
                     invalidate_personal_search_cache(user_id)
@@ -1412,6 +1468,7 @@ def register_route_frontend_chats(bp):
                 'group_upload_target': group_upload_target,
                 'title': collaboration_conversation.get('title') if is_collaboration_upload else conversation_item.get('title', 'New Conversation'),
                 'workspace_document': workspace_document_info,
+                'file_message_id': file_message_id,
                 'workspace_document_id': workspace_document_info.get('document_id')
             }), 200
 
@@ -1421,6 +1478,7 @@ def register_route_frontend_chats(bp):
         image_base64_url = None  # For storing base64-encoded images
         image_bytes = None
         image_mime_type = None
+        image_display_filename = None
 
         try:
             # Check if this is an image file
@@ -1435,7 +1493,8 @@ def register_route_frontend_chats(bp):
                 extracted_content_raw, _extraction_engine_used, _extraction_engine_fallback = extract_content_with_extraction_engine(
                     temp_file_path,
                     extraction_mode=extraction_mode,
-                    settings=settings
+                    settings=settings,
+                    is_image=is_image_file,
                 )
                 
                 # Convert pages_data list to string
@@ -1446,6 +1505,16 @@ def register_route_frontend_chats(bp):
                     ])
                 else:
                     extracted_content = str(extracted_content_raw)
+
+                if file_ext_nodot in {'docx', 'dotx'}:
+                    word_comments, _total_words = extract_docx_comments(temp_file_path)
+                    comments_section = format_word_comments_section(word_comments)
+                    if comments_section:
+                        extracted_content = (
+                            f"{extracted_content.rstrip()}\n\n{comments_section}"
+                            if extracted_content and extracted_content.strip()
+                            else comments_section
+                        )
                 
                 # For images, either store blob-backed bytes or convert to base64 for legacy inline display.
                 if is_image_file:
@@ -1453,6 +1522,26 @@ def register_route_frontend_chats(bp):
                         image_mime_type = mimetypes.guess_type(filename)[0] or 'image/png'
                         with open(temp_file_path, 'rb') as img_file:
                             image_bytes = img_file.read()
+                        image_display_filename = filename
+
+                        if file_ext_nodot in {'tif', 'tiff'}:
+                            # Browsers can't render TIFF; store a PNG display copy. OCR and
+                            # vision analysis still read the original file from temp_file_path.
+                            browser_image = to_browser_image(image_bytes, 'display')
+                            image_bytes = browser_image['bytes']
+                            image_mime_type = browser_image['mime_type']
+                            base_name = os.path.splitext(filename)[0] or 'image'
+                            image_display_filename = f"{base_name}.png"
+                            log_event(
+                                "[CHAT_UPLOAD] Converted TIFF upload to browser display image",
+                                {
+                                    "conversation_id": conversation_id,
+                                    "filename": filename,
+                                    "display_content_type": image_mime_type,
+                                    "display_image_size": len(image_bytes),
+                                },
+                                debug_only=True,
+                            )
 
                         if settings.get('enable_enhanced_citations', False):
                             log_event(
@@ -1468,9 +1557,26 @@ def register_route_frontend_chats(bp):
                         else:
                             base64_image = base64.b64encode(image_bytes).decode('utf-8')
                             image_base64_url = f"data:{image_mime_type};base64,{base64_image}"
-                            print(f"Converted image to base64: {filename}, size: {len(image_base64_url)} bytes")
+                            log_event(
+                                "[CHAT_UPLOAD] Encoded image upload for inline display",
+                                {
+                                    "conversation_id": conversation_id,
+                                    "filename": filename,
+                                    "display_content_type": image_mime_type,
+                                    "content_length": len(image_base64_url),
+                                },
+                                debug_only=True,
+                            )
                     except Exception as b64_error:
-                        print(f"Warning: Failed to convert image to base64: {b64_error}")
+                        log_event(
+                            "[CHAT_UPLOAD] Failed to prepare image upload for inline display",
+                            {
+                                "conversation_id": conversation_id,
+                                "filename": filename,
+                                "exception_type": type(b64_error).__name__,
+                            },
+                            level=logging.WARNING,
+                        )
                 
                 # Perform vision analysis for images if enabled
                 if is_image_file and settings.get('enable_multimodal_vision', False):
@@ -1588,7 +1694,7 @@ def register_route_frontend_chats(bp):
                 image_message = {
                     'id': file_message_id,
                     'conversation_id': conversation_id,
-                    'filename': filename,
+                    'filename': image_display_filename or filename,
                     'prompt': f"User uploaded: {filename}",
                     'created_at': datetime.utcnow().isoformat(),
                     'timestamp': datetime.utcnow().isoformat(),
@@ -1616,7 +1722,7 @@ def register_route_frontend_chats(bp):
                         user_id=user_id,
                         conversation_id=conversation_id,
                         message_id=file_message_id,
-                        file_name=filename,
+                        file_name=image_display_filename or filename,
                         image_bytes=image_bytes,
                         content_type=image_mime_type or 'image/png',
                         image_source='upload',
@@ -1756,6 +1862,7 @@ def register_route_frontend_chats(bp):
             'conversation_id': conversation_id,
             'title': conversation_item.get('title', 'New Conversation'),
             'workspace_document': workspace_document_info,
+            'file_message_id': file_message_id,
             'workspace_document_id': workspace_document_info.get('document_id') if workspace_document_info else None
         }), 200
     
@@ -1789,6 +1896,10 @@ def register_route_frontend_chats(bp):
             return doc_response, status_code
 
         raw_doc = doc_response.get_json()
+        try:
+            raw_doc = assert_document_available(doc_id, user_id=user_id, purpose="preview")
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         
         # Determine workspace type and appropriate container
         settings = get_settings()
@@ -1807,6 +1918,9 @@ def register_route_frontend_chats(bp):
                 return jsonify({"error": "User workspaces are not enabled"}), 403
             container_name = storage_account_user_documents_container_name
             blob_name = f"{raw_doc['user_id']}/{raw_doc['file_name']}"
+
+        if "content_screening" in raw_doc:
+            return build_available_document_response(raw_doc, user_id=user_id, purpose="preview")
 
         # 3) Generate the SAS URL (short-lived, read-only)
         blob_service_client = CLIENTS.get("storage_account_office_docs_client")
@@ -1921,7 +2035,6 @@ def register_route_frontend_chats(bp):
     @user_required
     def view_document():
         settings = get_settings()
-        download_location = tempfile.gettempdir()
 
 
         doc_id = request.args.get("doc_id")
@@ -1941,6 +2054,10 @@ def register_route_frontend_chats(bp):
             return doc_response, status_code
 
         raw_doc = doc_response.get_json() # Assuming get_user_document returns jsonify response
+        try:
+            raw_doc = assert_document_available(doc_id, user_id=user_id, purpose="preview")
+        except ScreeningError as error:
+            return jsonify({"error": error.public_message, "error_code": error.code}), error.status_code
         file_name = raw_doc.get('file_name')
         owner_user_id = raw_doc.get('user_id') # Get owner user_id from doc metadata
 
@@ -1965,6 +2082,10 @@ def register_route_frontend_chats(bp):
             blob_name = f"{owner_user_id}/{file_name}"
         file_ext = os.path.splitext(file_name)[-1].lower()
 
+        if "content_screening" in raw_doc:
+            return build_available_document_response(raw_doc, user_id=user_id, purpose="preview")
+
+        download_location = tempfile.gettempdir()
         # Ensure download location exists (good practice, especially if using mount)
         try:
             os.makedirs(download_location, exist_ok=True)

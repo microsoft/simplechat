@@ -8,6 +8,13 @@ from jsonschema import Draft7Validator
 from jsonschema.exceptions import SchemaError
 
 from functions_action_manifest import McpConfigurationError, McpStdioRemovedError
+from functions_mcp_fingerprint_metadata import (
+    MCP_PROMPTS_FIELD,
+    MCP_TOOL_DRIFT_FIELD,
+    MCP_TOOL_FINGERPRINTS_FIELD,
+    normalize_mcp_prompt_metadata,
+    normalize_mcp_tool_fingerprints,
+)
 
 
 MCP_PLUGIN_TYPE = "mcp"
@@ -601,6 +608,16 @@ def normalize_mcp_additional_fields(additional_fields):
         normalized_fields.get("allowed_tool_names")
     )
     normalized_fields["mcp_tools"] = normalize_mcp_tool_metadata(normalized_fields.get("mcp_tools"))
+    normalized_fields[MCP_PROMPTS_FIELD] = normalize_mcp_prompt_metadata(
+        normalized_fields.get(MCP_PROMPTS_FIELD)
+    )
+    fingerprints = normalize_mcp_tool_fingerprints(normalized_fields.get(MCP_TOOL_FINGERPRINTS_FIELD))
+    if fingerprints:
+        normalized_fields[MCP_TOOL_FINGERPRINTS_FIELD] = fingerprints
+    elif MCP_TOOL_FINGERPRINTS_FIELD in normalized_fields:
+        normalized_fields.pop(MCP_TOOL_FINGERPRINTS_FIELD, None)
+    if normalized_fields.get(MCP_TOOL_DRIFT_FIELD) is None:
+        normalized_fields.pop(MCP_TOOL_DRIFT_FIELD, None)
 
     for retired_field in ("command", "args", "env"):
         normalized_fields.pop(retired_field, None)

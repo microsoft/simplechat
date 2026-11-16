@@ -180,11 +180,13 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 
     *   If using the Video Extraction feature, create an **Azure Video Indexer** resource in the Azure Portal.
 
+    *   Video Indexer is not offered in every region. Create it in a region that offers it, which can differ from your App Service region, and connect it to a Standard general-purpose v2 storage account in that same region.
+
     *   You'll need to associate it with an Azure Media Services account (can be created during VI setup) and a Storage Account (used for temporary processing, can be new or existing).
 
     *   **Enable System-assigned Managed Identity** on your App Service if not already enabled (Identity > System assigned > Status: On).
 
-    *   **Grant the App Service's Managed Identity the `Contributor` role** on the Video Indexer resource:
+    *   **Grant the App Service's Managed Identity the `Contributor` role** on the Video Indexer resource. In Azure Commercial, the narrower `Video Indexer Account Contributor` role is also sufficient:
 
         - Navigate to your Video Indexer resource > Access control (IAM)
 
@@ -194,7 +196,7 @@ Deploy the necessary Azure services. For a quick estimate of monthly costs based
 
         - Select your App Service's managed identity
 
-    *   Note the **Account ID**, **Account Name**, **Resource Group**, **Subscription ID**, and **Location** (e.g., eastus). These will be configured in Admin Settings.
+    *   Note the **Account ID**, **Account Name**, **Resource Group**, **Subscription ID**, and **Location** (the Video Indexer account's own region, e.g., centralus). These will be configured in Admin Settings.
 
     *   See [Azure Video Indexer documentation](https://learn.microsoft.com/azure/azure-video-indexer/connect-to-azure) for detailed setup instructions.
 

@@ -2,6 +2,7 @@
 import copy
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 from azure.identity import AzureCliCredential
+from azure.keyvault.secrets import SecretClient
 import json
 import os
 import shutil
@@ -15,6 +16,12 @@ from deployment_configuration import (
     persist_settings,
 )
 from deployment_cosmos import create_deployment_cosmos_client
+from optional_services import (
+    OPTIONAL_SETTINGS_FIELDS,
+    configure_optional_settings,
+    cu_request_for_credential,
+    stage_web_iq_secret,
+)
 
 load_deployment_environment()
 credential = AzureCliCredential(tenant_id=os.environ["AZURE_TENANT_ID"])
@@ -412,7 +419,8 @@ if not var_redisCacheKind and var_redisCacheHostName:
         else "classic"
     )
 var_videoIndexerName = os.getenv("var_videoIndexerName")
-var_videoIndexerLocation = os.getenv("var_deploymentLocation")
+# Older deployments did not report a separate Video Indexer region; it matched the deployment region.
+var_videoIndexerLocation = os.getenv("var_videoIndexerLocation") or os.getenv("var_deploymentLocation")
 var_videoIndexerAccountId = os.getenv("var_videoIndexerAccountId")
 var_speechServiceEndpoint = os.getenv("var_speechServiceEndpoint")
 var_speechServiceLocation = os.getenv("var_deploymentLocation")
@@ -544,16 +552,17 @@ if var_authenticationType == "key":
     item["azure_document_intelligence_key"] = core_service_keys["azure_document_intelligence_key"]
 
 # Search and Extract > Multimedia Support
-# Video Indexer Configuration
+# Video Indexer Configuration. Write these only when this deployment created the account, so a
+# manually configured Video Indexer account survives later provisioning runs.
 if var_videoIndexerName and var_videoIndexerName.strip():
     item["enable_video_file_support"] = True
-item["video_indexer_resource_group"] = var_rgName
-item["video_indexer_subscription_id"] = var_subscriptionId
-item["video_indexer_account_name"] = var_videoIndexerName
-item["video_indexer_endpoint"] = os.getenv("var_videoIndexerEndpoint", item.get("video_indexer_endpoint", ""))
-item["video_indexer_location"] = var_videoIndexerLocation
-item["video_indexer_account_id"] = var_videoIndexerAccountId
-item["video_indexer_arm_api_version"] = os.getenv("var_videoIndexerArmApiVersion", item.get("video_indexer_arm_api_version", "2024-01-01"))
+    item["video_indexer_resource_group"] = var_rgName
+    item["video_indexer_subscription_id"] = var_subscriptionId
+    item["video_indexer_account_name"] = var_videoIndexerName
+    item["video_indexer_endpoint"] = os.getenv("var_videoIndexerEndpoint", item.get("video_indexer_endpoint", ""))
+    item["video_indexer_location"] = var_videoIndexerLocation
+    item["video_indexer_account_id"] = var_videoIndexerAccountId
+    item["video_indexer_arm_api_version"] = os.getenv("var_videoIndexerArmApiVersion", item.get("video_indexer_arm_api_version", "2024-01-01"))
 
 # Speech Service Configuration
 if var_speechServiceEndpoint and var_speechServiceEndpoint.strip():
@@ -563,8 +572,20 @@ item["speech_service_location"] = var_speechServiceLocation
 if var_authenticationType == "key" and "speech_service_key" in core_service_keys:
     item["speech_service_key"] = core_service_keys["speech_service_key"]
 
+def stage_optional_secret(name, existing_reference, field):
+    with SecretClient(vault_url=os.environ["var_keyVaultUri"], credential=credential) as optional_secrets:
+        return stage_web_iq_secret(optional_secrets, name, existing_reference, field)
+
+
+configure_optional_settings(
+    item, dict(os.environ), credential,
+    stage_secret=stage_optional_secret,
+    cu_request=cu_request_for_credential(credential),
+)
 created_indexes = configure_search(item, credential)
-response = persist_settings(container, original_item, item, credential)
+response = persist_settings(container, original_item, item, credential, guarded_fields=OPTIONAL_SETTINGS_FIELDS)
+if item.get("web_search_provider") == "web_iq" and not item.get("enable_web_search"):
+    print("Web IQ is pending: bind the billing resource in https://webiq.microsoft.ai/profiles, verify Allowed Services, then test credentials and accept Web IQ consent in V2 Admin Settings.")
 print(f"Settings saved and verified. Search indexes created: {', '.join(created_indexes) or 'none (already exist)'}.")
 print("Restart the web service to activate any changed Redis session configuration.")
 client.close()

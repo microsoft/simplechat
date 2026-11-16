@@ -25,15 +25,36 @@ Use SQL Schema when an agent must understand table names, column names, types, a
 - A decision about **Include System Tables**; the recommended default is **No**.
 - Agents/actions enabled with [`enable_semantic_kernel`]({{ '/admin/agents-actions/' | relative_url }}).
 
+
 ## Configure the action
 
-1. Choose the SQL action flow and select **Plugin Type** > **Schema Plugin**.
+`sql_schema` is hidden from new-action creation because the SQL Database action now includes schema discovery for agents that need table context. Existing SQL Schema actions continue to load and can be edited for compatibility, but new actions should use [SQL Database]({{ '/reference/actions/sql-query/' | relative_url }}).
+
+For existing actions:
+
+1. Open the existing SQL Schema action.
 2. Choose **Database Type** and **Connection Method**.
 3. Fill **Connection String** or individual **Server**, **Database**, **Port**, and **ODBC Driver** fields.
 4. Choose **Authentication Type** and provide credentials or a **Reusable Identity**.
-5. Under **Schema Plugin Settings**, keep **Include System Tables** set to **No (Recommended)** unless system metadata is required.
+5. Keep **Include System Tables** set to **No (Recommended)** unless system metadata is required.
 6. Use **Table Filter** to narrow discovery, for example `user_*` or `*_log`.
-7. Use **Test Connection** before saving.
+7. Use the connection check in **Authentication** before saving.
+
+The V2 editor no longer offers ad hoc custom fields; preserved legacy values remain available in **Advanced → JSON**.
+
+### Managed identity compatibility
+
+Since **0.261.372**, SQL Schema uses the same managed identity normalization and
+client-ID selector as SQL Database. A blank selector uses the system-assigned
+identity; an explicit user-assigned client ID selects that identity on Azure
+App Service. This applies both to existing schema actions and to the automatic
+schema companion of a SQL Database action.
+
+Inactive SQL password fields cannot override managed identity. Complete
+connection strings keep their own authentication settings. See
+[SQL Database managed identity selection]({{ '/reference/actions/sql-query/' | relative_url }}#managed-identity-selection)
+for reusable identity and inline configuration, identifier requirements, and
+the separate database-access prerequisites.
 
 ## Example prompts
 
@@ -45,13 +66,23 @@ Use SQL Schema when an agent must understand table names, column names, types, a
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
+| Connection fails before metadata discovery | The app cannot establish the configured database connection. | Use the shared [SQL connection failure categories]({{ '/reference/actions/sql-query/' | relative_url }}#connection-failure-categories) and have an administrator inspect the correlated server diagnostic. |
 | Schema output includes too much noise | System tables or broad schemas are included. | Turn off **Include System Tables** and add a **Table Filter**. |
 | The agent cannot see relationships | Metadata permissions are missing or relationships are not defined as foreign keys. | Grant metadata visibility or document the relationship in agent instructions. |
-| The action type is not visible as a separate card | `sql_schema` is hidden from the create-action UI. | Use the combined SQL configuration panel and choose **Schema Plugin**. |
+| The action type is not visible as a separate card | `sql_schema` is hidden from the create-action UI. | Use SQL Database for new actions; existing records still open for compatibility. |
+
+Since **0.261.351**, SQL Schema uses the same credential-safe connection diagnostics as SQL Database. A connection failure in `get_database_schema` includes an application-owned `error_code`; the table-list, table-detail, and relationship methods raise the same safe connection exception. This does not change metadata permissions or the handling of errors after a connection succeeds.
+
+Since **0.261.356**, connection-check failures also show a diagnostic reference
+in V2. An administrator can correlate it with the server's effective connection
+context and failure stage using the
+[SQL logging runbook]({{ '/reference/logging-tags/' | relative_url }}#connection-context-and-diagnostic-references).
+SQL Schema runtime connection creation records the same safe context server-side.
+Login rejection alone does not establish a missing principal or grant, and an
+operator's successful login does not verify the application's managed identity.
 
 ## Related
 
 - [SQL Query](../sql-query/)
 - [Actions reference index]({{ '/reference/actions/' | relative_url }})
 - [Agents administration]({{ '/admin/agents-actions/' | relative_url }})
-

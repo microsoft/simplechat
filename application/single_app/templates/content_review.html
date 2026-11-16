@@ -1,0 +1,203 @@
+<!-- content_review.html -->
+{% extends "base.html" %}
+
+{% block title %}Content Review - {{ app_settings.app_title }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-4 content-screening" id="content-screening-review-app">
+    <header class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+        <div>
+            <h1 class="h3">Content review</h1>
+            <p class="text-body-secondary mb-0">Review held knowledge before it becomes available to chat, search, or tools.</p>
+        </div>
+        <button type="button" class="btn btn-outline-secondary" id="screening-refresh">Refresh review</button>
+    </header>
+    <div id="screening-review-message" class="alert d-none" role="alert" tabindex="-1"></div>
+    <p class="small text-body-secondary">
+        Only a personal owner or an authorized workspace manager can view protected evidence. Permission to scan all
+        workspaces does not grant access to private findings. Disabling new scans does not release existing holds.
+    </p>
+    <form id="screening-scope-form" class="row g-3 align-items-end mb-4">
+        <div class="col-sm-4 col-lg-3">
+            <label for="screening-scope-type" class="form-label">Workspace type</label>
+            <select id="screening-scope-type" class="form-select">
+                <option value="personal">Personal</option>
+                <option value="group">Group</option>
+                <option value="public">Public</option>
+            </select>
+        </div>
+        <div class="col-sm-5 col-lg-5 d-none" id="screening-scope-id-field">
+            <label for="screening-scope-id" class="form-label">Workspace ID</label>
+            <input id="screening-scope-id" class="form-control" type="text" autocomplete="off" />
+            <div class="form-text">Open Content review from a workspace to fill this automatically.</div>
+        </div>
+        <div class="col-sm-3">
+            <button type="submit" class="btn btn-outline-primary">Open workspace</button>
+        </div>
+    </form>
+    <ul class="nav nav-tabs mb-3" role="tablist">
+        <li class="nav-item" role="presentation">
+            <button type="button" class="nav-link active" id="screening-reviews-tab" data-bs-toggle="tab"
+                data-bs-target="#screening-reviews-pane" role="tab" aria-controls="screening-reviews-pane"
+                aria-selected="true">Reviews</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button type="button" class="nav-link" id="screening-policy-tab" data-bs-toggle="tab"
+                data-bs-target="#screening-policy-pane" role="tab" aria-controls="screening-policy-pane"
+                aria-selected="false">Workspace policy</button>
+        </li>
+        <li class="nav-item" role="presentation">
+            <button type="button" class="nav-link" id="screening-jobs-tab" data-bs-toggle="tab"
+                data-bs-target="#screening-jobs-pane" role="tab" aria-controls="screening-jobs-pane"
+                aria-selected="false">Scan jobs</button>
+        </li>
+    </ul>
+    <div class="tab-content">
+        <section class="tab-pane fade show active" id="screening-reviews-pane" role="tabpanel" aria-labelledby="screening-reviews-tab">
+            <div class="d-flex flex-wrap align-items-end gap-3 mb-3">
+                <div>
+                    <label for="screening-review-filter" class="form-label">Review status</label>
+                    <select id="screening-review-filter" class="form-select">
+                        <option value="pending">Pending reviews</option>
+                        <option value="all">All reviews</option>
+                    </select>
+                </div>
+                <button type="button" class="btn btn-outline-secondary" id="screening-load-reviews">Load reviews</button>
+            </div>
+            <div id="screening-review-list" class="list-group mb-3" aria-live="polite"></div>
+            <button type="button" id="screening-more-reviews" class="btn btn-outline-secondary mb-3 d-none">More reviews</button>
+            <section id="screening-review-detail" class="d-none" aria-labelledby="screening-document-title">
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <h2 class="h4 text-break" id="screening-document-title"></h2>
+                        <div class="d-flex flex-wrap gap-2 mb-2" id="screening-document-state"></div>
+                        <p id="screening-review-coverage" class="mb-2" aria-live="polite"></p>
+                        <p id="screening-review-origin" class="small text-body-secondary mb-2"></p>
+                        <p id="screening-candidate-pending" class="alert alert-info d-none" role="status">
+                            The candidate is queued or scanning and remains held. This review refreshes automatically until the scan completes.
+                        </p>
+                        <p id="screening-evidence-unavailable" class="alert alert-warning d-none" role="status">
+                            Canonical evidence is unavailable. Approval and editing require verified evidence; authorized Reject/Delete actions remain available.
+                        </p>
+                        <p id="screening-review-warning" class="alert alert-warning d-none"></p>
+                        <p id="screening-recorded-decision" class="small text-break d-none"></p>
+                        <div id="screening-approval-blocked" class="alert alert-warning mb-0" role="status">
+                            Approval requires a completed scan of this exact revision. Missing, pending, or failed checks keep it held.
+                        </div>
+                    </div>
+                </div>
+                <div class="row g-3 mb-3">
+                    <nav class="col-lg-4" aria-label="Content findings">
+                        <h3 class="h5">Findings</h3>
+                        <div id="screening-findings" class="list-group screening-findings"></div>
+                        <button type="button" id="screening-more-findings" class="btn btn-sm btn-outline-secondary mt-2 d-none">Load more findings</button>
+                    </nav>
+                    <section class="col-lg-8" aria-labelledby="screening-source-heading">
+                        <h3 class="h5" id="screening-source-heading">Canonical source text</h3>
+                        <label for="screening-unit-select" class="form-label">Source unit</label>
+                        <select id="screening-unit-select" class="form-select mb-2"></select>
+                        <button type="button" id="screening-more-units" class="btn btn-sm btn-outline-secondary mb-2 d-none">Load more source units</button>
+                        <p id="screening-unit-location" class="small text-body-secondary"></p>
+                        <pre id="screening-unit-text" class="screening-source border rounded p-3" tabindex="0"
+                            aria-label="Canonical source text; select text to remove a span"></pre>
+                        <p class="small text-body-secondary">
+                            Evidence is displayed as text, not executed or rendered as HTML. Offsets count Unicode code points,
+                            not JavaScript UTF-16 characters.
+                        </p>
+                    </section>
+                </div>
+                <fieldset id="screening-edit-controls" class="card mb-3" disabled>
+                    <legend class="h5 px-3 pt-3">Prepare a clean candidate</legend>
+                    <div class="card-body pt-0">
+                        <p class="small text-body-secondary">
+                            Edits create a separate knowledge revision. They do not redact the original PDF or Office file in place.
+                            Originals remain reviewer-only; clean downloads are text or structured-data derivatives.
+                        </p>
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label for="screening-edit-kind" class="form-label">Edit action</label>
+                                <select id="screening-edit-kind" class="form-select"></select>
+                            </div>
+                            <div class="col-md-8" id="screening-span-fields">
+                                <div class="d-flex flex-wrap align-items-end gap-2">
+                                    <div>
+                                        <label for="screening-span-start" class="form-label">Start offset (inclusive)</label>
+                                        <input id="screening-span-start" class="form-control" type="number" min="0" step="1" value="0" />
+                                    </div>
+                                    <div>
+                                        <label for="screening-span-end" class="form-label">End offset (exclusive)</label>
+                                        <input id="screening-span-end" class="form-control" type="number" min="0" step="1" value="0" />
+                                    </div>
+                                    <button type="button" class="btn btn-outline-secondary" id="screening-use-selection">Use selected text</button>
+                                </div>
+                            </div>
+                            <div class="col-12 d-none" id="screening-cell-fields">
+                                <label for="screening-cell-value" class="form-label">Replacement cell value</label>
+                                <textarea id="screening-cell-value" class="form-control" rows="3" autocomplete="off"></textarea>
+                                <div class="form-text">The server validates the exact sheet, row, column, value type, and content hash.</div>
+                            </div>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2 my-3">
+                            <button type="button" class="btn btn-outline-primary" id="screening-add-edit">Add edit</button>
+                            <button type="button" class="btn btn-outline-secondary" id="screening-reset-edits">Discard candidate edits</button>
+                        </div>
+                        <ol id="screening-edit-list" class="ps-4"></ol>
+                        <button type="button" class="btn btn-primary" id="screening-preview-edit" disabled>Preview changes</button>
+                    </div>
+                </fieldset>
+                <section id="screening-preview" class="card mb-3 d-none" aria-labelledby="screening-preview-title">
+                    <div class="card-body">
+                        <h3 class="h5" id="screening-preview-title">Candidate diff preview</h3>
+                        <div id="screening-diff"></div>
+                        <p id="screening-preview-warning" class="alert alert-warning d-none"></p>
+                        <p class="small text-body-secondary">Submitting keeps the document held while the complete candidate is rescanned.</p>
+                        <button type="button" class="btn btn-primary" id="screening-submit-candidate" disabled>Submit candidate and rescan</button>
+                    </div>
+                </section>
+                <fieldset id="screening-decisions" class="card mb-3" disabled>
+                    <legend class="h5 px-3 pt-3">Review decision</legend>
+                    <div class="card-body pt-0">
+                        <label for="screening-decision-reason" class="form-label">Decision reason</label>
+                        <textarea id="screening-decision-reason" class="form-control mb-3" rows="3" autocomplete="off"
+                            aria-describedby="screening-reason-help"></textarea>
+                        <p id="screening-reason-help" class="form-text">A reason is required for each decision. Approval with flags also requires explicit acknowledgement.</p>
+                        <div class="form-check mb-3">
+                            <input type="checkbox" class="form-check-input" id="screening-flags-acknowledged" />
+                            <label class="form-check-label" for="screening-flags-acknowledged">
+                                I acknowledge the findings and authorize this exact revision to be used with a persistent warning.
+                            </label>
+                        </div>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-warning" id="screening-approve-flags" disabled>Approve with flags</button>
+                            <button type="button" class="btn btn-success" id="screening-approve-clean" disabled>Approve clean candidate</button>
+                            <button type="button" class="btn btn-outline-secondary" id="screening-reject" disabled>Reject / keep held</button>
+                            <button type="button" class="btn btn-outline-primary d-none" id="screening-retry-publication" disabled>Retry approved publication</button>
+                            <button type="button" class="btn btn-outline-danger" id="screening-delete" disabled>Delete document</button>
+                        </div>
+                    </div>
+                </fieldset>
+                <section class="card" aria-labelledby="screening-download-title">
+                    <div class="card-body">
+                        <h3 class="h5" id="screening-download-title">Review downloads</h3>
+                        <p class="small text-body-secondary">Original files are attachment-only and must be handled as untrusted content. No original is embedded in this page.</p>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-outline-secondary" id="screening-download-original" disabled>Download reviewer-only original</button>
+                            <button type="button" class="btn btn-outline-secondary" id="screening-download-clean" disabled>Download clean derivative</button>
+                        </div>
+                    </div>
+                </section>
+            </section>
+        </section>
+        <section class="tab-pane fade" id="screening-policy-pane" role="tabpanel" aria-labelledby="screening-policy-tab">
+            <div id="screening-workspace-policy" data-content-screening-policy data-scope-type="personal"></div>
+        </section>
+        <section class="tab-pane fade" id="screening-jobs-pane" role="tabpanel" aria-labelledby="screening-jobs-tab">
+            <h2 class="h4">Workspace scan jobs</h2>
+            <p class="text-body-secondary">Queued documents stay available until their scan starts. Cancelled or failed scans never release existing holds.</p>
+            <div id="screening-review-scan-controls"></div>
+            <div id="screening-job-list" class="list-group mt-3" aria-live="polite"></div>
+            <button type="button" id="screening-more-jobs" class="btn btn-outline-secondary mt-3 d-none">More jobs</button>
+        </section>
+    </div>
+</div>
+{% endblock %}

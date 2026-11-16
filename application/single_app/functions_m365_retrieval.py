@@ -33,6 +33,7 @@ from functions_conversation_memory import (
     MemoryUnavailableError,
 )
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
+from functions_m365_citations import annotate_m365_file_result, get_m365_display_time_zone
 from functions_m365_extraction import (
     M365_EVIDENCE_CHUNK_CHARS,
     M365_FILE_MIME_TYPES,
@@ -1492,11 +1493,24 @@ class M365FilePlugin(BasePlugin):
 
     def _invoke(self, operation, *args):
         try:
-            return getattr(self._operations, operation)(*args)
+            result = getattr(self._operations, operation)(*args)
         except M365ApprovalRequired:
             raise
         except (M365PolicyError, M365ProviderError, ConversationMemoryError) as exc:
             return self._invocation_error(operation, exc)
+        return self._with_citations(result, operation)
+
+    def _with_citations(self, result, operation):
+        """Give every file in a result the citation value the answer copies.
+
+        Added at the tool boundary rather than to stored identities, so retained searches and
+        captures saved before citations existed are cited the same way. The returned result
+        carries the files' citation records for the invocation logger.
+        """
+        return annotate_m365_file_result(
+            result, self._operations.source,
+            display_time_zone=get_m365_display_time_zone(), operation=operation,
+        )
 
     def _invocation_error(self, operation, exc, *, provider="graph"):
         if isinstance(exc, M365PolicyError):
@@ -1551,8 +1565,9 @@ class M365FilePlugin(BasePlugin):
     @kernel_function(description="Analyze one retained file evidence batch, with user-approved deeper processing. Continue with the returned analysis_id until complete.")
     async def analyze_file(self, memory_id: str, question: str, analysis_id: str = "") -> dict:
         try:
-            return await self._operations.analyze_file(memory_id, question, analysis_id)
+            result = await self._operations.analyze_file(memory_id, question, analysis_id)
         except M365ApprovalRequired:
             raise
         except (M365PolicyError, M365ProviderError, ConversationMemoryError) as exc:
             return self._invocation_error("analyze_file", exc, provider="conversation_memory")
+        return self._with_citations(result, "analyze_file")

@@ -3,27 +3,27 @@
 
 import json
 import asyncio
+import logging
+import os
 import re
 import ssl
+from collections.abc import Mapping
 from copy import deepcopy
-from contextvars import copy_context
 from inspect import iscoroutinefunction
 from types import SimpleNamespace
 from typing import Any, Dict, Iterable, Iterator, List
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse, urlunparse
 
 import anyio
 import httpcore
 import httpx
 import requests
 from openai import (
-    AsyncStream,
-    DEFAULT_CONNECTION_LIMITS,
-    DefaultAsyncHttpxClient,
-    DefaultHttpxClient,
-    OpenAI,
-    Stream,
+    APIConnectionError, APIError, AsyncStream, BadRequestError, DEFAULT_CONNECTION_LIMITS,
+    DefaultAsyncHttpxClient, DefaultHttpxClient, OpenAI,
 )
+from azure.core.exceptions import HttpResponseError, ServiceRequestError, ServiceResponseError
+from openai.types.chat import ChatCompletionChunk
 from pydantic import Field
 from semantic_kernel.connectors.ai.chat_completion_client_base import ChatCompletionClientBase
 from semantic_kernel.connectors.ai.function_calling_utils import update_settings_from_function_call_configuration
@@ -31,6 +31,7 @@ from semantic_kernel.connectors.ai.open_ai.prompt_execution_settings.open_ai_pro
 from semantic_kernel.contents.chat_message_content import ChatMessageContent
 from semantic_kernel.contents.function_call_content import FunctionCallContent
 from semantic_kernel.contents.function_result_content import FunctionResultContent
+from semantic_kernel.contents.image_content import ImageContent
 from semantic_kernel.contents.streaming_chat_message_content import StreamingChatMessageContent
 from semantic_kernel.contents.streaming_text_content import StreamingTextContent
 from semantic_kernel.contents.text_content import TextContent
@@ -39,50 +40,73 @@ from semantic_kernel.contents.utils.finish_reason import FinishReason
 from semantic_kernel.exceptions.service_exceptions import ServiceInvalidExecutionSettingsError
 
 from functions_debug import debug_print
-from model_endpoint_ca_bundles import ManagedCABundle
-from functions_model_endpoint_diagnostics import build_genai_mil_error, build_sanitized_model_endpoint_error
-from model_endpoint_profiles import GENAI_MIL_PROFILE, prepare_genai_request
+from functions_model_endpoint_types import MODEL_ENDPOINT_API_TYPE_ANTHROPIC
+from functions_appinsights import log_event
+from functions_model_capabilities import model_uses_mai_chat_api, resolve_model_reasoning_effort
+from functions_model_endpoint_diagnostics import (
+    SanitizedModelEndpointError,
+    build_genai_mil_error,
+    build_sanitized_model_endpoint_error,
+)
 from functions_model_endpoint_providers import (
-    CUSTOM_ENDPOINT_URL_MODE_EXACT,
-    URL_POLICY_APPEND_V1_IF_MISSING,
+    DEFAULT_ANTHROPIC_VERSION,
+    MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
+    MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
+    MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
+    MODEL_ENDPOINT_PROVIDER_CUSTOM,
     URL_POLICY_AS_GIVEN,
     get_model_endpoint_provider,
-)
-from functions_model_endpoint_types import (
-    DEFAULT_ANTHROPIC_VERSION,
-    MODEL_ENDPOINT_API_TYPE_ANTHROPIC,
-    MODEL_ENDPOINT_PROVIDER_CUSTOM,
-    normalize_model_endpoint_api_type,
+    normalize_custom_endpoint_url_mode,
 )
 from functions_model_endpoint_validation import (
     ModelEndpointValidationError,
+    endpoint_uses_mai_chat_completions,
+    endpoint_uses_openai_style_protocol,
+    model_endpoint_inference_api,
     resolve_custom_model_endpoint_addresses,
+    validate_custom_model_endpoint_url,
 )
 from functions_model_endpoint_urls import (
+    resolve_model_inference_endpoint,
     CUSTOM_OPENAI_OPERATION_SUFFIXES,
     CUSTOM_OPENAI_VERSION_SEGMENT_PATTERN,
-    _endpoint_path_names_a_version,
-    endpoint_uses_openai_style_protocol,
-    get_endpoint_origin,
-    get_endpoint_path,
-    infer_model_endpoint_protocol,
-    is_anthropic_model,
     normalize_endpoint_text,
-    normalize_anthropic_messages_url,
     normalize_custom_openai_base_url,
-    normalize_openai_style_base_url,
     resolve_custom_openai_base_url,
+    resolve_custom_azure_openai_base_url,
 )
+from model_responses_chat import (
+    responses_completion,
+    responses_request,
+    responses_stream_final_response,
+    responses_stream_text_delta,
+)
+from model_endpoint_ca_bundles import ManagedCABundle
+from model_endpoint_profiles import GENAI_MIL_PROFILE, prepare_genai_request
 
-
-MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI = "azure_openai"
-MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE = "openai_style"
-MODEL_ENDPOINT_PROTOCOL_ANTHROPIC = "anthropic"
 
 ANTHROPIC_MODEL_MARKERS = ("claude",)
-OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+OPENAI_REASONING_MODEL_PREFIXES = ("gpt-5", "gpt-6", "o1", "o3", "o4")
 MODEL_CONTEXT_MODE_SYSTEM = "system"
 MODEL_CONTEXT_MODE_FOLD_LATEST_USER = "fold_latest_user"
+
+DEFAULT_MODEL_STREAM_READ_TIMEOUT_SECONDS = 120
+MIN_MODEL_STREAM_READ_TIMEOUT_SECONDS = 30
+MAX_MODEL_STREAM_READ_TIMEOUT_SECONDS = 600
+
+DEFAULT_DOCUMENT_ACTION_TIMEOUT_SECONDS = 300
+MIN_DOCUMENT_ACTION_TIMEOUT_SECONDS = 60
+MAX_DOCUMENT_ACTION_TIMEOUT_SECONDS = 900
+
+DEFAULT_STREAM_DISCONNECT_GRACE_SECONDS = 60
+MIN_STREAM_DISCONNECT_GRACE_SECONDS = 0
+MAX_STREAM_DISCONNECT_GRACE_SECONDS = 300
+
+DEFAULT_MODEL_CALL_MAX_RETRIES = 1
+MIN_MODEL_CALL_MAX_RETRIES = 0
+MAX_MODEL_CALL_MAX_RETRIES = 3
+
+AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS = 30.0
 
 
 def validate_model_endpoint_request(route, request):
@@ -99,26 +123,40 @@ def validate_model_endpoint_request(route, request):
 
     def require(capability):
         if capabilities.get(capability) is not True:
-            raise ModelEndpointValidationError("The selected model does not support this request capability.")
+            raise ModelEndpointValidationError(
+                "The selected model does not support this request capability."
+            )
 
     require("processesText")
     require("generatesText")
     if payload.get("stream"):
         require("supportsStreaming")
-    if payload.get("tools") or payload.get("functions") or payload.get("tool_choice") not in (None, "none", "") or payload.get("function_call") not in (None, "none", ""):
+    if (
+        payload.get("tools")
+        or payload.get("functions")
+        or payload.get("tool_choice") not in (None, "none", "")
+        or payload.get("function_call") not in (None, "none", "")
+    ):
         require("toolCalling")
     response_format = payload.get("response_format")
     if response_format and response_format != {"type": "text"}:
         require("structuredOutput")
     if payload.get("audio") or "audio" in (payload.get("modalities") or []):
         require("generatesAudio")
-    messages = payload.get("messages") or []
+    messages = payload.get("messages") or payload.get("input") or []
+    if isinstance(messages, str):
+        messages = [{"role": "user", "content": messages}]
     if not isinstance(messages, (list, tuple)):
         raise ModelEndpointValidationError("Model messages must be a list.")
     for message in messages:
         if not isinstance(message, dict):
             raise ModelEndpointValidationError("Invalid model message.")
-        if message.get("role") in ("tool", "function") or message.get("tool_calls") or message.get("function_call"):
+        if (
+            message.get("role") in ("tool", "function")
+            or message.get("type") in ("function_call", "function_call_output")
+            or message.get("tool_calls")
+            or message.get("function_call")
+        ):
             require("toolCalling")
         content = message.get("content")
         if content is None or isinstance(content, str):
@@ -128,31 +166,236 @@ def validate_model_endpoint_request(route, request):
         for part in content:
             part_type = part.get("type") if isinstance(part, dict) else None
             capability = {
-                "text": "processesText", "image_url": "processesImages", "image": "processesImages",
-                "input_audio": "processesAudio", "file": "processesBinaryFiles",
-                "tool_use": "toolCalling", "tool_result": "toolCalling",
+                "text": "processesText",
+                "input_text": "processesText",
+                "output_text": "processesText",
+                "image_url": "processesImages",
+                "input_image": "processesImages",
+                "image": "processesImages",
+                "input_audio": "processesAudio",
+                "file": "processesBinaryFiles",
+                "input_file": "processesBinaryFiles",
+                "tool_use": "toolCalling",
+                "tool_result": "toolCalling",
             }.get(part_type)
             if capability is None:
-                raise ModelEndpointValidationError("Unsupported model message content.")
+                raise ModelEndpointValidationError(
+                    "Unsupported model message content."
+                )
             require(capability)
+
+
+def _guard_resource_create(resource, method_name, route, *, async_only=False):
+    original_create = getattr(resource, method_name)
+    if iscoroutinefunction(original_create):
+        async def guarded_create(**kwargs):
+            validate_model_endpoint_request(route, kwargs)
+            return await original_create(**kwargs)
+    else:
+        if async_only:
+            return
+        def guarded_create(**kwargs):
+            validate_model_endpoint_request(route, kwargs)
+            return original_create(**kwargs)
+    setattr(resource, method_name, guarded_create)
 
 
 def bind_model_endpoint_request_policy(client, route):
     """Bind an isolated route policy to one sync or async SDK client."""
     if route is None:
         return client
+    if getattr(client, "_simplechat_route_policy_bound", False):
+        return client
     policy = deepcopy(route)
-    original_create = client.chat.completions.create
-    if iscoroutinefunction(original_create):
-        async def guarded_create(**kwargs):
-            validate_model_endpoint_request(policy, kwargs)
-            return await original_create(**kwargs)
-    else:
-        def guarded_create(**kwargs):
-            validate_model_endpoint_request(policy, kwargs)
-            return original_create(**kwargs)
-    client.chat.completions.create = guarded_create
+    chat = getattr(client, "chat", None)
+    completions = getattr(chat, "completions", None) if chat else None
+    if completions is not None:
+        _guard_resource_create(completions, "create", policy)
+    responses = getattr(client, "responses", None)
+    if responses is not None:
+        _guard_resource_create(responses, "create", policy)
+    client._simplechat_route_policy_bound = True
     return client
+
+
+def _coerce_bounded_int(raw_value: Any, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(float(raw_value))
+    except (TypeError, ValueError):
+        parsed = int(default)
+    return max(minimum, min(maximum, parsed))
+
+
+def resolve_model_stream_read_timeout_seconds(
+    settings: Any = None,
+    default: int = DEFAULT_MODEL_STREAM_READ_TIMEOUT_SECONDS,
+) -> int:
+    """Resolve the per-chunk/read timeout in seconds for model endpoint calls."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("model_stream_read_timeout_seconds")
+    if raw_value in (None, ""):
+        raw_value = (
+            os.environ.get("SIMPLECHAT_OPENAI_READ_TIMEOUT_SECONDS")
+            or os.environ.get("SIMPLECHAT_OPENAI_TIMEOUT_SECONDS")
+        )
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_MODEL_STREAM_READ_TIMEOUT_SECONDS,
+        MAX_MODEL_STREAM_READ_TIMEOUT_SECONDS,
+    )
+
+
+def resolve_document_action_timeout_seconds(
+    settings: Any = None,
+    default: int = DEFAULT_DOCUMENT_ACTION_TIMEOUT_SECONDS,
+) -> int:
+    """Resolve the total wall-clock deadline in seconds for document action runs."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("document_action_timeout_seconds")
+    if raw_value in (None, ""):
+        raw_value = os.environ.get("SIMPLECHAT_DOCUMENT_ACTION_TIMEOUT_SECONDS")
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_DOCUMENT_ACTION_TIMEOUT_SECONDS,
+        MAX_DOCUMENT_ACTION_TIMEOUT_SECONDS,
+    )
+
+
+def resolve_stream_disconnect_grace_seconds(
+    settings: Any = None,
+    default: int = DEFAULT_STREAM_DISCONNECT_GRACE_SECONDS,
+) -> int:
+    """Resolve how long a disconnected stream runs before auto-cancelling."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("stream_disconnect_grace_seconds")
+    if raw_value in (None, ""):
+        raw_value = os.environ.get("SIMPLECHAT_STREAM_DISCONNECT_GRACE_SECONDS")
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_STREAM_DISCONNECT_GRACE_SECONDS,
+        MAX_STREAM_DISCONNECT_GRACE_SECONDS,
+    )
+
+
+def resolve_model_call_max_retries(
+    settings: Any = None,
+    default: int = DEFAULT_MODEL_CALL_MAX_RETRIES,
+) -> int:
+    """Resolve the SDK max_retries setting for model endpoint clients."""
+    raw_value = None
+    if isinstance(settings, Mapping):
+        raw_value = settings.get("model_call_max_retries")
+    if raw_value in (None, ""):
+        raw_value = os.environ.get("SIMPLECHAT_OPENAI_MAX_RETRIES")
+    return _coerce_bounded_int(
+        raw_value if raw_value not in (None, "") else default,
+        default,
+        MIN_MODEL_CALL_MAX_RETRIES,
+        MAX_MODEL_CALL_MAX_RETRIES,
+    )
+
+
+def build_openai_client_timeout(
+    settings: Any = None,
+    *,
+    read_timeout_seconds: float | int | None = None,
+    connect_timeout_seconds: float = 10.0,
+    write_timeout_seconds: float = 30.0,
+    pool_timeout_seconds: float = 10.0,
+) -> httpx.Timeout:
+    """Build a granular httpx.Timeout so stalled connects or reads fail fast."""
+    if read_timeout_seconds is not None and float(read_timeout_seconds) > 0:
+        read_timeout = float(read_timeout_seconds)
+    else:
+        read_timeout = float(resolve_model_stream_read_timeout_seconds(settings))
+    connect_timeout = min(float(connect_timeout_seconds), max(1.0, read_timeout))
+    write_timeout = min(float(write_timeout_seconds), max(1.0, read_timeout))
+    pool_timeout = min(float(pool_timeout_seconds), max(1.0, read_timeout))
+    return httpx.Timeout(
+        timeout=read_timeout,
+        connect=connect_timeout,
+        read=read_timeout,
+        write=write_timeout,
+        pool=pool_timeout,
+    )
+
+
+def build_openai_client_timeout_options(
+    settings: Any = None,
+    *,
+    read_timeout_seconds: float | int | None = None,
+    max_retries: int | None = None,
+) -> Dict[str, Any]:
+    """Return keyword arguments (`timeout` and `max_retries`) for OpenAI SDK clients."""
+    resolved_retries = (
+        resolve_model_call_max_retries(settings)
+        if max_retries is None
+        else max(MIN_MODEL_CALL_MAX_RETRIES, min(MAX_MODEL_CALL_MAX_RETRIES, int(max_retries)))
+    )
+    return {
+        "timeout": build_openai_client_timeout(
+            settings,
+            read_timeout_seconds=read_timeout_seconds,
+        ),
+        "max_retries": resolved_retries,
+    }
+
+
+def bind_callable_with_timeout(
+    client: Any,
+    create_callable: Any,
+    *,
+    timeout_seconds: float = AUXILIARY_MODEL_CALL_TIMEOUT_SECONDS,
+    max_retries: int = 0,
+):
+    """Return a chat.completions.create callable bounded by a short timeout and retry cap."""
+    timeout_obj = build_openai_client_timeout(read_timeout_seconds=timeout_seconds)
+    with_options = getattr(client, "with_options", None) if client is not None else None
+    if callable(with_options) and not isinstance(client, OpenAIStyleChatCompletionClient):
+        try:
+            scoped_client = with_options(timeout=timeout_obj, max_retries=max_retries)
+            scoped_create = getattr(getattr(scoped_client, "chat", None), "completions", None)
+            scoped_create = getattr(scoped_create, "create", None)
+            if callable(scoped_create):
+                return scoped_create
+        except Exception:
+            pass
+    inner_client = getattr(client, "_client", None) if client is not None else None
+    inner_with_options = getattr(inner_client, "with_options", None) if inner_client is not None else None
+    if callable(inner_with_options) and isinstance(client, OpenAIStyleChatCompletionClient):
+        try:
+            scoped_inner = inner_with_options(timeout=timeout_obj, max_retries=max_retries)
+            return OpenAIStyleChatCompletionClient(
+                scoped_inner,
+                sanitize_errors=client._sanitize_errors,
+                api_type=client._api_type,
+                protocol=client._protocol,
+                request_url=client._request_url,
+                inference_api=client._inference_api,
+                model_name=client._model_name,
+            ).chat.completions.create
+        except Exception:
+            pass
+    return create_callable
+
+
+def normalize_anthropic_finish_reason(finish_reason: Any) -> str | None:
+    """Preserve Anthropic completion semantics in the chat-completions interface."""
+    normalized_reason = str(finish_reason or "").strip().lower()
+    return {
+        "end_turn": "stop",
+        "stop_sequence": "stop",
+        "max_tokens": "length",
+        "model_context_window_exceeded": "length",
+        "tool_use": "tool_calls",
+        "refusal": "content_filter",
+    }.get(normalized_reason, normalized_reason or None)
 
 
 class ModelEndpointBehavior:
@@ -181,6 +424,7 @@ class ModelEndpointBehavior:
         return (
             normalized_model_name.startswith(OPENAI_REASONING_MODEL_PREFIXES)
             or "gpt-5" in normalized_model_name
+            or "gpt-6" in normalized_model_name
         )
 
     @property
@@ -198,14 +442,295 @@ class ModelEndpointBehavior:
         return MODEL_CONTEXT_MODE_FOLD_LATEST_USER if self.is_foundry_non_openai_model else MODEL_CONTEXT_MODE_SYSTEM
 
     def resolve_reasoning_effort(self, reasoning_effort: Any) -> str:
-        normalized_reasoning_effort = str(reasoning_effort or "").strip()
-        if not normalized_reasoning_effort or normalized_reasoning_effort.lower() == "none":
-            return ""
-        return normalized_reasoning_effort if self.is_openai_reasoning_model else ""
+        return resolve_model_reasoning_effort(
+            self.deployment_name, reasoning_effort
+        )["effective_effort"] or ""
 
     @property
     def response_length_parameter(self) -> str:
-        return "max_completion_tokens" if self.is_openai_reasoning_model else "max_tokens"
+        return (
+            "max_completion_tokens"
+            if self.is_openai_reasoning_model or model_uses_mai_chat_api(self.deployment_name)
+            else "max_tokens"
+        )
+
+
+def prepare_mai_chat_request(parameters, *, model_name="", endpoint=""):
+    """Apply the documented MAI chat contract without changing the request model."""
+    prepared = dict(parameters)
+    if not (
+        endpoint_uses_mai_chat_completions(endpoint)
+        or model_uses_mai_chat_api(model_name or prepared.get("model"))
+    ):
+        return prepared
+    sources = [prepared]
+    if isinstance(prepared.get("extra_body"), Mapping):
+        prepared["extra_body"] = dict(prepared["extra_body"])
+        sources.append(prepared["extra_body"])
+    for source in sources:
+        legacy_limit = source.pop("max_tokens", None)
+        if legacy_limit is not None and source.get("max_completion_tokens") is None:
+            source["max_completion_tokens"] = legacy_limit
+        # MAI documents a generation budget, not sampling/effort controls or stream_options.
+        for field in (
+            "temperature", "top_p", "frequency_penalty", "presence_penalty",
+            "seed", "reasoning_effort", "stream_options",
+        ):
+            source.pop(field, None)
+        if source.get("tool_choice") == "auto":
+            source.pop("tool_choice")
+    return prepared
+
+
+def configure_mai_async_openai_client(client, *, model_name=""):
+    """Share MAI request shaping with SK while retaining its real SDK stream."""
+    endpoint = str(client.base_url)
+    if not (endpoint_uses_mai_chat_completions(endpoint) or model_uses_mai_chat_api(model_name)):
+        return client
+    original_create = client.chat.completions.create
+
+    async def create(**kwargs):
+        return await original_create(**prepare_mai_chat_request(
+            kwargs, model_name=model_name, endpoint=endpoint,
+        ))
+
+    client.chat.completions.create = create
+    return client
+
+
+def is_reasoning_parameter_rejection(error: Exception) -> bool:
+    """Recognize only an SDK HTTP 400 rejecting this specific parameter or value."""
+    if isinstance(error, SanitizedModelEndpointError):
+        return getattr(error, "reasoning_parameter_rejected", False) is True
+    if not isinstance(error, BadRequestError) or error.status_code != 400:
+        return False
+    body = error.body
+    if not isinstance(body, Mapping):
+        return False
+    detail = body.get("error", body)
+    if not isinstance(detail, Mapping) or detail.get("param") != "reasoning_effort":
+        return False
+    return detail.get("code") in {"unsupported_value", "unsupported_parameter"}
+
+
+def is_response_format_rejection(error: Exception) -> bool:
+    """Recognize an HTTP 400 refusing the ``response_format`` option itself.
+
+    Endpoints and API versions differ in JSON-mode support, so a caller may resend without
+    the option. Any other rejection, including one about the messages, is not matched.
+    """
+    if isinstance(error, SanitizedModelEndpointError):
+        return getattr(error, "response_format_rejected", False) is True
+    if not isinstance(error, BadRequestError) or error.status_code != 400:
+        return False
+    body = error.body
+    if not isinstance(body, Mapping):
+        return False
+    detail = body.get("error", body)
+    if not isinstance(detail, Mapping):
+        return False
+    parameter = str(detail.get("param") or "")
+    message = str(detail.get("message") or "").lower()
+    if parameter:
+        if parameter != "response_format" and not parameter.startswith("response_format."):
+            return False
+    elif "response_format" not in message:
+        return False
+    return (
+        detail.get("code") in {"unsupported_value", "unsupported_parameter"}
+        or "not supported" in message
+        or "unsupported" in message
+    )
+
+
+def create_completion_with_response_format(create_callable, parameters, *, response_format=None, on_adjustment=None):
+    """Downgrade only an explicitly rejected response-format option, at most twice."""
+    if response_format is None:
+        return create_callable(**parameters)
+    if type(response_format) is not dict or response_format.get("type") not in ("json_schema", "json_object"):
+        raise ValueError("Unsupported response format.")
+    formats = [response_format]
+    if response_format["type"] == "json_schema":
+        formats.append({"type": "json_object"})
+    formats.append(None)
+    for index, requested in enumerate(formats):
+        try:
+            return create_callable(**parameters, **({"response_format": requested} if requested else {}))
+        except Exception as error:
+            if index == len(formats) - 1 or not is_response_format_rejection(error):
+                raise
+            if on_adjustment is not None:
+                on_adjustment({
+                    "error_type": type(error).__name__,
+                    "requested_format": requested["type"],
+                    "next_format": formats[index + 1]["type"] if formats[index + 1] else "prompt_only",
+                })
+
+
+def is_transient_model_error(error):
+    """Recognize provider availability failures, never refusals or authorization failures."""
+    seen = set()
+    while isinstance(error, SanitizedModelEndpointError):
+        if id(error) in seen or error.__cause__ is None:
+            return False
+        seen.add(id(error))
+        error = error.__cause__
+    if isinstance(error, (
+        APIConnectionError, httpx.TimeoutException, httpx.NetworkError,
+        requests.Timeout, requests.ConnectionError, ServiceRequestError, ServiceResponseError,
+    )):
+        return True
+    if isinstance(error, (APIError, HttpResponseError)):
+        status = getattr(error, "status_code", None)
+        return type(status) is int and (status == 429 or 500 <= status <= 599)
+    return False
+
+
+def create_completion_with_reasoning(create_callable, params, model_name, *, on_resolution=None):
+    """Resolve effort and recover once from a provider-policy disagreement.
+
+    Both attempts retain the selected model, messages and all unrelated options.
+    Streaming recovery applies only while creating the stream, never after any
+    output has been delivered. Provider text is not returned or logged.
+    ``on_resolution`` receives a snapshot before each attempt so an outer
+    compatibility retry retains the effective policy even if this call raises.
+    """
+    parameters = dict(params)
+    resolution = resolve_model_reasoning_effort(
+        model_name, parameters.pop("reasoning_effort", None)
+    )
+    if resolution["effective_effort"] is not None:
+        parameters["reasoning_effort"] = resolution["effective_effort"]
+    if on_resolution is not None:
+        on_resolution(dict(resolution))
+    try:
+        return create_callable(**parameters), resolution
+    except (BadRequestError, SanitizedModelEndpointError) as error:
+        if "reasoning_effort" not in parameters or not is_reasoning_parameter_rejection(error):
+            raise
+        parameters.pop("reasoning_effort")
+        resolution.update(
+            effective_effort=None, mode="model_default",
+            adjustment_reason="reasoning_parameter_rejected",
+        )
+        if on_resolution is not None:
+            on_resolution(dict(resolution))
+        log_event(
+            "[MODEL_ENDPOINT] Reasoning parameter rejected; retrying with model default.",
+            extra={"reason": "reasoning_parameter_rejected"}, debug_only=True,
+        )
+        return create_callable(**parameters), resolution
+
+
+def get_endpoint_path(endpoint: Any) -> str:
+    """Return the lower-case parsed path for an endpoint string."""
+    endpoint_value = normalize_endpoint_text(endpoint)
+    if not endpoint_value:
+        return ""
+    try:
+        return urlparse(endpoint_value).path.lower()
+    except ValueError:
+        return endpoint_value.lower()
+
+
+def get_endpoint_origin(endpoint: Any) -> str:
+    """Return scheme and host for an endpoint URL."""
+    endpoint_value = normalize_endpoint_text(endpoint)
+    parsed_url = urlparse(endpoint_value)
+    if not parsed_url.scheme or not parsed_url.netloc:
+        return endpoint_value
+    return f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+
+def is_anthropic_model(deployment_name: Any) -> bool:
+    """Return whether a deployment should use the Anthropic messages protocol."""
+    normalized_name = str(deployment_name or "").strip().lower()
+    return any(marker in normalized_name for marker in ANTHROPIC_MODEL_MARKERS)
+
+
+def infer_model_endpoint_protocol(
+    provider: Any, endpoint: Any, deployment_name: Any = "", api_type: Any = "", *, use_responses_api=None,
+) -> str:
+    """Infer the runtime protocol from provider, endpoint path, and deployment name."""
+    normalized_provider = str(provider or "aoai").strip().lower()
+    if normalized_provider == MODEL_ENDPOINT_PROVIDER_CUSTOM:
+        descriptor = get_model_endpoint_provider(api_type)
+        if descriptor is None:
+            raise ModelEndpointValidationError("Custom endpoints require a supported API type.")
+        if (
+            model_endpoint_inference_api(endpoint, use_responses_api) == "responses"
+            and api_type not in {"openai", "azure_openai_v1"}
+        ):
+            raise ModelEndpointValidationError("Responses connections require the OpenAI API contract.")
+        return descriptor.protocol
+    endpoint_path = get_endpoint_path(endpoint)
+
+    if normalized_provider in ("anthropic", "claude"):
+        if model_endpoint_inference_api(endpoint, use_responses_api) == "responses":
+            raise ModelEndpointValidationError("Responses connections require an OpenAI-compatible chat model.")
+        return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
+
+    if "/anthropic/" in endpoint_path or is_anthropic_model(deployment_name):
+        if model_endpoint_inference_api(endpoint, use_responses_api) == "responses":
+            raise ModelEndpointValidationError("Responses connections require an OpenAI-compatible chat model.")
+        return MODEL_ENDPOINT_PROTOCOL_ANTHROPIC
+
+    if normalized_provider in ("aoai", "aifoundry", "new_foundry") and (
+        endpoint_uses_openai_style_protocol(endpoint)
+        or model_endpoint_inference_api(endpoint, use_responses_api) == "responses"
+    ):
+        return MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE
+
+    return MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
+
+
+def normalize_openai_style_base_url(raw_endpoint: Any) -> str:
+    """Normalize Foundry OpenAI-compatible endpoints to a base URL."""
+    endpoint = normalize_endpoint_text(raw_endpoint)
+    if not endpoint:
+        raise ValueError("A Foundry endpoint is required for OpenAI-compatible inference.")
+
+    lowered_endpoint = endpoint.lower()
+    for suffix in ("/chat/completions", "/responses"):
+        if lowered_endpoint.endswith(suffix):
+            return endpoint[:-len(suffix)].rstrip("/") + "/"
+    if lowered_endpoint.endswith("/models"):
+        endpoint = endpoint[:-len("/models")]
+        lowered_endpoint = endpoint.lower()
+
+    v1_base = re.search(r"/(?:openai|mai)/v1(?=/|$)", lowered_endpoint)
+    if v1_base:
+        return endpoint[:v1_base.end()].rstrip("/") + "/"
+
+    openai_index = lowered_endpoint.find("/openai")
+    if openai_index >= 0:
+        return endpoint[:openai_index].rstrip("/") + "/openai/v1/"
+
+    return endpoint.rstrip("/") + "/openai/v1/"
+
+
+def normalize_anthropic_messages_url(raw_endpoint: Any, *, direct_custom: bool = False, url_mode: Any = "") -> str:
+    """Normalize a Foundry endpoint to the Anthropic messages URL."""
+    endpoint = normalize_endpoint_text(raw_endpoint)
+    if not endpoint:
+        raise ValueError("An endpoint is required for Anthropic inference.")
+
+    lowered_endpoint = endpoint.lower()
+    if direct_custom:
+        if normalize_custom_endpoint_url_mode(url_mode) == "exact" or lowered_endpoint.endswith("/messages"):
+            return endpoint
+        if lowered_endpoint.endswith("/v1"):
+            return endpoint + "/messages"
+        return endpoint + "/v1/messages"
+    messages_index = lowered_endpoint.find("/anthropic/v1/messages")
+    if messages_index >= 0:
+        return endpoint[: messages_index + len("/anthropic/v1/messages")]
+
+    anthropic_index = lowered_endpoint.find("/anthropic/v1")
+    if anthropic_index >= 0:
+        return endpoint[: anthropic_index + len("/anthropic/v1")].rstrip("/") + "/messages"
+
+    return get_endpoint_origin(endpoint).rstrip("/") + "/anthropic/v1/messages"
 
 
 def resolve_openai_style_request_api_version(raw_api_version: Any) -> str:
@@ -248,6 +773,171 @@ def iter_synthetic_stream_text_chunks(
         yield buffer
 
 
+def iter_synthetic_chat_message_chunks(message, model_id, function_invoke_attempt=0):
+    """Deliver complete tool calls and usage once, with progressively chunked text."""
+    text_items = [item for item in message.items or [] if isinstance(item, TextContent)]
+    other_items = [item for item in message.items or [] if not isinstance(item, TextContent)]
+    text_chunks = list(iter_synthetic_stream_text_chunks("".join(item.text or "" for item in text_items)))
+    for text in text_chunks[:-1]:
+        yield StreamingChatMessageContent(
+            role=message.role, items=[StreamingTextContent(choice_index=0, text=text, ai_model_id=model_id)],
+            choice_index=0, ai_model_id=model_id, function_invoke_attempt=function_invoke_attempt,
+        )
+    final_items = []
+    if text_chunks:
+        final_items.append(StreamingTextContent(
+            choice_index=0, text=text_chunks[-1], ai_model_id=model_id,
+            inner_content=text_items[-1].inner_content if text_items else None,
+            metadata=text_items[-1].metadata if text_items else {},
+            encoding=text_items[-1].encoding if text_items else None,
+        ))
+    yield StreamingChatMessageContent(
+        role=message.role, items=[*final_items, *other_items], choice_index=0, ai_model_id=model_id,
+        inner_content=message.inner_content, metadata=message.metadata, finish_reason=message.finish_reason,
+        function_invoke_attempt=function_invoke_attempt,
+    )
+
+
+def iter_completed_chat_chunks(completion):
+    message = completion.choices[0].message
+    parts = list(iter_synthetic_stream_text_chunks(message.content or "")) or [""]
+    for index, part in enumerate(parts):
+        final = index == len(parts) - 1
+        delta = {"content": part}
+        if final and message.tool_calls:
+            delta["tool_calls"] = [
+                {"index": position, **call.model_dump(exclude_none=True)}
+                for position, call in enumerate(message.tool_calls)
+            ]
+        yield ChatCompletionChunk(
+            id=completion.id, model=completion.model, created=completion.created, object="chat.completion.chunk",
+            choices=[{"index": 0, "delta": delta, "finish_reason": completion.choices[0].finish_reason if final else None}],
+            usage=completion.usage if final else None,
+        )
+
+
+class _ResponsesSyncEventStream:
+    """Adapt native Responses events to complete chat-stream chunks."""
+
+    def __init__(self, source):
+        self._source = source
+        self._iterator = iter(source)
+        self._closed = False
+        self._finished = False
+        self._emitted_calls = set()
+        self._response_id = ""
+        self._model = ""
+        self._created = 0
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self._finished or self._closed:
+            raise StopIteration
+        while True:
+            try:
+                event = next(self._iterator)
+            except StopIteration:
+                self.close()
+                if self._finished:
+                    raise
+                raise ModelEndpointValidationError(
+                    "The Responses stream ended before a terminal event."
+                ) from None
+
+            self._response_id = (
+                str(getattr(event, "response_id", "") or self._response_id)
+            )
+            delta = responses_stream_text_delta(event)
+            if delta:
+                return ChatCompletionChunk(
+                    id=self._response_id,
+                    model=self._model,
+                    created=self._created,
+                    object="chat.completion.chunk",
+                    choices=[{
+                        "index": 0,
+                        "delta": {"content": delta},
+                        "finish_reason": None,
+                    }],
+                    usage=None,
+                )
+
+            event_type = str(getattr(event, "type", "") or "")
+            item = getattr(event, "item", None)
+            if event_type == "response.output_item.done" and item is not None:
+                item_data = (
+                    item.model_dump(exclude_none=True)
+                    if hasattr(item, "model_dump")
+                    else item
+                    if isinstance(item, dict)
+                    else {}
+                )
+                if item_data.get("type") == "function_call":
+                    call_id = str(item_data.get("call_id") or item_data.get("id") or "")
+                    if call_id not in self._emitted_calls:
+                        self._emitted_calls.add(call_id)
+                        return ChatCompletionChunk(
+                            id=self._response_id,
+                            model=self._model,
+                            created=self._created,
+                            object="chat.completion.chunk",
+                            choices=[{
+                                "index": 0,
+                                "delta": {
+                                    "tool_calls": [{
+                                        "index": int(getattr(event, "output_index", 0) or 0),
+                                        "id": call_id,
+                                        "type": "function",
+                                        "function": {
+                                            "name": str(item_data.get("name") or ""),
+                                            "arguments": str(item_data.get("arguments") or ""),
+                                        },
+                                    }]
+                                },
+                                "finish_reason": None,
+                            }],
+                            usage=None,
+                        )
+
+            response = responses_stream_final_response(event)
+            if response is None:
+                continue
+            completion = responses_completion(response)
+            self._response_id = completion.id
+            self._model = completion.model
+            self._created = completion.created
+            self._finished = True
+            choice = completion.choices[0]
+            return ChatCompletionChunk(
+                id=completion.id,
+                model=completion.model,
+                created=completion.created,
+                object="chat.completion.chunk",
+                choices=[{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": choice.finish_reason,
+                }],
+                usage=completion.usage,
+            )
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        close = getattr(self._source, "close", None)
+        if close:
+            close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+
 def normalize_chat_completion_text(content: Any) -> str:
     """Normalize text content returned by OpenAI-compatible chat responses."""
     if content is None:        return ""
@@ -285,50 +975,29 @@ def extract_chat_completion_response_text(response: Any) -> str:
 def _resolve_custom_connection_addresses(host, port, allow_private):
     hostname = host.decode("ascii") if isinstance(host, bytes) else str(host)
     try:
-        return resolve_custom_model_endpoint_addresses(
-            hostname,
-            port,
-            allow_private=allow_private,
-        )
-    except ModelEndpointValidationError:
-        raise httpcore.ConnectError("Custom endpoint connection blocked.") from None
+        return resolve_custom_model_endpoint_addresses(hostname, port, allow_private=allow_private)
+    except ModelEndpointValidationError as exc:
+        raise httpcore.ConnectError("Custom endpoint connection blocked.") from exc
 
 
 class _PinnedCustomEndpointSyncBackend(httpcore.NetworkBackend):
-    """Connect only to addresses returned by the validated DNS lookup."""
+    """Keep DNS validation and TCP dialing bound to the same address set."""
 
     def __init__(self, *, allow_private=False):
         self._allow_private = allow_private
         self._backend = httpcore.SyncBackend()
 
-    def connect_tcp(
-        self,
-        host,
-        port,
-        timeout=None,
-        local_address=None,
-        socket_options=None,
-    ):
-        addresses = _resolve_custom_connection_addresses(
-            host,
-            port,
-            self._allow_private,
-        )
+    def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+        addresses = _resolve_custom_connection_addresses(host, port, self._allow_private)
         last_error = None
         for address in addresses:
             try:
                 return self._backend.connect_tcp(
-                    address,
-                    port,
-                    timeout=timeout,
-                    local_address=local_address,
-                    socket_options=socket_options,
+                    address, port, timeout=timeout, local_address=local_address, socket_options=socket_options,
                 )
             except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
                 last_error = exc
-        if last_error:
-            raise last_error
-        raise httpcore.ConnectError("Custom endpoint connection failed.")
+        raise last_error or httpcore.ConnectError("Custom endpoint connection failed.")
 
     def connect_unix_socket(self, path, timeout=None, socket_options=None):
         raise httpcore.ConnectError("Custom endpoint UNIX sockets are not supported.")
@@ -338,41 +1007,23 @@ class _PinnedCustomEndpointSyncBackend(httpcore.NetworkBackend):
 
 
 class _PinnedCustomEndpointAsyncBackend(httpcore.AsyncNetworkBackend):
-    """Async counterpart to the validated synchronous DNS backend."""
-
     def __init__(self, *, allow_private=False):
         self._allow_private = allow_private
         self._backend = httpcore.AnyIOBackend()
 
-    async def connect_tcp(
-        self,
-        host,
-        port,
-        timeout=None,
-        local_address=None,
-        socket_options=None,
-    ):
+    async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
         addresses = await anyio.to_thread.run_sync(
-            _resolve_custom_connection_addresses,
-            host,
-            port,
-            self._allow_private,
+            _resolve_custom_connection_addresses, host, port, self._allow_private,
         )
         last_error = None
         for address in addresses:
             try:
                 return await self._backend.connect_tcp(
-                    address,
-                    port,
-                    timeout=timeout,
-                    local_address=local_address,
-                    socket_options=socket_options,
+                    address, port, timeout=timeout, local_address=local_address, socket_options=socket_options,
                 )
             except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
                 last_error = exc
-        if last_error:
-            raise last_error
-        raise httpcore.ConnectError("Custom endpoint connection failed.")
+        raise last_error or httpcore.ConnectError("Custom endpoint connection failed.")
 
     async def connect_unix_socket(self, path, timeout=None, socket_options=None):
         raise httpcore.ConnectError("Custom endpoint UNIX sockets are not supported.")
@@ -382,102 +1033,268 @@ class _PinnedCustomEndpointAsyncBackend(httpcore.AsyncNetworkBackend):
 
 
 def build_custom_endpoint_ssl_context(ca_bundle_path: Any = "", client_cert: Any = None):
-    """Return the TLS context for Custom endpoint requests.
-
-    The default context trusts only certifi's public roots, and deliberately does
-    not read SSL_CERT_FILE, so ambient environment variables cannot silently widen
-    what SimpleChat trusts. That leaves an on-premises gateway with an
-    enterprise-issued certificate untrustable, so an administrator may name a CA
-    bundle explicitly. Naming a bundle is an explicit decision, not an ambient one.
-
-    ``client_cert`` supplies an mTLS client certificate, as either a combined PEM
-    path or a (certificate, key) pair of paths.
-    """
-    if isinstance(ca_bundle_path, ManagedCABundle):
-        try:
+    """Trust explicit CA roots, not ambient proxy/SSL environment configuration."""
+    try:
+        if isinstance(ca_bundle_path, ManagedCABundle):
             context = ssl.create_default_context(cadata=ca_bundle_path.pem)
-        except ssl.SSLError:
-            raise ModelEndpointValidationError("The selected managed CA bundle could not be loaded.") from None
-    elif str(ca_bundle_path or "").strip():
-        try:
-            context = ssl.create_default_context(cafile=str(ca_bundle_path).strip())
-        except (OSError, ssl.SSLError):
-            # A missing or unreadable bundle must not silently fall back to a
-            # weaker context, so the failure is surfaced to the caller.
-            raise ModelEndpointValidationError(
-                "The configured Custom endpoint CA bundle could not be loaded."
-            ) from None
-    else:
-        context = httpx.create_ssl_context(verify=True, trust_env=False)
-
-    if client_cert:
-        try:
+        else:
+            context = (
+                ssl.create_default_context(cafile=str(ca_bundle_path))
+                if ca_bundle_path
+                else httpx.create_ssl_context(verify=True, trust_env=False)
+            )
+        if client_cert:
             if isinstance(client_cert, (tuple, list)):
                 context.load_cert_chain(*client_cert)
             else:
                 context.load_cert_chain(client_cert)
-        except (OSError, ssl.SSLError):
-            raise ModelEndpointValidationError(
-                "The configured Custom endpoint client certificate could not be loaded."
-            ) from None
+        return context
+    except (OSError, ssl.SSLError, ValueError) as exc:
+        raise ModelEndpointValidationError("The Custom endpoint CA bundle or client certificate could not be loaded.") from exc
 
-    return context
+
+def _validate_custom_transport_request(request, *, allow_private, allow_insecure):
+    # SDK operation queries are legitimate; credentials in configured URLs are not.
+    parsed = urlparse(str(request.url))
+    address = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", "", ""))
+    validate_custom_model_endpoint_url(
+        address, allow_private=allow_private, allow_insecure=allow_insecure,
+    )
+    expected_host = request.url.netloc.decode("ascii").lower()
+    if request.headers.get("host", expected_host).lower() != expected_host:
+        raise ModelEndpointValidationError("Custom endpoint Host overrides are not supported.")
 
 
 class _PinnedCustomEndpointHTTPTransport(httpx.HTTPTransport):
-    """HTTPX transport whose TCP connection uses the validated DNS results."""
-
-    def __init__(self, *, allow_private=False, ca_bundle_path="", client_cert=None):
+    def __init__(self, *, allow_private=False, allow_insecure=False, ca_bundle_path="", client_cert=None):
+        self._allow_private = allow_private
+        self._allow_insecure = allow_insecure
         self._pool = httpcore.ConnectionPool(
             ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path, client_cert),
             max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
             max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
             keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
-            network_backend=_PinnedCustomEndpointSyncBackend(
-                allow_private=allow_private,
-            ),
+            network_backend=_PinnedCustomEndpointSyncBackend(allow_private=allow_private),
         )
+
+    def handle_request(self, request):
+        _validate_custom_transport_request(
+            request, allow_private=self._allow_private, allow_insecure=self._allow_insecure,
+        )
+        response = super().handle_request(request)
+        if 300 <= response.status_code < 400:
+            response.close()
+            raise ModelEndpointValidationError("Custom endpoint redirects are not allowed.")
+        return response
 
 
 class _PinnedCustomEndpointAsyncHTTPTransport(httpx.AsyncHTTPTransport):
-    """Async HTTPX transport whose TCP connection uses validated DNS results."""
-
-    def __init__(self, *, allow_private=False, ca_bundle_path="", client_cert=None):
+    def __init__(self, *, allow_private=False, allow_insecure=False, ca_bundle_path="", client_cert=None):
+        self._allow_private = allow_private
+        self._allow_insecure = allow_insecure
         self._pool = httpcore.AsyncConnectionPool(
             ssl_context=build_custom_endpoint_ssl_context(ca_bundle_path, client_cert),
             max_connections=DEFAULT_CONNECTION_LIMITS.max_connections,
             max_keepalive_connections=DEFAULT_CONNECTION_LIMITS.max_keepalive_connections,
             keepalive_expiry=DEFAULT_CONNECTION_LIMITS.keepalive_expiry,
-            network_backend=_PinnedCustomEndpointAsyncBackend(
-                allow_private=allow_private,
-            ),
+            network_backend=_PinnedCustomEndpointAsyncBackend(allow_private=allow_private),
         )
 
+    async def handle_async_request(self, request):
+        await anyio.to_thread.run_sync(
+            lambda: _validate_custom_transport_request(
+                request, allow_private=self._allow_private, allow_insecure=self._allow_insecure,
+            )
+        )
+        response = await super().handle_async_request(request)
+        if 300 <= response.status_code < 400:
+            await response.aclose()
+            raise ModelEndpointValidationError("Custom endpoint redirects are not allowed.")
+        return response
 
-def build_custom_openai_sync_http_client(*, allow_private=False, ca_bundle_path="", client_cert=None):
-    """Return a no-redirect SDK transport pinned to validated DNS addresses."""
+
+def build_custom_openai_sync_http_client(
+    *, allow_private=False, allow_insecure=False, ca_bundle_path="", client_cert=None,
+):
+    """Return the mandatory DNS-pinned HTTP client for ALL Custom SDK operations."""
     return DefaultHttpxClient(
         transport=_PinnedCustomEndpointHTTPTransport(
-            allow_private=allow_private,
-            ca_bundle_path=ca_bundle_path,
-            client_cert=client_cert,
+            allow_private=allow_private, allow_insecure=allow_insecure,
+            ca_bundle_path=ca_bundle_path, client_cert=client_cert,
         ),
-        follow_redirects=False,
-        trust_env=False,
+        follow_redirects=False, trust_env=False,
     )
 
 
-def build_custom_openai_async_http_client(*, allow_private=False, ca_bundle_path="", client_cert=None):
-    """Return an async no-redirect transport pinned to validated DNS addresses."""
+def build_custom_openai_async_http_client(
+    *, allow_private=False, allow_insecure=False, ca_bundle_path="", client_cert=None,
+):
     return DefaultAsyncHttpxClient(
         transport=_PinnedCustomEndpointAsyncHTTPTransport(
-            allow_private=allow_private,
-            ca_bundle_path=ca_bundle_path,
-            client_cert=client_cert,
+            allow_private=allow_private, allow_insecure=allow_insecure,
+            ca_bundle_path=ca_bundle_path, client_cert=client_cert,
         ),
-        follow_redirects=False,
-        trust_env=False,
+        follow_redirects=False, trust_env=False,
     )
+
+
+CUSTOM_ENDPOINT_REQUEST_ERRORS = (APIError, httpx.HTTPError, ModelEndpointValidationError)
+
+
+def _sanitized_custom_request_error(exc, *, api_type="", protocol="", request_url="", streaming=False):
+    descriptor = get_model_endpoint_provider(api_type)
+    error = build_sanitized_model_endpoint_error(
+        "Custom model stream failed." if streaming else "Custom model request failed.",
+        exc, api_type=api_type, request_url=request_url,
+        protocol=protocol or (descriptor.protocol if descriptor else ""),
+        status_code=getattr(exc, "status_code", None),
+    )
+    error.reasoning_parameter_rejected = is_reasoning_parameter_rejection(exc)
+    error.response_format_rejected = is_response_format_rejection(exc)
+    return error
+
+
+class _SanitizedSyncIterator:
+    def __init__(
+        self, source, *, api_type="", protocol="", request_url="", custom_profile=""
+    ):
+        self._source = source
+        self._iterator = iter(source)
+        self._api_type = api_type
+        self._protocol = protocol
+        self._request_url = request_url
+        self._custom_profile = custom_profile
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        try:
+            return next(self._iterator)
+        except (*CUSTOM_ENDPOINT_REQUEST_ERRORS, ValueError) as exc:
+            self.close()
+            if self._custom_profile == GENAI_MIL_PROFILE:
+                raise build_genai_mil_error(exc) from None
+            raise _sanitized_custom_request_error(
+                exc, api_type=self._api_type, request_url=self._request_url, streaming=True,
+                protocol=self._protocol,
+            ) from exc
+
+    def close(self):
+        close = getattr(self._source, "close", None)
+        if close:
+            close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        self.close()
+
+    def __getattr__(self, name):
+        return getattr(self._source, name)
+
+
+class _SanitizedAsyncIterator(AsyncStream):
+    def __init__(
+        self, source, *, api_type="", protocol="", request_url="", custom_profile=""
+    ):
+        self._source = source
+        self._iterator = source.__aiter__()
+        self._api_type = api_type
+        self._protocol = protocol
+        self._request_url = request_url
+        self._custom_profile = custom_profile
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            return await self._iterator.__anext__()
+        except (*CUSTOM_ENDPOINT_REQUEST_ERRORS, ValueError) as exc:
+            await self.close()
+            if self._custom_profile == GENAI_MIL_PROFILE:
+                raise build_genai_mil_error(exc) from None
+            raise _sanitized_custom_request_error(
+                exc, api_type=self._api_type, request_url=self._request_url, streaming=True,
+                protocol=self._protocol,
+            ) from exc
+
+    async def close(self):
+        await self._source.close()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        await self.close()
+
+    def __getattr__(self, name):
+        return getattr(self._source, name)
+
+
+def sanitize_custom_async_openai_client(
+    client, *, api_type="", protocol="", request_url="", custom_profile=""
+):
+    """Keep SDK/Semantic Kernel errors safe, including failures after streaming begins."""
+    original_create = client.chat.completions.create
+    descriptor = get_model_endpoint_provider(api_type)
+
+    async def create(**kwargs):
+        if custom_profile == GENAI_MIL_PROFILE:
+            kwargs = prepare_genai_request(kwargs)
+        if not descriptor or not descriptor.supports_stream_options:
+            kwargs.pop("stream_options", None)
+        try:
+            response = await original_create(**kwargs)
+        except (*CUSTOM_ENDPOINT_REQUEST_ERRORS, ValueError) as exc:
+            if custom_profile == GENAI_MIL_PROFILE:
+                raise build_genai_mil_error(exc) from None
+            raise _sanitized_custom_request_error(
+                exc, api_type=api_type, protocol=protocol, request_url=request_url,
+            ) from exc
+        if kwargs.get("stream"):
+            return _SanitizedAsyncIterator(
+                response,
+                api_type=api_type,
+                protocol=protocol,
+                request_url=request_url,
+                custom_profile=custom_profile,
+            )
+        return response
+
+    client.chat.completions.create = create
+    responses = getattr(client, "responses", None)
+    if responses is not None:
+        original_responses_create = responses.create
+
+        async def responses_create(**kwargs):
+            try:
+                response = await original_responses_create(**kwargs)
+            except (*CUSTOM_ENDPOINT_REQUEST_ERRORS, ValueError) as exc:
+                if custom_profile == GENAI_MIL_PROFILE:
+                    raise ModelEndpointValidationError(
+                        "GenAI.mil does not support the Responses API."
+                    ) from None
+                raise _sanitized_custom_request_error(
+                    exc,
+                    api_type=api_type,
+                    protocol=protocol,
+                    request_url=request_url,
+                ) from exc
+            if kwargs.get("stream"):
+                return _SanitizedAsyncIterator(
+                    response,
+                    api_type=api_type,
+                    protocol=protocol,
+                    request_url=request_url,
+                    custom_profile=custom_profile,
+                )
+            return response
+
+        responses.create = responses_create
+    return client
 
 
 def build_openai_style_chat_client(
@@ -487,48 +1304,68 @@ def build_openai_style_chat_client(
     default_headers: Dict[str, str] | None = None,
     *,
     direct_custom: bool = False,
-    allow_private_custom_endpoints: bool = False,
     api_type: Any = "",
     url_mode: Any = "",
+    allow_private_custom_endpoints: bool = False,
+    allow_insecure_custom_endpoints: bool = False,
     ca_bundle_path: Any = "",
+    client_cert: Any = None,
+    settings: Any = None,
+    model_name: Any = "",
     resolved_base_url: Any = "",
     request_url: Any = "",
-    client_cert: Any = None,
+    inference_api: Any = "",
     custom_profile: str = "",
 ):
     """Build an OpenAI-compatible chat client for Foundry data-plane endpoints."""
     request_api_version = resolve_openai_style_request_api_version(api_version)
-    explicit_base_url = str(resolved_base_url or "").strip()
-    if explicit_base_url:
-        client_base_url = explicit_base_url.rstrip("/") + "/"
+    normalized_base_url = str(resolved_base_url or "").strip()
+    if normalized_base_url:
+        normalized_base_url = normalized_base_url.rstrip("/") + "/"
     else:
-        client_base_url = (
+        normalized_base_url = (
             resolve_custom_openai_base_url(base_url, api_type, url_mode)
             if direct_custom
             else normalize_openai_style_base_url(base_url)
         )
     client_kwargs: Dict[str, Any] = {
         "api_key": token_or_key,
-        "base_url": client_base_url,
+        "base_url": normalized_base_url,
+        **build_openai_client_timeout_options(settings),
     }
     if custom_profile == GENAI_MIL_PROFILE:
         client_kwargs["max_retries"] = 0
     if direct_custom:
         client_kwargs["http_client"] = build_custom_openai_sync_http_client(
             allow_private=allow_private_custom_endpoints,
-            ca_bundle_path=ca_bundle_path,
-            client_cert=client_cert,
+            allow_insecure=allow_insecure_custom_endpoints,
+            ca_bundle_path=ca_bundle_path, client_cert=client_cert,
         )
     if default_headers:
-        client_kwargs["default_headers"] = default_headers
+        client_kwargs["default_headers"] = dict(default_headers)
+        authorization = next(
+            (
+                (name, value)
+                for name, value in client_kwargs["default_headers"].items()
+                if name.lower() == "authorization"
+            ),
+            None,
+        )
+        if authorization and authorization[0] != "Authorization":
+            client_kwargs["default_headers"].pop(authorization[0])
+            client_kwargs["default_headers"]["Authorization"] = authorization[1]
     if request_api_version:
         client_kwargs["default_query"] = {"api-version": request_api_version}
     return OpenAIStyleChatCompletionClient(
-        OpenAI(**client_kwargs),
-        sanitize_errors=direct_custom,
+        OpenAI(**client_kwargs), sanitize_errors=direct_custom,
         api_type=api_type,
-        custom_profile=custom_profile,
         request_url=request_url or client_kwargs["base_url"],
+        inference_api=(
+            str(inference_api or "").strip()
+            or model_endpoint_inference_api(base_url)
+        ),
+        model_name=model_name,
+        custom_profile=custom_profile,
     )
 
 
@@ -539,229 +1376,91 @@ class OpenAIStyleChatCompletionClient:
         self,
         client: OpenAI,
         *,
-        sanitize_errors: bool = False,
-        api_type: Any = "",
-        request_url: Any = "",
-        custom_profile: str = "",
+        sanitize_errors=False,
+        api_type="",
+        protocol="",
+        request_url="",
+        inference_api="chat_completions",
+        model_name="",
+        custom_profile="",
     ):
         self._client = client
         self._sanitize_errors = sanitize_errors
         self._api_type = api_type
+        self._protocol = protocol
         self._request_url = request_url
+        self._inference_api = inference_api
+        self._model_name = model_name
         self._custom_profile = custom_profile
-        provider = get_model_endpoint_provider(api_type) if sanitize_errors else None
-        self._supports_stream_options = bool(provider and provider.supports_stream_options)
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
 
     def create(self, **kwargs: Any):
-        request_kwargs = dict(kwargs)
+        request_kwargs = prepare_mai_chat_request(
+            kwargs, model_name=self._model_name, endpoint=self._request_url,
+        )
         if self._custom_profile == GENAI_MIL_PROFILE:
             request_kwargs = prepare_genai_request(request_kwargs)
-        # stream_options is how a streaming response reports token usage. It is
-        # dropped only for surfaces that reject it, rather than for everyone.
-        if not self._supports_stream_options:
+        descriptor = get_model_endpoint_provider(self._api_type) if self._sanitize_errors else None
+        if not descriptor or not descriptor.supports_stream_options:
             request_kwargs.pop("stream_options", None)
         try:
-            response = self._client.chat.completions.create(**request_kwargs)
-        except Exception as exc:
+            if self._inference_api == "responses":
+                responses_kwargs = responses_request(request_kwargs)
+                if request_kwargs.get("stream"):
+                    responses_kwargs["stream"] = True
+                    raw_response = self._client.responses.create(
+                        **responses_kwargs
+                    )
+                    response = (
+                        _ResponsesSyncEventStream(raw_response)
+                        if not hasattr(raw_response, "status")
+                        else iter_completed_chat_chunks(
+                            responses_completion(raw_response)
+                        )
+                    )
+                else:
+                    response = responses_completion(
+                        self._client.responses.create(**responses_kwargs)
+                    )
+            else:
+                response = self._client.chat.completions.create(**request_kwargs)
+        except (*CUSTOM_ENDPOINT_REQUEST_ERRORS, ValueError) as exc:
             if self._custom_profile == GENAI_MIL_PROFILE:
                 raise build_genai_mil_error(exc) from None
-            if self._sanitize_errors:
-                raise build_sanitized_model_endpoint_error(
-                    "Custom model request failed.",
-                    exc,
-                    api_type=self._api_type,
-                    protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
-                    request_url=self._request_url,
-                    status_code=getattr(exc, "status_code", None),
-                    detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
-                ) from None
-            raise
+            if not self._sanitize_errors:
+                raise
+            raise _sanitized_custom_request_error(
+                exc, api_type=self._api_type, request_url=self._request_url,
+                protocol=self._protocol,
+            ) from exc
         if self._sanitize_errors and request_kwargs.get("stream"):
             return _SanitizedSyncIterator(
                 response,
                 api_type=self._api_type,
+                protocol=self._protocol,
                 request_url=self._request_url,
                 custom_profile=self._custom_profile,
             )
         return response
 
-
-class _SanitizedSyncIterator(Stream):
-    """Proxy a streaming response without exposing provider exception details."""
-
-    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
-        self._iterator = iterator
-        self._items = iter(iterator)
-        self._api_type = api_type
-        self._request_url = request_url
-        self._custom_profile = custom_profile
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        try:
-            return next(self._items)
-        except StopIteration:
-            raise
-        except Exception as exc:
-            if self._custom_profile == GENAI_MIL_PROFILE:
-                raise build_genai_mil_error(exc) from None
-            raise build_sanitized_model_endpoint_error(
-                "Custom model stream failed.",
-                exc,
-                api_type=self._api_type,
-                protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
-                request_url=self._request_url,
-            ) from None
-
-    def __enter__(self):
-        enter = getattr(self._iterator, "__enter__", None)
-        if callable(enter):
-            enter()
-        return self
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        exit_method = getattr(self._iterator, "__exit__", None)
-        if callable(exit_method):
-            return exit_method(exc_type, exc_value, traceback)
-        return False
-
     def close(self):
-        close_method = getattr(self._iterator, "close", None)
-        if callable(close_method):
-            return close_method()
-        return None
+        self._client.close()
 
-    def __getattr__(self, name: str):
-        return getattr(self._iterator, name)
-
-
-class _SanitizedAsyncIterator(AsyncStream):
-    """Proxy an async streaming response without exposing provider exception details."""
-
-    def __init__(self, iterator: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
-        self._iterator = iterator
-        self._items = iterator.__aiter__()
-        self._api_type = api_type
-        self._request_url = request_url
-        self._custom_profile = custom_profile
-
-    def __aiter__(self):
-        return self
-
-    async def __anext__(self):
-        try:
-            return await self._items.__anext__()
-        except StopAsyncIteration:
-            raise
-        except Exception as exc:
-            if self._custom_profile == GENAI_MIL_PROFILE:
-                raise build_genai_mil_error(exc) from None
-            raise build_sanitized_model_endpoint_error(
-                "Custom model stream failed.",
-                exc,
-                api_type=self._api_type,
-                protocol=MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
-                request_url=self._request_url,
-            ) from None
-
-    async def __aenter__(self):
-        enter = getattr(self._iterator, "__aenter__", None)
-        if callable(enter):
-            await enter()
-        return self
-
-    async def __aexit__(self, exc_type, exc_value, traceback):
-        exit_method = getattr(self._iterator, "__aexit__", None)
-        if callable(exit_method):
-            return await exit_method(exc_type, exc_value, traceback)
-        return False
-
-    async def close(self):
-        close_method = getattr(self._iterator, "close", None)
-        if callable(close_method):
-            result = close_method()
-            if asyncio.iscoroutine(result):
-                return await result
-        return None
-
-    def __getattr__(self, name: str):
-        return getattr(self._iterator, name)
-
-
-class SanitizedCustomChatCompletionClient:
-    """Expose an SDK chat client while replacing direct Custom provider errors."""
-
-    def __init__(self, client: Any, *, api_type: Any = "", request_url: Any = ""):
-        self._client = client
-        self._api_type = api_type
-        self._request_url = request_url
-        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
-
-    def create(self, **kwargs: Any):
-        try:
-            response = self._client.chat.completions.create(**kwargs)
-        except Exception as exc:
-            raise build_sanitized_model_endpoint_error(
-                "Custom model request failed.",
-                exc,
-                api_type=self._api_type,
-                protocol=MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
-                request_url=self._request_url,
-                status_code=getattr(exc, "status_code", None),
-                detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
-            ) from None
-        if kwargs.get("stream"):
-            return _SanitizedSyncIterator(
-                response,
-                api_type=self._api_type,
-                request_url=self._request_url,
-            )
-        return response
-
-    def __getattr__(self, name: str):
+    def __getattr__(self, name):
         return getattr(self._client, name)
 
 
-def sanitize_custom_async_openai_client(client: Any, *, api_type: Any = "", request_url: Any = "", custom_profile: str = ""):
-    """Replace async SDK chat errors with safe direct-Custom messages."""
-    if getattr(client, "_simplechat_custom_errors_sanitized", False):
-        return client
+class SanitizedCustomChatCompletionClient(OpenAIStyleChatCompletionClient):
+    """Retain the Custom client interface while sharing the guarded SDK adapter."""
 
-    original_create = client.chat.completions.create
-
-    async def sanitized_create(*args, **kwargs):
-        if custom_profile == GENAI_MIL_PROFILE:
-            if args:
-                raise ModelEndpointValidationError("GenAI.mil requests require named chat arguments.")
-            kwargs = prepare_genai_request(kwargs)
-        try:
-            response = await original_create(*args, **kwargs)
-        except Exception as exc:
-            if custom_profile == GENAI_MIL_PROFILE:
-                raise build_genai_mil_error(exc) from None
-            raise build_sanitized_model_endpoint_error(
-                "Custom model request failed.",
-                exc,
-                api_type=api_type,
-                request_url=request_url,
-                status_code=getattr(exc, "status_code", None),
-                detail=getattr(exc, "message", "") or getattr(exc, "body", ""),
-            ) from None
-        if kwargs.get("stream"):
-            return _SanitizedAsyncIterator(
-                response,
-                api_type=api_type,
-                request_url=request_url,
-                custom_profile=custom_profile,
-            )
-        return response
-
-    client.chat.completions.create = sanitized_create
-    client._simplechat_custom_errors_sanitized = True
-    return client
+    def __init__(
+        self, client, *, api_type="", protocol="", request_url="", custom_profile=""
+    ):
+        super().__init__(
+            client, sanitize_errors=True, api_type=api_type,
+            protocol=protocol, request_url=request_url,
+            custom_profile=custom_profile,
+        )
 
 
 def build_anthropic_chat_client(
@@ -770,61 +1469,36 @@ def build_anthropic_chat_client(
     api_key: str = "",
     bearer_token: str = "",
     extra_headers: Dict[str, str] | None = None,
-    timeout: int = 90,
+    timeout: int | None = None,
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
     direct_custom: bool = False,
     allow_private_custom_endpoints: bool = False,
+    allow_insecure_custom_endpoints: bool = False,
     custom_endpoint_ca_bundle_path: str = "",
     operation_url: str = "",
     client_cert: Any = None,
+    settings: Any = None,
 ):
     """Build a chat-completions-shaped adapter over the Anthropic messages protocol."""
+    resolved_timeout = (
+        int(timeout)
+        if timeout is not None
+        else resolve_model_stream_read_timeout_seconds(settings)
+    )
     return AnthropicChatCompletionClient(
         endpoint=endpoint,
         api_key=api_key,
         bearer_token=bearer_token,
         extra_headers=extra_headers,
-        timeout=timeout,
+        timeout=resolved_timeout,
         anthropic_version=anthropic_version,
         direct_custom=direct_custom,
         allow_private_custom_endpoints=allow_private_custom_endpoints,
+        allow_insecure_custom_endpoints=allow_insecure_custom_endpoints,
         custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
         operation_url=operation_url,
         client_cert=client_cert,
     )
-
-
-class _OwnedMessagesStream:
-    def __init__(self, iterator, response, http_client=None):
-        self._iterator = iterator
-        self._response = response
-        self._http_client = http_client
-        self._closed = False
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        if self._closed:
-            raise StopIteration
-        try:
-            return next(self._iterator)
-        except BaseException:
-            self.close()
-            raise
-
-    def close(self):
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            self._iterator.close()
-        finally:
-            try:
-                self._response.close()
-            finally:
-                if self._http_client is not None:
-                    self._http_client.close()
 
 
 class AnthropicChatCompletionClient:
@@ -841,12 +1515,16 @@ class AnthropicChatCompletionClient:
         anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
         direct_custom: bool = False,
         allow_private_custom_endpoints: bool = False,
+        allow_insecure_custom_endpoints: bool = False,
         custom_endpoint_ca_bundle_path: str = "",
         operation_url: str = "",
         client_cert: Any = None,
     ):
-        self.endpoint = str(operation_url or "").strip() or normalize_anthropic_messages_url(
-            endpoint, direct_custom=direct_custom,
+        self.endpoint = (
+            str(operation_url or "").strip()
+            or normalize_anthropic_messages_url(
+                endpoint, direct_custom=direct_custom
+            )
         )
         self.api_key = api_key
         self.bearer_token = bearer_token
@@ -857,6 +1535,7 @@ class AnthropicChatCompletionClient:
         ).strip()
         self.direct_custom = direct_custom
         self.allow_private_custom_endpoints = allow_private_custom_endpoints
+        self.allow_insecure_custom_endpoints = allow_insecure_custom_endpoints
         self.custom_endpoint_ca_bundle_path = custom_endpoint_ca_bundle_path
         self.client_cert = client_cert
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
@@ -864,14 +1543,16 @@ class AnthropicChatCompletionClient:
     def create(self, **kwargs: Any):
         payload = self._build_payload(kwargs)
         stream = bool(kwargs.get("stream"))
+        call_timeout = kwargs.get("timeout")
+        effective_timeout = float(call_timeout) if isinstance(call_timeout, (int, float)) and call_timeout > 0 else float(self.timeout)
         if self.direct_custom:
-            return self._create_direct_custom(payload, stream=stream)
+            return self._create_direct_custom(payload, stream=stream, timeout_override=effective_timeout)
 
         response = requests.post(
             self.endpoint,
             headers=self._build_headers(stream=stream),
             json=payload,
-            timeout=(30, self.timeout),
+            timeout=(min(30.0, effective_timeout), effective_timeout),
             stream=stream,
             allow_redirects=not self.direct_custom,
         )
@@ -879,13 +1560,15 @@ class AnthropicChatCompletionClient:
             self._raise_response_error(response)
 
         if stream:
-            return _OwnedMessagesStream(self._iter_stream_chunks(response), response)
+            return self._iter_stream_chunks(response)
 
         return self._build_completion_response(response.json())
 
-    def _create_direct_custom(self, payload, *, stream):
+    def _create_direct_custom(self, payload, *, stream, timeout_override=None):
+        effective_timeout = float(timeout_override) if timeout_override is not None else float(self.timeout)
         http_client = build_custom_openai_sync_http_client(
             allow_private=self.allow_private_custom_endpoints,
+            allow_insecure=self.allow_insecure_custom_endpoints,
             ca_bundle_path=self.custom_endpoint_ca_bundle_path,
             client_cert=self.client_cert,
         )
@@ -894,7 +1577,7 @@ class AnthropicChatCompletionClient:
             self.endpoint,
             headers=self._build_headers(stream=stream),
             json=payload,
-            timeout=httpx.Timeout(self.timeout, connect=30),
+            timeout=httpx.Timeout(effective_timeout, connect=min(30.0, effective_timeout)),
         )
         try:
             response = http_client.send(
@@ -934,9 +1617,13 @@ class AnthropicChatCompletionClient:
             )
 
         if stream:
-            return _OwnedMessagesStream(
-                self._iter_stream_chunks(response, http_client=http_client),
-                response, http_client,
+            return _ManagedSyncStream(
+                self._iter_stream_chunks(
+                    response,
+                    http_client=http_client,
+                ),
+                response,
+                http_client,
             )
 
         try:
@@ -969,8 +1656,15 @@ class AnthropicChatCompletionClient:
             raise ValueError("Anthropic model endpoints require an API key or bearer token.")
         existing_header_names = {header_name.lower() for header_name in headers}
         for header_name, header_value in self.extra_headers.items():
-            if self.direct_custom and not self.bearer_token and header_name.lower() == "x-api-key":
-                headers["x-api-key"] = header_value
+            if self.bearer_token and header_name.lower() == "authorization":
+                continue
+            if self.direct_custom and header_name.lower() in existing_header_names:
+                existing_name = next(
+                    name for name in headers
+                    if name.lower() == header_name.lower()
+                )
+                headers.pop(existing_name)
+                headers[header_name] = header_value
             elif header_name.lower() not in existing_header_names:
                 headers[header_name] = header_value
         return headers
@@ -1155,7 +1849,7 @@ class AnthropicChatCompletionClient:
         return SimpleNamespace(
             choices=[SimpleNamespace(
                 message=SimpleNamespace(content=text, tool_calls=tool_calls),
-                finish_reason=response_payload.get("stop_reason"),
+                finish_reason=normalize_anthropic_finish_reason(response_payload.get("stop_reason")),
             )],
             usage=SimpleNamespace(
                 prompt_tokens=prompt_tokens,
@@ -1219,12 +1913,13 @@ class AnthropicChatCompletionClient:
                 try:
                     event_payload = json.loads(event_data)
                 except json.JSONDecodeError:
-                    if self.direct_custom:
-                        debug_print("[MODEL_ENDPOINT] Ignoring invalid Custom Anthropic stream payload.")
-                    else:
-                        debug_print(f"[MODEL_ENDPOINT] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
+                    if getattr(self, "direct_custom", False):
+                        raise
+                    debug_print(f"[MODEL_ENDPOINT] Ignoring invalid Anthropic stream payload: {event_data[:200]}")
                     continue
 
+                if getattr(self, "direct_custom", False) and not isinstance(event_payload, dict):
+                    raise ValueError("Invalid Custom Anthropic stream event.")
                 event_type = event_payload.get("type")
                 if event_type == "error":
                     error_payload = event_payload.get("error")
@@ -1299,13 +1994,168 @@ class AnthropicChatCompletionClient:
         )
 
 
+def _close_sync_model_stream(stream):
+    close = getattr(stream, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception as exc:
+        log_event(
+            "[MODELS] Unable to close a provider stream.",
+            extra={"error_type": type(exc).__name__},
+            level=logging.WARNING,
+        )
+
+
+class _ManagedSyncStream:
+    """Keep a sync provider response owned by its stream wrapper."""
+
+    def __init__(self, iterator, response, client):
+        self._iterator = iter(iterator)
+        self._response = response
+        self._client = client
+        self._closed = False
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        return next(self._iterator)
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        iterator_close = getattr(self._iterator, "close", None)
+        try:
+            if callable(iterator_close):
+                iterator_close()
+        finally:
+            self._response.close()
+            self._client.close()
+
+
+class CustomAnthropicChatCompletionClient(AnthropicChatCompletionClient):
+    """Anthropic's native HTTP surface using the same pinned transport as Custom OpenAI."""
+
+    def __init__(
+        self, *, endpoint, auth_headers, anthropic_version=DEFAULT_ANTHROPIC_VERSION,
+        url_mode="auto", allow_private=False, allow_insecure=False, ca_bundle_path="",
+        client_cert=None, timeout=90, operation_url="",
+    ):
+        self.endpoint = (
+            str(operation_url or "").strip()
+            or normalize_anthropic_messages_url(
+                endpoint, direct_custom=True, url_mode=url_mode
+            )
+        )
+        self.direct_custom = True
+        self.extra_headers = dict(auth_headers)
+        self.anthropic_version = anthropic_version
+        self.timeout = timeout
+        self._transport_options = {
+            "allow_private": allow_private, "allow_insecure": allow_insecure,
+            "ca_bundle_path": ca_bundle_path, "client_cert": client_cert,
+        }
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self.create))
+
+    def _build_headers(self, *, stream=False):
+        return {
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream" if stream else "application/json",
+            "anthropic-version": self.anthropic_version,
+            **self.extra_headers,
+        }
+
+    def create(self, **kwargs):
+        payload = self._build_payload(kwargs)
+        stream = bool(kwargs.get("stream"))
+        call_timeout = kwargs.get("timeout")
+        effective_timeout = float(call_timeout) if isinstance(call_timeout, (int, float)) and call_timeout > 0 else float(self.timeout)
+        client = build_custom_openai_sync_http_client(**self._transport_options)
+        response = None
+        try:
+            request = client.build_request(
+                "POST", self.endpoint, headers=self._build_headers(stream=stream),
+                json=payload, timeout=httpx.Timeout(effective_timeout, connect=min(30.0, effective_timeout)),
+            )
+            response = client.send(request, stream=stream, follow_redirects=False)
+            response.raise_for_status()
+            if stream:
+                return _ManagedSyncStream(
+                    self._iter_custom_response(response, client),
+                    response,
+                    client,
+                )
+            result = response.json()
+            if not isinstance(result, dict) or "error" in result or not isinstance(result.get("content"), list):
+                raise ValueError("Invalid Anthropic response shape.")
+            return self._build_completion_response(result)
+        except (httpx.HTTPError, ValueError) as exc:
+            if response is not None:
+                response.close()
+            client.close()
+            raise _sanitized_custom_request_error(
+                exc, api_type="anthropic", request_url=self.endpoint,
+            ) from exc
+        finally:
+            if not stream:
+                if response is not None:
+                    response.close()
+                client.close()
+
+    def _iter_custom_response(self, response, client):
+        adapter = SimpleNamespace(
+            iter_lines=lambda decode_unicode=True: response.iter_lines(),
+            close=response.close,
+        )
+        try:
+            yield from self._iter_stream_chunks(adapter)
+        except (httpx.HTTPError, ValueError, RuntimeError) as exc:
+            raise _sanitized_custom_request_error(
+                exc, api_type="anthropic", request_url=self.endpoint, streaming=True,
+            ) from exc
+        finally:
+            response.close()
+            client.close()
+
+    def _normalize_content(self, content):
+        if not isinstance(content, list):
+            return super()._normalize_content(content)
+        converted = []
+        for item in content:
+            if not isinstance(item, dict) or item.get("type") != "image_url":
+                converted.append(item)
+                continue
+            image = item.get("image_url")
+            url = image.get("url") if isinstance(image, dict) else image
+            url = str(url or "")
+            match = re.fullmatch(r"data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\s]+)", url)
+            if match:
+                converted.append({
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": match[1], "data": match[2]},
+                })
+            elif url.startswith("https://"):
+                converted.append({"type": "image", "source": {"type": "url", "url": url}})
+            else:
+                raise ModelEndpointValidationError("Custom Anthropic image inputs require supported image data or an HTTPS URL.")
+        blocks = []
+        for item in converted:
+            if isinstance(item, str):
+                blocks.append({"type": "text", "text": item})
+            elif isinstance(item, dict) and item.get("type") in {"text", "image", "tool_use", "tool_result"}:
+                blocks.append(item)
+        return blocks
+
+
 class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     """Semantic Kernel chat service for Anthropic-compatible model endpoints."""
 
     SUPPORTS_FUNCTION_CALLING = True
 
     endpoint: str
-    operation_url: str = ""
     api_key: str = ""
     bearer_token: str = ""
     extra_headers: Dict[str, str] = Field(default_factory=dict)
@@ -1313,9 +2163,14 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
     anthropic_version: str = DEFAULT_ANTHROPIC_VERSION
     direct_custom: bool = False
     allow_private_custom_endpoints: bool = False
-    custom_endpoint_ca_bundle_path: str | ManagedCABundle = Field(default="", exclude=True, repr=False)
-    client_cert: Any = None
-    resolved_route: Dict[str, Any] | None = Field(default=None, exclude=True)
+    allow_insecure_custom_endpoints: bool = False
+    custom_endpoint_ca_bundle_path: str | ManagedCABundle = Field(
+        default="", exclude=True, repr=False
+    )
+    client_cert: Any = Field(default=None, exclude=True, repr=False)
+    operation_url: str = ""
+    resolved_route: dict | None = Field(default=None, exclude=True, repr=False)
+    custom_client: Any = Field(default=None, exclude=True)
     prompt_execution_settings: OpenAIChatPromptExecutionSettings | None = Field(default=None)
 
     def __init__(
@@ -1324,7 +2179,6 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         service_id: str,
         deployment_name: str,
         endpoint: str,
-        operation_url: str = "",
         api_key: str = "",
         bearer_token: str = "",
         extra_headers: Dict[str, str] | None = None,
@@ -1332,14 +2186,17 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         anthropic_version: str = DEFAULT_ANTHROPIC_VERSION,
         direct_custom: bool = False,
         allow_private_custom_endpoints: bool = False,
+        allow_insecure_custom_endpoints: bool = False,
         custom_endpoint_ca_bundle_path: str = "",
         client_cert: Any = None,
+        operation_url: str = "",
+        resolved_route: dict | None = None,
+        custom_client: Any = None,
     ):
         super().__init__(
             ai_model_id=deployment_name,
             service_id=service_id,
             endpoint=endpoint,
-            operation_url=operation_url,
             api_key=api_key,
             bearer_token=bearer_token,
             extra_headers=extra_headers or {},
@@ -1347,8 +2204,12 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             anthropic_version=anthropic_version,
             direct_custom=direct_custom,
             allow_private_custom_endpoints=allow_private_custom_endpoints,
+            allow_insecure_custom_endpoints=allow_insecure_custom_endpoints,
             custom_endpoint_ca_bundle_path=custom_endpoint_ca_bundle_path,
             client_cert=client_cert,
+            operation_url=operation_url,
+            resolved_route=resolved_route,
+            custom_client=custom_client,
         )
 
     def get_prompt_execution_settings_class(self):
@@ -1416,11 +2277,9 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         ]
 
     def _normalize_finish_reason(self, finish_reason: Any) -> FinishReason | None:
-        normalized_reason = str(finish_reason or "").strip().lower()
+        normalized_reason = normalize_anthropic_finish_reason(finish_reason)
         if not normalized_reason:
             return None
-        if normalized_reason == "tool_use":
-            normalized_reason = "tool_calls"
         try:
             return FinishReason(normalized_reason)
         except ValueError:
@@ -1449,29 +2308,47 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
 
         request_kwargs = self._build_request_kwargs(chat_history, settings, stream=True)
         client = self._build_client()
-        pending_stream = asyncio.get_running_loop().run_in_executor(
-            None, copy_context().run, lambda: client.chat.completions.create(**request_kwargs),
+        stream = None
+        defer_close = False
+        create_task = asyncio.create_task(
+            asyncio.to_thread(client.chat.completions.create, **request_kwargs)
         )
-        try:
-            stream = await asyncio.shield(pending_stream)
-        except asyncio.CancelledError:
-            def close_late_stream(completed):
-                if not completed.cancelled() and completed.exception() is None:
-                    close_stream = getattr(completed.result(), "close", None)
-                    if callable(close_stream):
-                        close_stream()
-            pending_stream.add_done_callback(close_late_stream)
-            raise
-        sentinel = object()
-        iterator = iter(stream)
 
-        pending_read = None
+        def close_created(future):
+            try:
+                created = future.result()
+            except BaseException:
+                return
+            _close_sync_model_stream(created)
+
         try:
+            try:
+                stream = await asyncio.shield(create_task)
+            except asyncio.CancelledError:
+                defer_close = True
+                create_task.add_done_callback(close_created)
+                raise
+
+            sentinel = object()
+            iterator = iter(stream)
             while True:
-                pending_read = asyncio.get_running_loop().run_in_executor(
-                    None, copy_context().run, next, iterator, sentinel,
+                read_task = asyncio.create_task(
+                    asyncio.to_thread(next, iterator, sentinel)
                 )
-                chunk = await asyncio.shield(pending_read)
+                try:
+                    chunk = await asyncio.shield(read_task)
+                except asyncio.CancelledError:
+                    defer_close = True
+
+                    def close_after_read(future, owned_stream=stream):
+                        try:
+                            future.result()
+                        except BaseException:
+                            pass
+                        _close_sync_model_stream(owned_stream)
+
+                    read_task.add_done_callback(close_after_read)
+                    raise
                 if chunk is sentinel:
                     break
 
@@ -1506,16 +2383,8 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
                         )
                     ]
         finally:
-            close_stream = getattr(stream, "close", None)
-            if callable(close_stream):
-                if pending_read is not None and not pending_read.done():
-                    def close_after_read(completed):
-                        if not completed.cancelled():
-                            completed.exception()
-                            close_stream()
-                    pending_read.add_done_callback(close_after_read)
-                else:
-                    await asyncio.to_thread(close_stream)
+            if stream is not None and not defer_close:
+                _close_sync_model_stream(stream)
 
     def _iter_synthetic_stream_messages(
         self,
@@ -1529,48 +2398,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         alongside the finish reason and usage metadata. Emitting metadata only
         once keeps token usage from being counted per chunk.
         """
-        text_items = [item for item in message.items or [] if isinstance(item, TextContent)]
-        other_items = [item for item in message.items or [] if not isinstance(item, TextContent)]
-
-        combined_text = "".join(item.text or "" for item in text_items)
-        text_chunks = list(iter_synthetic_stream_text_chunks(combined_text))
-
-        # Every chunk before the last carries text only.
-        for chunk_text in text_chunks[:-1]:
-            yield StreamingChatMessageContent(
-                role=message.role,
-                items=[StreamingTextContent(
-                    choice_index=0,
-                    text=chunk_text,
-                    ai_model_id=self.ai_model_id,
-                )],
-                choice_index=0,
-                ai_model_id=self.ai_model_id,
-                function_invoke_attempt=function_invoke_attempt,
-            )
-
-        final_items: List[Any] = []
-        if text_chunks:
-            final_items.append(StreamingTextContent(
-                choice_index=0,
-                text=text_chunks[-1],
-                ai_model_id=self.ai_model_id,
-                inner_content=text_items[-1].inner_content if text_items else None,
-                metadata=text_items[-1].metadata if text_items else {},
-                encoding=text_items[-1].encoding if text_items else None,
-            ))
-        final_items.extend(other_items)
-
-        yield StreamingChatMessageContent(
-            role=message.role,
-            items=final_items,
-            choice_index=0,
-            ai_model_id=self.ai_model_id,
-            inner_content=message.inner_content,
-            metadata=message.metadata,
-            finish_reason=message.finish_reason,
-            function_invoke_attempt=function_invoke_attempt,
-        )
+        yield from iter_synthetic_chat_message_chunks(message, self.ai_model_id, function_invoke_attempt)
 
     def _to_streaming_chat_message_content(
         self,
@@ -1602,6 +2430,10 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
         )
 
     def _build_client(self):
+        if self.custom_client is not None:
+            return bind_model_endpoint_request_policy(
+                self.custom_client, self.resolved_route
+            )
         return bind_model_endpoint_request_policy(build_anthropic_chat_client(
             endpoint=self.endpoint,
             api_key=self.api_key,
@@ -1611,6 +2443,7 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             anthropic_version=self.anthropic_version,
             direct_custom=self.direct_custom,
             allow_private_custom_endpoints=self.allow_private_custom_endpoints,
+            allow_insecure_custom_endpoints=self.allow_insecure_custom_endpoints,
             custom_endpoint_ca_bundle_path=self.custom_endpoint_ca_bundle_path,
             operation_url=self.operation_url,
             client_cert=self.client_cert,
@@ -1640,7 +2473,9 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
             if tool_choice not in (None, "", [], {}):
                 request_kwargs["tool_choice"] = tool_choice
             if self.resolved_route is not None:
-                self._copy_setting(source_settings, request_kwargs, "response_format")
+                self._copy_setting(
+                    source_settings, request_kwargs, "response_format"
+                )
                 self._copy_setting(source_settings, request_kwargs, "extra_body")
 
         validate_model_endpoint_request(self.resolved_route, request_kwargs)
@@ -1698,6 +2533,10 @@ class AnthropicSemanticKernelChatCompletion(ChatCompletionClientBase):
                 })
             elif isinstance(item, TextContent):
                 text_parts.append(item.text)
+            elif isinstance(item, ImageContent) and self.custom_client is not None:
+                image_url = getattr(item, "data_uri", None) or getattr(item, "uri", None)
+                if image_url:
+                    blocks.append({"type": "image_url", "image_url": {"url": str(image_url)}})
 
         if blocks:
             if text_parts:

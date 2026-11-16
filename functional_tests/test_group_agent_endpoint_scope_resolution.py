@@ -3,7 +3,7 @@
 #!/usr/bin/env python3
 """
 Functional test for group agent endpoint scope resolution.
-Version: 0.241.007
+Version: 0.261.105
 Implemented in: 0.239.192
 
 This test ensures group agents resolve model endpoints from conversation or
@@ -11,6 +11,7 @@ persisted group scope instead of the mutable active group, while honoring the
 group-specific custom endpoint feature flags.
 """
 
+import ast
 import sys
 from pathlib import Path
 
@@ -41,7 +42,11 @@ def test_group_agent_endpoint_scope_resolution() -> None:
     route_agents_content = read_text(ROUTE_AGENTS_FILE)
     fix_doc_content = read_text(FIX_DOC_FILE)
 
-    assert "def resolve_agent_config(agent, settings, group_scope_id=None):" in loader_content, (
+    resolver = next(
+        node for node in ast.parse(loader_content).body
+        if isinstance(node, ast.FunctionDef) and node.name == "resolve_agent_config"
+    )
+    assert "group_scope_id" in {argument.arg for argument in resolver.args.args}, (
         "resolve_agent_config should accept an explicit group scope override."
     )
     assert "explicit_group_scope_id = str(group_scope_id or \"\").strip()" in loader_content, (

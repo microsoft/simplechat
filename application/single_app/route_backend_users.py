@@ -32,6 +32,11 @@ from functions_legacy_action_management import (
     legacy_action_management_view,
     legacy_action_snapshots,
 )
+from functions_message_visual_styles import (
+    VisualStyleError,
+    sanitize_visual_style,
+)
+from functions_orchestration_schema import APPROVAL_MODES
 from functions_public_workspaces import update_active_public_workspace_for_user
 from functions_settings import *
 from swagger_wrapper import swagger_route, get_auth_security
@@ -41,6 +46,15 @@ PROFILE_LOOKUP_MEMBERSHIP_STATUSES = {
     MEMBERSHIP_STATUS_ACCEPTED,
     MEMBERSHIP_STATUS_PENDING,
 }
+
+# Guided tours the new interface ships. Must match the ids in v2_ui/src/lib/tours.ts.
+TUTORIAL_IDS = frozenset({"chat", "workspace"})
+
+# /api/userSearch waits at most this long for Graph, the bound the SimpleChat
+# operations' Graph calls use.
+USER_SEARCH_GRAPH_TIMEOUT_SECONDS = 20
+USER_SEARCH_FAILED_MESSAGE = "Graph API request failed"
+USER_SEARCH_TIMEOUT_MESSAGE = "Graph API request timed out"
 
 
 def _escape_graph_odata_literal(value):
@@ -300,34 +314,45 @@ def register_route_backend_users(bp):
             "$select": "id,displayName,mail,userPrincipalName"
         }
 
+        # A failure answers only a fixed message: Graph's error body can name the
+        # tenant, the app and its permissions, so it is neither returned nor logged.
         try:
-            response = requests.get(user_endpoint, headers=headers, params=params)
+            response = requests.get(
+                user_endpoint,
+                headers=headers,
+                params=params,
+                timeout=USER_SEARCH_GRAPH_TIMEOUT_SECONDS,
+            )
             response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-
             user_results = response.json().get("value", [])
-            results = []
-            for user in user_results:
-                email = user.get("mail") or user.get("userPrincipalName") or ""
-                results.append({
-                    "id": user.get("id"),
-                    "displayName": user.get("displayName", "(no name)"),
-                    "email": email
-                })
-            return jsonify(results), 200
+        except requests.exceptions.Timeout:
+            log_event(
+                "[USERS] Graph user search timed out",
+                extra={"status_code": None},
+                level=logging.WARNING,
+            )
+            return jsonify({"error": USER_SEARCH_TIMEOUT_MESSAGE}), 504
+        except (requests.exceptions.RequestException, ValueError) as e:
+            status_code = getattr(getattr(e, "response", None), "status_code", None)
+            log_event(
+                "[USERS] Graph user search failed",
+                extra={"status_code": status_code},
+                level=logging.WARNING,
+            )
+            # Graph's own error status when it answered with one, otherwise a bad gateway.
+            if not (isinstance(status_code, int) and status_code >= 400):
+                status_code = 502
+            return jsonify({"error": USER_SEARCH_FAILED_MESSAGE}), status_code
 
-        except requests.exceptions.RequestException as e:
-            print(f"Graph API request failed: {e}")
-            # Try to get more details from response if available
-            error_details = "Unknown error"
-            if e.response is not None:
-                try:
-                    error_details = e.response.json()
-                except ValueError: # Handle cases where response is not JSON
-                    error_details = e.response.text
-            return jsonify({
-                "error": "Graph API request failed",
-                "details": error_details
-            }), getattr(e.response, 'status_code', 500) # Use response status code if available
+        results = []
+        for user in user_results:
+            email = user.get("mail") or user.get("userPrincipalName") or ""
+            results.append({
+                "id": user.get("id"),
+                "displayName": user.get("displayName", "(no name)"),
+                "email": email
+            })
+        return jsonify(results), 200
 
     @bp.route("/api/user/info/<user_id>", methods=["GET"])
     @swagger_route(security=get_auth_security())
@@ -520,9 +545,42 @@ def register_route_backend_users(bp):
                     # Chat UI settings
                     'navbar_layout', 'chatLayout', 'showChatTitle', 'chatSplitSizes',
                     'deepResearchDefaultEnabled',
+                    'orchestrationApprovalMode',
+                    # The Orchestrate model choice, used by the V2 interface only.
+                    'orchestrationModelRouting', 'orchestrationPreferredModelId',
                     'aiNoticeDismissal',
                     'sidebarToggleStyle', 'sidebarMenuState', 'fontSizePreference',
                     'conversationContentsDrawerEnabled',
+                    # Conversation list display, used by the V2 interface
+                    'showConversationWorkspaceTags',
+                    # V2 shell preferences. Deliberately namespaced rather than reusing
+                    # dockedSidebarHidden / chatLayout, which describe the classic
+                    # interface's own surfaces and would change its layout too.
+                    'v2RailCollapsed', 'v2ChatWidth',
+                    # Whether the personal workspace's own section rail is collapsed to
+                    # icons. Separate from v2RailCollapsed, which is the shell's rail.
+                    'v2WorkspaceRailCollapsed',
+                    # Whether the V2 Admin Settings categories rail is collapsed to icons.
+                    # Separate from the shell and workspace rails so each keeps its own state.
+                    'v2AdminRailCollapsed',
+                    # Whether the V2 Approvals categories rail is collapsed to icons.
+                    'v2ApprovalsRailCollapsed',
+                    # Whether the V2 admin Review center sections rail is collapsed to icons.
+                    'v2ReviewRailCollapsed',
+                    # Whether the V2 User Settings sections rail is collapsed to icons.
+                    'v2UserSettingsRailCollapsed',
+                    # Whether the V2 Control Center section rail is collapsed to icons.
+                    'v2ControlCenterRailCollapsed',
+                    # V2 Control Center Activity Logs: named filter combinations (saved views)
+                    # and display preferences (time zone, density, trend strip visibility).
+                    'v2ActivityLogSavedViews', 'v2ActivityLogPrefs',
+                    # V2 document explorer: how the workspace documents list is presented
+                    # (view mode, visible columns, page size, details pane) and the saved
+                    # filter combinations pinned in its navigation rail.
+                    'v2DocumentsPrefs', 'v2DocumentSavedViews',
+                    # Default colours for diagrams and charts rendered in the V2 chat. A block
+                    # someone recolours individually stores its own style on the message.
+                    'v2MermaidStyle', 'v2ChartStyle',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
@@ -532,7 +590,7 @@ def register_route_backend_users(bp):
                     'chatCompletionAudioEnabled', 'chatCompletionAudioMuted',
                     'chatCompletionAudioSound', 'chatCompletionAudioVolume',
                     # Tutorial visibility settings
-                    'showTutorialButtons',
+                    'showTutorialButtons', 'tutorialVisibility',
                     # Desktop conversation notification settings
                     'desktopNotificationsEnabled',
                     'recentCollaborators',
@@ -561,6 +619,26 @@ def register_route_backend_users(bp):
 
                 settings_to_update = dict(settings_to_update)
 
+                if "orchestrationApprovalMode" in settings_to_update:
+                    approval_mode = settings_to_update["orchestrationApprovalMode"]
+                    if not isinstance(approval_mode, str) or approval_mode not in APPROVAL_MODES:
+                        return jsonify({"error": "Invalid orchestration approval mode"}), 400
+
+                # The Orchestrate model choice: Auto, or one pinned catalog selection key. The
+                # key only picks an option in the user's own picker; every request still
+                # authorizes the model it names, so this validates shape, not access.
+                if "orchestrationModelRouting" in settings_to_update:
+                    model_routing = settings_to_update["orchestrationModelRouting"]
+                    if not isinstance(model_routing, str) or model_routing not in ("auto", "manual"):
+                        return jsonify({"error": "Invalid orchestration model routing"}), 400
+
+                if "orchestrationPreferredModelId" in settings_to_update:
+                    pinned_model = settings_to_update["orchestrationPreferredModelId"]
+                    pinned_model = pinned_model.strip() if isinstance(pinned_model, str) else ""
+                    if not pinned_model or len(pinned_model) > 512 or not pinned_model.isprintable():
+                        return jsonify({"error": "Invalid orchestration model"}), 400
+                    settings_to_update["orchestrationPreferredModelId"] = pinned_model
+
                 if "sidebarToggleStyle" in settings_to_update:
                     sidebar_toggle_style = str(settings_to_update.get("sidebarToggleStyle") or "large").strip().lower()
                     if sidebar_toggle_style not in {"large", "compact"}:
@@ -578,6 +656,19 @@ def register_route_backend_users(bp):
                 if "conversationContentsDrawerEnabled" in settings_to_update:
                     if not isinstance(settings_to_update["conversationContentsDrawerEnabled"], bool):
                         return jsonify({"error": "Invalid conversation contents drawer preference"}), 400
+
+                # Default diagram and chart colours end up in inline styles and in mermaid's
+                # theme configuration in the browser, so they are normalized to a single
+                # accepted colour form here rather than being stored as sent.
+                for style_key in ("v2MermaidStyle", "v2ChartStyle"):
+                    if style_key not in settings_to_update:
+                        continue
+                    try:
+                        settings_to_update[style_key] = sanitize_visual_style(
+                            settings_to_update[style_key]
+                        )
+                    except VisualStyleError as style_error:
+                        return jsonify({"error": f"Invalid {style_key}: {style_error}"}), 400
 
                 for boolean_key in (
                     "chatCompletionAudioEnabled",
@@ -608,6 +699,22 @@ def register_route_backend_users(bp):
                     if volume < 1 or volume > 10:
                         return jsonify({"error": "Completion audio volume must be between 1 and 10"}), 400
                     settings_to_update["chatCompletionAudioVolume"] = volume
+
+                if "showTutorialButtons" in settings_to_update:
+                    if not isinstance(settings_to_update["showTutorialButtons"], bool):
+                        return jsonify({"error": "Invalid tutorial button preference"}), 400
+
+                # Per-tutorial visibility from the new interface, { tutorialId: bool }. Only
+                # the tutorials the application ships are accepted, so the map cannot grow
+                # without bound or carry arbitrary keys into the settings document.
+                if "tutorialVisibility" in settings_to_update:
+                    tutorial_visibility = settings_to_update["tutorialVisibility"]
+                    if not isinstance(tutorial_visibility, dict):
+                        return jsonify({"error": "Invalid tutorial visibility"}), 400
+                    for tutorial_id, visible in tutorial_visibility.items():
+                        if tutorial_id not in TUTORIAL_IDS or not isinstance(visible, bool):
+                            return jsonify({"error": "Invalid tutorial visibility"}), 400
+                    settings_to_update["tutorialVisibility"] = dict(tutorial_visibility)
 
                 if "desktopNotificationsEnabled" in settings_to_update:
                     if not isinstance(settings_to_update["desktopNotificationsEnabled"], bool):

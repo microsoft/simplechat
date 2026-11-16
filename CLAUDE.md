@@ -135,6 +135,8 @@ if __name__ == "__main__":
     sys.exit(0 if success else 1)
 ```
 
+Under pytest, a test that returns `False` now fails (the guard in `functional_tests/conftest.py` and `ui_tests/conftest.py`, #1572). Use `assert` in new tests, or raise `AssertionError` where a check must survive `python -O`; keep `return True`/`return False` for the `__main__` runner.
+
 
 
 ## Key Project Files

@@ -1,0 +1,883 @@
+// fields.tsx
+// Generic controls that render one server-declared Admin Settings field.
+//
+// Every control here is driven entirely by the field definition, so describing a new
+// setting in `admin_settings_fields.py` is enough to make it appear and save. Nothing in
+// this file knows about a specific setting.
+//
+// Two conventions worth stating: edits are reported upward and buffered by the page rather
+// than saved per keystroke, and a field's own validation error is rendered beneath it so a
+// rejected save points at the control that caused it.
+
+import { clsx } from 'clsx';
+import { AlertCircle, Check, CheckCircle2, Info, KeyRound, LocateFixed, Lock, RotateCcw } from 'lucide-react';
+import { useContext, useMemo, useState, type ReactNode } from 'react';
+import {
+    asBoolean,
+    asNumber,
+    asString,
+    asStringArray,
+    countWords,
+    SECRET_PLACEHOLDER,
+    type AdminField,
+} from '../../lib/adminFields';
+import {
+    formatUtcOffset,
+    isKnownTimeZone,
+    listTimeZones,
+    viewerTimeZone,
+} from '../../lib/adminOperations';
+import { Toggle } from '../ui/primitives';
+import { SectionStatusContext } from './sectionStatusContext';
+
+const inputClass = clsx(
+    'min-h-10 w-full rounded-lg border border-edge bg-surface-1 px-3 py-2',
+    'text-sm text-text-1 placeholder:text-text-3',
+    'focus:border-accent focus:outline-none',
+    'disabled:cursor-not-allowed disabled:opacity-60',
+);
+
+export { inputClass };
+
+/**
+ * Standing operational guidance a field carries, drawn beneath its control.
+ *
+ * Separate from `help`, which says what the setting does, and from the server's
+ * per-save warnings, which react to a value that was just submitted. A notice is true
+ * whenever the setting is on screen, so it renders regardless of the current value.
+ */
+export function FieldNotice({ field }: { field: AdminField }) {
+    if (!field.notice) {
+        return null;
+    }
+
+    const isWarning = field.notice_level === 'warning';
+    const Icon = isWarning ? AlertCircle : Info;
+
+    return (
+        <div
+            className={clsx(
+                'mt-2 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs leading-relaxed',
+                isWarning
+                    ? 'border-warn/40 bg-warn-soft text-warn'
+                    : 'border-edge bg-surface-2 text-text-2',
+            )}
+        >
+            <Icon size={13} className="mt-0.5 shrink-0" />
+            <span>{field.notice}</span>
+        </div>
+    );
+}
+
+/**
+ * Marks a field its section cannot be configured without, while it is still empty.
+ *
+ * The section's status chip says "Needs configuration"; this says which control to fill.
+ * It is not a validation error -- the value can be saved blank -- so it is a quiet pill
+ * beside the label rather than a red line beneath the control.
+ */
+function RequiredMark() {
+    return (
+        <span
+            title="Needed before this section is fully configured"
+            className="shrink-0 rounded-full border border-warn/40 bg-warn-soft px-2 py-0.5 text-[11px] leading-none font-medium text-warn"
+        >
+            Required
+        </span>
+    );
+}
+
+/**
+ * How much of the control column a field's input may take on a wide card.
+ *
+ * A number box stretched across 700px reads as a text field, and a URL squeezed into a
+ * select-sized box hides its end, so each control asks for the width its content needs.
+ * Stacked layouts ignore this; every control spans the card there.
+ */
+export type FieldWidth = 'compact' | 'standard' | 'wide' | 'full';
+
+/**
+ * Label, help text, control and error, laid out consistently for every field type.
+ *
+ * On a narrow card the parts stack: label, control, help. On a wide one the label and
+ * help take a left column and the control a right one, so a section reads as a list of
+ * settings instead of a column of full-width inputs (see `.admin-field` in theme.css).
+ */
+export function FieldShell({
+    field,
+    error,
+    warning,
+    htmlFor,
+    children,
+    trailing,
+    width = 'wide',
+    missing = false,
+}: {
+    field: AdminField;
+    error?: string;
+    warning?: string;
+    htmlFor?: string;
+    children: ReactNode;
+    trailing?: ReactNode;
+    width?: FieldWidth;
+    /** A required field that is still empty; see `RequiredMark`. */
+    missing?: boolean;
+}) {
+    const requiredMark = missing ? <RequiredMark /> : null;
+    return (
+        <div className="admin-field py-3" data-field-width={width}>
+            <div className="admin-field-heading flex items-baseline justify-between gap-3">
+                <label
+                    htmlFor={htmlFor}
+                    className="text-sm font-semibold text-text-1"
+                >
+                    {field.label}
+                </label>
+                {requiredMark && trailing ? (
+                    <span className="flex shrink-0 items-baseline gap-2">
+                        {requiredMark}
+                        {trailing}
+                    </span>
+                ) : (
+                    requiredMark ?? trailing
+                )}
+            </div>
+
+            {field.help ? (
+                <p className="admin-field-help text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
+            ) : null}
+
+            <div className="admin-field-control min-w-0">
+                {children}
+
+                <FieldNotice field={field} />
+
+                {warning ? (
+                    <p className="mt-1.5 flex items-start gap-1.5 text-xs text-warn">
+                        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                        {warning}
+                    </p>
+                ) : null}
+
+                {error ? (
+                    <p
+                        role="alert"
+                        className="mt-1.5 flex items-start gap-1.5 text-xs text-danger"
+                    >
+                        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                        {error}
+                    </p>
+                ) : null}
+            </div>
+        </div>
+    );
+}
+
+export interface FieldControlProps {
+    field: AdminField;
+    value: unknown;
+    error?: string;
+    warning?: string;
+    disabled?: boolean;
+    onChange: (next: unknown) => void;
+}
+
+function TextControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    // Marked only while the section asks for configuration: blank fields under a
+    // capability that is off, or behind a missing prerequisite, are not the next step.
+    // Read before the timezone branch so the hook runs on every render.
+    const sectionStatus = useContext(SectionStatusContext);
+    if (field.input_type === 'timezone') {
+        return (
+            <TimezoneControl
+                field={field}
+                value={value}
+                error={error}
+                warning={warning}
+                disabled={disabled}
+                onChange={onChange}
+            />
+        );
+    }
+
+    const id = `admin-field-${field.key}`;
+    const isTime = field.input_type === 'time';
+    const missing =
+        Boolean(field.required) &&
+        !asString(value).trim() &&
+        (sectionStatus === undefined || sectionStatus === 'incomplete');
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            missing={missing}
+            width={isTime ? 'compact' : 'wide'}
+        >
+            <input
+                id={id}
+                type={field.input_type ?? 'text'}
+                className={inputClass}
+                value={asString(value)}
+                maxLength={field.max_length}
+                placeholder={field.placeholder}
+                disabled={disabled}
+                onChange={(event) => onChange(event.target.value)}
+            />
+        </FieldShell>
+    );
+}
+
+/**
+ * An IANA timezone, typed or picked from the zones this browser knows.
+ *
+ * A free list of four hundred names is unusable as a select, so this is a text box with
+ * suggestions, plus the one choice most administrators want: their own zone. The server
+ * validates the name on save, so a typo is reported rather than silently replaced.
+ */
+function TimezoneControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const listId = `${id}-zones`;
+    const zones = useMemo(() => listTimeZones(), []);
+    const viewerZone = useMemo(() => viewerTimeZone(), []);
+    const current = asString(value, asString(field.default));
+    const known = isKnownTimeZone(current);
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="standard">
+            <div className="flex flex-wrap items-center gap-2">
+                <input
+                    id={id}
+                    type="text"
+                    list={listId}
+                    className={clsx(inputClass, 'min-w-0 flex-1 basis-48')}
+                    value={current}
+                    maxLength={field.max_length}
+                    spellCheck={false}
+                    autoComplete="off"
+                    disabled={disabled}
+                    aria-describedby={`${id}-offset`}
+                    onChange={(event) => onChange(event.target.value)}
+                />
+                <datalist id={listId}>
+                    {zones.map((zone) => (
+                        <option key={zone} value={zone} />
+                    ))}
+                </datalist>
+                {viewerZone && viewerZone !== current ? (
+                    <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onChange(viewerZone)}
+                        className={clsx(
+                            'inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-edge px-3 py-2',
+                            'text-sm text-text-2 transition-colors',
+                            disabled ? 'cursor-not-allowed opacity-60' : 'hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        <LocateFixed size={14} aria-hidden="true" />
+                        Use my timezone ({viewerZone})
+                    </button>
+                ) : null}
+            </div>
+            <p id={`${id}-offset`} className={clsx('mt-1.5 text-xs', known ? 'text-text-3' : 'text-warn')}>
+                {known
+                    ? `Currently ${formatUtcOffset(current, new Date())}.`
+                    : 'Not a timezone this browser recognises. Pick one from the suggestions.'}
+            </p>
+        </FieldShell>
+    );
+}
+
+/**
+ * A write-only credential.
+ *
+ * The server sends a placeholder rather than the stored value, so there is nothing to
+ * reveal and no toggle to reveal it. What an administrator actually needs to know is
+ * whether a secret is stored at all, and to be able to replace it without being able to
+ * clear it by accident — hence the explicit Replace step rather than an editable input
+ * pre-filled with something that is not the real value.
+ */
+function SecretControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const current = asString(value);
+    const isStored = current === SECRET_PLACEHOLDER;
+
+    // Replace only switches this control into entry mode; it deliberately stages
+    // nothing. Staging an empty value there would queue a deletion of a working
+    // credential from a click that means "let me type a new one" -- and this control can
+    // unmount before anything is typed, because moving between groups, searching, or
+    // flipping a switch this field depends on all drop it. The escape hatch would go
+    // with it and the queued deletion would not.
+    const [replacing, setReplacing] = useState(false);
+    const [emitted, setEmitted] = useState(current);
+
+    if (current !== emitted) {
+        // Changed for a reason other than typing here: a save that restored the
+        // placeholder, or a discarded draft. Either way this edit is over.
+        setEmitted(current);
+        setReplacing(false);
+    }
+
+    const commit = (next: string) => {
+        setEmitted(next);
+        onChange(next);
+    };
+
+    if (isStored && !replacing) {
+        return (
+            <FieldShell field={field} error={error} warning={warning}>
+                <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 rounded-lg border border-edge bg-surface-1 px-3 py-2 text-sm text-text-2">
+                        <Check size={14} className="text-ok" />
+                        Stored
+                    </span>
+                    <button
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => setReplacing(true)}
+                        className={clsx(
+                            'inline-flex items-center gap-1.5 rounded-lg border border-edge px-3 py-2',
+                            'text-sm text-text-2 transition-colors',
+                            disabled
+                                ? 'cursor-not-allowed opacity-60'
+                                : 'hover:bg-surface-2 hover:text-text-1',
+                        )}
+                    >
+                        <RotateCcw size={14} />
+                        Replace
+                    </button>
+                </div>
+                <p className="mt-1.5 text-xs text-text-3">
+                    The stored value is never sent to the browser, so it cannot be shown
+                    here. Replacing it overwrites it.
+                </p>
+            </FieldShell>
+        );
+    }
+
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            trailing={
+                replacing ? (
+                    <button
+                        type="button"
+                        className="text-xs text-text-3 transition-colors hover:text-text-1"
+                        onClick={() => setReplacing(false)}
+                    >
+                        Cancel
+                    </button>
+                ) : null
+            }
+        >
+            <div className="flex items-center gap-2">
+                <KeyRound size={15} className="shrink-0 text-text-3" />
+                <input
+                    id={id}
+                    type="password"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    className={inputClass}
+                    // While replacing, the placeholder is the untouched stored value, and
+                    // showing it in the box would invite someone to edit a string that is
+                    // not their secret.
+                    value={isStored ? '' : current}
+                    placeholder={field.placeholder ?? 'Paste the new value'}
+                    disabled={disabled}
+                    onChange={(event) => commit(event.target.value)}
+                />
+            </div>
+            {replacing ? (
+                <p className="mt-1.5 text-xs text-text-3">
+                    Left blank, the stored value is kept. Type a value to replace it, or
+                    clear a typed value to remove the secret entirely.
+                </p>
+            ) : null}
+        </FieldShell>
+    );
+}
+
+/**
+ * A short list of tokens, edited as comma-separated text.
+ *
+ * Stored as an array, so the control parses on the way out and joins on the way in. The
+ * chips below the input show what will actually be saved, which is the only way to see
+ * that stray whitespace and duplicates were folded away.
+ */
+function StringListControl({
+    field,
+    value,
+    error,
+    warning,
+    disabled,
+    onChange,
+}: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const items = asStringArray(value);
+    const incoming = items.join('\u0000');
+
+    const [text, setText] = useState(() => items.join(', '));
+    const [emitted, setEmitted] = useState(incoming);
+
+    if (incoming !== emitted) {
+        // The value changed for a reason other than typing here — a discarded draft, or
+        // a save that normalized the list. The text has to follow, or it keeps showing
+        // an edit that no longer exists anywhere.
+        setEmitted(incoming);
+        setText(items.join(', '));
+    }
+
+    const commit = (next: string) => {
+        setText(next);
+        const parsed: string[] = [];
+        for (const part of next.split(/[,;]/)) {
+            const item = part.trim().replace(/\s+/g, ' ').slice(0, field.max_item_length ?? 80);
+            if (item && !parsed.includes(item)) {
+                parsed.push(item);
+            }
+        }
+        setEmitted(parsed.join('\u0000'));
+        onChange(parsed);
+    };
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id}>
+            <input
+                id={id}
+                type="text"
+                className={inputClass}
+                value={text}
+                placeholder={field.placeholder}
+                disabled={disabled}
+                onChange={(event) => commit(event.target.value)}
+            />
+            {items.length ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                    {items.map((item) => (
+                        <span
+                            key={item}
+                            className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-xs text-text-2"
+                        >
+                            {item}
+                        </span>
+                    ))}
+                </div>
+            ) : null}
+        </FieldShell>
+    );
+}
+
+function TextAreaControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const text = asString(value);
+    const words = field.word_limit ? countWords(text) : 0;
+    const overLimit = Boolean(field.word_limit && words > field.word_limit);
+
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            width="full"
+            trailing={
+                field.word_limit ? (
+                    <span
+                        className={clsx(
+                            'text-xs tabular-nums',
+                            overLimit ? 'text-warn' : 'text-text-3',
+                        )}
+                    >
+                        {words} / {field.word_limit} words
+                    </span>
+                ) : field.max_length ? (
+                    <span className="text-xs tabular-nums text-text-3">
+                        {text.length} / {field.max_length}
+                    </span>
+                ) : null
+            }
+        >
+            <textarea
+                id={id}
+                className={clsx(inputClass, 'resize-y font-mono text-xs leading-relaxed')}
+                rows={field.rows ?? 4}
+                value={text}
+                maxLength={field.max_length}
+                placeholder={field.placeholder}
+                disabled={disabled}
+                onChange={(event) => onChange(event.target.value)}
+            />
+        </FieldShell>
+    );
+}
+
+function SelectControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="standard">
+            <select
+                id={id}
+                className={clsx(inputClass, 'appearance-none pr-8')}
+                value={asString(value, asString(field.default))}
+                disabled={disabled}
+                onChange={(event) => onChange(event.target.value)}
+            >
+                {(field.options ?? []).map((option) => (
+                    <option key={option.value} value={option.value}>
+                        {option.label}
+                    </option>
+                ))}
+            </select>
+        </FieldShell>
+    );
+}
+
+function SwitchControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    return (
+        <div className="admin-switch-row py-1">
+            <Toggle
+                label={field.label}
+                description={field.help}
+                checked={asBoolean(value)}
+                disabled={disabled}
+                onChange={(next) => onChange(next)}
+                labelClassName="font-semibold"
+                descriptionClassName="max-w-[72ch] text-[0.8125rem]"
+            />
+            {/* Indented to the switch's text column so a notice reads as part of the row
+                rather than as a page-level banner. */}
+            {field.notice ? (
+                <div className="ml-14">
+                    <FieldNotice field={field} />
+                </div>
+            ) : null}
+            {warning ? (
+                <p className="mt-1 ml-14 text-xs text-warn">{warning}</p>
+            ) : null}
+            {error ? (
+                <p role="alert" className="mt-1 ml-14 text-xs text-danger">
+                    {error}
+                </p>
+            ) : null}
+        </div>
+    );
+}
+
+function ColorControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const current = asString(value, asString(field.default, '#000000'));
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="standard">
+            <div className="admin-color-controls flex items-center gap-2">
+                <input
+                    id={id}
+                    type="color"
+                    className="h-9 w-14 shrink-0 cursor-pointer rounded-lg border border-edge bg-surface-1 p-1 disabled:cursor-not-allowed"
+                    value={/^#[0-9a-fA-F]{6}$/.test(current) ? current : '#000000'}
+                    disabled={disabled}
+                    onChange={(event) => onChange(event.target.value)}
+                />
+                {/* The hex is editable too: picking a brand colour by eye is harder than
+                    pasting the value from a brand guide. */}
+                <input
+                    type="text"
+                    aria-label={`${field.label} hex value`}
+                    className={clsx(inputClass, 'font-mono')}
+                    value={current}
+                    disabled={disabled}
+                    spellCheck={false}
+                    onChange={(event) => onChange(event.target.value)}
+                />
+            </div>
+        </FieldShell>
+    );
+}
+
+function RangeControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const min = field.min ?? 0;
+    const max = field.max ?? 100;
+    const current = asNumber(value, asNumber(field.default, min));
+
+    return (
+        <FieldShell
+            field={field}
+            error={error}
+            warning={warning}
+            htmlFor={id}
+            trailing={
+                <span className="text-xs font-semibold tabular-nums text-text-2">
+                    {current}
+                    {field.suffix ?? ''}
+                </span>
+            }
+        >
+            <input
+                id={id}
+                type="range"
+                className="w-full accent-[var(--accent)] disabled:cursor-not-allowed"
+                min={min}
+                max={max}
+                step={field.step ?? 1}
+                value={current}
+                disabled={disabled}
+                onChange={(event) => onChange(Number(event.target.value))}
+            />
+            <div className="flex justify-between text-xs text-text-3">
+                <span>
+                    {min}
+                    {field.suffix ?? ''}
+                </span>
+                <span>
+                    {max}
+                    {field.suffix ?? ''}
+                </span>
+            </div>
+        </FieldShell>
+    );
+}
+
+function NumberControl({ field, value, error, warning, disabled, onChange }: FieldControlProps) {
+    const id = `admin-field-${field.key}`;
+    const unit = field.suffix?.trim();
+    return (
+        <FieldShell field={field} error={error} warning={warning} htmlFor={id} width="compact">
+            <div className="flex items-center gap-2">
+                <input
+                    id={id}
+                    type="number"
+                    className={inputClass}
+                    min={field.min}
+                    max={field.max}
+                    step={field.step ?? 1}
+                    value={asNumber(value, asNumber(field.default, 0))}
+                    disabled={disabled}
+                    onChange={(event) => onChange(Number(event.target.value))}
+                />
+                {/* The unit belongs beside the number: 900 reads very differently as
+                    seconds, minutes or RU/s. */}
+                {unit ? <span className="shrink-0 text-xs text-text-3">{unit}</span> : null}
+            </div>
+        </FieldShell>
+    );
+}
+
+function CheckboxSetControl({
+    field,
+    value,
+    error,
+    warning,
+    disabled,
+    onChange,
+}: FieldControlProps) {
+    const selected = asStringArray(value);
+    const options = field.options ?? [];
+
+    const toggle = (optionValue: string, checked: boolean) => {
+        const next = checked
+            ? [...selected, optionValue]
+            : selected.filter((item) => item !== optionValue);
+        // Keep the declared order so the saved array does not depend on click order.
+        onChange(options.map((option) => option.value).filter((item) => next.includes(item)));
+    };
+
+    return (
+        <FieldShell field={field} error={error} warning={warning} width="full">
+            <div className="grid gap-1.5 sm:grid-cols-2">
+                {options.map((option) => {
+                    const id = `admin-field-${field.key}-${option.value}`;
+                    // An option can be declared but not yet released. Showing it
+                    // disabled says the capability is coming; omitting it would look
+                    // like the option had been removed.
+                    const optionDisabled = disabled || option.disabled;
+                    return (
+                        <label
+                            key={option.value}
+                            htmlFor={id}
+                            className={clsx(
+                                'flex items-start gap-2 rounded-lg border border-edge px-3 py-2 text-sm',
+                                optionDisabled
+                                    ? 'cursor-not-allowed opacity-60'
+                                    : 'cursor-pointer hover:bg-surface-2',
+                                selected.includes(option.value)
+                                    ? 'bg-accent-soft text-text-1'
+                                    : 'text-text-2',
+                            )}
+                        >
+                            <input
+                                id={id}
+                                type="checkbox"
+                                className="mt-0.5 accent-[var(--accent)]"
+                                checked={selected.includes(option.value)}
+                                disabled={optionDisabled}
+                                onChange={(event) => toggle(option.value, event.target.checked)}
+                            />
+                            <span>
+                                {option.label}
+                                {option.description ? (
+                                    <span className="block text-xs text-text-3">
+                                        {option.description}
+                                    </span>
+                                ) : null}
+                            </span>
+                        </label>
+                    );
+                })}
+            </div>
+        </FieldShell>
+    );
+}
+
+/**
+ * A server-computed readout.
+ *
+ * Some of what an administrator needs here is not a setting: whether the FFmpeg audio
+ * runtime is present, which Video Indexer endpoint the cloud selection resolves to,
+ * whether the Playwright runtime can render JavaScript. V1 renders these as loose markup
+ * inside the panes. Declaring them makes them searchable and keeps the reason a control
+ * is unavailable next to the control itself.
+ */
+function StatusControl({ field, value }: FieldControlProps) {
+    const tone = statusTone(value);
+    const text = readStatusMessage(value);
+
+    return (
+        <div className="admin-field py-3" data-field-width="wide">
+            <div className="admin-field-heading text-sm font-semibold text-text-1">{field.label}</div>
+            {field.help ? (
+                <p className="admin-field-help text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
+            ) : null}
+            <div className="admin-field-control min-w-0">
+                <div
+                    className={clsx(
+                        'flex items-start gap-2 rounded-lg border px-3 py-2 text-xs',
+                        tone === 'ok' && 'border-ok/40 bg-ok/5 text-text-2',
+                        tone === 'warn' && 'border-warn/40 bg-warn/5 text-warn',
+                        tone === 'unknown' && 'border-edge bg-surface-1 text-text-3',
+                    )}
+                >
+                    {tone === 'ok' ? (
+                        <CheckCircle2 size={13} className="mt-0.5 shrink-0" />
+                    ) : (
+                        <AlertCircle size={13} className="mt-0.5 shrink-0" />
+                    )}
+                    <span>{text || 'Not checked yet.'}</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * A setting shown here but owned somewhere else.
+ *
+ * Fact memory is a chat capability that decides whether agents get a memory action, and
+ * tabular processing is recomputed from Enhanced Citations on every settings read. Both
+ * belong in this list for an administrator working out what an agent can do, and neither
+ * can be set from here -- so they report their state and name their owner instead of
+ * offering a switch that would be rejected or silently overwritten.
+ */
+function MirrorControl({ field, value }: FieldControlProps) {
+    const on = asBoolean(value);
+    return (
+        <div className="admin-field admin-field-inline py-3" data-field-width="compact">
+            <div className="admin-field-heading">
+                <p className="text-sm font-semibold text-text-1">{field.label}</p>
+            </div>
+            {field.help || field.managed_by ? (
+                <div className="admin-field-help">
+                    {field.help ? (
+                        <p className="text-[0.8125rem] leading-relaxed text-text-3">{field.help}</p>
+                    ) : null}
+                    {field.managed_by ? (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs text-text-3">
+                            <Lock size={12} className="shrink-0" aria-hidden="true" />
+                            Configured in {field.managed_by}
+                        </p>
+                    ) : null}
+                </div>
+            ) : null}
+            <div className="admin-field-control">
+                <span
+                    className={clsx(
+                        'inline-block shrink-0 rounded-full px-2 py-0.5 text-xs font-medium',
+                        on ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-text-3',
+                    )}
+                >
+                    {on ? 'On' : 'Off'}
+                </span>
+            </div>
+        </div>
+    );
+}
+
+/**
+ * Read the tone of a status value.
+ *
+ * The server sends `{ok, message}`, carrying the tone rather than leaving it to be
+ * inferred from the wording. A bare string is still accepted, because a readout added
+ * later should not have to be normalised before it can be shown.
+ */
+function statusTone(value: unknown): 'ok' | 'warn' | 'unknown' {
+    if (value && typeof value === 'object' && 'ok' in value) {
+        return (value as { ok?: unknown }).ok ? 'ok' : 'warn';
+    }
+    return asString(value) ? 'ok' : 'unknown';
+}
+
+function readStatusMessage(value: unknown): string {
+    if (value && typeof value === 'object' && 'message' in value) {
+        return asString((value as { message?: unknown }).message);
+    }
+    return asString(value);
+}
+
+/**
+ * Render one declared field.
+ *
+ * `image`, `link_list`, `id_list` and `component` fields are handled by the page, which
+ * owns the upload endpoint, the search endpoints and the bespoke widgets, so they are
+ * not reached here.
+ *
+ * The page also intercepts `secret` ahead of this, because telling "not configured" from
+ * "configured but hidden" needs the stored value and not just the draft one. The branch
+ * below is the fallback for anywhere else that renders a field directly.
+ */
+export function SettingField(props: FieldControlProps) {
+    if (props.field.readonly) {
+        return <MirrorControl {...props} />;
+    }
+
+    switch (props.field.type) {
+        case 'text':
+            return <TextControl {...props} />;
+        case 'textarea':
+            return <TextAreaControl {...props} />;
+        case 'secret':
+            return <SecretControl {...props} />;
+        case 'select':
+            return <SelectControl {...props} />;
+        case 'switch':
+            return <SwitchControl {...props} />;
+        case 'color':
+            return <ColorControl {...props} />;
+        case 'range':
+            return <RangeControl {...props} />;
+        case 'number':
+            return <NumberControl {...props} />;
+        case 'string_list':
+            return <StringListControl {...props} />;
+        case 'checkbox_set':
+            return <CheckboxSetControl {...props} />;
+        case 'status':
+            return <StatusControl {...props} />;
+        default:
+            return null;
+    }
+}

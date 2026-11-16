@@ -56,6 +56,38 @@
           "type": "string",
           "description": "Workspace identity reference used by this action. Credentials are resolved server-side within the action scope."
         },
+        "credential_requirements": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "slots"],
+          "properties": {
+            "version": {"const": 1},
+            "slots": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "service": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["source", "auth_type"],
+                  "properties": {
+                    "source": {"const": "personal"},
+                    "auth_type": {"enum": ["username_password", "api_key", "bearer_token"]}
+                  }
+                },
+                "proxy": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["source", "auth_type"],
+                  "properties": {
+                    "source": {"const": "personal"},
+                    "auth_type": {"const": "username_password"}
+                  }
+                }
+              }
+            }
+          }
+        },
         "endpoint": {
           "type": "string"
         },
@@ -80,17 +112,7 @@
             }
           },
           "additionalProperties": false,
-          "allOf": [
-            { "if": { "properties": { "type": { "const": "NoAuth" } } }, "then": { "required": ["type"] } },
-            { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["type", "key"] } },
-            { "if": { "properties": { "type": { "const": "identity" } } }, "then": { "required": ["type", "identity"] } },
-            { "if": { "properties": { "type": { "const": "user" } } }, "then": { "required": ["type"] } },
-            { "if": { "properties": { "type": { "const": "servicePrincipal" } } }, "then": { "required": ["type", "tenantId", "identity", "key"] } },
-            { "if": { "properties": { "type": { "const": "connection_string" } } }, "then": { "required": ["type", "key"] } },
-            { "if": { "properties": { "type": { "const": "basic" } } }, "then": { "required": ["type", "key", "identity"] } },
-            { "if": { "properties": { "type": { "const": "username_password" } } }, "then": { "required": ["type", "key", "identity"] } },
-            { "required": ["type"] }
-          ]
+          "required": ["type"]
         },
         "metadata": {
           "type": "object",
@@ -103,6 +125,29 @@
           "additionalProperties": true
         }
       },
+      "allOf": [{
+        "if": {
+          "required": ["credential_requirements"],
+          "properties": {
+            "credential_requirements": {
+              "required": ["slots"],
+              "properties": {"slots": {"required": ["service"]}}
+            }
+          }
+        },
+        "then": {"properties": {"type": {"const": "yamcs"}}},
+        "else": {"properties": {"auth": {"allOf": [
+            { "if": { "properties": { "type": { "const": "NoAuth" } } }, "then": { "required": ["type"] } },
+            { "if": { "properties": { "type": { "const": "key" } } }, "then": { "required": ["type", "key"] } },
+            { "if": { "properties": { "type": { "const": "identity" } } }, "then": { "required": ["type", "identity"] } },
+            { "if": { "properties": { "type": { "const": "user" } } }, "then": { "required": ["type"] } },
+            { "if": { "properties": { "type": { "const": "servicePrincipal" } } }, "then": { "required": ["type", "tenantId", "identity", "key"] } },
+            { "if": { "properties": { "type": { "const": "connection_string" } } }, "then": { "required": ["type", "key"] } },
+            { "if": { "properties": { "type": { "const": "basic" } } }, "then": { "required": ["type", "key", "identity"] } },
+            { "if": { "properties": { "type": { "const": "username_password" } } }, "then": { "required": ["type", "key", "identity"] } },
+            { "required": ["type"] }
+        ]}}}
+      }],
       "required": ["name", "type", "description", "endpoint", "auth", "metadata", "additionalFields"],
       "title": "Plugin"
     }

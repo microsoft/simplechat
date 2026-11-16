@@ -12,6 +12,13 @@ redirect_from:
 
 This guide explains how to run SimpleChat as a Microsoft Teams personal tab with Teams Single Sign-On (SSO).
 
+{% include media.html id="slide-microsoft-365-and-teams" %}
+
+The personal tab opens the application; it does not add a channel bot or
+grant access to every Microsoft 365 source. Account connection, disclosure
+in a shared conversation, workflow Run as authorization, and outgoing-action
+review remain [separate decisions]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}).
+
 ## Enablement Model
 
 Teams SSO requires two layers:

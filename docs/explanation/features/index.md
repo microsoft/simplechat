@@ -18,12 +18,15 @@ category: Version History
 - [Activity Log Auto-Refresh](CONTROL_CENTER_ACTIVITY_LOG_AUTO_REFRESH.md)
 - [Activity Log Layout Presets](ACTIVITY_LOG_LAYOUT_PRESETS.md)
 - [Content Safety Violation Messages](CONTENT_SAFETY_VIOLATION_MESSAGES.md)
+- [Access Restricted Sign-In Screen](ACCESS_RESTRICTED_SIGN_IN_SCREEN.md)
+- [V2 Admin Review Center](V2_ADMIN_REVIEW_CENTER.md)
 
 ## Agent and Action Features
 
 - [Action Type Governance](v0.242.064/ACTION_TYPE_GOVERNANCE.md)
 - [Agents Page Customization](v0.241.229/AGENTS_PAGE_CUSTOMIZATION.md)
 - [Microsoft Graph Send Mail Action](MSGRAPH_SEND_MAIL_ACTION.md)
+- [Microsoft 365 Source Citations](M365_SOURCE_CITATIONS.md)
 - [RocksDB Action](v0.250.216/ROCKSDB_ACTION.md)
 - [Snowflake Action](v0.250.006/SNOWFLAKE_ACTION.md)
 - [Tableau Action](TABLEAU_ACTION.md)
@@ -51,6 +54,17 @@ category: Version History
 
 ## Versioned Features
 
+- [Document Accessibility, Structure, and Comment Extraction](DOCUMENT_ACCESSIBILITY_AND_STRUCTURE_EXTRACTION.md)
+- [Word Document Comment Extraction](WORD_COMMENT_EXTRACTION.md)
+- [Content Understanding Enhanced Extraction](CONTENT_UNDERSTANDING_ENHANCED_EXTRACTION.md)
+- [Saved Analyze Results](ANALYZE_RESULTS.md)
+- [V2 Media Galleries And Viewer](V2_MEDIA_GALLERIES_AND_VIEWER.md)
+- [V2 Inline Diagram Editing](V2_INLINE_DIAGRAM_EDITING.md)
+- [V2 Inline Chart Editing](V2_INLINE_CHART_EDITING.md)
+- [V2 Inline Image Editing](V2_INLINE_IMAGE_EDITING.md)
+- [V2 Diagram And Chart Styling](V2_DIAGRAM_AND_CHART_STYLING.md)
+- [Mermaid Diagram Rendering](MERMAID_DIAGRAM_RENDERING.md)
+- [Mermaid And TeX Rendering In Exports](EXPORT_MERMAID_AND_TEX_RENDERING.md)
 - [Data Management Durable Backup Jobs](DATA_MANAGEMENT_BACKUP_MIGRATION.md)
 - [Data Management Migration Resilience](DATA_MANAGEMENT_MIGRATION_RESILIENCE.md)
 - [Migration Provenance](MIGRATION_PROVENANCE.md)

@@ -36,6 +36,18 @@ in the page body is rendered after the generated sections as extra detail.
                     <p>No entry for <code>{{ page.slug }}</code> exists in <code>docs/_data/features.yml</code>.</p>
                 {%- else -%}
 
+                    {%- if feature.why -%}
+                        <h2 id="why-you-would-use-this">Why you would use this</h2>
+                        <p>{{ feature.why }}</p>
+                    {%- endif -%}
+
+                    {%- for section in feature.visual_sections -%}
+                        <h2 id="{{ section.heading | slugify | escape }}">{{ section.heading | escape }}</h2>
+                        {{ section.text | markdownify }}
+                        {% include media.html id=section.media_id %}
+                    {%- endfor -%}
+
+                    <h2 id="availability">Availability</h2>
                     <dl class="docs-feature-meta">
                         {%- if feature.area -%}
                             <dt>Area</dt><dd>{{ feature.area }}</dd>
@@ -51,11 +63,6 @@ in the page body is rendered after the generated sections as extra detail.
                             <dd><a href="{{ '/admin/' | append: feature.admin_tab | append: '/' | relative_url }}">{{ feature.admin_tab }} settings</a></dd>
                         {%- endif -%}
                     </dl>
-
-                    {%- if feature.why -%}
-                        <h2 id="why-you-would-use-this">Why you would use this</h2>
-                        <p>{{ feature.why }}</p>
-                    {%- endif -%}
 
                     {%- if feature.setting_keys and feature.setting_keys.size > 0 -%}
                         <h2 id="settings-that-control-it">Settings that control it</h2>

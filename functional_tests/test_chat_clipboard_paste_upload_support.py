@@ -2,15 +2,17 @@
 #!/usr/bin/env python3
 """
 Functional test for chat clipboard paste upload support.
-Version: 0.241.056
-Implemented in: 0.241.056
+Version: 0.261.046
+Implemented in: 0.241.056; expanded in: 0.261.032; hardened in: 0.261.046
 
 This test ensures chat paste uploads route clipboard files through the shared
 chat upload helper, normalize missing clipboard filenames, preserve normal text
-paste behavior after image uploads, and support dropped files in the chat input.
+paste behavior after image uploads, support dropped files in the chat input,
+and provide actionable errors when the browser cannot read an upload.
 """
 
 import os
+import re
 import sys
 from test_support.versioning import assert_app_version_at_least
 
@@ -115,12 +117,40 @@ def test_chat_drag_and_drop_upload_binding():
     print("✅ Chat drag-and-drop upload binding passed")
 
 
+def test_chat_upload_reports_unreadable_files_with_recovery_guidance():
+    """Verify local file access failures identify the document and recovery steps."""
+    print("🔍 Testing unreadable chat upload guidance...")
+
+    content = read_file(CHAT_INPUT_ACTIONS_FILE)
+
+    required_snippets = [
+        "async function ensureUploadFileIsReadable(file) {",
+        "await file.slice(0, Math.min(file.size, 1)).arrayBuffer();",
+        "await ensureUploadFileIsReadable(file);",
+        'The browser could not read "${fileName}".',
+        "Close the file in other apps then try again.",
+        'The browser could not upload "${fileName}".',
+        "The file may be open in another app, unavailable from cloud storage, or the network connection may have been interrupted.",
+    ]
+
+    missing = [snippet for snippet in required_snippets if snippet not in content]
+    assert not missing, f"Missing unreadable upload guidance snippets: {missing}"
+    assert re.search(
+        r"catch \(error\) \{\s*const fileName = String\(file\?\.name \|\| \"selected file\"\)\.trim\(\) \|\| \"selected file\";",
+        content,
+    ), "Expected fetch upload failures to include the selected file name in recovery guidance."
+    assert "error instanceof TypeError" not in content, (
+        "Rejected upload requests must not depend on a browser-realm-specific error type."
+    )
+
+    print("✅ Unreadable chat upload guidance passed")
+
+
 def test_config_version_is_bumped_for_chat_clipboard_upload_support():
     """Verify config version was bumped for the clipboard paste upload feature."""
     print("🔍 Testing config version bump...")
 
-    config_content = read_file(CONFIG_FILE)
-    assert_app_version_at_least("0.241.056")
+    assert_app_version_at_least("0.261.032")
 
     print("✅ Config version bump passed")
 
@@ -130,6 +160,7 @@ if __name__ == "__main__":
         test_chat_clipboard_paste_reuses_shared_upload_helper,
         test_chat_clipboard_paste_handler_normalizes_missing_filenames,
         test_chat_drag_and_drop_upload_binding,
+        test_chat_upload_reports_unreadable_files_with_recovery_guidance,
         test_config_version_is_bumped_for_chat_clipboard_upload_support,
     ]
 

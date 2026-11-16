@@ -32,6 +32,11 @@
       "type": "string",
       "description": "ODBC or DB driver name."
     },
+    "managed_identity_client_id": {
+      "type": "string",
+      "maxLength": 128,
+      "description": "Optional user-assigned managed identity client ID for SQL Server on Azure App Service. Leave blank to use the system-assigned identity."
+    },
     "read_only": {
       "type": "boolean",
       "default": true,

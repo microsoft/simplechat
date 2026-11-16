@@ -1,0 +1,1734 @@
+# functions_orchestration_deliverables.py
+"""What the user asked to receive, and whether the plan can actually deliver each part.
+
+Version: 0.261.341
+Implemented in: 0.261.138
+Document merge recipes added in: 0.261.245
+One-sheet or sheet-per-file question for spreadsheet merges added in: 0.261.246
+Gathered results and charts must reach the answer or a file, with chart delivery notes, in: 0.261.293
+Explicit compose visual omission checks shared with final delivery in: 0.261.341
+
+The planner lists its plan's deliverables first: the answer, files, images, charts, and
+diagrams the user asked for (``requested: explicit``) and anything it adds on its own
+(``suggested``). Each step names the deliverables it produces in ``delivers``.
+
+The server owns the truth about what can be produced. ``build_deliverable_availability``
+describes it for the planner from the live capability resolution and export catalog, and
+``compile_deliverables`` checks every plan against it:
+
+- a planned deliverable must come from a step whose capability can produce that kind and
+  format (a file only from ``render_file`` in the same format, an explicit image only from
+  ``generate_image``);
+- an unavailable deliverable must carry the exact reason the server reports, and the planner
+  cannot call something unavailable that the server can produce;
+- what a gather step collects must be read by a later step that ends in the answer, a file, or
+  a generated image, and a planned chart or diagram must reach the answer or a file.
+
+A proposed workflow is a deliverable too: a card after the answer that the user approves before
+anything is created. It is a kind for the planner only while ``enable_chat_orchestration_workflows``
+is on, so planning with the setting off is unchanged; saved plans keep it after the setting changes.
+
+Nothing here reads the request text, the plan's prose, or its assumptions. Every rule is a
+structural comparison between declared deliverables, declared steps, and server state.
+
+The module also owns what deliverables mean at run time: the brief each answer-writing step
+receives, the ``[[image:<step_id>]]`` placement tokens, the chat projection of generated
+images, and the deterministic delivery notes added after the answer.
+"""
+
+import json
+import re
+from copy import deepcopy
+
+from functions_chart_operations import INLINE_CHART_BLOCK_LANGUAGE
+from functions_orchestration_registry import (
+    CAPABILITY_ACTION_INVOKE,
+    CAPABILITY_AGENT_INVOKE,
+    CAPABILITY_COMPOSE,
+    CAPABILITY_DOCUMENT_ANALYZE,
+    CAPABILITY_DOCUMENT_COMPARE,
+    CAPABILITY_DOCUMENT_MERGE,
+    CAPABILITY_DOCUMENT_INSPECT,
+    CAPABILITY_DOCUMENT_CREATE_FROM_REFERENCE,
+    CAPABILITY_DOCUMENT_REFRESH,
+    CAPABILITY_GENERATE_IMAGE,
+    CAPABILITY_RENDER_FILE,
+    CAPABILITY_TABULAR_INSPECT,
+    CAPABILITY_TABULAR_MERGE,
+    CAPABILITY_WORKFLOW_HANDOFF,
+    CAPABILITY_WORKFLOW_PROPOSE,
+    CAPABILITY_WORKFLOW_RESULTS,
+    CAPABILITY_WORKFLOW_RUN,
+    MAX_GENERATED_IMAGES_PER_PLAN,
+    ROLE_GATHER,
+    TABULAR_COLUMN_MAPPING_PROFILE,
+    VISUAL_CHART,
+    VISUAL_DIAGRAM,
+    VISUAL_IMAGE_PROPOSAL,
+    VISUAL_KINDS,
+    WORKFLOW_PROPOSALS_SETTING,
+    WORKFLOW_RESULTS_SETTING,
+    WORKFLOW_RUNS_SETTING,
+    resolve_admitted_export_catalog,
+)
+from functions_orchestration_result_contracts import (
+    IMAGE_ASSET_KIND, InputBinding, ResultContractError, output_name,
+)
+from functions_orchestration_visuals import collect_run_charts, place_chart_blocks
+
+
+KIND_ANSWER = 'answer'
+KIND_FILE = 'file'
+KIND_IMAGE = 'image'
+KIND_CHART = 'chart'
+KIND_DIAGRAM = 'diagram'
+KIND_WORKFLOW = 'workflow'
+DELIVERABLE_KINDS = (KIND_ANSWER, KIND_FILE, KIND_IMAGE, KIND_CHART, KIND_DIAGRAM)
+# The workflow kind is accepted only where the server describes it; see _parse_deliverables.
+WORKFLOW_DELIVERABLE_KINDS = (*DELIVERABLE_KINDS, KIND_WORKFLOW)
+MAX_WORKFLOWS_PER_PLAN = 1
+REQUESTED_EXPLICIT = 'explicit'
+REQUESTED_SUGGESTED = 'suggested'
+STATUS_PLANNED = 'planned'
+STATUS_UNAVAILABLE = 'unavailable'
+IMPLICIT_ANSWER_ID = 'answer'
+MAX_DELIVERABLES = 12
+MAX_DELIVERABLE_QUANTITY = 12
+MAX_DESCRIPTION_LENGTH = 300
+MAX_FORMAT_LENGTH = 40
+AI_ILLUSTRATION_LABEL = 'AI-generated image'
+# The two answers to "one sheet or a sheet per file?" for a spreadsheet merge into one Excel file.
+MERGE_LAYOUT_ONE_SHEET = 'All rows on one sheet'
+MERGE_LAYOUT_SHEET_PER_FILE = 'Each file on its own sheet'
+MERGE_LAYOUT_FACT = (
+    'Several CSV or Excel files merged into one Excel file can mean every row on one sheet '
+    '(tabular_merge, then render_file with xlsx) or each file on its own sheet (document_merge with '
+    'kind workbook). When the user asks to merge or combine several spreadsheets, wants Excel or '
+    'names no format, and has not said which, ask instead of assuming: return an elicitation whose '
+    'only field is a required single-choice string enum of exactly "' + MERGE_LAYOUT_ONE_SHEET
+    + '" and "' + MERGE_LAYOUT_SHEET_PER_FILE + '". Do not ask when the request already decides it: '
+    'CSV holds one table, so CSV output means one sheet; one sheet, one table, one list, stack, '
+    'append or combine the rows mean one sheet; a sheet or tab per file, separate sheets or keep them '
+    'separate mean a sheet each; a saved preference, a clarification or an earlier answer also '
+    'decides it. When the user declines to answer, put every row on one sheet and say so in '
+    'assumptions.'
+)
+
+# The closed set of reasons a deliverable can be unavailable. Each one is a condition the
+# server can check; the text is application-owned and is what users see.
+UNAVAILABLE_REASONS = {
+    'capability_not_enabled_for_orchestration': (
+        'The capability that produces this is not enabled for orchestration.'
+    ),
+    'file_rendering_unavailable': 'Downloadable files cannot be created here right now.',
+    'format_not_admitted': 'This file format is not available for this plan.',
+    'format_not_supported': 'SimpleChat cannot create files in this format.',
+    'image_generation_disabled': 'Image generation is turned off for this deployment.',
+    'image_generation_unavailable': 'The configured image model cannot generate images right now.',
+    'image_budget_exceeded': (
+        f'One plan can generate at most {MAX_GENERATED_IMAGES_PER_PLAN} images.'
+    ),
+}
+# Why a workflow cannot be proposed. The planner is told these only while workflow proposals
+# are turned on; the allowlist uses capability_not_enabled_for_orchestration like every kind.
+WORKFLOW_UNAVAILABLE_REASONS = {
+    'workflow_proposals_disabled': 'Creating workflows from chat is turned off for this deployment.',
+    'workflow_role_required': 'Your account does not have access to personal workflows.',
+    'workflow_shared_conversation': (
+        'Workflows can be proposed only in your own conversations, not in shared ones.'
+    ),
+    'workflow_quota_reached': (
+        'You have reached the limit of workflows created from chat. Delete one in Workflows to make room.'
+    ),
+    'workflow_context_unavailable': 'Workflow details could not be loaded for this request. Try again later.',
+    'workflow_draft_invalid': (
+        'SimpleChat could not prepare this workflow from chat. Create it in Workflows, where you can '
+        'edit every setting.'
+    ),
+    'workflow_one_per_request': 'One request can propose one workflow. Ask for the next one in a new message.',
+}
+# Why a saved workflow cannot be started from this request. Starting a workflow is not a
+# deliverable, so these reach the planner as a fact, and only while an administrator has turned
+# starting workflows from chat on.
+WORKFLOW_RUN_UNAVAILABLE_REASONS = {
+    'capability_not_enabled_for_orchestration': 'Starting saved workflows is not enabled for chat orchestration.',
+    'workflow_runs_disabled': 'Starting saved workflows from chat is turned off for this deployment.',
+    'workflow_role_required': 'Your account does not have access to personal workflows.',
+    'workflow_shared_conversation': (
+        'Saved workflows can be started only from your own conversations, not from shared ones.'
+    ),
+    'workflow_context_unavailable': 'Your saved workflows could not be loaded for this request. Try again later.',
+}
+# Why a saved workflow's stored results cannot be read from this request. Reading a result is not
+# a deliverable either, so these reach the planner as a fact, and only while an administrator has
+# turned using workflow results in chat on.
+WORKFLOW_RESULTS_UNAVAILABLE_REASONS = {
+    'capability_not_enabled_for_orchestration': (
+        'Reading saved workflow results is not enabled for chat orchestration.'
+    ),
+    'workflow_results_disabled': 'Reading saved workflow results in chat is turned off for this deployment.',
+    'workflow_role_required': 'Your account does not have access to saved workflow results in chat.',
+    'workflow_shared_conversation': (
+        'Saved workflow results can be read only in your own conversations, not in shared ones.'
+    ),
+    'workflow_context_unavailable': 'Your saved workflows could not be loaded for this request. Try again later.',
+    'workflow_results_no_workflows': 'You have no saved workflows whose results could be read.',
+}
+_KIND_LABELS = {
+    KIND_ANSWER: 'answer', KIND_FILE: 'file', KIND_IMAGE: 'image',
+    KIND_CHART: 'chart', KIND_DIAGRAM: 'diagram', KIND_WORKFLOW: 'workflow',
+}
+_FIELDS = frozenset({
+    'id', 'kind', 'format', 'requested', 'quantity', 'description', 'status', 'unavailable_reason',
+})
+_SERVER_FIELDS = frozenset({'implicit', 'unavailable_message'})
+_RESULT_KIND_FOR_SOURCE = {
+    'records': 'records-v1', 'text': 'text-v1', 'markdown': 'markdown-v1',
+    'structured_value': 'structured-v1',
+}
+_TEXT_OUTPUT_KINDS = ('text-v1', 'markdown-v1')
+_ANSWER_PRODUCERS = frozenset({CAPABILITY_COMPOSE, CAPABILITY_DOCUMENT_ANALYZE, CAPABILITY_DOCUMENT_COMPARE})
+_IMAGE_OPTION_NAMES = (('size', 'sizes'), ('quality', 'qualities'), ('background', 'backgrounds'))
+
+IMAGE_TOKEN_PATTERN = re.compile(r'`?\[\[image:([A-Za-z][A-Za-z0-9_-]{0,63})\]\]`?')
+ASSET_IMAGE_PATTERN = re.compile(r'!\[([^\]\n]{0,300})\]\(asset:([A-Za-z0-9][A-Za-z0-9._-]{0,127})\)')
+# Gather steps that chart the exact rows their tools return when their visuals ask for a chart.
+CHARTING_GATHER_CAPABILITIES = frozenset({CAPABILITY_ACTION_INVOKE, CAPABILITY_AGENT_INVOKE})
+_VISUAL_FENCES = {KIND_CHART: f'```{INLINE_CHART_BLOCK_LANGUAGE}', KIND_DIAGRAM: '```mermaid'}
+# Why the answer does not show a chart or diagram the user asked for. The text is what users see.
+VISUAL_DELIVERY_MESSAGES = {
+    'chart_not_created': 'The chart could not be created from the retrieved data.',
+    'not_in_answer': 'The answer did not include it.',
+    'step_not_completed': 'The step that makes it did not finish.',
+}
+# The reply of a saved plan that gathered information but had no step to write an answer from it.
+UNREAD_GATHER_MESSAGE = (
+    'The information was gathered, but this plan had no step that writes an answer from it. '
+    'Ask again to get an answer.'
+)
+
+
+class DeliverableError(ValueError):
+    """A deliverables declaration the server cannot accept; the message is planner-facing."""
+
+    def __init__(self, message, code='deliverables_invalid', *, rule=None):
+        super().__init__(message)
+        self.message = message
+        self.code = code
+        self.rule = rule
+
+
+# --------------------------------------------------------------------------------------
+# Server truth
+# --------------------------------------------------------------------------------------
+
+def _unavailable(reason):
+    return {'status': STATUS_UNAVAILABLE, 'reason': reason}
+
+
+def _available(**facts):
+    return {'status': 'available', **facts}
+
+
+def _file_reason(unavailable):
+    if unavailable.get(CAPABILITY_RENDER_FILE) == 'not_enabled_for_orchestration':
+        return 'capability_not_enabled_for_orchestration'
+    return 'file_rendering_unavailable'
+
+
+def _image_reason(settings, unavailable):
+    reason = unavailable.get(CAPABILITY_GENERATE_IMAGE)
+    if reason == 'not_enabled_for_orchestration':
+        return 'capability_not_enabled_for_orchestration'
+    if reason in ('image_generation_disabled', 'image_generation_unavailable'):
+        return reason
+    if reason == 'feature_disabled' or not (isinstance(settings, dict) and settings.get('enable_image_generation')):
+        return 'image_generation_disabled'
+    return 'image_generation_unavailable'
+
+
+def _compose_reason(unavailable):
+    # compose has no feature gate; only the administrator's allowlist can withhold it.
+    return 'capability_not_enabled_for_orchestration'
+
+
+def _workflow_availability(available, unavailable):
+    """Whether this caller's plan can propose a workflow, or the closed reason it cannot."""
+    if CAPABILITY_WORKFLOW_PROPOSE in available:
+        return _available(produced_by=[CAPABILITY_WORKFLOW_PROPOSE], max_per_plan=MAX_WORKFLOWS_PER_PLAN)
+    reason = unavailable.get(CAPABILITY_WORKFLOW_PROPOSE)
+    if reason == 'not_enabled_for_orchestration':
+        return _unavailable('capability_not_enabled_for_orchestration')
+    if isinstance(reason, str) and reason in WORKFLOW_UNAVAILABLE_REASONS:
+        return _unavailable(reason)
+    # A settings gate, or a condition this module has no text for, reads as turned off.
+    return _unavailable('workflow_proposals_disabled')
+
+
+def _workflow_run_reason(unavailable):
+    """The closed reason this caller's plan cannot start a saved workflow."""
+    reason = unavailable.get(CAPABILITY_WORKFLOW_RUN)
+    if reason == 'not_enabled_for_orchestration':
+        return 'capability_not_enabled_for_orchestration'
+    if isinstance(reason, str) and reason in WORKFLOW_RUN_UNAVAILABLE_REASONS:
+        return reason
+    # A settings gate, or a condition this module has no text for, reads as turned off.
+    return 'workflow_runs_disabled'
+
+
+def _workflow_results_reason(unavailable):
+    """The closed reason this caller's plan cannot read a saved workflow's stored results."""
+    reason = unavailable.get(CAPABILITY_WORKFLOW_RESULTS)
+    if reason == 'not_enabled_for_orchestration':
+        return 'capability_not_enabled_for_orchestration'
+    if isinstance(reason, str) and reason in WORKFLOW_RESULTS_UNAVAILABLE_REASONS:
+        return reason
+    # A settings gate, or a condition this module has no text for, reads as turned off.
+    return 'workflow_results_disabled'
+
+
+def _image_options(capabilities):
+    """The exact size, quality, and background values the configured image model accepts."""
+    for capability in capabilities or ():
+        if capability.get('id') != CAPABILITY_GENERATE_IMAGE:
+            continue
+        properties = (capability.get('inputs') or {}).get('properties') or {}
+        return {
+            plural: list(properties[name]['enum'])
+            for name, plural in _IMAGE_OPTION_NAMES
+            if isinstance(properties.get(name), dict) and isinstance(properties[name].get('enum'), list)
+        }
+    return {}
+
+
+def build_deliverable_availability(settings, *, capabilities, unavailable=None, export_catalog=None):
+    """What this caller's plan can deliver, by kind and file format, and why not when not.
+
+    ``capabilities`` and ``unavailable`` come from the same ``resolve_available_capabilities``
+    call that decides what the planner may use, so the two can never disagree. A supplied
+    ``export_catalog`` is the admitted format catalog; ``None`` means the shared one.
+    """
+    # Export declarations are read only when a dependency plan is being described.
+    from functions_generated_export_registry import get_generated_file_export_catalog
+
+    settings = settings if isinstance(settings, dict) else {}
+    unavailable = dict(unavailable or {})
+    available = {capability['id'] for capability in capabilities or ()}
+    shared = get_generated_file_export_catalog()
+    admitted = {
+        entry['format_id']: entry for entry in (
+            resolve_admitted_export_catalog(export_catalog) if export_catalog is not None else shared
+        )
+    }
+    rendering = CAPABILITY_RENDER_FILE in available
+    file_reason = None if rendering else _file_reason(unavailable)
+    formats = {}
+    for entry in shared:
+        current = admitted.get(entry['format_id'], entry)
+        record = {
+            'source_kinds': sorted({
+                _RESULT_KIND_FOR_SOURCE[kind] for profile in current['profiles']
+                for kind in profile['source_kinds'] if kind in _RESULT_KIND_FOR_SOURCE
+            }),
+            'profiles': [profile['profile'] for profile in current['profiles']],
+            'embeds_images': bool(entry.get('rich_media')),
+        }
+        if not rendering:
+            record.update(_unavailable(file_reason))
+        elif entry['format_id'] not in admitted:
+            record.update(_unavailable('format_not_admitted'))
+        else:
+            record['status'] = 'available'
+        formats[entry['format_id']] = record
+    compose = CAPABILITY_COMPOSE in available
+    images_enabled = bool(settings.get('enable_image_generation'))
+    explicit_images = _available(
+        produced_by=[CAPABILITY_GENERATE_IMAGE], max_per_plan=MAX_GENERATED_IMAGES_PER_PLAN,
+        options=_image_options(capabilities),
+    ) if CAPABILITY_GENERATE_IMAGE in available else _unavailable(_image_reason(settings, unavailable))
+    if not images_enabled:
+        suggested_images = _unavailable('image_generation_disabled')
+    elif not compose:
+        suggested_images = _unavailable(_compose_reason(unavailable))
+    else:
+        suggested_images = _available(produced_by=[CAPABILITY_COMPOSE], visual=VISUAL_IMAGE_PROPOSAL)
+    chart_producers = [
+        capability_id for capability_id in (CAPABILITY_COMPOSE, CAPABILITY_ACTION_INVOKE)
+        if capability_id in available
+    ]
+    facts = [
+        'Only render_file creates a downloadable file. Text, CSV, or Markdown written into the chat '
+        'answer is not a file.',
+        'web_search, url_fetch, and deep_research return text and links only. They cannot retrieve, '
+        'download, or embed existing images or photographs.',
+    ]
+    recipes = []
+    if rendering:
+        recipes.extend([
+            {'for': 'CSV or XLSX file', 'steps': (
+                'compose a records-v1 output with explicit columns, then render_file with csv and '
+                'tabular_records_v1, or xlsx and tabular_workbook_v1, and options.columns in the same '
+                'order (xlsx also needs options.sheet_name).'
+            )},
+            {'for': 'DOCX or PDF document', 'steps': (
+                'compose a complete markdown-v1 document, then render_file with docx or pdf and '
+                'prepared_report_v1 (options.title is optional).'
+            )},
+            {'for': 'PPTX deck', 'steps': (
+                'compose a structured-v1 output with profile prepared_slide_deck_v1, then render_file '
+                'with pptx and prepared_slide_deck_v1.'
+            )},
+        ])
+        if CAPABILITY_TABULAR_MERGE in available:
+            recipes.append({'for': 'One file merged from several CSV or Excel files', 'steps': (
+                'tabular_merge with the files in merge order, then render_file binding its "records" '
+                'output with csv and exact_tabular_records_v1, or xlsx and exact_tabular_workbook_v1 '
+                '(options.sheet_name is optional). Never compose merged rows.'
+            )})
+            if CAPABILITY_TABULAR_INSPECT in available and compose:
+                recipes.append({'for': 'One file merged from CSV or Excel files whose columns differ', 'steps': (
+                    'tabular_inspect with the files; compose binding its "inspection" output and declaring '
+                    'a structured-v1 output with profile ' + TABULAR_COLUMN_MAPPING_PROFILE + '; '
+                    'tabular_merge with the same files and its "mapping" input bound to that output; then '
+                    'render_file as above. When the user wants to review the differences first, compose a '
+                    'markdown-v1 answer from the inspection instead and merge in a later turn.'
+                )})
+            facts.append(
+                'tabular_merge appends rows exactly; it does not match rows on a key column or change values.'
+            )
+        if CAPABILITY_DOCUMENT_MERGE in available:
+            recipes.append({'for': 'One PDF, Word document, PowerPoint deck or workbook merged from several files', 'steps': (
+                'document_merge with the files in order and its kind, then render_file binding its '
+                '"assembly" output with profile assembled_document_v1 and output_format pdf, docx, pptx, or '
+                'xlsx for a workbook. Never compose a merged document.'
+            )})
+            facts.append('document_merge copies files exactly; it never summarizes, translates or rewrites them.')
+        if CAPABILITY_DOCUMENT_INSPECT in available and any(
+            capability in available for capability in (
+                CAPABILITY_DOCUMENT_CREATE_FROM_REFERENCE, CAPABILITY_DOCUMENT_REFRESH,
+            )
+        ):
+            recipes.append({'for': 'Reuse or refresh a Word or PowerPoint reference', 'steps': (
+                'document_inspect with an authorized document_transform_references handle; gather any '
+                'new information in parallel; document_create_from_reference for new content in the '
+                'reference formatting, or document_refresh for selected updates, binding inspection '
+                'and named evidence; render_file binding "transformation" with document_transform_v1 '
+                'and the inspected docx or pptx format. Do not recreate the file through a generic '
+                'report or deck profile, and do not use document_merge for content updates.'
+            )})
+            facts.append(
+                'Reference transformations produce useful drafts with applied, unchanged, skipped and '
+                'unresolved outcomes. Unfilled targets do not require another approval before delivery; '
+                'they remain disclosed rather than invented.'
+            )
+        if CAPABILITY_TABULAR_MERGE in available and CAPABILITY_DOCUMENT_MERGE in available:
+            # Only when the plan could deliver either layout is it worth asking which one.
+            facts.append(MERGE_LAYOUT_FACT)
+    if explicit_images['status'] == 'available':
+        facts.extend([
+            'generate_image follows the visual style the user asks for, including photorealistic '
+            'images. Every generated image is AI-generated and captioned as such; never present it '
+            'as a real photograph, as a depiction of a real event, or as something found on the web.',
+            'DOCX, PDF, and PPTX files embed the generated images their prepared content places. '
+            'Other formats do not contain images.',
+        ])
+        recipes.append({'for': 'Images the user asked for', 'steps': (
+            'one generate_image step per image, each with a self-contained prompt and title; bind '
+            'each "image" output to the compose step that writes the answer or file content as an '
+            'optional named input; that step places [[image:<step_id>]] where each image belongs.'
+        )})
+    if suggested_images['status'] == 'available':
+        facts.append(
+            'Image proposal cards are suggestions the user approves after the answer arrives, so '
+            'they never appear in a file.'
+        )
+    if CAPABILITY_ACTION_INVOKE in available:
+        recipes.append({'for': 'Chart of data an action retrieves', 'steps': (
+            'action_invoke with visuals ["chart"] charts the exact rows it retrieves; bind its "prepared" '
+            'output to the compose step that is the final_response, which places the chart in the answer.'
+        )})
+    truth = {
+        KIND_ANSWER: _available(produced_by=[CAPABILITY_COMPOSE]) if compose else _unavailable(
+            _compose_reason(unavailable),
+        ),
+        KIND_FILE: {
+            **(_available() if rendering else _unavailable(file_reason)),
+            'produced_by': [CAPABILITY_RENDER_FILE], 'formats': formats,
+        },
+        KIND_IMAGE: {'explicit': explicit_images, 'suggested': suggested_images},
+        KIND_CHART: _available(produced_by=chart_producers) if chart_producers else _unavailable(
+            _compose_reason(unavailable),
+        ),
+        KIND_DIAGRAM: _available(produced_by=[CAPABILITY_COMPOSE]) if compose else _unavailable(
+            _compose_reason(unavailable),
+        ),
+    }
+    unavailable_reasons = dict(UNAVAILABLE_REASONS)
+    # The workflow kind, its reasons, and how to plan one exist only while an administrator has
+    # turned workflow proposals on; otherwise the planner is told exactly what it was before.
+    if settings.get(WORKFLOW_PROPOSALS_SETTING) is True:
+        truth[KIND_WORKFLOW] = _workflow_availability(available, unavailable)
+        unavailable_reasons.update(WORKFLOW_UNAVAILABLE_REASONS)
+        if truth[KIND_WORKFLOW]['status'] == 'available':
+            facts.append(
+                'A workflow deliverable is a proposal card shown after the answer. Nothing is created or '
+                'scheduled until the user approves it on that card, so never say a workflow was created.'
+            )
+            recipes.append({'for': 'Recurring or automated work the user asks for', 'steps': (
+                'one workflow_propose step whose blueprint is written from the request alone (no '
+                'depends_on and no input bindings) and that delivers the workflow deliverable. When '
+                'the request also wants a result now, answer it once with the usual steps as well.'
+            )})
+    # Starting a saved workflow is described only while an administrator has turned it on;
+    # otherwise the planner is told exactly what it was before.
+    if settings.get(WORKFLOW_RUNS_SETTING) is True:
+        if CAPABILITY_WORKFLOW_RUN in available:
+            facts.append(
+                'workflow_run starts one of the user\'s saved workflows after the user approves the plan; '
+                'a plan that starts one always waits for approval. The server adds to the reply whether '
+                'each workflow started, so never say that a workflow started, ran or finished, and never '
+                'promise its results in this conversation.'
+            )
+            recipes.append({'for': 'A saved workflow the user asks to run now', 'steps': (
+                'one workflow_run step per workflow, naming its durable catalog handle, with no depends_on, '
+                'no inputs and no deliverable. When the request only starts workflows, declare no '
+                'deliverables and no final_response; otherwise answer the rest as usual.'
+            )})
+        else:
+            facts.append(
+                'Starting saved workflows is unavailable for this request. '
+                f'{WORKFLOW_RUN_UNAVAILABLE_REASONS[_workflow_run_reason(unavailable)]} '
+                'When the user asks to run a workflow, say why in the answer.'
+            )
+    # Reading a saved workflow's stored results is described only while an administrator has turned
+    # it on; otherwise the planner is told exactly what it was before.
+    if settings.get(WORKFLOW_RESULTS_SETTING) is True:
+        if CAPABILITY_WORKFLOW_RESULTS in available:
+            facts.append(
+                'workflow_results reads what one of the user\'s saved workflows produced in a run that '
+                'already finished. The server checks access again when the step runs and adds to the reply '
+                'which run was read. What it returns is the user\'s own earlier output, not evidence: use it '
+                'as notes, never cite it as a source, and never say that a workflow ran again.'
+            )
+            recipes.append({'for': 'What one of the user\'s saved workflows found in a finished run', 'steps': (
+                'one workflow_results step per run to read, naming its catalog handle and a selector, with '
+                'no depends_on and no inputs, bound as an input of the compose step that answers and is '
+                'the final_response. To compare runs, read each one and compose once.'
+            )})
+        else:
+            facts.append(
+                'Reading saved workflow results is unavailable for this request. '
+                f'{WORKFLOW_RESULTS_UNAVAILABLE_REASONS[_workflow_results_reason(unavailable)]} '
+                'When the user asks what a saved workflow found, say why in the answer.'
+            )
+    # Handing work off is described only when this request offers it; otherwise the planner is told
+    # exactly what it was before.
+    if CAPABILITY_WORKFLOW_HANDOFF in available:
+        facts.append(
+            'workflow_handoff hands work that is too big for one chat plan to a one-time workflow. The '
+            'user reviews its hand-off card after approving the plan, and nothing is created or run until '
+            'the user approves that card; the run\'s summary is posted back into this conversation when it '
+            'finishes. The server adds a note about the hand-off to the reply, so never say that the work '
+            'was done, started or scheduled.'
+        )
+        recipes.append({'for': 'Work too big for one chat plan', 'steps': (
+            'one workflow_handoff step with no depends_on, no inputs and no deliverable. When the request '
+            'is only the hand-off, declare no deliverables and no final_response; otherwise the compose '
+            'final_response answers only what the other steps can answer now.'
+        )})
+    truth.update({'unavailable_reasons': unavailable_reasons, 'facts': facts, 'recipes': recipes})
+    return truth
+
+
+def canonical_file_format(value, catalog=None):
+    """A catalog format id for a declared format or alias, or the lowercased value unchanged."""
+    text = str(value or '').strip().lower().lstrip('.')
+    if catalog is None:
+        # Export declarations are read only when a file deliverable is compiled.
+        from functions_generated_export_registry import get_generated_file_export_catalog
+
+        catalog = get_generated_file_export_catalog()
+    for entry in catalog:
+        if text == entry['format_id'] or text in entry.get('aliases', ()):
+            return entry['format_id']
+    return text
+
+
+def _verdict(availability, deliverable, *, planned_images=0, planned_workflows=0):
+    """The server's reason a deliverable cannot be produced, or None when it can."""
+    kind = deliverable['kind']
+    if kind == KIND_FILE:
+        entry = availability[KIND_FILE]['formats'].get(deliverable['format'])
+        if entry is None:
+            return 'format_not_supported'
+        return entry.get('reason') if entry['status'] != 'available' else None
+    if kind == KIND_IMAGE:
+        requested = deliverable['requested']
+        entry = availability[KIND_IMAGE]['explicit' if requested == REQUESTED_EXPLICIT else 'suggested']
+        if entry['status'] != 'available':
+            return entry.get('reason')
+        # The budget is a reason only once the plan already generates as many images as allowed.
+        if (
+            requested == REQUESTED_EXPLICIT and deliverable['status'] == STATUS_UNAVAILABLE
+            and planned_images >= MAX_GENERATED_IMAGES_PER_PLAN
+        ):
+            return 'image_budget_exceeded'
+        return None
+    if kind == KIND_WORKFLOW:
+        entry = availability.get(KIND_WORKFLOW)
+        if entry is None:
+            return 'workflow_proposals_disabled'
+        if entry['status'] != 'available':
+            return entry.get('reason')
+        # Like the image budget: only once the plan already proposes as many workflows as allowed.
+        if deliverable['status'] == STATUS_UNAVAILABLE and planned_workflows >= MAX_WORKFLOWS_PER_PLAN:
+            return 'workflow_one_per_request'
+        return None
+    entry = availability[kind]
+    return entry.get('reason') if entry['status'] != 'available' else None
+
+
+# --------------------------------------------------------------------------------------
+# Plan validation
+# --------------------------------------------------------------------------------------
+
+def _label(deliverable):
+    kind = deliverable['kind']
+    if kind == KIND_FILE:
+        return f"file deliverable \"{deliverable['id']}\" ({deliverable['format']})"
+    return f"{_KIND_LABELS[kind]} deliverable \"{deliverable['id']}\""
+
+
+def _sentence_label(deliverable):
+    label = _label(deliverable)
+    return label[:1].upper() + label[1:]
+
+
+def _parse_deliverables(raw, workflow_allowed=False):
+    if raw is None:
+        return []
+    if type(raw) is not list:
+        raise DeliverableError(
+            '"deliverables" must be a list of deliverable objects.', rule='deliverables_not_list',
+        )
+    # The server-added answer of a plan that declared nothing is derived again, unless the
+    # planner kept it beside real deliverables; then it is an ordinary declared answer.
+    declared = any(type(entry) is dict and entry.get('implicit') is not True for entry in raw)
+    parsed, seen = [], set()
+    for entry in raw:
+        if type(entry) is not dict:
+            raise DeliverableError('Each deliverable must be an object.', rule='deliverable_not_object')
+        if entry.get('implicit') is True and not declared:
+            continue
+        unknown = set(entry) - _FIELDS - _SERVER_FIELDS
+        if unknown:
+            raise DeliverableError(
+                'A deliverable has unsupported fields. Use only id, kind, format, requested, '
+                'quantity, description, status, and unavailable_reason.',
+                rule='unsupported_deliverable_field',
+            )
+        try:
+            identifier = output_name(entry.get('id'))
+        except ResultContractError as exc:
+            raise DeliverableError(
+                'Each deliverable needs an id of letters, digits, "_" or "-", starting with a letter.',
+                rule='invalid_deliverable_id',
+            ) from exc
+        if identifier in seen:
+            raise DeliverableError(
+                f'Deliverable id "{identifier}" is used more than once.', rule='duplicate_deliverable_id',
+            )
+        seen.add(identifier)
+        kind = entry.get('kind')
+        if kind not in (WORKFLOW_DELIVERABLE_KINDS if workflow_allowed else DELIVERABLE_KINDS):
+            listed = (
+                'answer, file, image, chart, diagram, or workflow' if workflow_allowed
+                else 'answer, file, image, chart, or diagram'
+            )
+            raise DeliverableError(
+                f'Deliverable "{identifier}" needs kind {listed}.',
+                rule='invalid_deliverable_kind',
+            )
+        requested = entry.get('requested')
+        if requested not in (REQUESTED_EXPLICIT, REQUESTED_SUGGESTED):
+            raise DeliverableError(
+                f'Deliverable "{identifier}" needs requested explicit or suggested.', rule='invalid_requested_value',
+            )
+        if kind == KIND_WORKFLOW and requested != REQUESTED_EXPLICIT:
+            raise DeliverableError(
+                f'Workflow deliverable "{identifier}" must be requested explicit: propose a workflow only '
+                'when the user asks for recurring or automated work.', rule='suggested_workflow',
+            )
+        status = entry.get('status')
+        if status not in (STATUS_PLANNED, STATUS_UNAVAILABLE):
+            raise DeliverableError(
+                f'Deliverable "{identifier}" needs status planned or unavailable.', rule='invalid_deliverable_status',
+            )
+        description = entry.get('description')
+        if type(description) is not str or not description.strip():
+            raise DeliverableError(
+                f'Deliverable "{identifier}" needs a short description.', rule='missing_description',
+            )
+        deliverable = {
+            'id': identifier, 'kind': kind, 'requested': requested, 'status': status,
+            'description': description.strip()[:MAX_DESCRIPTION_LENGTH].rstrip(),
+        }
+        if kind == KIND_FILE:
+            value = entry.get('format')
+            if type(value) is not str or not value.strip() or len(value) > MAX_FORMAT_LENGTH:
+                raise DeliverableError(
+                    f'File deliverable "{identifier}" needs its file format id.', rule='invalid_file_format',
+                )
+            deliverable['format'] = canonical_file_format(value)
+        elif entry.get('format') not in (None, ''):
+            raise DeliverableError(
+                f'Only file deliverables declare a format; remove it from "{identifier}".', rule='non_file_format',
+            )
+        if 'quantity' in entry and entry['quantity'] is not None:
+            quantity = entry['quantity']
+            if (
+                kind not in (KIND_FILE, KIND_IMAGE) or type(quantity) is not int
+                or not 1 <= quantity <= MAX_DELIVERABLE_QUANTITY
+            ):
+                raise DeliverableError(
+                    f'quantity counts files or images from 1 to {MAX_DELIVERABLE_QUANTITY}; '
+                    f'fix or remove it on "{identifier}".', rule='invalid_quantity',
+                )
+            deliverable['quantity'] = quantity
+        reason = entry.get('unavailable_reason')
+        if status == STATUS_UNAVAILABLE:
+            if reason in UNAVAILABLE_REASONS:
+                message = UNAVAILABLE_REASONS[reason]
+            elif workflow_allowed and reason in WORKFLOW_UNAVAILABLE_REASONS:
+                message = WORKFLOW_UNAVAILABLE_REASONS[reason]
+            else:
+                raise DeliverableError(
+                    f'Unavailable deliverable "{identifier}" needs an unavailable_reason from '
+                    'capability_availability.deliverables.unavailable_reasons.', rule='invalid_unavailable_reason',
+                )
+            deliverable['unavailable_reason'] = reason
+            deliverable['unavailable_message'] = message
+        elif reason not in (None, ''):
+            raise DeliverableError(
+                f'Planned deliverable "{identifier}" cannot have an unavailable_reason.',
+                rule='unexpected_unavailable_reason',
+            )
+        parsed.append(deliverable)
+    if len(parsed) > MAX_DELIVERABLES:
+        raise DeliverableError(
+            f'A plan can declare at most {MAX_DELIVERABLES} deliverables.', rule='deliverable_limit',
+        )
+    return parsed
+
+
+def implicit_answer_deliverable():
+    return {
+        'id': IMPLICIT_ANSWER_ID, 'kind': KIND_ANSWER, 'requested': REQUESTED_EXPLICIT,
+        'status': STATUS_PLANNED, 'description': 'An answer to your request.', 'implicit': True,
+    }
+
+
+def _markdown_outputs(step):
+    return [output['name'] for output in step.get('outputs') or () if output.get('kind') == 'markdown-v1']
+
+
+def _final_step_id(final_response):
+    if not final_response:
+        return None, False
+    binding = InputBinding.from_dict(final_response)
+    return binding.step_id, binding.existing_result is not None
+
+
+def _render_source(step):
+    source = ((step.get('inputs') or {}).get('source') or {}).get('binding')
+    if not isinstance(source, dict):
+        return None, None
+    binding = InputBinding.from_dict(source)
+    return binding.step_id, binding.output_name
+
+
+def _image_inputs(step, by_id):
+    """Named inputs of a step that bind a generate_image step's image output."""
+    images = []
+    for name, value in (step.get('inputs') or {}).items():
+        binding = InputBinding.from_dict(value['binding'])
+        producer = by_id.get(binding.step_id) if binding.step_id else None
+        if producer is not None and producer['capability_id'] == CAPABILITY_GENERATE_IMAGE:
+            images.append((name, producer))
+    return images
+
+
+def _check_producer(step, deliverable, final_step):
+    """Raise unless this step's capability can produce the deliverable's kind and format."""
+    kind, capability = deliverable['kind'], step['capability_id']
+    step_id = step['step_id']
+    if kind == KIND_FILE:
+        if capability != CAPABILITY_RENDER_FILE:
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: only a render_file step creates a file.',
+                rule='file_producer_mismatch',
+            )
+        if step['arguments'].get('output_format') != deliverable['format']:
+            raise DeliverableError(
+                f'Step "{step_id}" renders {step["arguments"].get("output_format")}, but '
+                f'{_label(deliverable)} is {deliverable["format"]}. The output_format must match.',
+                rule='file_format_mismatch',
+            )
+    elif kind == KIND_IMAGE and deliverable['requested'] == REQUESTED_EXPLICIT:
+        if capability != CAPABILITY_GENERATE_IMAGE:
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: explicitly requested images '
+                'come only from generate_image steps.', rule='image_producer_mismatch',
+            )
+    elif kind == KIND_IMAGE:
+        if capability != CAPABILITY_COMPOSE or not _markdown_outputs(step):
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver suggested {_label(deliverable)}: suggested images are '
+                'image proposal cards in a compose step with a markdown-v1 output.',
+                rule='suggested_image_producer_mismatch',
+            )
+    elif kind == KIND_CHART:
+        if capability == CAPABILITY_ACTION_INVOKE:
+            return
+        if capability != CAPABILITY_COMPOSE or not _markdown_outputs(step):
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: charts come from a compose step '
+                'with a markdown-v1 output, or from action_invoke charting its rows.',
+                rule='chart_producer_mismatch',
+            )
+    elif kind == KIND_DIAGRAM:
+        if capability != CAPABILITY_COMPOSE or not _markdown_outputs(step):
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: diagrams come from a compose '
+                'step with a markdown-v1 output.', rule='diagram_producer_mismatch',
+            )
+    elif kind == KIND_ANSWER:
+        if capability not in _ANSWER_PRODUCERS or step_id != final_step:
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: the answer comes from the '
+                'step final_response selects.', rule='answer_producer_mismatch',
+            )
+    elif kind == KIND_WORKFLOW:
+        if capability != CAPABILITY_WORKFLOW_PROPOSE:
+            raise DeliverableError(
+                f'Step "{step_id}" cannot deliver {_label(deliverable)}: only a workflow_propose step '
+                'proposes a workflow.', rule='workflow_producer_mismatch',
+            )
+
+
+def _link_unambiguous(deliverables, steps, final_step):
+    """Fill ``delivers`` only where exactly one deliverable can be meant; never guess between two.
+
+    The answer comes from the final_response producer by definition. A render step with no
+    ``delivers`` belongs to the only planned file deliverable of its exact format, an image
+    step to the plan's only explicit image deliverable, and a workflow_propose step to the
+    plan's only planned workflow deliverable.
+    """
+    planned = [deliverable for deliverable in deliverables if deliverable['status'] == STATUS_PLANNED]
+    claimed = {identifier for step in steps for identifier in step['delivers']}
+    by_step = {step['step_id']: step for step in steps}
+    if final_step in by_step:
+        for deliverable in planned:
+            if deliverable['kind'] == KIND_ANSWER and deliverable['id'] not in claimed:
+                by_step[final_step]['delivers'].append(deliverable['id'])
+    explicit_images = [
+        deliverable for deliverable in planned
+        if deliverable['kind'] == KIND_IMAGE and deliverable['requested'] == REQUESTED_EXPLICIT
+    ]
+    workflows = [deliverable for deliverable in planned if deliverable['kind'] == KIND_WORKFLOW]
+    for step in steps:
+        if step['delivers']:
+            continue
+        if step['capability_id'] == CAPABILITY_RENDER_FILE:
+            matches = [
+                deliverable for deliverable in planned
+                if deliverable['kind'] == KIND_FILE
+                and deliverable['format'] == step['arguments'].get('output_format')
+            ]
+            if len(matches) == 1:
+                step['delivers'].append(matches[0]['id'])
+        elif step['capability_id'] == CAPABILITY_GENERATE_IMAGE and len(explicit_images) == 1:
+            step['delivers'].append(explicit_images[0]['id'])
+        elif step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE and len(workflows) == 1:
+            step['delivers'].append(workflows[0]['id'])
+
+
+def _derive_visuals(step, deliverables):
+    """Chart, diagram, and suggested-image deliverables become the step's structured visuals."""
+    wanted = set(step['arguments'].get('visuals') or ())
+    for deliverable in deliverables:
+        if deliverable['status'] != STATUS_PLANNED:
+            continue
+        if deliverable['kind'] == KIND_CHART:
+            wanted.add(VISUAL_CHART)
+        elif deliverable['kind'] == KIND_DIAGRAM and step['capability_id'] == CAPABILITY_COMPOSE:
+            wanted.add(VISUAL_DIAGRAM)
+        elif (
+            deliverable['kind'] == KIND_IMAGE and deliverable['requested'] == REQUESTED_SUGGESTED
+            and step['capability_id'] == CAPABILITY_COMPOSE
+        ):
+            wanted.add(VISUAL_IMAGE_PROPOSAL)
+    if wanted:
+        step['arguments']['visuals'] = [kind for kind in VISUAL_KINDS if kind in wanted]
+
+
+def _shown_steps(steps, final_step, *, include_files=True, include_images=True):
+    """Enabled steps whose results reach something the user sees.
+
+    The user sees the answer of the step final_response selects, the files render_file steps
+    save, and generated images, which the finished answer always shows. A step reaches them
+    when a chain of named input bindings leads from it to one of those steps.
+    """
+    enabled = {step['step_id']: step for step in steps if step.get('enabled', True)}
+    producers = {step_id: set() for step_id in enabled}
+    for step in enabled.values():
+        for value in (step.get('inputs') or {}).values():
+            producer = InputBinding.from_dict(value['binding']).step_id
+            if producer in enabled:
+                producers[step['step_id']].add(producer)
+    pending = [
+        step_id for step_id, step in enabled.items()
+        if step_id == final_step
+        or (include_files and step['capability_id'] == CAPABILITY_RENDER_FILE)
+        or (include_images and step['capability_id'] == CAPABILITY_GENERATE_IMAGE)
+    ]
+    reached = set()
+    while pending:
+        step_id = pending.pop()
+        if step_id not in reached:
+            reached.add(step_id)
+            pending.extend(producers[step_id] - reached)
+    return reached
+
+
+def _require_shown_work(deliverables, steps, final_step):
+    """While planning: gathered results and planned charts and diagrams must reach the user.
+
+    The answer step used to run in every plan, so whatever was gathered was always read and
+    written up. A plan now writes an answer only when final_response selects one, so a gather
+    step that nothing reads, or a chart that no answer places, would run and never be shown.
+    workflow_run is the exception: nothing may read it, and the server writes its reply.
+    """
+    published = _shown_steps(steps, final_step, include_images=False)
+    for deliverable in deliverables:
+        if deliverable['status'] != STATUS_PLANNED or deliverable['kind'] not in (KIND_CHART, KIND_DIAGRAM):
+            continue
+        producers = [
+            step for step in steps
+            if step.get('enabled', True) and deliverable['id'] in (step.get('delivers') or ())
+        ]
+        if producers and not any(step['step_id'] in published for step in producers):
+            raise DeliverableError(
+                f'{_sentence_label(deliverable)} would never be shown: no step that delivers it reaches '
+                'the final_response answer or a file. A chart or diagram appears only in the compose '
+                'step final_response selects, or in content a render_file step saves. When action_invoke '
+                'charts the rows it retrieves, bind its "prepared" output as a named input of that '
+                'compose step and select that compose step as final_response.',
+                rule='visual_not_published',
+            )
+    shown = _shown_steps(steps, final_step)
+    for step in steps:
+        if (
+            step.get('enabled', True) and step.get('role') == ROLE_GATHER
+            and step['capability_id'] != CAPABILITY_WORKFLOW_RUN and step['step_id'] not in shown
+        ):
+            raise DeliverableError(
+                f'Gather step "{step["step_id"]}" collects results that no later step reads, so they would '
+                'never be shown. Bind its output as a named input of the compose step that writes the '
+                'answer and select that compose step as final_response, or bind it to the step that '
+                'prepares a file.',
+                rule='gather_not_used',
+            )
+
+
+def _brief_entry(deliverable, relation, **extra):
+    entry = {
+        'relation': relation, 'id': deliverable['id'], 'kind': deliverable['kind'],
+        'requested': deliverable['requested'], 'description': deliverable['description'],
+        **({'format': deliverable['format']} if 'format' in deliverable else {}),
+        **({'quantity': deliverable['quantity']} if 'quantity' in deliverable else {}),
+    }
+    entry.update(extra)
+    return entry
+
+
+def _deliverable_briefs(deliverables, steps, final_step):
+    """Attach to each compose step the deliverables its content is for."""
+    by_id = {step['step_id']: step for step in steps}
+    lookup = {deliverable['id']: deliverable for deliverable in deliverables}
+    for step in steps:
+        step.pop('deliverable_context', None)
+    for step in steps:
+        if step['capability_id'] != CAPABILITY_COMPOSE:
+            continue
+        brief = [
+            _brief_entry(lookup[identifier], 'delivers') for identifier in step.get('delivers') or ()
+            if identifier in lookup and lookup[identifier]['status'] == STATUS_PLANNED
+        ]
+        for render in steps:
+            if render['capability_id'] != CAPABILITY_RENDER_FILE:
+                continue
+            source_step, source_output = _render_source(render)
+            if source_step != step['step_id']:
+                continue
+            for identifier in render.get('delivers') or ():
+                deliverable = lookup.get(identifier)
+                if deliverable is not None and deliverable['status'] == STATUS_PLANNED:
+                    brief.append(_brief_entry(
+                        deliverable, 'rendered_as', output=source_output,
+                        file_name=render['arguments'].get('file_name'), enabled=render.get('enabled', True),
+                    ))
+        for _name, producer in _image_inputs(step, by_id):
+            for identifier in producer.get('delivers') or ():
+                deliverable = lookup.get(identifier)
+                if deliverable is not None and not any(
+                    entry['relation'] == 'images' and entry['id'] == identifier for entry in brief
+                ):
+                    brief.append(_brief_entry(deliverable, 'images'))
+        if step['step_id'] == final_step:
+            brief.extend(
+                _brief_entry(
+                    deliverable, 'unavailable', reason=deliverable['unavailable_reason'],
+                    message=deliverable['unavailable_message'],
+                )
+                for deliverable in deliverables
+                if deliverable['status'] == STATUS_UNAVAILABLE and deliverable['requested'] == REQUESTED_EXPLICIT
+            )
+            # The answer never consumes a proposal; it is only told that a card follows it.
+            brief.extend(
+                _brief_entry(deliverable, 'workflow_proposal', enabled=any(
+                    producer.get('enabled', True) for producer in steps
+                    if deliverable['id'] in (producer.get('delivers') or ())
+                ))
+                for deliverable in deliverables
+                if deliverable['kind'] == KIND_WORKFLOW and deliverable['status'] == STATUS_PLANNED
+            )
+        if brief:
+            step['deliverable_context'] = brief
+
+
+def compile_deliverables(
+    raw_deliverables, steps, *, final_response=None, availability=None, image_selected=False,
+):
+    """Validate declared deliverables against compiled steps and return their normal form.
+
+    ``steps`` are the accepted, dependency-compiled plan steps. Their ``delivers`` lists are
+    normalized in place, chart, diagram, and suggested-image deliverables become structured
+    visuals, and each compose step receives the ``deliverable_context`` it writes for.
+
+    ``availability`` is the server truth from ``build_deliverable_availability``. It is
+    supplied while planning: then planned deliverables must be delivered by enabled steps,
+    unavailable claims must match the server exactly, and ``image_selected`` (the composer's
+    Image control) requires an explicit image deliverable. Saved plans are revalidated without
+    it, so a later change in availability or a step the user turned off never invalidates
+    an approved plan; the delivery notes report such gaps instead.
+
+    While planning, a ``workflow`` deliverable is accepted only when ``availability``
+    describes the kind, which it does only while workflow proposals are turned on. Planning
+    also requires every enabled gather step except ``workflow_run`` to feed the answer, a file
+    or a generated image, and every planned chart or diagram to reach the answer or a file;
+    see ``_require_shown_work``.
+    """
+    workflow_allowed = availability is None or KIND_WORKFLOW in availability
+    deliverables = _parse_deliverables(raw_deliverables, workflow_allowed)
+    final_step, final_is_existing = _final_step_id(final_response)
+    strict = availability is not None
+    for step in steps:
+        step.pop('deliverable_context', None)
+        values = step.get('delivers', [])
+        if type(values) is not list or any(type(value) is not str for value in values):
+            raise DeliverableError(
+                f'Step "{step["step_id"]}" delivers must be a list of deliverable ids.', rule='invalid_delivers',
+            )
+        if len(set(values)) != len(values):
+            raise DeliverableError(
+                f'Step "{step["step_id"]}" lists a deliverable more than once.', rule='duplicate_step_deliverable',
+            )
+        step['delivers'] = list(values)
+    if not deliverables:
+        if strict and image_selected:
+            raise DeliverableError(
+                'The user selected the Image control: declare at least one explicit image deliverable.',
+                rule='missing_selected_image',
+            )
+        for step in steps:
+            step['delivers'] = [value for value in step['delivers'] if value != IMPLICIT_ANSWER_ID]
+            if step['delivers']:
+                raise DeliverableError(
+                    f'Step "{step["step_id"]}" delivers an undeclared deliverable. Declare it in "deliverables".',
+                    rule='undeclared_step_deliverable',
+                )
+            if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE:
+                raise DeliverableError(
+                    f'workflow_propose step "{step["step_id"]}" proposes a workflow that no deliverable '
+                    'declares. Declare it as an explicit workflow deliverable and list it in delivers.',
+                    rule='undeclared_workflow_output',
+                )
+            step.pop('delivers')
+        if strict:
+            _require_shown_work([], steps, final_step)
+        return [implicit_answer_deliverable()]
+    lookup = {deliverable['id']: deliverable for deliverable in deliverables}
+    for step in steps:
+        unknown = [value for value in step['delivers'] if value not in lookup]
+        if unknown:
+            raise DeliverableError(
+                f'Step "{step["step_id"]}" delivers "{unknown[0]}", which is not a declared deliverable.',
+                rule='undeclared_step_deliverable',
+            )
+    _link_unambiguous(deliverables, steps, final_step)
+    delivering = {deliverable['id']: [] for deliverable in deliverables}
+    for step in steps:
+        for identifier in step['delivers']:
+            deliverable = lookup[identifier]
+            if deliverable['status'] == STATUS_UNAVAILABLE:
+                raise DeliverableError(
+                    f'Step "{step["step_id"]}" delivers {_label(deliverable)}, which is marked unavailable.',
+                    rule='unavailable_deliverable_produced',
+                )
+            _check_producer(step, deliverable, final_step)
+            delivering[identifier].append(step)
+    for step in steps:
+        if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE and len(step['delivers']) > 1:
+            raise DeliverableError(
+                f'workflow_propose step "{step["step_id"]}" proposes exactly one workflow. List one '
+                'workflow deliverable in its delivers.', rule='workflow_delivers_one',
+            )
+        if not step['delivers']:
+            if step['capability_id'] == CAPABILITY_RENDER_FILE:
+                raise DeliverableError(
+                    f'render_file step "{step["step_id"]}" creates a file that no deliverable declares. '
+                    'Declare the file as an explicit or suggested file deliverable and list it in delivers.',
+                    rule='undeclared_file_output',
+                )
+            if step['capability_id'] == CAPABILITY_GENERATE_IMAGE:
+                raise DeliverableError(
+                    f'generate_image step "{step["step_id"]}" makes an image that no deliverable declares. '
+                    'Declare it as an explicit image deliverable and list it in delivers.',
+                    rule='undeclared_image_output',
+                )
+            if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE:
+                raise DeliverableError(
+                    f'workflow_propose step "{step["step_id"]}" proposes a workflow that no deliverable '
+                    'declares. Declare it as an explicit workflow deliverable and list it in delivers.',
+                    rule='undeclared_workflow_output',
+                )
+    planned_images = sum(
+        1 for step in steps if step['capability_id'] == CAPABILITY_GENERATE_IMAGE and step.get('enabled', True)
+    )
+    planned_workflows = sum(
+        1 for step in steps if step['capability_id'] == CAPABILITY_WORKFLOW_PROPOSE and step.get('enabled', True)
+    )
+    for deliverable in deliverables:
+        producers = delivering[deliverable['id']]
+        verdict = _verdict(
+            availability, deliverable, planned_images=planned_images, planned_workflows=planned_workflows,
+        ) if strict else None
+        if deliverable['status'] == STATUS_PLANNED:
+            if verdict is not None:
+                raise DeliverableError(
+                    f'{_sentence_label(deliverable)} cannot be produced here: {verdict}. Mark it '
+                    f'unavailable with unavailable_reason "{verdict}".', rule='planned_deliverable_unavailable',
+                )
+            if deliverable['kind'] == KIND_ANSWER and final_is_existing and not producers:
+                continue
+            if strict:
+                producers = [step for step in producers if step.get('enabled', True)]
+            if not producers and deliverable['kind'] == KIND_ANSWER:
+                raise DeliverableError(
+                    f'The planned {_label(deliverable)} needs final_response to select the prepared '
+                    'answer text of the step that writes it.', rule='missing_final_response',
+                )
+            if not producers:
+                raise DeliverableError(
+                    f'No step delivers the planned {_label(deliverable)}. Add a step that can produce '
+                    'it and list the deliverable in that step\'s delivers, or mark it unavailable with '
+                    'the reason capability_availability.deliverables gives.', rule='missing_deliverable_producer',
+                )
+            quantity = deliverable.get('quantity')
+            counted = deliverable['kind'] == KIND_FILE or (
+                deliverable['kind'] == KIND_IMAGE and deliverable['requested'] == REQUESTED_EXPLICIT
+            )
+            if quantity is not None and counted and len(producers) < quantity:
+                raise DeliverableError(
+                    f'{_sentence_label(deliverable)} asks for {quantity} but only {len(producers)} '
+                    'steps deliver it. Plan one step per item, or split the deliverable and mark the '
+                    'remainder unavailable with its reason.', rule='insufficient_producers',
+                )
+        elif strict:
+            if verdict is None:
+                raise DeliverableError(
+                    f'The server can produce {_label(deliverable)}. Plan it with a capable step '
+                    'instead of marking it unavailable.', rule='available_deliverable_declined',
+                )
+            if verdict != deliverable['unavailable_reason']:
+                raise DeliverableError(
+                    f'{_sentence_label(deliverable)} is unavailable because of "{verdict}", not '
+                    f'"{deliverable["unavailable_reason"]}".', rule='unavailable_reason_mismatch',
+                )
+    if strict and image_selected and not any(
+        deliverable['kind'] == KIND_IMAGE and deliverable['requested'] == REQUESTED_EXPLICIT
+        for deliverable in deliverables
+    ):
+        raise DeliverableError(
+            'The user selected the Image control: declare at least one explicit image deliverable.',
+            rule='missing_selected_image',
+        )
+    if strict:
+        options = ((availability.get(KIND_IMAGE) or {}).get('explicit') or {}).get('options') or {}
+        for step in steps:
+            if step['capability_id'] != CAPABILITY_GENERATE_IMAGE:
+                continue
+            for name, plural in _IMAGE_OPTION_NAMES:
+                value = step['arguments'].get(name)
+                if value and value not in (options.get(plural) or ()):
+                    raise DeliverableError(
+                        f'Step "{step["step_id"]}" sets {name} "{value}", which the configured image '
+                        f'model does not support. Use one of {options.get(plural) or []} or omit it.',
+                        rule='unsupported_image_option',
+                    )
+        _require_shown_work(deliverables, steps, final_step)
+    for step in steps:
+        if step['delivers'] and step['capability_id'] in (CAPABILITY_COMPOSE, CAPABILITY_ACTION_INVOKE):
+            _derive_visuals(step, [lookup[identifier] for identifier in step['delivers']])
+    _deliverable_briefs(deliverables, steps, final_step)
+    for step in steps:
+        if not step['delivers']:
+            step.pop('delivers')
+    return deliverables
+
+
+# --------------------------------------------------------------------------------------
+# The answer step
+# --------------------------------------------------------------------------------------
+
+def _format_label(value):
+    return {
+        'docx': 'Word document (.docx)', 'pdf': 'PDF', 'pptx': 'PowerPoint deck (.pptx)',
+        'xlsx': 'Excel workbook (.xlsx)', 'csv': 'CSV file', 'md': 'Markdown file',
+        'txt': 'text file', 'json': 'JSON file', 'yaml': 'YAML file', 'xml': 'XML file',
+    }.get(value, f'{value} file')
+
+
+def image_alt_text(title):
+    return f'{AI_ILLUSTRATION_LABEL}: {title}'[:300]
+
+
+def _rendered_output_guidance(entry, kind):
+    """How to write an output a later step saves, by the kind of value that step reads.
+
+    Rows and structured values are data the file is built from. Asking for "the finished
+    file" there invites CSV or file text where the declared output needs JSON rows.
+    """
+    output = entry.get('output') or 'the output'
+    name = entry.get('file_name') or 'the file'
+    target = f'A later step saves output "{output}" as {name}, a {_format_label(entry.get("format"))}'
+    if kind == 'records-v1':
+        return (
+            f'{target}, from the rows you return. Return "{output}" as rows, not as file text: '
+            'that step writes the file. Never say files cannot be created.'
+        )
+    if kind == 'structured-v1':
+        return (
+            f'{target}, from the value you return. Return "{output}" as the structured value its '
+            'schema or profile describes, not as file text: that step builds the file. Never say '
+            'files cannot be created.'
+        )
+    return (
+        f'{target}. Write its complete content as the finished file: no preamble about the file, '
+        'and no notes about saving, attaching, converting, or downloading it. Never say files '
+        'cannot be created.'
+    )
+
+
+def compose_deliverable_guidance(step, images):
+    """System guidance for an answer step, from its deliverables and its bound images.
+
+    ``images`` lists the generated images this step received as inputs, each a dict with
+    ``asset_id`` and ``title``. The guidance is built from structured plan data only.
+    """
+    brief = step.get('deliverable_context') or []
+    kinds = {
+        output.get('name'): output.get('kind')
+        for output in step.get('outputs') or () if isinstance(output, dict)
+    }
+    lines = []
+    rendered = [entry for entry in brief if entry['relation'] == 'rendered_as' and entry.get('enabled', True)]
+    for entry in rendered:
+        lines.append(_rendered_output_guidance(entry, kinds.get(entry.get('output'))))
+    wanted = [entry for entry in brief if entry['relation'] in ('delivers', 'images')]
+    if wanted:
+        lines.append('This content must include what the user asked for:')
+        lines.extend(
+            f"- {entry['description']}" + (f" ({entry['quantity']})" if entry.get('quantity') else '')
+            for entry in wanted
+        )
+        if step.get('inputs'):
+            lines.append(
+                'When the user asked to find or verify information in the bound sources and '
+                'those inputs do not contain it, deliver this by clearly stating that the '
+                'searched content does not contain the requested information, stating how many '
+                'pages or sections were inspected (when reported in the inputs), and citing '
+                'evidence of what the inspected content covers.'
+            )
+    if images:
+        tokens = ', '.join(f"[[image:{image['asset_id']}]] ({image['title']})" for image in images)
+        lines.append(
+            f'These AI-generated images were created for this answer: {tokens}. Put each token '
+            'on its own line where that image belongs in Markdown content, at most once. A caption '
+            'labelling it as an AI-generated image is added automatically. In a prepared slide '
+            'deck, use an image shape whose source is "asset:<step_id>". Do not present an image as a '
+            'real photograph, as a depiction of a real event, or as something found on the web, and do '
+            'not refer to images other than these.'
+        )
+    unavailable = [entry for entry in brief if entry['relation'] == 'unavailable']
+    for entry in unavailable:
+        lines.append(
+            f"The user asked for {entry['description']}, which is not available here: {entry['message']} "
+            'Do not claim, promise, or apologize for it; a delivery note is added after the answer. '
+            'Deliver the rest of the request as well as you can.'
+        )
+    proposals = [
+        entry for entry in brief if entry['relation'] == 'workflow_proposal' and entry.get('enabled', True)
+    ]
+    for entry in proposals:
+        lines.append(
+            f"A card after this answer proposes a workflow: {entry['description'].rstrip('.')}. Nothing is "
+            'created or scheduled until the user approves it on that card. Do not say the workflow was '
+            'created, scheduled, or turned on, and leave its details to the card.'
+        )
+    return ['\n'.join(lines)] if lines else []
+
+
+def _caption(title):
+    return f'*{AI_ILLUSTRATION_LABEL}: {_safe_markdown_text(title)}*'
+
+
+def _safe_markdown_text(value):
+    return re.sub(r'[\[\]()`*_<>\n\r]+', ' ', str(value or '')).strip()
+
+
+def place_image_tokens(text, images):
+    """Replace ``[[image:<id>]]`` with the image and its caption; append any it did not place.
+
+    ``images`` maps an asset id to its title, in the order the step received them. Unknown
+    tokens and asset references are removed, so prepared content can only reference images
+    this step actually received. Content without tokens, references, or images is unchanged.
+    """
+    source = str(text or '')
+    placed = set()
+    changed = False
+
+    def image_block(asset_id):
+        title = images[asset_id]
+        placed.add(asset_id)
+        return f'\n\n![{_safe_markdown_text(image_alt_text(title))}](asset:{asset_id})\n\n{_caption(title)}\n\n'
+
+    def from_token(match):
+        nonlocal changed
+        changed = True
+        asset_id = match.group(1)
+        return image_block(asset_id) if asset_id in images and asset_id not in placed else ''
+
+    def from_reference(match):
+        nonlocal changed
+        changed = True
+        asset_id = match.group(2)
+        return image_block(asset_id) if asset_id in images and asset_id not in placed else ''
+
+    # Model-written references first, so the images this pass inserts are never revisited.
+    value = ASSET_IMAGE_PATTERN.sub(from_reference, source)
+    value = IMAGE_TOKEN_PATTERN.sub(from_token, value)
+    remaining = [asset_id for asset_id in images if asset_id not in placed]
+    if not changed and not remaining:
+        return source
+    value = re.sub(r'\n{3,}', '\n\n', value).strip()
+    if remaining:
+        value = '\n\n'.join([value, *(image_block(asset_id).strip() for asset_id in remaining)]).strip()
+    return value
+
+
+def place_deck_images(deck, images):
+    """Keep only slide images that reference a received asset, and add a slide for any not placed.
+
+    Every image shape gets the server's alt text. An image the deck did not place gets its
+    own slide, so a requested image is never left out of the file.
+    """
+    if type(deck) is not dict or type(deck.get('slides')) is not list:
+        return deck
+    placed = set()
+    for slide in deck['slides']:
+        if type(slide) is not dict or type(slide.get('shapes')) is not list:
+            continue
+        kept = []
+        for shape in slide['shapes']:
+            if type(shape) is dict and shape.get('type') == 'image':
+                source = str(shape.get('source') or '')
+                asset_id = source[len('asset:'):] if source.startswith('asset:') else ''
+                if asset_id not in images:
+                    continue
+                placed.add(asset_id)
+                shape = {**shape, 'alt': image_alt_text(images[asset_id])}
+            kept.append(shape)
+        slide['shapes'] = kept
+    missing = [asset_id for asset_id in images if asset_id not in placed]
+    if missing:
+        counted = deck.get('slide_count') == len(deck['slides'])
+        width = 10 if deck.get('size') == 'standard' else 40 / 3
+        for asset_id in missing:
+            title = str(images[asset_id] or '').strip()[:60] or AI_ILLUSTRATION_LABEL
+            deck['slides'].append({
+                'layout': 'title_and_content', 'title': title, 'notes': image_alt_text(images[asset_id]),
+                'shapes': [{
+                    'type': 'image', 'source': f'asset:{asset_id}', 'alt': image_alt_text(images[asset_id]),
+                    'box': {'left': 0.75, 'top': 1.5, 'width': round(width - 1.5, 2), 'height': 5.5},
+                }],
+            })
+        if counted:
+            deck['slide_count'] = len(deck['slides'])
+    return deck
+
+
+# --------------------------------------------------------------------------------------
+# The chat answer and delivery notes
+# --------------------------------------------------------------------------------------
+
+def _no_fence(value):
+    return str(value or '').replace('`', "'")
+
+
+def generated_image_block(asset):
+    """A ``simpleimage`` block the chat renders as the already generated image."""
+    payload = {
+        'version': 1, 'visualId': asset['asset_id'], 'title': _no_fence(asset['title']),
+        'description': AI_ILLUSTRATION_LABEL, 'prompt': _no_fence(asset['prompt']),
+        'visualType': 'illustration', 'context': AI_ILLUSTRATION_LABEL,
+    }
+    return '```simpleimage\n' + json.dumps(payload, ensure_ascii=False) + '\n```'
+
+
+def project_generated_images(text, assets):
+    """Show this run's generated images in the chat answer where the content placed them.
+
+    ``assets`` maps asset ids to retained image descriptors. Images the content did not
+    place are added after it, so a generated image is never left out of the answer. Text
+    without image references is returned unchanged when the run generated no images.
+    """
+    source = str(text or '')
+    placed = set()
+    changed = False
+
+    def block(asset_id):
+        placed.add(asset_id)
+        return f'\n\n{generated_image_block(assets[asset_id])}\n\n'
+
+    def from_reference(match):
+        nonlocal changed
+        changed = True
+        asset_id = match.group(2)
+        return block(asset_id) if asset_id in assets and asset_id not in placed else ''
+
+    def from_token(match):
+        nonlocal changed
+        changed = True
+        asset_id = match.group(1)
+        return block(asset_id) if asset_id in assets and asset_id not in placed else ''
+
+    value = ASSET_IMAGE_PATTERN.sub(from_reference, source)
+    value = IMAGE_TOKEN_PATTERN.sub(from_token, value)
+    remaining = [asset_id for asset_id in assets if asset_id not in placed]
+    if not changed and not remaining:
+        return source
+    value = re.sub(r'\n{3,}', '\n\n', value).strip()
+    if remaining:
+        blocks = []
+        for asset_id in remaining:
+            blocks.append(generated_image_block(assets[asset_id]))
+            blocks.append(_caption(assets[asset_id]['title']))
+        value = '\n\n'.join(part for part in (value, *blocks) if part).strip()
+    return value
+
+
+def explicit_image_shortfalls(plan, statuses):
+    """Explicit planned image deliverables whose enabled image steps did not all complete."""
+    shortfalls = []
+    steps = [step for step in plan.get('steps') or () if step.get('enabled', True)]
+    for deliverable in plan.get('deliverables') or ():
+        if (
+            deliverable.get('kind') != KIND_IMAGE or deliverable.get('requested') != REQUESTED_EXPLICIT
+            or deliverable.get('status') != STATUS_PLANNED
+        ):
+            continue
+        producers = [step for step in steps if deliverable['id'] in (step.get('delivers') or ())]
+        completed = [step for step in producers if statuses.get(step['step_id']) == 'completed']
+        if len(completed) < len(producers):
+            shortfalls.append({
+                'id': deliverable['id'], 'expected': len(producers), 'delivered': len(completed),
+            })
+    return shortfalls
+
+
+def transformation_delivery_notes(file_outputs):
+    """Describe committed applied outcomes, never prepared intentions or reference identities."""
+    lines = []
+    for output in file_outputs or ():
+        if (
+            type(output) is not dict or output.get('state') != 'completed'
+            or output.get('available') is not True
+        ):
+            continue
+        report = output.get('transformation_report')
+        if (
+            type(report) is not dict or report.get('version') != 'document-transformation-report-v1'
+            or any(type(report.get(f'{name}_count')) is not int for name in (
+                'applied', 'unchanged', 'skipped', 'unresolved',
+            ))
+        ):
+            continue
+        name = _safe_markdown_text(output.get('file_name'))
+        applied = report['applied_count']
+        summary = (
+            f"Applied {applied} {'change' if applied == 1 else 'changes'}" if applied
+            else "No changes applied; unchanged reference draft"
+        )
+        lines.append(
+            f"- {name}: {summary}; {report['unchanged_count']} unchanged targets; "
+            f"{report['skipped_count']} skipped; {report['unresolved_count']} unresolved."
+        )
+        for outcome in ('applied', 'skipped', 'unresolved', 'unchanged'):
+            entries = report.get(outcome) or ()
+            details = []
+            for entry in entries[:5]:
+                target = _safe_markdown_text(entry.get('target'))
+                reason = _safe_markdown_text(entry.get('reason'))[:160]
+                details.append(f'{target}: {reason}' if reason else target)
+            remaining = report[f'{outcome}_count'] - min(5, len(entries))
+            if remaining > 0:
+                details.append(f'{remaining} more')
+            if details:
+                lines.append(f"  - {outcome.capitalize()}: {'; '.join(details)}.")
+        for warning in (report.get('warnings') or ())[:3]:
+            lines.append(f"  - {_safe_markdown_text(warning)[:200]}")
+    return lines
+
+
+def delivery_notes(plan, statuses, *, file_steps_with_outputs=(), visual_states=(), file_outputs=()):
+    """A deterministic note for explicit deliverables that were not delivered or are unavailable.
+
+    ``statuses`` maps step ids to their final status. Files that reached the output service
+    are already described by the files summary, so only files that never started are named.
+    ``visual_states`` are the chart and diagram states from ``visual_delivery``.
+    ``file_outputs`` contains only authorized public output projections; committed
+    transformation reports add actual changes and draft limitations after the answer.
+    """
+    lines = []
+    steps = {step['step_id']: step for step in plan.get('steps') or ()}
+    shortfalls = {item['id']: item for item in explicit_image_shortfalls(plan, statuses)}
+    missing_visuals = {
+        state['id']: state for state in visual_states or () if state.get('state') == 'not_delivered'
+    }
+    for deliverable in plan.get('deliverables') or ():
+        if deliverable.get('implicit') or deliverable.get('requested') != REQUESTED_EXPLICIT:
+            continue
+        # Each note adds its own period after the description.
+        description = _safe_markdown_text(deliverable.get('description')).rstrip('.').rstrip()
+        if deliverable.get('status') == STATUS_UNAVAILABLE:
+            reason = deliverable.get('unavailable_reason')
+            lines.append(
+                f"- Not available: {description}. "
+                f"{UNAVAILABLE_REASONS.get(reason) or WORKFLOW_UNAVAILABLE_REASONS.get(reason, '')}".rstrip()
+            )
+            continue
+        producers = [step for step in steps.values() if deliverable['id'] in (step.get('delivers') or ())]
+        if producers and not any(step.get('enabled', True) for step in producers):
+            lines.append(f'- Not delivered: {description}. Its step was turned off.')
+            continue
+        if deliverable['id'] in missing_visuals:
+            lines.append(f"- Not delivered: {description}. {missing_visuals[deliverable['id']]['message']}")
+            continue
+        if deliverable['id'] in shortfalls:
+            item = shortfalls[deliverable['id']]
+            lines.append(
+                f"- Not delivered: {description}. {item['delivered']} of {item['expected']} images "
+                'were generated.'
+            )
+            continue
+        if deliverable.get('kind') == KIND_WORKFLOW:
+            # A prepared proposal, ready or not, is explained by its own card.
+            if any(
+                step.get('enabled', True) and statuses.get(step['step_id']) != 'completed' for step in producers
+            ):
+                lines.append(f'- Not delivered: {description}. The workflow proposal could not be prepared.')
+            continue
+        if deliverable.get('kind') == KIND_FILE:
+            missing = [
+                step for step in producers
+                if step.get('enabled', True) and step['step_id'] not in set(file_steps_with_outputs)
+                and statuses.get(step['step_id']) != 'completed'
+            ]
+            if missing:
+                lines.append(f'- Not delivered: {description}. The file was not created.')
+    lines.extend(transformation_delivery_notes(file_outputs))
+    return 'Delivery notes:\n' + '\n'.join(lines) if lines else ''
+
+
+def generated_image_assets(task_results, read_value):
+    """Retained generated images by asset id, in plan-independent producer order.
+
+    ``task_results`` maps step ids to TaskResult objects; ``read_value(reference)`` reads a
+    retained descriptor through the owning authorization service.
+    """
+    assets = {}
+    for step_id, task in (task_results or {}).items():
+        if task.producer.capability_id != CAPABILITY_GENERATE_IMAGE or task.status != 'complete':
+            continue
+        for reference in task.outputs:
+            if reference.kind == IMAGE_ASSET_KIND and reference.completeness.status == 'complete':
+                value = read_value(reference)
+                if value.get('asset_id') == step_id:
+                    assets[step_id] = deepcopy(value)
+    return assets
+
+
+def _draws_charts(step):
+    """Whether a plan step is a gather step the plan asked to chart the rows it retrieves."""
+    return (
+        step.get('enabled', True) and step.get('capability_id') in CHARTING_GATHER_CAPABILITIES
+        and VISUAL_CHART in ((step.get('arguments') or {}).get('visuals') or ())
+    )
+
+
+def has_visual_block(text, kind):
+    """The same format-presence check for compose correction and final answer delivery."""
+    return _VISUAL_FENCES[kind] in text
+
+
+def missing_compose_visuals(step, values):
+    """Explicit visuals this enabled compose step owes but its Markdown does not include.
+
+    The compiled brief contains planned deliverables only. Unavailable, suggested and
+    separately produced images are not requirements for a corrective content call.
+    """
+    if not step.get('enabled', True):
+        return []
+    text = '\n'.join(
+        values[name] for name in _markdown_outputs(step) if type(values.get(name)) is str
+    )
+    required = {
+        entry['kind'] for entry in step.get('deliverable_context') or ()
+        if entry.get('relation') == 'delivers' and entry.get('requested') == REQUESTED_EXPLICIT
+        and entry.get('enabled', True) and entry.get('kind') in _VISUAL_FENCES
+    }
+    return [kind for kind in _VISUAL_FENCES if kind in required and not has_visual_block(text, kind)]
+
+
+def gathered_charts(plan, task_results, read_value):
+    """The charts each charting gather step drew from its exact rows, by step id in plan order.
+
+    ``task_results`` maps step ids to TaskResult objects; ``read_value(reference)`` reads the
+    step's retained "prepared" value through the owning authorization service. A step that
+    drew no chart is left out.
+    """
+    charts = {}
+    for step in plan.get('steps') or ():
+        task = (task_results or {}).get(step.get('step_id'))
+        if not _draws_charts(step) or task is None or task.status not in ('complete', 'partial'):
+            continue
+        for reference in task.outputs:
+            if reference.output_name != 'prepared' or reference.completeness.status not in ('complete', 'partial'):
+                continue
+            value = read_value(reference)
+            citations = value.get('citations') if isinstance(value, dict) else None
+            drawn = collect_run_charts(citations if isinstance(citations, list) else [])
+            if drawn:
+                charts[step['step_id']] = drawn
+    return charts
+
+
+def _shows_chart(text, chart):
+    return f'"chartId":"{chart["chart_id"]}"' in text or chart['chart_markdown'] in text
+
+
+def show_gathered_charts(text, charts):
+    """The answer with each chart a gather step drew shown once.
+
+    A chart the answer step placed stays where it is. One that no answer step placed, such as
+    in a plan whose answer step did not read the gather step, is added after the answer, the
+    way a generated image is.
+    """
+    text = str(text or '')
+    missing, seen = [], set()
+    for drawn in (charts or {}).values():
+        for chart in drawn:
+            if chart['chart_id'] not in seen and not _shows_chart(text, chart):
+                missing.append(chart)
+            seen.add(chart['chart_id'])
+    return place_chart_blocks(text, missing) if missing else text
+
+
+def visual_delivery(plan, statuses, answer, charts):
+    """Whether the answer shows each chart and diagram the user asked for, and what to run again.
+
+    Returns ``(states, redraw)``. ``states`` has one ``{'id', 'state', 'message'}`` entry, without
+    a message when delivered, for each explicit planned chart or diagram meant for the answer;
+    ``state`` is ``delivered`` or ``not_delivered``. One that only goes into a file is left out,
+    because the file's own status covers it. ``redraw`` lists the steps that finished without the
+    chart or diagram the plan asked of them; a retry runs them, and every step computed from
+    them, again. ``charts`` is ``gathered_charts``' result and ``answer`` the published text.
+    """
+    steps = [step for step in plan.get('steps') or () if step.get('enabled', True)]
+    final_step, _ = _final_step_id(plan.get('final_response'))
+    answer_steps = _shown_steps(steps, final_step, include_files=False, include_images=False)
+    answer = str(answer or '')
+    states, redraw = [], []
+    for deliverable in plan.get('deliverables') or ():
+        kind = deliverable.get('kind')
+        if (
+            kind not in _VISUAL_FENCES or deliverable.get('requested') != REQUESTED_EXPLICIT
+            or deliverable.get('status') != STATUS_PLANNED
+        ):
+            continue
+        shown, reasons, again = False, [], []
+        for step in steps:
+            if deliverable.get('id') not in (step.get('delivers') or ()):
+                continue
+            finished = statuses.get(step['step_id']) in ('completed', 'partial')
+            if kind == KIND_CHART and _draws_charts(step):
+                if not finished:
+                    reasons.append('step_not_completed')
+                elif any(_shows_chart(answer, chart) for chart in (charts or {}).get(step['step_id']) or ()):
+                    shown = True
+                else:
+                    reasons.append('chart_not_created')
+                    again.append(step['step_id'])
+            elif step['step_id'] in answer_steps:
+                if not finished:
+                    reasons.append('step_not_completed')
+                elif has_visual_block(answer, kind):
+                    shown = True
+                else:
+                    reasons.append('not_in_answer')
+                    again.append(step['step_id'])
+        if shown:
+            states.append({'id': deliverable['id'], 'state': 'delivered'})
+        elif reasons:
+            states.append({
+                'id': deliverable['id'], 'state': 'not_delivered', 'message': VISUAL_DELIVERY_MESSAGES[reasons[0]],
+            })
+            redraw.extend(again)
+    return states, list(dict.fromkeys(redraw))
+
+
+def unread_gather_steps(plan):
+    """Enabled gather steps, other than workflow_run, whose results nothing the user sees reads.
+
+    Planning refuses such a plan now; a plan saved before that rule can still have them.
+    """
+    steps = [step for step in plan.get('steps') or () if step.get('enabled', True)]
+    final_step, _ = _final_step_id(plan.get('final_response'))
+    shown = _shown_steps(steps, final_step)
+    return [
+        step['step_id'] for step in steps
+        if step.get('role') == ROLE_GATHER and step.get('capability_id') != CAPABILITY_WORKFLOW_RUN
+        and step['step_id'] not in shown
+    ]

@@ -4,6 +4,7 @@ title: "Simple Chat Documentation"
 description: "Deploy, operate, and extend Simple Chat: an Azure-native chat platform with retrieval, workspaces, agents, and enterprise controls."
 section: "Start"
 hide_toc: false
+version: "0.261.398"
 ---
 
 Simple Chat gives teams an Azure-native way to deploy, ground, govern, and
@@ -59,7 +60,7 @@ and the common tasks admins perform there.
 [Deployment paths]({{ '/reference/deploy/' | relative_url }}) for Azure Developer
 CLI, Bicep, Terraform, Azure CLI, and manual setup, plus
 [networking]({{ '/guides/enterprise-networking/' | relative_url }}),
-[scaling]({{ '/application_scaling/' | relative_url }}),
+[scaling]({{ '/guides/scale-simplechat-on-azure/' | relative_url }}),
 [upgrades]({{ '/guides/upgrade-paths/' | relative_url }}), and
 [troubleshooting]({{ '/troubleshooting/' | relative_url }}).
 
@@ -73,33 +74,46 @@ and [release notes]({{ '/explanation/release_notes/' | relative_url }}).
 
 ### Context-aware AI conversations
 
-Uses Azure OpenAI with hybrid retrieval over personal, group, and public
-workspace content, so responses stay tied to your own data rather than to the
-model's general knowledge.
+Combines a configured model with hybrid retrieval over authorized personal,
+group, and public workspace content. Citations help readers inspect the
+supporting material; a grounded answer still needs review. Public workspaces
+share curated content with signed-in application users, not anonymous visitors.
 
 ### Document pipelines that stay searchable
 
-Ingests PDFs, Office files, images, audio, and video through Azure AI services,
-then retrieves them with citations and optional metadata enrichment.
+Uses format-specific extraction, chunking, and embeddings to make supported
+files searchable. PDF/image extraction and optional audio/video processing have
+their own service dependencies. Start with
+[uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
 
 ### Controls for enterprise rollouts
 
-Adds Entra ID roles, content safety, feedback review, conversation archiving,
-and operational logging without rebuilding the application.
+Combines Entra ID roles and workspace permissions with configurable content
+checks, feedback review, data lifecycle controls, and operational logging.
+[Feature guidance]({{ '/explanation/feature_guidance/' | relative_url }}) explains
+what to validate before widening a rollout.
+
+### From answers to repeatable work
+
+Saved prompts and agents make useful instructions reusable. Approved actions,
+reviewed orchestration plans, and saved workflows can extend that work into
+external systems or generated files when configured. Browse the
+[feature catalog]({{ '/features/' | relative_url }}) or start with
+[creating a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
 
 ## Platform at a glance
 
-Core application state lives in Azure Cosmos DB. Document retrieval runs through
-Azure AI Search. Ingestion is handled by Azure AI Document Intelligence and
-related media services. Authentication uses Entra ID.
+The Flask application coordinates sign-in, conversation state, retrieval, and
+configured AI connections. Entra ID establishes identity, Cosmos DB stores
+application records, and Azure AI Search supplies workspace retrieval.
 
-That combination makes it practical to run Simple Chat as a governed internal
-tool rather than a demo-only sample.
+{% include media.html id="slide-azure-services" %}
 
-{% include media.html src="architecture.png"
-                      alt="Architecture diagram showing Simple Chat running on Azure App Service with Azure OpenAI, Azure AI Search, Cosmos DB, and storage services."
-                      title="Simple Chat architecture"
-                      caption="Simple Chat on Azure App Service, composing search, storage, document processing, and conversation state into one application." %}
+The full slide is a service map, not a requirement to deploy every pictured
+service. Storage-backed citations, media processing, Content Safety, API
+Management, and Redis depend on the capabilities and topology you choose.
+Read [Architecture]({{ '/explanation/architecture/' | relative_url }}) for the
+application boundaries and approved outbound paths.
 
 ## Contributing
 

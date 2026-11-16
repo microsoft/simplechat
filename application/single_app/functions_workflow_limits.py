@@ -1,0 +1,320 @@
+# functions_workflow_limits.py
+"""Validated ceilings and floors shared by workflow administration, saving and loop admission."""
+
+from collections.abc import Mapping
+
+
+WORKFLOW_LOOP_ITEMS_DEFAULT = 500
+WORKFLOW_LOOP_ITEMS_MIN = 1
+WORKFLOW_LOOP_ITEMS_MAX = 5000
+WORKFLOW_LOOP_LIMIT_SETTING = "workflow_max_loop_items"
+WORKFLOW_MAX_EXECUTION_ADMISSIONS = 5000
+WORKFLOW_REPEAT_ITERATIONS_DEFAULT = 25
+WORKFLOW_REPEAT_ITERATIONS_MIN = 1
+WORKFLOW_REPEAT_ITERATIONS_MAX = 1000
+WORKFLOW_REPEAT_LIMIT_SETTING = "workflow_max_repeat_iterations"
+# One second is the shortest interval a schedule could already use, so the default changes nothing.
+WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT = 1
+WORKFLOW_MIN_SCHEDULE_INTERVAL_MIN = 1
+WORKFLOW_MIN_SCHEDULE_INTERVAL_MAX = 86400
+WORKFLOW_MIN_SCHEDULE_INTERVAL_SETTING = "workflow_min_schedule_interval_seconds"
+# Workflows that chat orchestration creates for a user have their own count cap.
+CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT = 20
+CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN = 1
+CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX = 100
+CHAT_ORCHESTRATION_MAX_WORKFLOWS_SETTING = "chat_orchestration_max_workflows_per_user"
+# Each accepted hand-off creates a one-time workflow and queues a durable run, so a rolling 24-hour
+# limit per user bounds how much background work chat can start, separately from the cap above.
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT = 5
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MIN = 1
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MAX = 100
+CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_SETTING = "chat_orchestration_max_workflow_handoffs_per_day"
+# How long a chat plan may wait for a quick saved workflow before the answer moves on and the run's
+# result is posted to the chat instead. Five minutes covers a short personal workflow; the ceiling
+# stays under the 7,200-second plan budget, which bounds any single wait anyway.
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT = 300
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MIN = 60
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MAX = 1800
+CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_SETTING = "chat_orchestration_workflow_run_wait_max_seconds"
+
+
+class WorkflowLoopInputError(ValueError):
+    """A safe workflow-input failure shared by source and cardinality checks."""
+
+    def __init__(self, public_message, *, code="workflow_loop_input_unavailable",
+                 count=None, count_exact=False, limit=None):
+        self.public_message = public_message
+        self.code = code
+        self.count = count
+        self.count_exact = bool(count_exact)
+        self.limit = limit
+        super().__init__(public_message)
+
+
+class WorkflowLoopLimitError(WorkflowLoopInputError):
+    """A safe validation or admission failure, with explicit count precision."""
+
+    def __init__(self, public_message, *, code="workflow_loop_limit_invalid",
+                 count=None, count_exact=False, limit=None):
+        super().__init__(
+            public_message, code=code, count=count, count_exact=count_exact, limit=limit,
+        )
+
+
+def validate_workflow_max_loop_items(value):
+    """Accept an integer in the supported admin range; never clamp a supplied value."""
+    candidate = value
+    if isinstance(value, str):
+        text = value.strip()
+        candidate = (
+            int(text)
+            if text.isascii() and text.isdecimal() and len(text) <= 10
+            else None
+        )
+    if (
+        type(candidate) is not int
+        or not WORKFLOW_LOOP_ITEMS_MIN <= candidate <= WORKFLOW_LOOP_ITEMS_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Workflow Loop Item Limit must be a whole number from 1 to 5,000."
+        )
+    return candidate
+
+
+def get_workflow_max_loop_items(settings=None):
+    """Read the current policy, without normalizing or writing the settings document."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError("The workflow item limit is temporarily unavailable.")
+    return validate_workflow_max_loop_items(
+        settings.get(WORKFLOW_LOOP_LIMIT_SETTING, WORKFLOW_LOOP_ITEMS_DEFAULT)
+    )
+
+
+def get_workflow_loop_item_limit(settings=None):
+    """Return the validated administrator ceiling to snapshot at new-run admission."""
+    return get_workflow_max_loop_items(settings)
+
+
+def validate_workflow_max_repeat_iterations(value):
+    """Validate the separate ceiling for one automatically executed Repeat batch."""
+    candidate = value
+    if isinstance(value, str):
+        text = value.strip()
+        candidate = (
+            int(text)
+            if text.isascii() and text.isdecimal() and len(text) <= 10
+            else None
+        )
+    if (
+        type(candidate) is not int
+        or not WORKFLOW_REPEAT_ITERATIONS_MIN <= candidate <= WORKFLOW_REPEAT_ITERATIONS_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Workflow Repeat Iteration Limit must be a whole number from 1 to 1,000.",
+            code="workflow_repeat_limit_invalid",
+        )
+    return candidate
+
+
+def get_workflow_max_repeat_iterations(settings=None):
+    """Read new-run policy without changing an admitted run's frozen allowance."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The workflow Repeat limit is temporarily unavailable.",
+            code="workflow_repeat_limit_unavailable",
+        )
+    return validate_workflow_max_repeat_iterations(
+        settings.get(WORKFLOW_REPEAT_LIMIT_SETTING, WORKFLOW_REPEAT_ITERATIONS_DEFAULT)
+    )
+
+
+def validate_workflow_min_schedule_interval_seconds(value):
+    """Validate the shortest interval a new or changed interval schedule may use."""
+    candidate = value
+    if isinstance(value, str):
+        text = value.strip()
+        candidate = (
+            int(text)
+            if text.isascii() and text.isdecimal() and len(text) <= 10
+            else None
+        )
+    if (
+        type(candidate) is not int
+        or not WORKFLOW_MIN_SCHEDULE_INTERVAL_MIN <= candidate <= WORKFLOW_MIN_SCHEDULE_INTERVAL_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Workflow Minimum Schedule Interval must be a whole number of seconds from 1 to 86,400.",
+            code="workflow_schedule_interval_limit_invalid",
+        )
+    return candidate
+
+
+def get_workflow_min_schedule_interval_seconds(settings=None):
+    """Read the schedule floor for a save; saved schedules are never re-checked against it."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The workflow schedule minimum is temporarily unavailable.",
+            code="workflow_schedule_interval_limit_unavailable",
+        )
+    return validate_workflow_min_schedule_interval_seconds(
+        settings.get(WORKFLOW_MIN_SCHEDULE_INTERVAL_SETTING, WORKFLOW_MIN_SCHEDULE_INTERVAL_DEFAULT)
+    )
+
+
+def _whole_number(value):
+    """Read an integer, or its decimal text, without truncating or clamping it."""
+    if isinstance(value, str):
+        text = value.strip()
+        return int(text) if text.isascii() and text.isdecimal() and len(text) <= 10 else None
+    return value if type(value) is int else None
+
+
+def validate_chat_orchestration_max_workflows_per_user(value):
+    """Validate how many workflows chat orchestration may create for one user."""
+    candidate = _whole_number(value)
+    if (
+        candidate is None
+        or not CHAT_ORCHESTRATION_MAX_WORKFLOWS_MIN <= candidate <= CHAT_ORCHESTRATION_MAX_WORKFLOWS_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Workflows Created From Chat Per User must be a whole number from 1 to 100.",
+            code="chat_orchestration_workflow_limit_invalid",
+        )
+    return candidate
+
+
+def get_chat_orchestration_max_workflows_per_user(settings=None):
+    """Read the per-user cap on orchestration-created workflows."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The limit on workflows created from chat is temporarily unavailable.",
+            code="chat_orchestration_workflow_limit_unavailable",
+        )
+    return validate_chat_orchestration_max_workflows_per_user(
+        settings.get(CHAT_ORCHESTRATION_MAX_WORKFLOWS_SETTING, CHAT_ORCHESTRATION_MAX_WORKFLOWS_DEFAULT)
+    )
+
+
+def validate_chat_orchestration_max_workflow_handoffs_per_day(value):
+    """Validate how many hand-offs one user may start from chat in a rolling 24 hours."""
+    candidate = _whole_number(value)
+    if (
+        candidate is None
+        or not CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MIN <= candidate <= CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Hand-Offs From Chat Per User Per Day must be a whole number from 1 to 100.",
+            code="chat_orchestration_handoff_limit_invalid",
+        )
+    return candidate
+
+
+def get_chat_orchestration_max_workflow_handoffs_per_day(settings=None):
+    """Read the rolling 24-hour hand-off limit; a corrupt stored value fails closed."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The daily limit on hand-offs from chat is temporarily unavailable.",
+            code="chat_orchestration_handoff_limit_unavailable",
+        )
+    return validate_chat_orchestration_max_workflow_handoffs_per_day(
+        settings.get(
+            CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_SETTING, CHAT_ORCHESTRATION_MAX_HANDOFFS_PER_DAY_DEFAULT,
+        )
+    )
+
+
+def validate_chat_orchestration_workflow_run_wait_max_seconds(value):
+    """Validate the longest a chat plan may wait for a saved workflow run to finish."""
+    candidate = _whole_number(value)
+    if (
+        candidate is None
+        or not CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MIN
+        <= candidate
+        <= CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_MAX
+    ):
+        raise WorkflowLoopLimitError(
+            "Wait For A Workflow From Chat must be a whole number of seconds from 60 to 1,800.",
+            code="chat_orchestration_workflow_run_wait_limit_invalid",
+        )
+    return candidate
+
+
+def get_chat_orchestration_workflow_run_wait_max_seconds(settings=None):
+    """Read the cap on one in-plan workflow wait; a corrupt stored value fails closed."""
+    if settings is None:
+        # Settings initialize application clients; load them only at a request boundary.
+        from functions_settings import get_settings
+
+        settings = get_settings()
+    if not isinstance(settings, Mapping):
+        raise WorkflowLoopLimitError(
+            "The limit on waiting for a workflow from chat is temporarily unavailable.",
+            code="chat_orchestration_workflow_run_wait_limit_unavailable",
+        )
+    return validate_chat_orchestration_workflow_run_wait_max_seconds(
+        settings.get(
+            CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_SETTING,
+            CHAT_ORCHESTRATION_WORKFLOW_RUN_WAIT_SECONDS_DEFAULT,
+        )
+    )
+
+
+def get_orchestration_workflow_min_interval_seconds(settings=None):
+    """Use the same administrator minimum for chat planning as for every workflow editor."""
+    return get_workflow_min_schedule_interval_seconds(settings)
+
+
+def effective_workflow_loop_limit(max_items=None, *, settings=None, policy=None):
+    """Combine an authored ceiling with a run's admitted policy or current settings."""
+    if policy is None:
+        admin_limit = get_workflow_max_loop_items(settings)
+    else:
+        if not isinstance(policy, Mapping) or "max_items" not in policy:
+            raise WorkflowLoopLimitError("The admitted workflow item limit is unavailable.")
+        admin_limit = validate_workflow_max_loop_items(policy["max_items"])
+    author_limit = admin_limit if max_items is None else validate_workflow_max_loop_items(max_items)
+    return min(admin_limit, author_limit)
+
+
+def assert_workflow_loop_item_count(count, *, limit, count_exact=True):
+    """Reject oversized inputs before body execution, preserving lower-bound wording."""
+    limit = validate_workflow_max_loop_items(limit)
+    if type(count) is not int or count < 0:
+        raise WorkflowLoopLimitError("The workflow input count could not be confirmed.")
+    if count > limit:
+        qualifier = "" if count_exact else "at least "
+        raise WorkflowLoopLimitError(
+            f"This selection contains {qualifier}{count:,} items. This run allows "
+            f"{limit:,} items. Narrow the query or select {limit:,} or fewer items "
+            "before starting a new run.",
+            code="workflow_loop_item_limit_exceeded",
+            count=count,
+            count_exact=count_exact,
+            limit=limit,
+        )
+    return count

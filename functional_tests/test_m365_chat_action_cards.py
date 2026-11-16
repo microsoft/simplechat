@@ -1,13 +1,16 @@
 # test_m365_chat_action_cards.py
 """
 Functional integration tests for Microsoft 365 chat action-card transport.
-Version: 0.261.038
+Version: 0.261.129
 Implemented in: 0.261.038
 Date: 2026-09-19
 
 Fresh-process tests execute real typed Calendar/Email tools, Semantic Kernel,
 Flask chat/stream/history routes, and the authoritative card resolver. Only
 external storage, model, Graph, and token-acquisition I/O is replaced.
+Since 0.261.129 an agent reply that fails after streaming text must be saved
+as an incomplete message, reported to the browser as saved, and reappear when
+the conversation is reopened.
 """
 
 from pathlib import Path
@@ -214,6 +217,12 @@ def run_offline_scenarios(*, lifecycle_only=False, emit_ui_transcript=False):
             ])]
 
         async def _inner_get_streaming_chat_message_contents(self, chat_history, settings, function_invoke_attempt=0):
+            if self.mode == "partial_stream_error":
+                self.requests.append(self.mode)
+                yield [StreamingChatMessageContent(
+                    role=AuthorRole.ASSISTANT, content="Partial offline answer", choice_index=0,
+                )]
+                raise RuntimeError("offline stream failed with private detail")
             messages = await self._inner_get_chat_message_contents(chat_history, settings)
             for message in messages:
                 yield [StreamingChatMessageContent(
@@ -539,6 +548,42 @@ def run_offline_scenarios(*, lifecycle_only=False, emit_ui_transcript=False):
             recovered_cards = check_cards(failed, "model-error")
             require(len(records("model-error")) == 2, "A model failure replayed the producing tools.")
             require(all(card["status"] == "pending" for card in recovered_cards), "A failed model changed pending delivery state.")
+
+            request_payload = prepare("partial-stream-error")
+            model.mode = "partial_stream_error"
+            response = client.post("/api/chat/stream", json=request_payload)
+            stream_body = response.get_data(as_text=True)
+            events = [chats._extract_sse_event_payload(block) for block in stream_body.split("\n\n")]
+            events = [event for event in events if event is not None]
+            interrupted = next(event for event in reversed(events) if event.get("error"))
+            require(
+                "Partial offline answer" in (interrupted.get("partial_content") or ""),
+                f"The streamed reply was not returned with the error: {interrupted}",
+            )
+            require(
+                interrupted.get("message_persisted") is True and interrupted.get("message_id"),
+                f"The interrupted agent reply was not saved: {interrupted}",
+            )
+            require("private detail" not in stream_body, "A raw stream exception reached the browser.")
+            interrupted_saved = config.cosmos_messages_container.read_item(interrupted["message_id"], "partial-stream-error")
+            require("Partial offline answer" in interrupted_saved["content"], "The saved reply lost the streamed text.")
+            require(
+                interrupted_saved["metadata"].get("incomplete") is True
+                and interrupted_saved["metadata"].get("error") == "stream_interrupted",
+                f"The saved reply was not marked as interrupted: {interrupted_saved['metadata']}",
+            )
+            require(interrupted_saved.get("agent_name") == "card_agent", "The saved reply lost its agent.")
+            require(records("partial-stream-error") == [], "A text-only failure created a pending action.")
+            reopened = client.get("/api/get_messages", query_string={"conversation_id": "partial-stream-error"})
+            require(reopened.status_code == 200, "The interrupted conversation could not be reopened.")
+            require(
+                any(
+                    message.get("id") == interrupted["message_id"]
+                    and "Partial offline answer" in (message.get("content") or "")
+                    for message in reopened.get_json()["messages"]
+                ),
+                "Reopening the conversation did not show the interrupted reply.",
+            )
 
             request_payload = prepare("callback-error")
             pending_container.fail_queries_on_create = True

@@ -10,6 +10,12 @@ audience: user
 
 The Profile page combines account information, usage statistics, and personal preferences. This guide opens settings and saves changes that affect only your SimpleChat experience.
 
+{% include media.html id="slide-memory-and-preferences" %}
+
+Keep memories specific and editable, and do not store secrets in them.
+Personal instructions, voice choices, and interface preferences do not
+override organization policy, source permissions, or deployment capabilities.
+
 {% include media.html type="video"
                       title="Update profile preferences walkthrough"
                       poster="video-posters/guide-update-profile-preferences.png"
@@ -45,6 +51,73 @@ Profile preferences are for personal comfort and control: font size, navigation 
                       capture="Capture the update profile preferences task at this step in SimpleChat with realistic sample data and redact secrets." %}
 
 6. If shown, configure **Desktop Conversation Notifications**, **Fact Memory**, retention settings, microphone permission, or text-to-speech settings.
+7. In **Workflow Alert Sounds**, choose whether workflow alerts can play sounds in this browser. The switch takes effect at once and applies only to this browser, so a shared operations screen and your own laptop can differ. See [Alerts that need acknowledgment]({{ '/guides/manage-notifications/#alerts-that-need-acknowledgment' | relative_url }}).
+
+## In the new interface
+
+In the new interface, open **User Settings** from the account menu. The left rail lists
+**Preferences**, **Stats**, **Groups**, **Public**, **Feedback**, and
+**Violations**. To give the settings more room, collapse the rail to icons with the button
+at its top. The rail stays collapsed until you expand it again, on any device.
+
+Each tab is laid out as cards. On wide screens an **On this page** index on the right
+lists them, so you can jump straight to a card. Preferences are grouped under
+**Appearance**, **Chat**, **Voice and audio**, **Notifications and alerts**, **Help and
+guidance**, **Memory and data**, **Connected accounts**, and **Diagrams and charts**. Most changes save as soon as you make them.
+
+Under **Voice and audio**, which cards appear depends on what your administrator has
+turned on:
+
+- **Completion sounds** plays a short sound when a reply finishes while you are looking at
+  something else, such as another conversation, another page, or another window. Pick a
+  sound and volume, and use **Preview** to hear it. **Mute for now** silences it without losing
+  your choice.
+- **Spoken replies** sets the voice and speed used when a reply is read aloud, with a
+  sample you can play. Turn on **Read replies aloud automatically** to hear each reply in
+  the open conversation as soon as it finishes.
+- **Microphone** shows whether this browser lets the site use your microphone for voice
+  input, and lets you allow it.
+
+Under **Help and guidance**:
+
+- **Latest Features** controls the shortcut to recent changes in the navigation rail. Select
+  **Hide for this version** to remove it; it returns by itself after the next upgrade, so
+  you still hear about new features. You can also hide it with the button beside the
+  shortcut, or bring it back with **Show again**. The setting is shared with the classic
+  interface.
+- **Guided tours** walk you through the controls on a page, one step at a time. Each page
+  with a tour has a help button in its header, and **Start now** opens the page and starts
+  the tour. Turn individual tours off, or use **Show tour buttons** to turn them all off.
+  That switch is shared with the classic interface's tutorial buttons.
+
+Under **Memory and data**, **Fact memory** holds what the assistant should know about you.
+Add a memory as an **Instruction**, which shapes every reply, or a **Fact**, which is
+recalled only when it is relevant to what you ask. The list beside the editor lets you
+search and filter your memories; select one to change its wording or type, or to delete
+it. If your administrator has turned fact memory off, the card says so: you can still tidy
+your memories, but they are not used until it is turned back on.
+
+**Retention** sets how long your own conversations and
+documents are kept. You can follow your organization's default, keep them indefinitely, or
+pick a period. Select **Save** to apply it: items older than the period are deleted at the
+next retention run, and deleted conversations are archived first if your organization has
+archiving turned on.
+
+Under **Connected accounts**, the Microsoft 365 cards cover the same ground as the classic
+page, described in the next section: **Microsoft 365 sharing**, **Chat connection**,
+**Workflow connection**, and **Workflow authorizations**. Every revocation and disconnect asks
+you to confirm first. Chat reconnect opens Microsoft sign-in in a pop-up and keeps you on the
+page; connecting for workflows signs in through the classic Profile page and returns there.
+
+The **Groups** and **Public** tabs list the workspaces you can use, with your role in each.
+From version **0.261.296**, every row has **Open**, which takes you straight to that
+workspace, next to **Set active**, which only changes where new work in this interface is
+scoped and keeps you in settings. Opening a group also makes it your active group, because a
+group's pages work in the active group. Opening a public workspace leaves your active public
+workspace as it was.
+
+**Violations** is always listed. If content safety is off for your application, the tab
+says so instead of showing an empty list.
 
 ## Microsoft 365 data preferences
 
@@ -61,12 +134,44 @@ For workflows, select each source once; its supported read/write permissions
 are explained before Microsoft's consent step, without extra permission
 checkboxes. Action capability limits and outgoing-delivery review still apply.
 
+### Review workflow authorizations
+
+Since **0.261.374**, **Workflow authorizations** shows the current workflow name
+instead of its identifier in both User Settings and classic Profile. Choose
+**Open** beside an authorization to inspect that workflow's overview in the new
+interface, in a new tab, without leaving your settings. Group workflows open in
+their own group's workspace; opening a workflow does not run it.
+
+Use **Revoke** to withdraw a pending or approved workflow revision's permission
+to use your Microsoft 365 account. Confirmation is still required, and already
+published answers and evidence are not removed. Multiple authorizations for
+different revisions remain separate.
+
+Deleted workflows and workflows you can no longer access are not listed. Their
+authorization audit history is retained, and execution still checks current
+access. If the current page has no accessible workflows but more records exist,
+choose **Load more authorizations** to continue.
+
+### Reconnect Microsoft 365 for chat
+
 Use the separate **Microsoft 365 chat connection** card to reconnect even when
 no chat is waiting or a saved sign-in is already present. Select sources, choose
 **Reconnect Microsoft 365 for chat**, and verify your same-account sign-in with
 Microsoft. Then retry the original question. This renews the current interactive
-session without changing saved workflow connections, permissions at the source,
-or sharing approvals.
+connection without changing saved workflow connections, permissions at the
+source, or sharing approvals.
+
+Since **0.261.355**, the card distinguishes **saved** chat connections from
+**session-only** connections. With Key Vault secret storage configured, reconnect
+once to save a separate encrypted chat credential that survives browser restarts
+and app sign-out/sign-in. Routine access-token expiry no longer erases the
+connected-source list. Microsoft or your organization can still require a new
+sign-in. Without Key Vault, the card explains that chat lasts only for the
+current app session.
+
+**Disconnect chat** asks for confirmation and removes that chat credential
+without disconnecting workflows. Signing out of SimpleChat leaves saved chat
+connections intact; disconnect explicitly when you no longer want one saved.
 
 See [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }})
 for approval duration, retained-evidence sharing, and Run as behavior
@@ -86,5 +191,7 @@ Each card shows a status message after saving. Reload the app and confirm the pr
 ## Related
 
 - [Manage notifications]({{ '/guides/manage-notifications/' | relative_url }})
+- [Manage group workspaces]({{ '/guides/manage-group-workspaces/' | relative_url }})
+- [Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }})
 - [Send feedback]({{ '/guides/send-feedback/' | relative_url }})
 - [Safety settings]({{ '/admin/security/' | relative_url }})

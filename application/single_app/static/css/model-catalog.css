@@ -1,0 +1,49 @@
+/* model-catalog.css */
+.sc-model-catalog {
+    color: var(--text-1, var(--bs-body-color, #212529));
+    font-size: 0.9rem;
+}
+.sc-model-catalog .sc-catalog-toolbar,
+.sc-model-catalog .sc-catalog-columns {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+.sc-model-catalog .sc-catalog-list { flex: 1 1 18rem; min-width: 0; }
+.sc-model-catalog .sc-catalog-detail { flex: 1 1 24rem; min-width: 0; }
+.sc-model-catalog .sc-catalog-row,
+.sc-model-catalog .sc-catalog-detail {
+    border: 1px solid var(--edge, var(--bs-border-color, #dee2e6));
+    border-radius: 0.75rem;
+    padding: 1rem;
+    margin-bottom: 0.75rem;
+    overflow-wrap: anywhere;
+}
+.sc-model-catalog h3 { font-size: 1.2rem; font-weight: 600; margin-bottom: 0.75rem; }
+.sc-model-catalog h4 { font-size: 1rem; font-weight: 600; margin: 1rem 0 0.5rem; }
+.sc-model-catalog p { margin: 0.5rem 0; }
+.sc-model-catalog pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 0.8rem; }
+.sc-model-catalog ul { list-style: disc; padding-left: 1.5rem; }
+.sc-model-catalog a { color: var(--accent, var(--bs-link-color, #0d6efd)); text-decoration: underline; }
+.sc-model-catalog .sc-catalog-button,
+.sc-model-catalog input,
+.sc-model-catalog select,
+.sc-model-catalog textarea {
+    border: 1px solid var(--edge, var(--bs-border-color, #adb5bd));
+    border-radius: 0.4rem;
+    padding: 0.5rem 0.7rem;
+    background: var(--surface-1, var(--bs-body-bg, white));
+    color: inherit;
+    font: inherit;
+    max-width: 100%;
+}
+.sc-model-catalog .sc-catalog-button { margin: 0.25rem; cursor: pointer; }
+.sc-model-catalog .sc-catalog-button:disabled { opacity: 0.5; cursor: wait; }
+.sc-model-catalog :focus-visible { outline: 2px solid var(--accent, #0d6efd); outline-offset: 2px; }
+.sc-model-catalog .sc-catalog-field { display: flex; flex-direction: column; gap: 0.35rem; margin: 0.5rem 0; }
+.sc-model-catalog .sc-catalog-specs { display: grid; grid-template-columns: 1fr 1fr; gap: 0.25rem 1rem; }
+.sc-model-catalog .sc-catalog-error { padding: 0.75rem; border: 1px solid var(--danger, #dc3545); border-radius: 0.4rem; }
+@media (max-width: 640px) {
+    .sc-model-catalog .sc-catalog-toolbar > * { width: 100%; }
+}

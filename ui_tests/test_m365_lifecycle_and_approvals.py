@@ -1,11 +1,13 @@
 # test_m365_lifecycle_and_approvals.py
 """
 Azure Playwright-ready UI tests for typed actions, Profile, and saved approvals.
-Version: 0.261.038
+Version: 0.261.374
 Implemented in: 0.261.029
 In-chat onboarding regression coverage implemented in: 0.261.032
 Independent Profile chat reconnect coverage implemented in: 0.261.034
 Shared pending-action renderer coverage implemented in: 0.261.038
+Self-authored Run as binding coverage implemented in: 0.261.229
+Workflow authorization names and navigation implemented in: 0.261.374
 
 Uses the real local templates, Bootstrap, and browser modules with deterministic
 same-origin API fixtures. Set AZURE_PLAYWRIGHT_WS_ENDPOINT, AZURE_SUBSCRIPTION_ID,
@@ -22,6 +24,7 @@ import copy
 import json
 import mimetypes
 import os
+import sys
 from pathlib import Path
 from urllib.parse import parse_qs, quote, unquote, urlencode, urlsplit
 
@@ -33,6 +36,11 @@ from playwright.sync_api import expect
 
 
 APP_ROOT = Path(__file__).resolve().parents[1] / "application" / "single_app"
+sys.path.insert(0, str(APP_ROOT))
+
+# The approval projection the server sends; a pure policy module with no cloud I/O at import.
+from functions_m365_approvals import sanitize_m365_approval  # noqa: E402
+
 ORIGIN = "http://simplechat.test"
 CSRF_TOKEN = "ui-test-only-m365-anti-forgery-token-not-a-credential"
 SOURCES = ("calendar", "email", "onedrive", "spo")
@@ -94,6 +102,7 @@ class ApiFixture:
     def __init__(self, catalog):
         self.catalog = catalog
         self.records = {}
+        self.binding_pages = {}
         self.decisions = []
         self.preference_writes = []
         self.revocations = []
@@ -181,6 +190,10 @@ class ApiFixture:
         elif path == "/api/m365/chat/connection/connect":
             self.profile_chat_connect_requests.append(body)
             self.respond(route, {"success": True, "authorization_url": self.authorization_url})
+        elif path == "/api/m365/chat/connection/disconnect":
+            self.revocations.append((path, body))
+            self.chat_connection = {"status": "not_connected", "sources": [], "persistence": "session"}
+            self.respond(route, {"success": True, "connection": self.chat_connection})
         elif path == "/api/m365/connections":
             self.respond(route, {"success": True, "connection": self.connection, "csrf_token": self.csrf_token})
         elif path == "/api/m365/connections/connect":
@@ -199,7 +212,11 @@ class ApiFixture:
             self.revocations.append((path, body))
             self.respond(route, {"success": True, "revoked": True})
         elif path == "/api/m365/bindings":
-            self.respond(route, {"items": [record for record in self.records.values() if record["request_type"] == "m365_workflow_run_as"], "continuation_token": None})
+            token = parse_qs(urlsplit(route.request.url).query).get("continuation_token", [""])[0]
+            self.respond(route, self.binding_pages.get(token, {
+                "items": [record for record in self.records.values() if record["request_type"] == "m365_workflow_run_as"],
+                "continuation_token": None,
+            }))
         elif path == "/api/m365/requests":
             self.respond(route, {"items": self.waiting_requests, "continuation_token": None, "csrf_token": self.csrf_token})
         elif path == "/api/msgraph/pending-actions":
@@ -887,7 +904,12 @@ def test_workflow_run_as_selection_preserves_an_unavailable_saved_account(ui):
     }""")
     select = page.get_by_label("Microsoft 365 Run as", exact=True)
     expect(select).to_have_value("removed-reader")
-    expect(page.locator("#workflow-m365-run-as-help")).to_contain_text("manual and scheduled")
+    help_text = page.locator("#workflow-m365-run-as-help")
+    expect(help_text).to_contain_text("manual and scheduled")
+    # Since 0.261.229 only someone else's revision needs the selected person's approval.
+    expect(help_text).to_contain_text("When someone else saves the workflow")
+    expect(help_text).to_contain_text("A revision they saved themselves needs no separate approval.")
+    expect(help_text).not_to_contain_text("require approval again")
     select.select_option("data-user")
     selected = page.evaluate("window.runAsControl.getValue()")
     assert selected == "data-user"
@@ -980,9 +1002,9 @@ def test_workflow_delivery_controls_follow_the_run_as_viewer(ui):
 @pytest.mark.ui
 @pytest.mark.parametrize("viewport", [{"width": 1440, "height": 900}, {"width": 390, "height": 844}])
 @pytest.mark.parametrize("status,sources,message", [
-    ("available", list(SOURCES), "Sign-in saved for this session"),
-    ("not_connected", [], "No Microsoft 365 sign-in is saved for this session"),
-    ("reconnect_required", ["email"], "Reconnect Microsoft 365 before using these sources in chat"),
+    ("available", list(SOURCES), "Signed in to Microsoft 365 for this session. Chat can use: Calendar, Email"),
+    ("not_connected", [], "Not signed in to Microsoft 365 in this session"),
+    ("reconnect_required", ["email"], "Microsoft 365 needs you to sign in again before chat can use Email"),
 ])
 def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewport, status, sources, message):
     page, api = ui
@@ -992,8 +1014,8 @@ def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewp
     region = page.get_by_role("region", name="Microsoft 365 chat connection", exact=True)
     expect(region.get_by_role("button", name="Reconnect Microsoft 365 for chat", exact=True)).to_be_enabled()
     expect(region.locator("#m365-chat-connection-status")).to_contain_text(message)
-    expect(region).to_contain_text("Access is checked when a source runs")
-    expect(region).to_contain_text("does not require Key Vault")
+    expect(region).to_contain_text("Microsoft still checks your access each time a source runs")
+    expect(region).to_contain_text("With Key Vault configured")
     expect(region).to_contain_text("sharing approvals")
     expect(region).to_contain_text("saved workflow credentials")
     expect(region).to_contain_text("workflow Run as")
@@ -1020,6 +1042,36 @@ def test_profile_chat_reconnect_is_available_without_a_pending_request(ui, viewp
     assert "/api/m365/requests" not in api.api_paths
     assert not api.m365_posts
     assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("width", [1440, 390])
+def test_profile_saved_chat_persists_sources_and_disconnect_requires_confirmation(ui, width):
+    page, api = ui
+    page.set_viewport_size({"width": width, "height": 900})
+    api.chat_connection = {
+        "status": "available", "sources": list(SOURCES), "persistence": "saved",
+        "persistence_message": "Saved for chat across sign-ins. Microsoft still checks access.",
+    }
+    for _ in range(2):
+        page.goto(f"{ORIGIN}/profile?tab=settings")
+        expect(page.locator("#m365-chat-connection-status")).to_contain_text("Microsoft 365 is connected for chat")
+        expect(page.locator("#m365-chat-connection-details")).to_contain_text("Saved for chat across sign-ins")
+        for source in SOURCES:
+            expect(page.locator(f"#m365-chat-connect-{source}")).to_be_checked()
+    page.get_by_role("button", name="Disconnect chat", exact=True).click()
+    dialog = page.locator("#m365RevokeModal")
+    expect(dialog).to_be_visible()
+    expect(dialog).to_contain_text("workflow connection and authorizations stay unchanged")
+    assert not api.revocations
+    dialog.get_by_role("button", name="Cancel", exact=True).click()
+    expect(dialog).to_be_hidden()
+    assert not api.revocations
+    page.get_by_role("button", name="Disconnect chat", exact=True).click()
+    page.locator("#m365-revoke-confirm").click()
+    expect(page.locator("#m365-chat-disconnect-btn")).to_be_disabled()
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Not signed in")
+    assert api.revocations == [("/api/m365/chat/connection/disconnect", {})]
 
 
 @pytest.mark.ui
@@ -1214,7 +1266,7 @@ def test_profile_chat_invalid_status_is_visible_without_blocking_workflow_contro
     api.chat_connection = {"status": "not_connected", "sources": []}
     page.locator("#m365-profile-refresh").click()
     expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
-    expect(page.locator("#m365-chat-connection-status")).to_contain_text("No Microsoft 365 sign-in is saved")
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Not signed in to Microsoft 365 in this session")
     assert not api.m365_posts
     assert not api.errors
 
@@ -1269,7 +1321,7 @@ def test_profile_chat_callback_reports_success_preserves_navigation_and_never_re
     expect(notice).to_contain_text("Microsoft 365 sign-in completed")
     expect(notice).to_contain_text("retry your original question")
     expect(notice).to_contain_text("No past requests were retried")
-    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Sign-in saved for this session")
+    expect(page.locator("#m365-chat-connection-status")).to_contain_text("Signed in to Microsoft 365 for this session")
     expect(page.locator("#m365-chat-connect-btn")).to_be_enabled()
     returned_url = urlsplit(page.url)
     assert returned_url.path == "/profile"
@@ -1568,6 +1620,7 @@ def test_profile_own_connection_disconnect_and_binding_revoke(ui):
     binding = approval("binding", "m365_workflow_run_as", shared=False)
     binding["status"] = "approved"
     binding["context"]["workflow_id"] = "workflow"
+    binding["workflow"] = {"id": "workflow", "name": "Morning mail digest", "scope_type": "personal", "group_id": None}
     api.records["binding"] = binding
     page.goto(f"{ORIGIN}/profile")
     expect(page.locator("#m365-connection-status")).to_contain_text("connected")
@@ -1582,6 +1635,109 @@ def test_profile_own_connection_disconnect_and_binding_revoke(ui):
     expect(page.locator("#m365RevokeModal")).to_be_hidden()
     expect(page.locator("#m365-connection-status")).to_contain_text("disconnected")
     assert api.revocations[-1] == ("/api/m365/connections/disconnect", {"connection_id": "own-connection"})
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_self_authored_binding_reads_as_your_own_save_everywhere(ui):
+    """Since 0.261.229 a revision its Run as user saved is approved without a request or a decision."""
+    page, api = ui
+    status = "Decision: approved automatically because you saved this workflow revision yourself."
+    record = approval("self-authored", "m365_workflow_run_as", shared=False)
+    record.pop("expires_at")
+    record.update({
+        "status": "approved", "self_authored": True, "execution_status": "not_required",
+        "continuation_status": "delivered",
+    })
+    record["context"]["workflow_id"] = "own-workflow"
+    record = sanitize_m365_approval(record)
+    record["workflow"] = {"id": "own-workflow", "name": "My saved digest", "scope_type": "personal", "group_id": None}
+    assert (record["can_approve"], record["can_deny"]) == (False, False)
+    api.records[record["id"]] = record
+
+    page.goto(f"{ORIGIN}/profile")
+    bindings = page.locator("#m365-workflow-bindings")
+    expect(bindings).to_contain_text("My saved digest")
+    expect(bindings).to_contain_text(status)
+    expect(bindings).not_to_contain_text("own-workflow")
+    expect(bindings.get_by_role("button", name="Revoke workflow authorization", exact=True)).to_be_visible()
+
+    page.goto(f"{ORIGIN}/approvals")
+    page.evaluate("""record => {
+        document.getElementById('approvalsTableBody').appendChild(
+            window.SimpleChatM365ApprovalList.renderRow(record)
+        );
+    }""", record)
+    expect(page.locator("#approvalsTableBody")).to_contain_text(status)
+    page.get_by_role("button", name="View saved decision", exact=True).click()
+    saved = page.locator("#m365-approval-records")
+    expect(saved).to_contain_text(status)
+    expect(saved).to_contain_text(record["reason"])
+    expect(saved).not_to_contain_text("Request expires")
+    expect(page.get_by_role("button", name="Allow this workflow revision", exact=True)).to_have_count(0)
+    expect(page.locator("#m365-approvals-apply")).to_be_disabled()
+    assert api.decisions == []
+    assert not api.errors
+
+
+@pytest.mark.ui
+@pytest.mark.parametrize("width", [1440, 390])
+@pytest.mark.parametrize("group_id", [None, "team & ops"])
+def test_profile_named_authorization_opens_the_selected_v2_workflow_in_a_new_tab(ui, width, group_id):
+    page, api = ui
+    page.set_viewport_size({"width": width, "height": 900})
+    name = '<img src=x onerror="window.injected=true"> ' + "Quarterly workflow review " * 8
+    record = approval("named-binding", "m365_workflow_run_as", shared=False)
+    record["workflow"] = {
+        "id": "workflow?with&encoded=#", "name": name,
+        "scope_type": "group" if group_id else "personal", "group_id": group_id,
+    }
+    api.records[record["id"]] = record
+    page.goto(f"{ORIGIN}/profile")
+    bindings = page.locator("#m365-workflow-bindings")
+    expect(bindings.get_by_text(name, exact=True)).to_be_visible()
+    expect(bindings.locator("img")).to_have_count(0)
+    expect(bindings).not_to_contain_text(record["workflow"]["id"])
+    base = f"/v2/groups/{quote(group_id, safe='')}/workflows" if group_id else "/v2/workspace/workflows"
+    href = f"{base}?{urlencode({'workflow_id': record['workflow']['id']})}"
+    link = bindings.get_by_role("link", name=f"Open {name} (opens in a new tab)", exact=True)
+    expect(link).to_have_attribute("href", href)
+    expect(link).to_have_attribute("rel", "noopener noreferrer")
+    expect(link).to_have_attribute("target", "_blank")
+    link.focus()
+    with page.expect_popup() as opened:
+        link.press("Enter")
+    popup = opened.value
+    popup.wait_for_load_state()
+    assert popup.url == ORIGIN + href
+    opener = popup.evaluate("window.opener")
+    assert opener is None
+    assert page.url == f"{ORIGIN}/profile"
+    popup.close()
+    # This harness extracts the Profile section without its surrounding Bootstrap gutter container.
+    dimensions = bindings.evaluate("(element) => ({ width: element.clientWidth, content: element.scrollWidth })")
+    assert dimensions["content"] <= dimensions["width"] + 1
+    artifacts = Path(__file__).resolve().parent / "artifacts" / "workflow-authorizations"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    bindings.screenshot(path=str(artifacts / f"classic-{width}-{'group' if group_id else 'personal'}.png"))
+    assert not api.revocations
+    assert not api.errors
+
+
+@pytest.mark.ui
+def test_profile_authorizations_can_page_past_hidden_workflows(ui):
+    page, api = ui
+    record = approval("visible-binding", "m365_workflow_run_as", shared=False)
+    record["workflow"] = {"id": "workflow", "name": "Visible digest", "scope_type": "personal", "group_id": None}
+    api.binding_pages = {
+        "": {"items": [], "continuation_token": "next"},
+        "next": {"items": [record], "continuation_token": None},
+    }
+    page.goto(f"{ORIGIN}/profile")
+    expect(page.locator("#m365-bindings-status")).to_contain_text("No accessible workflows on this page")
+    page.locator("#m365-bindings-more").click()
+    expect(page.locator("#m365-workflow-bindings")).to_contain_text("Visible digest")
+    expect(page.locator("#m365-bindings-more")).to_be_hidden()
     assert not api.errors
 
 

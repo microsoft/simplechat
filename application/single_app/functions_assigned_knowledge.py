@@ -4,12 +4,17 @@ import logging
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
 
+from content_screening.access import PROVENANCE_FIELD, document_provenance, filter_available_results, public_document_payload
 from config import (
     cosmos_group_documents_container,
     cosmos_public_documents_container,
     cosmos_user_documents_container,
 )
 from functions_appinsights import log_event
+from functions_document_access_index import (
+    DOCUMENT_ACCESS_SOURCE_BATCH_SIZE,
+    query_document_access_index_ids,
+)
 from functions_documents import (
     get_document_record,
     sanitize_tags_for_filter,
@@ -519,7 +524,7 @@ def resolve_assigned_knowledge_active_documents(
                 source_id="personal",
                 source_name="Personal workspace",
             )
-            for document in _get_personal_catalog_documents(user_id)
+            for document in _get_personal_catalog_documents(user_id, limit=None)
         ])
 
     for group_id in group_ids:
@@ -532,12 +537,12 @@ def resolve_assigned_knowledge_active_documents(
                 source_id=group_id,
                 source_name=group_name,
             )
-            for document in _get_group_catalog_documents(group_id)
+            for document in _get_group_catalog_documents(group_id, limit=None)
         ])
 
     if public_workspace_ids:
         public_sources = _public_workspace_source_map()
-        for document in _get_public_catalog_documents(public_workspace_ids):
+        for document in _get_public_catalog_documents(public_workspace_ids, limit=None):
             source_id = str(document.get("public_workspace_id") or "").strip()
             source = public_sources.get(source_id, {})
             candidate_documents.append(_serialize_catalog_document(
@@ -561,7 +566,7 @@ def resolve_assigned_knowledge_active_documents(
         active_documents.append(document)
 
     return sorted(
-        active_documents,
+        filter_available_results(active_documents, user_id=user_id),
         key=lambda document: (
             str(document.get("source_name") or "").lower(),
             str(document.get("title") or document.get("file_name") or "").lower(),
@@ -570,24 +575,37 @@ def resolve_assigned_knowledge_active_documents(
     )
 
 
-def _query_documents(container: Any, query: str, parameters: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _query_documents(
+    container: Any, query: str, parameters: List[Dict[str, Any]], *,
+    source_scope, scope_arguments, limit=ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT,
+) -> List[Dict[str, Any]]:
     try:
-        documents = list(
-            container.query_items(
-                query=query,
-                parameters=parameters,
-                enable_cross_partition_query=True,
-            )
-        )
-        return sort_documents(select_current_documents(documents))[:ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT]
+        result = query_document_access_index_ids(source_scope, **scope_arguments)
+        if result.get("success"):
+            identifiers = result["document_ids"]
+            documents = []
+            for offset in range(0, len(identifiers), DOCUMENT_ACCESS_SOURCE_BATCH_SIZE):
+                documents.extend(container.query_items(
+                    query=f"{query} AND ARRAY_CONTAINS(@document_ids, c.id)",
+                    parameters=[*parameters, {
+                        "name": "@document_ids",
+                        "value": identifiers[offset:offset + DOCUMENT_ACCESS_SOURCE_BATCH_SIZE],
+                    }],
+                    enable_cross_partition_query=True,
+                ))
+        else:
+            documents = list(container.query_items(
+                query=query, parameters=parameters, enable_cross_partition_query=True,
+            ))
+        return sort_documents(select_current_documents(documents))[:limit]
     except Exception as ex:
         log_event(
             "[ASSIGNED_KNOWLEDGE] Failed to query assigned knowledge catalog documents",
             level=logging.WARNING,
             debug_only=True,
-            extra={"error": str(ex)},
+            extra={"exception_type": type(ex).__name__, "source_scope": source_scope},
         )
-        return []
+        raise AssignedKnowledgeError("The document catalog is temporarily unavailable. Please retry.") from ex
 
 
 def _serialize_catalog_document(
@@ -597,8 +615,10 @@ def _serialize_catalog_document(
     source_id: str,
     source_name: str,
 ) -> Dict[str, Any]:
+    provenance = document_provenance(document)
+    document = public_document_payload(document)
     tags = sanitize_tags_for_filter(document.get("tags", []))
-    return {
+    payload = {
         "id": document.get("id") or document.get("document_id") or "",
         "file_name": document.get("file_name") or document.get("title") or "Untitled document",
         "title": document.get("title") or document.get("file_name") or "Untitled document",
@@ -607,6 +627,10 @@ def _serialize_catalog_document(
         "source_name": source_name,
         "tags": tags,
     }
+    if "content_screening" in document:
+        payload["content_screening"] = document["content_screening"]
+        payload[PROVENANCE_FIELD] = provenance
+    return payload
 
 
 def _append_tag_counts(tag_counts: Dict[str, int], documents: List[Dict[str, Any]]) -> None:
@@ -615,12 +639,12 @@ def _append_tag_counts(tag_counts: Dict[str, int], documents: List[Dict[str, Any
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
 
-def _get_personal_catalog_documents(user_id: str) -> List[Dict[str, Any]]:
+def _get_personal_catalog_documents(user_id: str, *, limit=ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT) -> List[Dict[str, Any]]:
     query = """
         SELECT * FROM c
-        WHERE c.user_id = @user_id
+        WHERE (c.user_id = @user_id
             OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
-            OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix))
+            OR EXISTS(SELECT VALUE s FROM s IN c.shared_user_ids WHERE STARTSWITH(s, @user_id_prefix)))
     """
     return _query_documents(
         cosmos_user_documents_container,
@@ -629,15 +653,16 @@ def _get_personal_catalog_documents(user_id: str) -> List[Dict[str, Any]]:
             {"name": "@user_id", "value": user_id},
             {"name": "@user_id_prefix", "value": f"{user_id},"},
         ],
+        source_scope="personal", scope_arguments={"user_id": user_id}, limit=limit,
     )
 
 
-def _get_group_catalog_documents(group_id: str) -> List[Dict[str, Any]]:
+def _get_group_catalog_documents(group_id: str, *, limit=ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT) -> List[Dict[str, Any]]:
     query = """
         SELECT * FROM c
-        WHERE c.group_id = @group_id
+        WHERE (c.group_id = @group_id
             OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
-            OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids WHERE STARTSWITH(s, @group_id_prefix))
+            OR EXISTS(SELECT VALUE s FROM s IN c.shared_group_ids WHERE STARTSWITH(s, @group_id_prefix)))
     """
     return _query_documents(
         cosmos_group_documents_container,
@@ -646,10 +671,13 @@ def _get_group_catalog_documents(group_id: str) -> List[Dict[str, Any]]:
             {"name": "@group_id", "value": group_id},
             {"name": "@group_id_prefix", "value": f"{group_id},"},
         ],
+        source_scope="group", scope_arguments={"group_ids": [group_id]}, limit=limit,
     )
 
 
-def _get_public_catalog_documents(public_workspace_ids: List[str]) -> List[Dict[str, Any]]:
+def _get_public_catalog_documents(
+    public_workspace_ids: List[str], *, limit=ASSIGNED_KNOWLEDGE_CATALOG_DOCUMENT_LIMIT,
+) -> List[Dict[str, Any]]:
     if not public_workspace_ids:
         return []
     conditions = []
@@ -659,8 +687,11 @@ def _get_public_catalog_documents(public_workspace_ids: List[str]) -> List[Dict[
         conditions.append(f"c.public_workspace_id = {parameter_name}")
         parameters.append({"name": parameter_name, "value": workspace_id})
 
-    query = f"SELECT * FROM c WHERE {' OR '.join(conditions)}"
-    return _query_documents(cosmos_public_documents_container, query, parameters)
+    query = f"SELECT * FROM c WHERE ({' OR '.join(conditions)})"
+    return _query_documents(
+        cosmos_public_documents_container, query, parameters,
+        source_scope="public", scope_arguments={"public_workspace_ids": public_workspace_ids}, limit=limit,
+    )
 
 
 def _public_workspace_source_map() -> Dict[str, Dict[str, str]]:

@@ -1,9 +1,10 @@
 # functions_azure_endpoint_validation.py
-"""Shared Azure endpoint origin validation for actions that use the application identity.
+"""Shared Azure endpoint origin validation for callers that use the application identity.
 
 Actions can be configured with a caller-supplied endpoint while authenticating with the
-application's own workload identity. Without an origin check, a caller who can save an
-action is able to direct an application-identity token to a destination they control.
+application's own workload identity, and so can transient personal and group model
+discovery. Without an origin check, a caller who can save an action or submit a draft
+connection is able to direct an application-identity token to a destination they control.
 Each validator here rejects endpoints that are not canonical Azure service hostnames for
 a supported Azure cloud and returns a rebuilt origin, so only the validated destination
 ever reaches an SDK client.
@@ -47,6 +48,24 @@ AZURE_ENTRA_AUTHORITY_HOSTS = (
     "login.chinacloudapi.cn",
     "login.microsoftonline.de",
 )
+# Azure AI service hosts (Azure OpenAI, Azure AI Foundry and Azure AI Services) for each
+# model endpoint management cloud, the same sets image capability resolution uses. The
+# application's own credential is sent only to one of these. A custom cloud publishes
+# no known suffixes, so it has none.
+AZURE_AI_ENDPOINT_SUFFIXES = {
+    "public": (
+        "openai.azure.com",
+        "services.ai.azure.com",
+        "cognitiveservices.azure.com",
+        "api.cognitive.microsoft.com",
+    ),
+    "government": (
+        "openai.azure.us",
+        "services.ai.azure.us",
+        "cognitiveservices.azure.us",
+        "api.cognitive.microsoft.us",
+    ),
+}
 
 AZURE_BLOB_SERVICE_LABEL = "blob"
 AZURE_QUEUE_SERVICE_LABEL = "queue"
@@ -67,6 +86,10 @@ AZURE_QUEUE_ENDPOINT_ERROR = (
     "Queue Storage actions require an HTTPS Azure Queue service endpoint such as "
     "https://account.queue.core.windows.net"
 )
+AZURE_FILE_ENDPOINT_ERROR = (
+    "Azure Files sources require an HTTPS Azure File service endpoint such as "
+    "https://account.file.core.windows.net"
+)
 AZURE_COSMOS_ENDPOINT_ERROR = (
     "Cosmos actions require an HTTPS Azure Cosmos DB endpoint such as "
     "https://account.documents.azure.com"
@@ -82,6 +105,10 @@ AZURE_MONITOR_QUERY_ENDPOINT_ERROR = (
 AZURE_AUTHORITY_HOST_ERROR = (
     "Log Analytics actions require a supported Microsoft Entra authority host such as "
     "login.microsoftonline.com"
+)
+AZURE_AI_ENDPOINT_ERROR = (
+    "The application identity can be used only with an HTTPS Azure AI endpoint in this "
+    "cloud, such as https://resource.openai.azure.com"
 )
 
 
@@ -220,6 +247,11 @@ def validate_azure_queue_endpoint(value: Any) -> str:
     return _validate_storage_endpoint(value, AZURE_QUEUE_SERVICE_LABEL, AZURE_QUEUE_ENDPOINT_ERROR)
 
 
+def validate_azure_file_endpoint(value: Any) -> str:
+    """Return a canonical Azure File service origin, or raise ValueError."""
+    return _validate_storage_endpoint(value, AZURE_FILE_SERVICE_LABEL, AZURE_FILE_ENDPOINT_ERROR)
+
+
 def validate_azure_cosmos_endpoint(value: Any) -> str:
     """Return a canonical Azure Cosmos DB origin, or raise ValueError."""
     _, hostname = parse_azure_https_endpoint(
@@ -265,4 +297,23 @@ def validate_azure_entra_authority_host(value: Any) -> str:
     _, hostname = parse_azure_https_endpoint(value, AZURE_AUTHORITY_HOST_ERROR)
     if hostname not in AZURE_ENTRA_AUTHORITY_HOSTS:
         raise ValueError(AZURE_AUTHORITY_HOST_ERROR)
+    return hostname
+
+
+def validate_azure_ai_endpoint_host(value: Any, cloud: str) -> str:
+    """Return the hostname of an HTTPS Azure AI service endpoint in ``cloud``, or raise ValueError.
+
+    ``cloud`` is a model endpoint management cloud (``public``, ``government`` or
+    ``custom``). The endpoint may carry a path, such as a Foundry project path, but
+    the host must be a resource under one of that cloud's Azure AI suffixes.
+    """
+    _, hostname = parse_azure_https_endpoint(value, AZURE_AI_ENDPOINT_ERROR, allow_default_port=True)
+    resource_label, _suffix = _match_endpoint_suffix(
+        hostname,
+        "",
+        AZURE_AI_ENDPOINT_SUFFIXES.get(str(cloud or "").strip().lower(), ()),
+        AZURE_AI_ENDPOINT_ERROR,
+    )
+    if not DNS_NAME_PATTERN.match(resource_label):
+        raise ValueError(AZURE_AI_ENDPOINT_ERROR)
     return hostname

@@ -58,6 +58,13 @@ Classification works when the categories reflect how your organization actually 
 
 Document classification allows you to tag documents with categories that indicate their type, purpose, sensitivity level, or department. Think of it like adding colored labels to file folders.
 
+{% include media.html id="slide-document-classification" %}
+
+Labels and metadata help readers understand a source and its context. They
+do **not** enforce permissions, automatically route an approval, or make a
+document safe to share. A label called Public is not the same as publishing
+into a public workspace; review the destination's access rules separately.
+
 ### Benefits of Classification
 
 **Better Organization**:
@@ -66,9 +73,9 @@ Document classification allows you to tag documents with categories that indicat
 - Clear document purposes
 
 **Improved Workflows**:
-- Route documents to appropriate teams
-- Implement approval processes
-- Support compliance requirements
+- Identify which team should review a document
+- Make sensitivity visible during a configured approval process
+- Support handling guidelines without replacing their enforcement
 
 **Enhanced AI Responses**:
 - AI can understand document context better
@@ -119,15 +126,14 @@ As an admin, you'll set up the classification options:
 
 ### Access Admin Settings
 1. **Navigate to Admin Settings**
-2. **Find the "Workspaces" section**
-3. **Locate "Document Classification" settings**
+2. **Open Data Lifecycle**
+3. **Choose Classification**, then review [Document Classification settings]({{ '/admin/data-lifecycle/#document-classification-section' | relative_url }})
 
 ### Create Classification Categories
 1. **Enable Document Classification** if not already active
 2. **Add classification types**:
    - Enter category name (e.g., "Financial Reports")
    - Choose color for visual identification
-   - Add description (optional but helpful)
 3. **Save configuration**
 
 ### Example Configuration
@@ -224,16 +230,21 @@ Classifications provide context to AI responses:
 ## Step 6: Advanced Classification Workflows
 
 ### Approval Processes
-Use classifications to route documents:
+Use classifications to identify the appropriate review audience:
 - Financial documents → Finance team review
 - Policy updates → Legal approval
 - Technical specs → Engineering validation
 
+Routing and approval require their own configured process; applying a category
+does not start that process by itself.
+
 ### Compliance Management
-Track sensitive documents:
-- Confidential documents get special handling
-- Public documents can be shared freely
-- Internal documents stay within organization
+Use labels to support your organization's handling decisions:
+- Review Confidential content against its actual workspace permissions
+- Confirm disclosure is permitted before sharing material labeled Public
+- Use access controls and approved destinations to keep Internal material within its intended audience
+
+Changing a label alone does not apply or remove any of those restrictions.
 
 ### Project Organization
 Group project-related content:

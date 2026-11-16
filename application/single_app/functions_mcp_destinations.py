@@ -394,6 +394,27 @@ def _get_environment_destination_policy_config():
     }
 
 
+def describe_mcp_destination_environment_policy():
+    """Summarize the deployment's non-overridable destination floor for administrators.
+
+    The admin settings page shows whether the environment already forces enforcement or
+    unsafe-address blocking, because a switch that reads "off" while the deployment
+    enforces anyway is misleading. Only booleans and counts are returned: an
+    administrator needs to know a floor exists, not to read the deployment's
+    configuration back out of a settings page.
+    """
+    environment_policy = _get_environment_destination_policy_config()
+    scope_patterns = environment_policy.get("scope_patterns") or {}
+    allowed_pattern_count = len(environment_policy.get("common_patterns") or []) + sum(
+        len(patterns or []) for patterns in scope_patterns.values()
+    )
+    return {
+        "enforcement_required": bool(environment_policy.get("enabled")),
+        "unsafe_blocking_required": bool(environment_policy.get("block_unsafe_destinations")),
+        "allowed_pattern_count": allowed_pattern_count,
+    }
+
+
 def get_mcp_destination_policy_config(settings=None, user_id=""):
     """Combine supplied current settings with a non-overridable deployment floor."""
     environment_policy = _get_environment_destination_policy_config()

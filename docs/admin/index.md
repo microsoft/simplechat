@@ -15,6 +15,81 @@ Use these pages when configuring SimpleChat from **Admin Settings**. The applica
 
 For a first-time deployment, configure **Appearance**, **AI Models**, **Knowledge**, **Workspaces**, **Chat**, **Security**, and **Agents & Actions** first. Then review **Scale**, **Operations**, **Governance**, **Data Lifecycle**, **Backup & Recovery**, **Workflow**, and **Help** as the deployment moves into operations.
 
+## Application version and updates
+
+Classic and V2 Admin Settings display the running server's application version.
+Use this value when diagnosing a deployment or deciding whether to upgrade; it is
+not the frontend package version.
+
+Opening either admin page automatically checks the
+[SimpleChat releases page](https://github.com/microsoft/simplechat/releases) when
+the shared cached check is at least 24 hours old. This is an on-visit check, not a
+scheduled background task. V2 displays a **New version available** notice and a
+**View releases** link only when the discovered numeric version is greater than
+the running version. Equal or older releases do not trigger an upgrade notice.
+The checker retains classic behavior: it selects the greatest numeric version
+among release-tag links on the fetched releases page.
+
+V2 requests the update check separately from the settings, so the settings load
+and stay editable while the version banner shows **Checking for updates...**. A
+slow or unreachable releases page delays only that banner, never the settings.
+Classic Admin Settings runs the same check while the page renders, so a check that
+has to contact GitHub still delays the classic page.
+
+The application server needs outbound HTTPS access to GitHub; browsers do not
+contact GitHub to perform the check. A failed check shows an unavailable message
+and labels any last known release information as potentially stale. Failed
+attempts are also cached for 24 hours when settings storage is available. If the
+check cannot be saved, the page reports that failure and a later visit may retry.
+Settings remain editable while update checks are unavailable.
+
+V2 version/update display was implemented in **0.261.126**, and since
+**0.261.133** V2 runs the check alongside the settings instead of before them.
+There is no manual refresh button, automatic installation, or upgrade triggered
+by saving settings.
+
+## Reading V2 Admin Settings
+
+V2 Admin Settings uses the full width of the screen. Every section is a card with
+an icon, a title, and its place in the navigation. A section that can be switched
+off or left incomplete also shows its status: **Configured**, **Needs
+configuration**, **Off**, or **Prerequisite missing**.
+
+Inside a card, the switch the section depends on is highlighted, and the settings
+that only apply while a switch is on sit indented beneath it. On a wide screen each
+setting's label and description sit on the left with its control on the right, and
+switches that stand on their own pair up in two columns, so a section takes less
+scrolling to review. At narrower widths or larger text sizes the same settings stack
+in a single column.
+
+When there is room, an **On this page** list sits beside the cards. It lists the
+sections in the current category, or in the search results, with each section's
+status and a count of the sections that need attention, and it highlights the
+section you are reading. Select an entry to jump to that section.
+
+Links from one setting to another, such as **Go to setting** in App Role
+Requirements, scroll to their target. When a search or a different category hides
+the target, the page clears the search or switches to the target's category first.
+
+This layout was implemented in **0.261.258**.
+
+### Collapsing the category list
+
+The category list on the left can shrink to a strip of icons, giving its width to the
+settings cards. That matters most at larger text sizes, where the list grows with the
+text, and on mid-sized screens, where the extra width can leave room for the **On this
+page** list. Select **Collapse** at the top of the list to shrink it, and the expand
+icon in the same place to bring the labels back.
+
+Collapsed, each icon still switches category, shows its category name as a tooltip,
+and is announced by name to screen readers. The choice is saved with your user
+preferences, so it applies wherever you sign in, and it is kept separately from the
+workspace section rail and the main navigation, so collapsing one leaves the others
+alone. On narrower windows the page offers a category drop-down instead of the list,
+whichever way the list was left.
+
+The collapsible category list was added in **0.261.267**.
+
 ## Settings groups
 
 | Group | What it controls | Tabs | Link |
@@ -30,6 +105,6 @@ For a first-time deployment, configure **Appearance**, **AI Models**, **Knowledg
 | Governance | Governance controls review policy for personal, group, and global endpoints, agents, actions, and MCP destinations. | `feature-governance`, `governance-policies`, `mcp-governance` | [Governance settings]({{ '/admin/governance/' | relative_url }}) |
 | Data Lifecycle | Data Lifecycle groups retention, classification, and conversation archiving decisions. | `retention`, `classification`, `archiving` | [Data Lifecycle settings]({{ '/admin/data-lifecycle/' | relative_url }}) |
 | Backup & Recovery | Backup & Recovery contains backup readiness, scheduled backups, migration, restore, backup inventory, job history, and Cosmos JSON repair tools. | `backup`, `migrate`, `restore`, `cosmos-editor`, `jobs` | [Backup & Recovery settings]({{ '/admin/backup-recovery/' | relative_url }}) |
-| Scale | Scale covers Redis, conversation and search caches, document access indexing, Cosmos maintenance, and Cosmos throughput automation. | `redis-caching`, `cosmos` | [Scale settings]({{ '/admin/scale/' | relative_url }}) |
+| Scale | Scale covers Redis, the conversation and document list caches, document access indexing, Cosmos maintenance, and Cosmos throughput automation. | `redis-caching`, `cosmos` | [Scale settings]({{ '/admin/scale/' | relative_url }}) |
 | Operations | Operations collects Control Center access, refresh behavior, Application Insights, debug logging, file-processing logs, health checks, and Swagger documentation. | `control-center-config`, `logging` | [Operations settings]({{ '/admin/operations/' | relative_url }}) |
-| Help | Help controls end-user support navigation, Send Feedback destinations, and Latest Features cards. | `support-menu`, `send-feedback`, `latest-features` | [Help settings]({{ '/admin/help/' | relative_url }}) |
+| Help | Help controls the end-user Support menu and its feedback mailbox, which release announcements users see, feedback to the SimpleChat team, and the admin release catalog. | `support-menu`, `send-feedback`, `user-facing-latest-features`, `latest-features` | [Help settings]({{ '/admin/help/' | relative_url }}) |

@@ -5,6 +5,13 @@ import functions_authentication
 import functions_settings
 from functions_group import *
 from typing import Iterable
+from public_chat_scope_state import (
+    PublicChatScopeError,
+    aggregate_public_workspace_ids,
+    normalize_public_workspace_selection,
+)
+from public_source_policy import uses_all_public_sources
+from public_source_access import configure_public_source_resolver
 
 from functions_chat_bootstrap_cache import bump_chat_bootstrap_global_cache_version
 from functions_workspace_branding import (
@@ -12,6 +19,82 @@ from functions_workspace_branding import (
     get_workspace_logo_metadata,
     normalize_workspace_hero_color,
 )
+
+
+# How many times a conditional public-workspace write re-reads and re-applies its
+# change after losing a race to another writer before it reports a conflict.
+PUBLIC_DOCUMENT_WRITE_ATTEMPTS = 3
+
+
+class PublicWorkspaceDocumentWriteConflict(RuntimeError):
+    """The public workspace document kept changing while a write was being applied to it."""
+
+
+# Every public route answers PublicWorkspaceDocumentWriteConflict the same way: 409
+# with this code and this reviewed sentence. Other modules import these rather than
+# copy them.
+PUBLIC_WORKSPACE_WRITE_CONFLICT_CODE = "public_workspace_write_conflict"
+PUBLIC_WORKSPACE_WRITE_CONFLICT_MESSAGE = "The public workspace changed while your request was being saved. Try again."
+
+
+def _stored_public_workspace_fields(document):
+    """A public workspace document without the Cosmos system properties (``_etag``, ``_ts``, ...)."""
+    return {key: value for key, value in (document or {}).items() if not key.startswith("_")}
+
+
+def update_public_workspace_document_with_etag_guard(ws_id, apply_changes, *, cache_reason, attempts=PUBLIC_DOCUMENT_WRITE_ATTEMPTS):
+    """Apply one change to the stored public workspace document and write it back conditionally.
+
+    The public workspace document also carries membership, status and every other
+    workspace-scoped setting, so a writer that changes one part of it must never
+    restore the rest from an outdated copy. ``apply_changes`` receives a private copy
+    of the document just read and returns the document to write; the replace is
+    conditional on that read's ``_etag`` (``IfNotModified``). When another writer lands
+    in between, the document is read again and ``apply_changes`` is re-applied to the
+    newer copy, up to ``attempts`` writes, after which
+    ``PublicWorkspaceDocumentWriteConflict`` is raised. Because it can run more than
+    once, ``apply_changes`` must derive its result only from the copy it is given;
+    raising from it abandons the write with nothing stored.
+
+    A workspace that is missing at read time or at replace time is never recreated: the
+    function returns ``None`` and writes nothing. When a re-read finds exactly the body
+    this call sent, the earlier replace committed and only its response was lost (a
+    transport retry of a committed write fails its own precondition), so that is
+    reported as the committed write rather than as a conflict.
+
+    A committed write returns the stored document and bumps the global chat bootstrap
+    cache with ``cache_reason``. ``cache_reason`` is required, and ``None`` is the
+    explicit choice for a change no bootstrap payload reads, such as a join request,
+    which commits without a bump.
+    """
+    attempted = None
+    for attempt in range(attempts + 1):
+        try:
+            current = cosmos_public_workspaces_container.read_item(item=ws_id, partition_key=ws_id)
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        if attempted is not None and _stored_public_workspace_fields(current) == _stored_public_workspace_fields(attempted):
+            if cache_reason is not None:
+                bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+            return current
+        if attempt == attempts:
+            break
+        attempted = apply_changes(copy.deepcopy(current))
+        try:
+            written = cosmos_public_workspaces_container.replace_item(
+                item=ws_id,
+                body=attempted,
+                etag=current.get("_etag"),
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except exceptions.CosmosResourceNotFoundError:
+            return None
+        except exceptions.CosmosAccessConditionFailedError:
+            continue
+        if cache_reason is not None:
+            bump_chat_bootstrap_global_cache_version(reason=cache_reason)
+        return written
+    raise PublicWorkspaceDocumentWriteConflict("The public workspace document kept changing while it was being saved.")
 
 def create_public_workspace(name: str, description: str) -> dict:
     """
@@ -28,6 +111,7 @@ def create_public_workspace(name: str, description: str) -> dict:
         "id": new_id,
         "name": name,
         "description": description,
+        "status": "active",
         "heroColor": DEFAULT_WORKSPACE_HERO_COLOR,
         "logoBase64": "",
         "logoVersion": 1,
@@ -138,6 +222,85 @@ def search_all_public_workspaces(search_query: str) -> list:
     ))
 
 
+PUBLIC_WORKSPACE_DIRECTORY_MAX_LIMIT = 200
+PUBLIC_WORKSPACE_DIRECTORY_DEFAULT_LIMIT = 50
+
+
+def _to_public_workspace_directory_row(workspace_doc):
+    """Project a public workspace down to the fields an administrator's picker needs."""
+    return {
+        "id": str(workspace_doc.get("id") or ""),
+        "name": workspace_doc.get("name") or "",
+        "description": workspace_doc.get("description") or "",
+    }
+
+
+def find_public_workspaces_by_ids(workspace_ids):
+    """Return directory rows for specific public workspace ids, skipping ids that no longer exist.
+
+    The counterpart of ``find_groups_by_ids``. Governance policies store public
+    workspace ids beside group ids, so labelling a saved policy has to resolve both.
+    An id that resolves to nothing is absent from the result, which is how the caller
+    tells a live entry apart from one pointing at a deleted workspace.
+    """
+    wanted_ids = [str(workspace_id or "").strip() for workspace_id in (workspace_ids or [])]
+    wanted_ids = [workspace_id for workspace_id in wanted_ids if workspace_id]
+    if not wanted_ids:
+        return []
+
+    results = list(cosmos_public_workspaces_container.query_items(
+        query="SELECT c.id, c.name, c.description FROM c WHERE ARRAY_CONTAINS(@ids, c.id)",
+        parameters=[{"name": "@ids", "value": wanted_ids}],
+        enable_cross_partition_query=True
+    ))
+
+    rows_by_id = {row["id"]: row for row in (_to_public_workspace_directory_row(doc) for doc in results)}
+    return [rows_by_id[workspace_id] for workspace_id in wanted_ids if workspace_id in rows_by_id]
+
+
+def list_public_workspaces_for_admin_directory(search_query="", limit=PUBLIC_WORKSPACE_DIRECTORY_DEFAULT_LIMIT):
+    """Return ``(rows, truncated)`` for an administrator's public workspace picker.
+
+    Mirrors ``list_groups_for_admin_directory``: an empty search browses, and one
+    row more than ``limit`` is requested so a truncated result is reported rather
+    than silently hiding workspaces beyond the cap.
+    """
+    normalized_query = str(search_query or "").strip().lower()
+    capped_limit = max(1, min(int(limit or PUBLIC_WORKSPACE_DIRECTORY_DEFAULT_LIMIT), PUBLIC_WORKSPACE_DIRECTORY_MAX_LIMIT))
+
+    filters = []
+    parameters = []
+    if normalized_query:
+        filters.append(
+            "(CONTAINS(LOWER(c.name), @search)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(LOWER(c.description), @search))"
+            " OR LOWER(c.id) = @search)"
+        )
+        parameters.append({"name": "@search", "value": normalized_query})
+
+    where_clause = f"WHERE {' AND '.join(filters)}" if filters else ""
+    # No ORDER BY, for the same reason as the group directory: Cosmos drops
+    # documents that lack the sorted property. The page is sorted below.
+    query = f"""
+        SELECT c.id, c.name, c.description
+        FROM c
+        {where_clause}
+        OFFSET 0 LIMIT @limit
+    """
+    parameters.append({"name": "@limit", "value": capped_limit + 1})
+
+    results = list(cosmos_public_workspaces_container.query_items(
+        query=query,
+        parameters=parameters,
+        enable_cross_partition_query=True
+    ))
+
+    truncated = len(results) > capped_limit
+    rows = [_to_public_workspace_directory_row(doc) for doc in results[:capped_limit]]
+    rows.sort(key=lambda row: (row["name"].lower(), row["id"]))
+    return rows, truncated
+
+
 def delete_public_workspace(ws_id: str) -> None:
     """
     Deletes a public workspace from Cosmos DB. Typically only the owner may call this.
@@ -232,89 +395,6 @@ def get_pending_document_manager_requests(ws_id: str) -> list:
     if not ws:
         return []
     return ws.get("pendingDocumentManagers", [])
-
-
-def add_document_manager(ws_id: str, user_id: str, email: str, display_name: str) -> None:
-    """
-    Add a user as a document manager.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    ws.setdefault("documentManagers", []).append({
-        "userId": user_id,
-        "email": email,
-        "displayName": display_name
-    })
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_added")
-
-
-def remove_document_manager(ws_id: str, user_id: str) -> None:
-    """
-    Remove a user from document managers.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    ws["documentManagers"] = [
-        dm for dm in ws.get("documentManagers", [])
-        if dm["userId"] != user_id
-    ]
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_removed")
-
-
-def approve_document_manager_request(ws_id: str, request_user_id: str) -> None:
-    """
-    Approve a pending document-manager request and add the user.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    pend = ws.get("pendingDocumentManagers", [])
-    new_pend = []
-    for p in pend:
-        if p["userId"] == request_user_id:
-            existing_manager_ids = {
-                dm.get("userId") if isinstance(dm, dict) else dm
-                for dm in ws.get("documentManagers", [])
-            }
-            if p["userId"] not in existing_manager_ids:
-                ws.setdefault("documentManagers", []).append({
-                    "userId": p["userId"],
-                    "email": p["email"],
-                    "displayName": p["displayName"]
-                })
-        else:
-            new_pend.append(p)
-
-    ws["pendingDocumentManagers"] = new_pend
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_request_approved")
-
-
-def reject_document_manager_request(ws_id: str, request_user_id: str) -> None:
-    """
-    Reject (remove) a pending document-manager request.
-    """
-    ws = find_public_workspace_by_id(ws_id)
-    if not ws:
-        raise Exception("Workspace not found")
-
-    ws["pendingDocumentManagers"] = [
-        p for p in ws.get("pendingDocumentManagers", [])
-        if p["userId"] != request_user_id
-    ]
-    ws["modifiedDate"] = datetime.utcnow().isoformat()
-    cosmos_public_workspaces_container.upsert_item(ws)
-    bump_chat_bootstrap_global_cache_version(reason="public_workspace_document_manager_request_rejected")
 
 
 def count_public_workspace_documents(ws_id: str) -> int:
@@ -413,6 +493,45 @@ def get_user_visible_public_workspace_ids_from_settings(user_id: str) -> list:
     return get_user_visible_public_workspaces(user_id)
 
 
+def get_public_source_workspace_ids(user_id, *, settings=None, user_settings=None):
+    """Resolve discovery policy, not a caller-supplied authorization allowlist.
+
+    V2 reads every currently chat-available public workspace. Classic retains its
+    saved curation, including its original fallback behavior. A snapshot keeps
+    workflow previews and dry runs write-free.
+    """
+    aggregate_ids = aggregate_public_workspace_ids(user_id)
+    if aggregate_ids is not None:
+        return aggregate_ids
+    if uses_all_public_sources(user_id):
+        settings = functions_settings.get_settings() if settings is None else settings
+        if not settings.get("enable_public_workspaces", False):
+            return []
+        return resolve_public_chat_workspace_ids(user_id, "all", settings=settings)
+    if user_settings is not None:
+        return visible_public_workspace_ids_from_user_settings(user_settings)
+    return get_user_visible_public_workspace_ids_from_settings(user_id)
+
+
+def visible_public_workspace_ids_from_user_settings(user_settings, list_public_workspaces=None):
+    """Apply the visibility rule above to a settings document the caller already read.
+
+    It never reads or repairs user settings, so a write-free caller can pass a read-only snapshot.
+    With neither preference saved, every public workspace is visible, as above.
+    """
+    settings = user_settings.get("settings", {}) if isinstance(user_settings, dict) else {}
+    settings = settings if isinstance(settings, dict) else {}
+    public_directory_settings = settings.get("publicDirectorySettings", {})
+    if public_directory_settings:
+        return [ws_id for ws_id, is_visible in public_directory_settings.items() if is_visible]
+
+    visible_workspace_ids = settings.get("visiblePublicWorkspaceIds")
+    if visible_workspace_ids is None:
+        workspaces = (list_public_workspaces or get_all_public_workspaces)()
+        return [ws["id"] for ws in workspaces]
+    return visible_workspace_ids
+
+
 def set_user_visible_public_workspaces(user_id: str, workspace_ids: list) -> None:
     """
     Set the list of public workspace IDs that the user wants to be visible.
@@ -420,6 +539,31 @@ def set_user_visible_public_workspaces(user_id: str, workspace_ids: list) -> Non
     from functions_settings import update_user_settings
     
     update_user_settings(user_id, {"visiblePublicWorkspaceIds": workspace_ids})
+
+
+def resolve_public_chat_workspace_ids(user_id, selection, *, settings=None):
+    """Resolve aggregate curation against existing, chat-available public workspaces."""
+    selection = normalize_public_workspace_selection(selection)
+    if not selection:
+        raise PublicChatScopeError("Choose All or Visible public workspaces.")
+    settings = functions_settings.get_settings() if settings is None else settings
+    if not settings.get("enable_public_workspaces", False):
+        raise PublicChatScopeError("Public workspaces are currently disabled.", "public_chat_disabled", 403)
+    workspaces = get_all_public_workspaces()
+    visible_ids = None
+    if selection == "visible" and not uses_all_public_sources(user_id):
+        user_settings = functions_settings.get_user_settings(user_id)
+        visible_ids = set(visible_public_workspace_ids_from_user_settings(
+            user_settings, list_public_workspaces=lambda: workspaces,
+        ))
+    resolved = []
+    for workspace in workspaces:
+        workspace_id = workspace.get("id")
+        allowed, _reason = check_public_workspace_status_allows_operation(workspace, "chat")
+        if workspace_id and allowed and (visible_ids is None or workspace_id in visible_ids):
+            if workspace_id not in resolved:
+                resolved.append(workspace_id)
+    return resolved
 
 
 def add_visible_public_workspace(user_id: str, ws_id: str) -> None:
@@ -531,14 +675,19 @@ def check_public_workspace_status_allows_operation(workspace_doc, operation_type
         }
     }
     
-    # Get permissions for current status
-    permissions = status_permissions.get(status, status_permissions['active'])
+    # An unrecognized status is treated as inactive rather than active: a status the
+    # code does not know must never be given active's full permissions. Its reason is
+    # the public context's own words for an unknown status.
+    known_status = status in status_permissions
+    permissions = status_permissions.get(status, status_permissions['inactive'])
     
     # Check if operation is allowed
     allowed = permissions.get(operation_type, False)
     
     # Generate helpful reason message if not allowed
     if not allowed:
+        if not known_status:
+            return False, "This workspace's status is not recognized. Contact an administrator."
         reasons = {
             'locked': {
                 'upload': 'This public workspace is locked (read-only mode). Document uploads are disabled.',
@@ -560,3 +709,6 @@ def check_public_workspace_status_allows_operation(workspace_doc, operation_type
         return False, reason
     
     return True, ""
+
+
+configure_public_source_resolver(get_public_source_workspace_ids)

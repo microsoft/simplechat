@@ -1,8 +1,9 @@
 # test_m365_routes.py
 """
 Functional tests for Microsoft 365 Profile, approval, and audit routes.
-Version: 0.261.034
+Version: 0.261.374
 Implemented in: 0.261.029
+Workflow authorization names and visibility implemented in: 0.261.374
 
 Imports the real route module with scoped authentication/logging I/O seams.
 Exercises exact subject/object scope, CSRF, safe errors, callback registration,
@@ -21,6 +22,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from azure.cosmos import exceptions
+from azure.cosmos._cosmos_responses import CosmosDict
 from flask import Blueprint, Flask, jsonify, session
 from werkzeug.test import Client
 
@@ -32,7 +34,7 @@ sys.path.insert(0, str(APP_DIR))
 import functions_m365_approvals as approvals
 import functions_m365_connections as connections
 import functions_m365_execution as execution
-from test_support.m365 import Clock, CosmosContainer, Notifications
+from test_support.m365 import Clock, CosmosContainer, Notifications, WORKFLOW_REVIEW
 
 
 def module_stub(name, **values):
@@ -84,6 +86,7 @@ class M365RouteTests(unittest.TestCase):
         self.connection_service = connections.M365ConnectionService(
             container_factory=lambda: self.connection_container,
             config_provider=lambda: self.connection_config,
+            chat_readiness_provider=lambda: {"available": False, "message": "Session-only test deployment."},
         )
         for target, name, value in (
             (approvals, "_service", self.service),
@@ -110,7 +113,10 @@ class M365RouteTests(unittest.TestCase):
         }
         with patch.dict(sys.modules, dependencies):
             spec.loader.exec_module(self.routes)
-        self.app = Flask(__name__)
+        # The real templates and static files, so callbacks render the actual result page.
+        self.app = Flask(
+            __name__, template_folder=str(APP_DIR / "templates"), static_folder=str(APP_DIR / "static"),
+        )
         self.app.secret_key = "unit-test-only"
         blueprint = Blueprint("backend_m365", __name__)
         self.routes.register_route_backend_m365(blueprint)
@@ -145,6 +151,219 @@ class M365RouteTests(unittest.TestCase):
         with self.assertRaises(approvals.M365ApprovalRequired) as raised:
             self.service.authorize_sources(self.context(**changes), {"email": "always"})
         return raised.exception.approval_id
+
+    def workflow_dependencies(self):
+        self.personal_workflows = CosmosContainer("user_id")
+        self.group_workflows = CosmosContainer()
+        self.workflow_settings = {
+            "allow_user_workflows": True, "allow_group_workflows": True, "enable_group_workspaces": True,
+        }
+        self.group_access = Mock(return_value="User")
+        return {
+            "config": module_stub(
+                "config", cosmos_personal_workflows_container=self.personal_workflows,
+                cosmos_group_workflows_container=self.group_workflows,
+            ),
+            "functions_group": module_stub("functions_group", assert_group_role=self.group_access),
+            "functions_settings": module_stub(
+                "functions_settings", get_settings=lambda: self.workflow_settings,
+                is_user_workflows_enabled_for_user=lambda settings, user_roles: (
+                    settings["allow_user_workflows"]
+                    and (not settings.get("require_member_of_workflow_user") or "WorkflowUser" in user_roles)
+                ),
+                is_group_workflows_enabled_for_group=lambda settings, group_id: (
+                    settings["allow_group_workflows"]
+                    and (not settings.get("require_group_assignment_for_group_workflows")
+                         or group_id in settings.get("group_workflow_allowed_group_ids", []))
+                ),
+            ),
+        }
+
+    def workflow_binding(self, workflow_id="workflow", *, group_id=None, user_id="user-a", revision="revision"):
+        context = self.context(
+            actor_user_id=user_id, data_user_id=user_id, workflow_id=workflow_id,
+            group_id=group_id, request_id=revision, run_id=revision,
+            workflow_fingerprint=revision, connection_id="connection",
+        )
+        return self.service.ensure_workflow_binding(
+            context, ["email"], {
+                "id": "connection", "user_id": user_id, "tenant_id": "tenant-a",
+                "status": "connected", "generation": 1, "sources": ["email"],
+            },
+            review=WORKFLOW_REVIEW, self_authored=True,
+        )
+
+    def test_bindings_project_current_name_from_sdk_document_without_mutating_history(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={
+            "id": "workflow", "user_id": "user-a", "name": "Morning mail",
+            "task_prompt": "private instructions", "internal_config": {"secret": "not-for-display"},
+        })
+        point = self.personal_workflows.read_item(item="workflow", partition_key="user-a")
+        self.assertIsInstance(point, CosmosDict)
+        binding = self.workflow_binding()
+        before = copy.deepcopy(self.container.items)
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+            self.personal_workflows.upsert_item(body={**point, "name": "Renamed mail digest"})
+            renamed = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["items"][0]
+        self.assertEqual(item["id"], binding["id"])
+        self.assertEqual(item["workflow"], {
+            "id": "workflow", "name": "Morning mail", "scope_type": "personal", "group_id": None,
+        })
+        self.assertNotIn("private instructions", response.get_data(as_text=True))
+        self.assertNotIn("not-for-display", response.get_data(as_text=True))
+        self.assertEqual(renamed.get_json()["items"][0]["workflow"]["name"], "Renamed mail digest")
+        self.assertEqual(self.container.items, before)
+
+    def test_bindings_group_scope_uses_context_not_the_approval_user_partition(self):
+        dependencies = self.workflow_dependencies()
+        self.group_workflows.create_item(body={
+            "id": "workflow", "group_id": "team", "user_id": "other-owner", "name": "Team digest",
+        })
+        self.workflow_binding(group_id="team")
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 200)
+        item = response.get_json()["items"][0]
+        self.assertEqual(item["group_id"], "user-a")
+        self.assertEqual(item["workflow"], {
+            "id": "workflow", "name": "Team digest", "scope_type": "group", "group_id": "team",
+        })
+        self.group_access.assert_called_once_with(
+            "user-a", "team", allowed_roles=("Owner", "Admin", "DocumentManager", "User"),
+        )
+
+    def test_bindings_omit_missing_deleting_and_non_owned_workflows(self):
+        dependencies = self.workflow_dependencies()
+        for workflow_id, changes in (
+            ("wrong-owner", {"user_id": "other-user"}),
+            ("wrong-scope", {"group_id": "other-team"}),
+            ("deleting-flag", {"deleting": True}),
+            ("deleting-status", {"status": "deleting"}),
+        ):
+            self.personal_workflows.create_item(body={
+                "id": workflow_id, "user_id": "user-a", "name": "Hidden", **changes,
+            })
+            self.workflow_binding(workflow_id)
+        self.workflow_binding("missing")
+        before = copy.deepcopy(self.container.items)
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["items"], [])
+        self.assertEqual(self.container.items, before)
+
+    def test_bindings_recheck_removed_group_membership_before_reading_the_workflow(self):
+        dependencies = self.workflow_dependencies()
+        self.group_workflows.create_item(body={"id": "workflow", "group_id": "team", "name": "Team digest"})
+        self.workflow_binding(group_id="team")
+        with patch.dict(sys.modules, dependencies):
+            visible = self.client.get("/api/m365/bindings")
+            self.group_access.side_effect = PermissionError("Membership removed")
+            with patch.object(self.group_workflows, "read_item", wraps=self.group_workflows.read_item) as read:
+                hidden = self.client.get("/api/m365/bindings")
+        self.assertEqual(len(visible.get_json()["items"]), 1)
+        self.assertEqual(hidden.get_json()["items"], [])
+        read.assert_not_called()
+
+    def test_bindings_respect_personal_feature_and_app_role_access(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "Digest"})
+        self.workflow_binding()
+        for settings in (
+            {"allow_user_workflows": False},
+            {"allow_user_workflows": True, "require_member_of_workflow_user": True},
+        ):
+            with self.subTest(settings=settings), patch.dict(sys.modules, dependencies):
+                self.workflow_settings.update(settings)
+                response = self.client.get("/api/m365/bindings")
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["items"], [])
+
+    def test_bindings_respect_group_feature_and_assignment_access(self):
+        dependencies = self.workflow_dependencies()
+        self.group_workflows.create_item(body={"id": "workflow", "group_id": "team", "name": "Digest"})
+        self.workflow_binding(group_id="team")
+        for settings in (
+            {"allow_group_workflows": False},
+            {"enable_group_workspaces": False},
+            {"require_group_assignment_for_group_workflows": True, "group_workflow_allowed_group_ids": []},
+        ):
+            with self.subTest(settings=settings), patch.dict(sys.modules, dependencies):
+                original = self.workflow_settings.copy()
+                self.workflow_settings.update(settings)
+                response = self.client.get("/api/m365/bindings")
+                self.workflow_settings = original
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(response.get_json()["items"], [])
+        self.group_access.assert_not_called()
+
+    def test_bindings_only_list_the_current_subject_and_tenant(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "Digest"})
+        self.workflow_binding()
+        self.workflow_binding(user_id="other-user")
+        with patch.dict(sys.modules, dependencies):
+            own = self.client.get("/api/m365/bindings")
+            stored = next(
+                record for record in self.container.items.values()
+                if record.get("record_kind") == "m365_approval" and record["subject_user_id"] == "user-a"
+            )
+            self.container.upsert_item(body={**stored, "context": {**stored["context"], "tenant_id": "other-tenant"}})
+            wrong_tenant = self.client.get("/api/m365/bindings")
+            self.sign_in("unrelated-admin", roles=["Admin"])
+            other = self.client.get("/api/m365/bindings")
+        self.assertEqual(len(own.get_json()["items"]), 1)
+        self.assertEqual(wrong_tenant.get_json()["items"], [])
+        self.assertEqual(other.get_json()["items"], [])
+
+    def test_bindings_resolve_duplicate_revisions_once_and_keep_them_separate(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "Digest"})
+        self.workflow_binding(revision="first")
+        self.workflow_binding(revision="second")
+        with patch.dict(sys.modules, dependencies), \
+             patch.object(self.personal_workflows, "read_item", wraps=self.personal_workflows.read_item) as read:
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(len(response.get_json()["items"]), 2)
+        read.assert_called_once_with(item="workflow", partition_key="user-a")
+
+    def test_bindings_keep_continuation_after_a_hidden_only_page(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "visible", "user_id": "user-a", "name": "Visible digest"})
+        self.workflow_binding("visible")
+        self.clock.advance(seconds=1)
+        self.workflow_binding("deleted")
+        with patch.dict(sys.modules, dependencies):
+            first = self.client.get("/api/m365/bindings?page_size=1")
+            token = first.get_json()["continuation_token"]
+            second = self.client.get("/api/m365/bindings", query_string={"page_size": 1, "continuation_token": token})
+        self.assertEqual(first.get_json()["items"], [])
+        self.assertTrue(token)
+        self.assertEqual(second.get_json()["items"][0]["workflow"]["name"], "Visible digest")
+        self.assertIsNone(second.get_json()["continuation_token"])
+
+    def test_bindings_storage_outage_is_a_safe_error_not_an_empty_success(self):
+        dependencies = self.workflow_dependencies()
+        self.workflow_binding()
+        error = exceptions.CosmosHttpResponseError(status_code=503, message="private-storage-detail")
+        with patch.dict(sys.modules, dependencies), \
+             patch.object(self.personal_workflows, "read_item", side_effect=error):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()["error"], "m365_service_unavailable")
+        self.assertNotIn("private-storage-detail", response.get_data(as_text=True))
+
+    def test_bindings_untitled_workflow_uses_a_label_not_an_identifier(self):
+        dependencies = self.workflow_dependencies()
+        self.personal_workflows.create_item(body={"id": "workflow", "user_id": "user-a", "name": "  "})
+        self.workflow_binding()
+        with patch.dict(sys.modules, dependencies):
+            response = self.client.get("/api/m365/bindings")
+        self.assertEqual(response.get_json()["items"][0]["workflow"]["name"], "Untitled workflow")
 
     def test_every_new_route_requires_login_and_user_with_blueprint_guard(self):
         self.set_session({})
@@ -497,6 +716,144 @@ class M365RouteTests(unittest.TestCase):
                 self.assertEqual(response.headers["Cache-Control"], "private, no-store")
                 self.assertEqual(response.headers["Pragma"], "no-cache")
                 self.assertEqual(response.status_code, 302 if result == "connected" else 400)
+                if result == "invalid":
+                    # A readable page that can report to an opener, not raw JSON in the popup.
+                    page = response.get_data(as_text=True)
+                    self.assertEqual(response.mimetype, "text/html")
+                    self.assertIn("Microsoft 365 was not connected", page)
+                    self.assertIn("Connect again.", page)
+                    self.assertIn('"type": "m365-connect-failed"', page)
+                    self.assertIn('"code": "m365_auth_state_invalid"', page)
+                    self.assertIn("js/profile/profile-m365-connection-result.js", page)
+
+    def test_chat_callback_answers_the_popup_that_started_it(self):
+        dependencies = self.chat_request_dependencies(CosmosContainer("user_id"))
+        dependencies["functions_m365_runtime"] = module_stub(
+            "functions_m365_runtime", _conversation_access=Mock(side_effect=AssertionError("No request is resumed.")),
+        )
+        with patch.dict(sys.modules, dependencies), self.app.test_request_context(
+            "/getAToken?state=m365-chat-popupstate&code=opaque",
+        ):
+            session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]}
+            session[connections.CHAT_AUTH_SESSION_KEY] = {
+                "flow": {"state": "m365-chat-popupstate"}, "completion": "popup", "purpose": "profile_reconnect",
+            }
+            with patch.object(
+                self.connection_service, "complete_chat_connection",
+                return_value={"return_to": "profile", "completion": "popup"},
+            ):
+                connected = self.routes.complete_m365_chat_connection_callback()
+            with patch.object(
+                self.connection_service, "complete_chat_connection",
+                side_effect=connections.M365ConnectionError("m365_consent_required", "Consent was not completed."),
+            ):
+                session[connections.CHAT_AUTH_SESSION_KEY] = {
+                    "flow": {"state": "m365-chat-popupstate"}, "completion": "popup", "purpose": "profile_reconnect",
+                }
+                failed = self.routes.complete_m365_chat_connection_callback()
+        self.assertEqual(connected.status_code, 200)
+        self.assertIn('"type": "m365-profile-reconnected"', connected.get_data(as_text=True))
+        self.assertIn('"completion": "popup"', connected.get_data(as_text=True))
+        self.assertEqual(failed.status_code, 400)
+        self.assertIn('"completion": "popup"', failed.get_data(as_text=True))
+        self.assertIn("Consent was not completed.", failed.get_data(as_text=True))
+
+    def test_workflow_connect_uses_registered_callback_and_reports_readiness(self):
+        dependencies = {
+            "config": module_stub("config", LOGIN_REDIRECT_URL=None),
+            "functions_settings": module_stub("functions_settings", get_settings=lambda: {
+                "enable_key_vault_secret_storage": False,
+            }),
+        }
+        begin = Mock(return_value={"authorization_url": "https://login.microsoftonline.com/tenant-a/authorize"})
+        with patch.dict(sys.modules, dependencies), patch.object(self.connection_service, "start_connection", begin):
+            status = self.client.get("/api/m365/connections")
+            page = self.client.post(
+                "/api/m365/connections/connect", json={"sources": ["email"]},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+            popup = self.client.post(
+                "/api/m365/connections/connect", json={"sources": ["email"], "completion": "popup"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+            invalid = self.client.post(
+                "/api/m365/connections/connect", json={"sources": ["email"], "completion": "window"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+        readiness = status.get_json()["workflow_connections"]
+        self.assertEqual(readiness["available"], False)
+        self.assertEqual(readiness["reason"], "key_vault_disabled")
+        self.assertIn("Admin Settings", readiness["message"])
+        self.assertEqual((page.status_code, popup.status_code, invalid.status_code), (200, 200, 400))
+        self.assertEqual(begin.call_count, 2)
+        for call, completion in zip(begin.call_args_list, ("page", "popup")):
+            self.assertEqual(call.args[3], "http://localhost/getAToken")
+            self.assertEqual(call.kwargs["completion"], completion)
+
+    def workflow_callback(self, path, *, completion, binding=True, failure=None):
+        with self.app.test_request_context(path):
+            session["user"] = {"oid": "user-a", "tid": "tenant-a", "roles": ["User"]}
+            if binding:
+                session["m365_workflow_oauth_binding"] = "binding"
+            with patch.object(
+                self.connection_service, "connection_flow_completion", return_value=completion,
+            ), patch.object(
+                self.connection_service, "complete_connection",
+                side_effect=failure, return_value={"status": "connected"},
+            ) as complete:
+                response = self.routes.complete_m365_workflow_connection_callback()
+            binding_left = session.get("m365_workflow_oauth_binding")
+        return response, complete, binding_left
+
+    def test_workflow_callback_answers_popups_redirects_pages_and_explains_failures(self):
+        path = "/getAToken?state=m365-workflow-abcdefghijklmnopqrstuvwxyz&code=opaque"
+        popup, complete, binding_left = self.workflow_callback(path, completion="popup")
+        self.assertEqual(popup.status_code, 200)
+        self.assertIn('"type": "m365-workflow-connected"', popup.get_data(as_text=True))
+        self.assertEqual(complete.call_args.args[:4], (
+            "user-a", "tenant-a", {"state": "m365-workflow-abcdefghijklmnopqrstuvwxyz", "code": "opaque"}, "binding",
+        ))
+        self.assertIsNone(binding_left)
+
+        page, _complete, _binding = self.workflow_callback(path, completion="page")
+        self.assertEqual(page.status_code, 302)
+        self.assertEqual(page.headers["Location"], self.routes.CLASSIC_WORKFLOW_CONNECTED_URL)
+
+        expired, complete, _binding = self.workflow_callback(path, completion="popup", binding=False)
+        self.assertEqual(expired.status_code, 400)
+        self.assertIn('"code": "m365_auth_state_invalid"', expired.get_data(as_text=True))
+        self.assertIn("Start Connect for workflows again.", expired.get_data(as_text=True))
+        complete.assert_not_called()
+
+        key_error = connections.M365ConnectionError("m365_key_provision_forbidden", "Grant Key Vault Secrets Officer.")
+        forbidden, _complete, _binding = self.workflow_callback(path, completion="auto", failure=key_error)
+        self.assertEqual(forbidden.status_code, 503)
+        self.assertEqual(forbidden.headers["Cache-Control"], "private, no-store")
+        self.assertIn('"completion": "auto"', forbidden.get_data(as_text=True))
+        self.assertIn("Grant Key Vault Secrets Officer.", forbidden.get_data(as_text=True))
+
+    def test_legacy_workflow_callback_still_completes_existing_registrations(self):
+        with patch.object(self.routes, "complete_m365_workflow_connection_callback", return_value="workflow-done") as workflow, \
+             patch.object(self.routes, "complete_m365_chat_connection_callback", return_value="chat-done") as chat:
+            workflow_response = self.client.get("/api/m365/connections/callback?state=legacy-state-value&code=x")
+            chat_response = self.client.get("/api/m365/connections/callback?state=m365-chat-value&code=x")
+        self.assertEqual(workflow_response.get_data(as_text=True), "workflow-done")
+        self.assertEqual(chat_response.get_data(as_text=True), "chat-done")
+        workflow.assert_called_once()
+        chat.assert_called_once()
+
+    def test_sign_in_callback_routes_workflow_state_to_the_workflow_completion(self):
+        source = (APP_DIR / "route_frontend_authentication.py").read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        authorized = next(
+            node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == "authorized"
+        )
+        body = ast.get_source_segment(source, authorized)
+        workflow_branch = body.index("startswith(WORKFLOW_AUTH_STATE_PREFIX)")
+        self.assertLess(body.index("startswith(CHAT_AUTH_STATE_PREFIX)"), workflow_branch)
+        self.assertLess(workflow_branch, body.index("complete_m365_workflow_connection_callback()"))
+        # Both M365 branches run before the login token exchange.
+        self.assertLess(body.index("complete_m365_workflow_connection_callback()"), body.index("request.args.get('code')"))
 
     def test_chat_callback_returns_to_original_visible_conversation_without_running_a_request(self):
         jobs = CosmosContainer("user_id")
@@ -550,9 +907,22 @@ class M365RouteTests(unittest.TestCase):
                 "/api/m365/chat/connection/connect", json={"sources": ["spo", "email"]},
                 headers={"X-M365-CSRF-Token": self.csrf},
             )
+            popup = self.client.post(
+                "/api/m365/chat/connection/connect", json={"sources": ["email"], "completion": "popup"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+            invalid_completion = self.client.post(
+                "/api/m365/chat/connection/connect", json={"sources": ["email"], "completion": "tab"},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
         self.assertEqual(missing.status_code, 403)
         self.assertEqual(valid.status_code, 200)
-        begin.assert_called_once_with("user-a", "tenant-a", ["spo", "email"], "http://localhost/getAToken")
+        self.assertEqual(popup.status_code, 200)
+        self.assertEqual(invalid_completion.status_code, 400)
+        self.assertEqual(begin.call_args_list[0].args, ("user-a", "tenant-a", ["spo", "email"], "http://localhost/getAToken"))
+        self.assertEqual(begin.call_args_list[0].kwargs, {"completion": "page"})
+        self.assertEqual(begin.call_args_list[1].kwargs, {"completion": "popup"})
+        self.assertEqual(begin.call_count, 2)
         self.assertEqual(self.connection_container.items, {})
 
     def test_profile_callback_does_not_read_or_replay_any_chat_request(self):
@@ -577,22 +947,47 @@ class M365RouteTests(unittest.TestCase):
         })
         response = self.client.get("/api/m365/chat/connection")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["connection"], {"status": "reconnect_required", "sources": []})
+        status = response.get_json()["connection"]
+        self.assertEqual(status["status"], "reconnect_required")
+        self.assertEqual(status["sources"], [])
+        self.assertEqual(status["persistence"], "session")
         self.assertNotIn("private-corrupted", response.get_data(as_text=True))
         self.assertEqual(response.headers["Cache-Control"], "private, no-store")
         self.set_session({})
         anonymous = self.client.get("/api/m365/chat/connection")
         self.assertEqual(anonymous.status_code, 401)
 
-    def test_verified_workflow_reconnect_clears_an_interactive_rejection_marker(self):
+    def test_workflow_reconnect_never_replaces_chat_credentials_or_reconnect_marker(self):
         with self.app.test_request_context():
-            session["token_cache"] = "old-cache"
+            session["user"] = {"oid": "user-a", "tid": "tenant-a"}
+            session[connections.CHAT_CACHE_SESSION_KEY] = "chat-only-cache"
             session[connections.CHAT_RECONNECT_SESSION_KEY] = {"user_id": "user-a", "tenant_id": "tenant-a"}
-            self.routes._publish_verified_workflow_cache_to_session("verified-cache")
-            cached = session["token_cache"]
+            session["m365_workflow_oauth_binding"] = "workflow-test-binding"
+            with patch.object(self.connection_service, "complete_connection") as complete:
+                self.routes._complete_workflow_connection("user-a", "tenant-a", {"state": "workflow"}, "page")
+            cached = session[connections.CHAT_CACHE_SESSION_KEY]
             marker = session.get(connections.CHAT_RECONNECT_SESSION_KEY)
-        self.assertEqual(cached, "verified-cache")
-        self.assertIsNone(marker)
+        self.assertEqual(cached, "chat-only-cache")
+        self.assertEqual(marker, {"user_id": "user-a", "tenant_id": "tenant-a"})
+        self.assertNotIn("cache_writer", complete.call_args.kwargs)
+
+    def test_chat_disconnect_requires_csrf_and_uses_only_signed_in_subject(self):
+        for payload, headers, expected in (
+            ({}, {}, 403),
+            ({"user_id": "user-b"}, {"X-M365-CSRF-Token": self.csrf}, 400),
+            ({}, {"X-M365-CSRF-Token": self.csrf, "Sec-Fetch-Site": "cross-site"}, 403),
+        ):
+            response = self.client.post("/api/m365/chat/connection/disconnect", json=payload, headers=headers)
+            self.assertEqual(response.status_code, expected)
+        with patch.object(self.connection_service, "disconnect_chat", return_value={
+            "status": "not_connected", "sources": [], "persistence": "session",
+        }) as disconnect:
+            response = self.client.post(
+                "/api/m365/chat/connection/disconnect", json={},
+                headers={"X-M365-CSRF-Token": self.csrf},
+            )
+        self.assertEqual(response.status_code, 200)
+        disconnect.assert_called_once_with("user-a", "tenant-a")
 
     def test_real_notification_helper_only_targets_subject_and_deduplicates(self):
         notification_container = CosmosContainer("user_id")
@@ -650,6 +1045,18 @@ class M365RouteTests(unittest.TestCase):
             if item["metadata"]["approval_id"] == cancel_id
         ]
         self.assertEqual(statuses, ["cancelled"])
+
+
+def test_workflow_authorization_sdk_contract():
+    """Expose the SDK-backed unittest cases as a top-level inventory evidence selector."""
+    names = [
+        name for name in unittest.defaultTestLoader.getTestCaseNames(M365RouteTests)
+        if name.startswith("test_bindings_")
+        or name == "test_dependency_errors_do_not_reveal_sdk_or_configuration_text"
+    ]
+    result = unittest.TestResult()
+    unittest.TestSuite(M365RouteTests(name) for name in names).run(result)
+    assert result.wasSuccessful(), result.errors + result.failures
 
 
 if __name__ == "__main__":

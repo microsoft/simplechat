@@ -1,0 +1,576 @@
+// Sidebar.tsx
+// The single navigation surface. SimpleChat V2 has no top bar by design: brand, primary
+// navigation, workspace scopes, theme control and the user menu all live in this rail,
+// which collapses to an icon strip.
+//
+// The user menu carries everything about *your* account rather than about your work: your
+// own settings, administration for those who have it, the way back to the classic interface
+// and signing out. Admin Settings sits here rather than in the primary list above, which is
+// the list of places you work; the classic interface draws the same line, keeping App
+// Settings under an Admin heading in its account dropdown.
+//
+// The menu deliberately offers one destination for personal settings. It used to offer
+// two — Settings here and Profile in the classic interface — which was a choice nobody had
+// the information to make, since the classic profile page is where the settings *and* the
+// activity stats were. The stats now live on the Settings page's Stats tab, so the second
+// entry has nothing left to lead to.
+
+import { useEffect, useRef, useState } from 'react';
+import { NavLink, useLocation } from 'react-router-dom';
+import { clsx } from 'clsx';
+import {
+    CheckCircle2,
+    ChevronDown,
+    ChevronLeft,
+    ChevronRight,
+    ClipboardCheck,
+    FolderOpen,
+    Globe2,
+    LogOut,
+    MessageSquarePlus,
+    MessagesSquare,
+    Moon,
+    Settings,
+    ShieldCheck,
+    SlidersHorizontal,
+    Sparkles,
+    Sun,
+    Users,
+} from 'lucide-react';
+import { useUiStore } from '../../stores/uiStore';
+import { clearConversationModes } from '../../lib/conversationMode';
+import { useBootstrapStore } from '../../stores/bootstrapStore';
+import { useChatStore } from '../../stores/chatStore';
+import { classicChatHref } from '../../lib/conversationUrl';
+import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
+import { reviewAccessInput, reviewSections } from '../../lib/reviewAccess';
+import { ConversationRail } from '../chat/ConversationRail';
+import { NavExtras } from './NavExtras';
+import { SupportMenu } from './SupportMenu';
+import { NotificationBell } from './NotificationBell';
+import { UserAvatar } from './UserAvatar';
+import { useWorkflowAlertCalloutShown, WorkflowAlertRowSlot } from '../notifications/WorkflowAlertNotice';
+
+interface NavItem {
+    to: string;
+    label: string;
+    icon: typeof MessagesSquare;
+    /** Hover text. Two entries are easily confused without it, so both say what they are. */
+    hint?: string;
+}
+
+// Home is deliberately absent. The brand mark above this list is the link to it, which is
+// where a reader looks for it anyway; a nav row saying the same thing spent a slot on a
+// destination the logo already implies.
+const NAV_ITEMS: NavItem[] = [
+    { to: '/chat', label: 'Chats', icon: MessagesSquare },
+    {
+        to: '/agents',
+        label: 'Agents',
+        icon: Sparkles,
+        // Distinct from My Workspace > Agents, which is where you build your own. This is
+        // the catalogue of every agent you are allowed to use, wherever it came from.
+        hint: 'Browse every agent you can use',
+    },
+    {
+        to: '/workspace',
+        label: 'My Workspace',
+        icon: FolderOpen,
+        hint: 'Your documents, prompts, agents and automation',
+    },
+    { to: '/groups', label: 'Group Workspaces', icon: Users },
+    { to: '/public', label: DEFAULT_PUBLIC_WORKSPACE_LABELS.plural, icon: Globe2 },
+    { to: '/approvals', label: 'Approval requests', icon: CheckCircle2, hint: 'Approve or deny requests waiting on you' },
+    { to: '/content-review', label: 'Content review', icon: ShieldCheck, hint: 'Review screened knowledge, including existing holds when new scanning is disabled' },
+];
+
+/**
+ * A rail destination, kept as a path relative to the router's `/v2` base.
+ *
+ * It must never become a full URL. React Router treats an absolute URL outside the `/v2`
+ * basename as an external link and renders a plain anchor, so every rail link would reload
+ * the classic page at that path instead of routing within V2 (#1698).
+ */
+function safeNavHref(value: string): string {
+    return NAV_ITEMS.some((item) => item.to === value) ? value : '/chat';
+}
+
+function BrandMark({ collapsed }: { collapsed: boolean }) {
+    const branding = useBootstrapStore((state) => state.data?.branding);
+    const theme = useUiStore((state) => state.theme);
+
+    const themedLogoUrl = theme === 'dark' ? branding?.logo_dark_url : branding?.logo_url;
+    const title = branding?.app_title || 'SimpleChat';
+
+    // A logo counts only when one is stored *and* switched on.
+    const logoUrl = branding?.show_logo ? themedLogoUrl : null;
+    const showTitle = !collapsed && !branding?.hide_app_title;
+    // The letter square stands in for a mark there is either no configuration or no room
+    // for, so it is drawn only where the title itself is not: in the collapsed rail, or
+    // when the title is hidden. Beside the title it was the same word twice.
+    const showInitial = !logoUrl && !showTitle;
+
+    return (
+        // The brand is the way back to the landing page -- there is no separate Home nav
+        // item, because this is where a reader looks for one. `end` matters: without it
+        // "/" prefixes every route and this would claim aria-current on all of them.
+        //
+        // The accessible name carries the title rather than reading only "Home", so the
+        // visible label stays inside the accessible name (WCAG 2.5.3) and the link is
+        // still named when the rail is collapsed to the logo or the letter alone.
+        <NavLink
+            to="/"
+            end
+            aria-label={`${title} home`}
+            className={clsx(
+                '-mx-1.5 flex min-w-0 items-center gap-2.5 rounded-xl px-1.5 py-1.5',
+                'transition-colors hover:bg-surface-2',
+                collapsed && 'justify-center',
+            )}
+        >
+            {logoUrl && (
+                // Height-constrained with a free width, matching the classic navigation.
+                // Forcing a square would letterbox or crop the wordmark most deployments
+                // upload. The collapsed rail is only 68px wide, so the cap tightens there.
+                //
+                // Decorative: the link names itself, so alt text would announce twice.
+                <img
+                    src={logoUrl}
+                    alt=""
+                    className={clsx(
+                        'h-8 w-auto shrink-0 object-contain',
+                        collapsed ? 'max-w-[44px]' : 'max-w-[150px]',
+                    )}
+                />
+            )}
+            {showInitial && (
+                <span
+                    aria-hidden="true"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent text-sm font-bold text-on-accent"
+                >
+                    {title.slice(0, 1).toUpperCase()}
+                </span>
+            )}
+            {showTitle && (
+                <span className="truncate text-[15px] font-semibold text-text-1" title={title}>
+                    {title}
+                </span>
+            )}
+        </NavLink>
+    );
+}
+
+function UserMenu({ collapsed }: { collapsed: boolean }) {
+    const bootstrap = useBootstrapStore((state) => state.data);
+    const user = bootstrap?.user;
+    const controlCenter = bootstrap?.control_center;
+    const isAdmin = Boolean(user?.is_admin);
+    const canOpenControlCenter = Object.values(controlCenter ?? {}).some(Boolean);
+    // One entry for the Review center whenever either of its sections is open to this user;
+    // the same rules as the server's feedback and safety review decorators.
+    const canReview = reviewSections(reviewAccessInput(bootstrap)).length > 0;
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const [open, setOpen] = useState(false);
+    const containerRef = useRef<HTMLDivElement>(null);
+
+    // Without this the menu could only be dismissed by choosing something from it or by
+    // clicking the avatar again, which is not how any other menu in the app behaves.
+    useEffect(() => {
+        if (!open) {
+            return;
+        }
+
+        const onPointerDown = (event: MouseEvent) => {
+            if (!containerRef.current?.contains(event.target as Node)) {
+                setOpen(false);
+            }
+        };
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                setOpen(false);
+            }
+        };
+
+        document.addEventListener('mousedown', onPointerDown);
+        document.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.removeEventListener('mousedown', onPointerDown);
+            document.removeEventListener('keydown', onKeyDown);
+        };
+    }, [open]);
+
+    const itemClass =
+        'flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-text-1 hover:bg-surface-2';
+
+    // A disclosure containing links rather than an ARIA menu. `role="menu"` would strip the
+    // link semantics from its children and promise arrow-key navigation that is not
+    // implemented, which reads worse than the plain links do.
+    const panelId = 'sidebar-account-menu';
+
+    return (
+        <div className="relative" ref={containerRef}>
+            {open && (
+                <div
+                    id={panelId}
+                    aria-label="Account"
+                    className={clsx(
+                        'glass-modal absolute z-50 overflow-hidden rounded-2xl p-1.5',
+                        // Collapsed, the rail is a 68px strip with no room for a panel above
+                        // the avatar, so the menu comes out beside it instead. The rail sets
+                        // no overflow, so this escapes the strip without needing a portal.
+                        collapsed
+                            ? 'bottom-0 left-full ml-2 w-56'
+                            : 'bottom-full left-0 mb-2 w-full',
+                    )}
+                >
+                    {/* The collapsed rail hides the name on the button, so the menu says
+                        whose account it is rather than opening unlabelled. */}
+                    {collapsed && (
+                        <div className="border-b border-edge px-3 pt-1 pb-2">
+                            <p className="truncate text-sm font-medium text-text-1">
+                                {user?.display_name || 'Signed in'}
+                            </p>
+                            {isAdmin && <p className="text-[11px] text-text-3">Administrator</p>}
+                        </div>
+                    )}
+
+                    <NavLink
+                        to="/settings"
+                        onClick={() => setOpen(false)}
+                        className={clsx(itemClass, collapsed && 'mt-1')}
+                    >
+                        <SlidersHorizontal size={15} /> User Settings
+                    </NavLink>
+                    {isAdmin && (
+                        <NavLink to="/admin" onClick={() => setOpen(false)} className={itemClass}>
+                            <Settings size={15} /> Admin Settings
+                        </NavLink>
+                    )}
+                    {canReview && (
+                        <NavLink to="/admin/review" onClick={() => setOpen(false)} className={itemClass}>
+                            <ClipboardCheck size={15} /> Review center
+                        </NavLink>
+                    )}
+                    {canOpenControlCenter && (
+                        <NavLink to="/control-center" onClick={() => setOpen(false)} className={itemClass}>
+                            <ShieldCheck size={15} /> Control Center
+                        </NavLink>
+                    )}
+                    {/* Carries the open conversation across, since both interfaces read the
+                        same parameter. Crossing over otherwise lands on the conversation
+                        list, leaving you to find your place again. */}
+                    <a href={classicChatHref(activeConversationId)} className={itemClass}>
+                        <ChevronLeft size={15} /> Back to classic UI
+                    </a>
+                    <a
+                        href="/logout"
+                        onClick={() => clearConversationModes(user?.id ?? '')}
+                        className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-danger hover:bg-danger-soft"
+                    >
+                        <LogOut size={15} /> Sign out
+                    </a>
+                </div>
+            )}
+
+            <button
+                type="button"
+                onClick={() => setOpen((isOpen) => !isOpen)}
+                aria-expanded={open}
+                aria-controls={panelId}
+                data-tour="user-menu"
+                // Collapsed, the avatar is the only content and carries no text of its own
+                // once a profile photo replaces the initials, so the button needs a name.
+                aria-label={collapsed ? 'Account' : undefined}
+                title={collapsed ? user?.display_name || 'Account' : undefined}
+                className={clsx(
+                    'flex w-full items-center gap-2.5 rounded-xl p-2 transition-colors hover:bg-surface-2',
+                    collapsed && 'justify-center',
+                )}
+            >
+                <UserAvatar size={32} />
+                {!collapsed && (
+                    <>
+                        <span className="min-w-0 flex-1 text-left">
+                            <span className="block truncate text-sm font-medium text-text-1">
+                                {user?.display_name || 'Signed in'}
+                            </span>
+                            {isAdmin && (
+                                <span className="block text-[11px] text-text-3">Administrator</span>
+                            )}
+                        </span>
+                        <ChevronDown
+                            size={14}
+                            className={clsx('shrink-0 text-text-3 transition-transform', open && 'rotate-180')}
+                        />
+                    </>
+                )}
+            </button>
+        </div>
+    );
+}
+
+export function Sidebar({ mobile = false }: { mobile?: boolean }) {
+    const { railCollapsed, toggleRail, theme, toggleTheme, mobileNavOpen, setMobileNavOpen } = useUiStore();
+    const startNewConversation = useChatStore((state) => state.startNewConversation);
+    const publicLabels = usePublicWorkspaceLabels();
+    const activeConversationId = useChatStore((state) => state.activeConversationId);
+    const location = useLocation();
+    const expandRef = useRef<HTMLButtonElement>(null);
+    const collapseRef = useRef<HTMLButtonElement>(null);
+    const railScrollRef = useRef<HTMLDivElement>(null);
+    const alertCalloutShown = useWorkflowAlertCalloutShown();
+    const navRef = useRef<HTMLElement>(null);
+    const previousRoute = useRef({ pathname: location.pathname, conversation: activeConversationId });
+
+    const onChatPage = location.pathname.startsWith('/chat');
+    const collapsed = mobile ? !mobileNavOpen : railCollapsed;
+    // The conversation list is drawn only on the chat page, and only in the full rail.
+    const showConversations = onChatPage && !collapsed;
+    const toggleNavigation = () => mobile ? setMobileNavOpen(!mobileNavOpen) : toggleRail();
+
+    useEffect(() => {
+        const previous = previousRoute.current;
+        if (mobile && (previous.pathname !== location.pathname || previous.conversation !== activeConversationId)) {
+            setMobileNavOpen(false);
+        }
+        previousRoute.current = { pathname: location.pathname, conversation: activeConversationId };
+    }, [mobile, location.pathname, activeConversationId, setMobileNavOpen]);
+
+    useEffect(() => {
+        if (!mobile || !mobileNavOpen) return;
+        const opener = document.activeElement;
+        collapseRef.current?.focus();
+        const onKeyDown = (event: KeyboardEvent) => {
+            if (document.querySelector('[role="dialog"]')) return;
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setMobileNavOpen(false);
+            }
+            if (event.key === 'Tab') {
+                const controls = [...(navRef.current?.querySelectorAll<HTMLElement>(
+                    'a[href], button, input, select, [tabindex="0"]',
+                ) ?? [])].filter((item) => !item.matches(':disabled') && item.getClientRects().length > 0);
+                const first = controls[0];
+                const last = controls[controls.length - 1];
+                if (event.shiftKey && document.activeElement === first) {
+                    event.preventDefault();
+                    last?.focus();
+                } else if (!event.shiftKey && document.activeElement === last) {
+                    event.preventDefault();
+                    first?.focus();
+                }
+            }
+        };
+        document.addEventListener('keydown', onKeyDown);
+        return () => {
+            document.removeEventListener('keydown', onKeyDown);
+            requestAnimationFrame(() => {
+                if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+            });
+        };
+    }, [mobile, mobileNavOpen, setMobileNavOpen]);
+
+    /**
+     * Arriving at the chat page from elsewhere starts a fresh chat.
+     *
+     * The store is not reset by navigation — it is plain in-memory state that outlives a
+     * route change — so without this, returning to the chat page silently re-opens the
+     * conversation last read and puts it back in the address bar. Since `New chat` is only
+     * offered on the chat page, this is what makes a new chat reachable from anywhere else.
+     *
+     * Two things are deliberately left alone. Clicking `Chats` while already on the chat
+     * page does nothing, so a stray click on the highlighted nav item cannot throw away
+     * whatever is being read. And a conversation still streaming a reply is returned to
+     * rather than reset, so a reply being watched stays on screen instead of being swapped
+     * out for an empty composer. The reply itself is no longer at stake: resetting detaches
+     * the reader without cancelling the generation, so the answer finishes and is saved
+     * either way.
+     *
+     * `streaming` is read from the store rather than subscribed to: it changes with every
+     * token, and subscribing would re-render this rail — conversation list included —
+     * throughout a response.
+     */
+    const startNewChatOnArrival = () => {
+        if (onChatPage || useChatStore.getState().streaming) {
+            return;
+        }
+        startNewConversation();
+    };
+
+    return (
+        <nav
+            ref={navRef}
+            id="primary-navigation"
+            aria-label="Primary"
+            onClickCapture={(event) => {
+                if (mobile && event.target instanceof Element && event.target.closest('a')) {
+                    setMobileNavOpen(false);
+                }
+            }}
+            className={clsx(
+                'glass glass-edge flex h-full shrink-0 flex-col rounded-none border-y-0 border-l-0 transition-[width] duration-200',
+                collapsed ? 'w-[68px]' : 'w-[280px]',
+                mobile && 'absolute inset-y-0 left-0 z-50 max-w-full',
+                mobile && mobileNavOpen && 'glass-modal',
+                // A workflow alert's notice hangs from the bell past the rail's edge, over the page.
+                !mobile && alertCalloutShown && 'z-40',
+            )}
+        >
+            <div
+                className={clsx(
+                    'flex h-14 shrink-0 items-center gap-2 px-3',
+                    collapsed && 'justify-center',
+                )}
+            >
+                <BrandMark collapsed={collapsed} />
+                {!collapsed && (
+                    <>
+                        {/* Desktop keeps notifications beside the brand; phones use the header. */}
+                        {!mobile && <NotificationBell collapsed={false} className="ml-auto" />}
+                        <button
+                            type="button"
+                            ref={collapseRef}
+                            onClick={toggleNavigation}
+                            aria-label={mobile ? 'Close navigation' : 'Collapse navigation'}
+                            aria-expanded="true"
+                            aria-controls="primary-navigation"
+                            className={clsx(
+                                'rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1',
+                                mobile && 'ml-auto',
+                            )}
+                        >
+                            <ChevronLeft size={17} />
+                        </button>
+                    </>
+                )}
+            </div>
+
+            {/* An alert that needs acknowledgment stays until someone acknowledges it, so in the
+                full rail it takes a row of its own here, under the bell it hangs from, rather
+                than covering New chat and the page as an ordinary notice briefly does. */}
+            <WorkflowAlertRowSlot collapsed={collapsed} />
+
+            {collapsed && (
+                <>
+                    {/* The collapsed strip has no room beside the brand, so the bell takes the
+                        row under it and shows a dot instead of a number. Its wrapper spans the
+                        strip's inner width, so a workflow alert flying out from the bell starts
+                        at the strip's edge. */}
+                    <NotificationBell collapsed className="mx-3 mb-1 justify-center" />
+                    <button
+                        type="button"
+                        ref={expandRef}
+                        onClick={toggleNavigation}
+                        aria-label="Expand navigation"
+                        aria-expanded="false"
+                        aria-controls="primary-navigation"
+                        className="mx-auto mb-2 rounded-lg p-1.5 text-text-3 transition-colors hover:bg-surface-2 hover:text-text-1"
+                    >
+                        <ChevronRight size={17} />
+                    </button>
+                </>
+            )}
+
+            {/* Only offered where it has somewhere to act. On any other page it reset chat
+                state that was not on screen and left the reader where they were, which
+                looked like a button that did nothing. `Chats` covers that case instead. */}
+            {onChatPage && (
+                <div className="px-3">
+                    <button
+                        type="button"
+                        onClick={() => {
+                            startNewConversation();
+                            if (mobile) setMobileNavOpen(false);
+                        }}
+                        title="Start a new chat"
+                        data-tour="new-chat"
+                        className={clsx(
+                            'flex w-full items-center gap-2 rounded-xl bg-accent px-3 py-2.5',
+                            'text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover',
+                            collapsed && 'justify-center px-0',
+                        )}
+                    >
+                        <MessageSquarePlus size={17} className="shrink-0" />
+                        {!collapsed && <span>New chat</span>}
+                    </button>
+                </div>
+            )}
+
+            {/* On the chat page, everything between New chat and the footer scrolls as one
+                panel, as the classic sidebar does. Reading down the conversation list carries
+                the navigation up out of view and pins the list's search right under New chat,
+                so the list gets nearly the whole rail rather than whatever the navigation
+                leaves it. Everywhere else, and in the collapsed strip, nothing here scrolls: the
+                region only fills the height the footer leaves, as the spacer it replaced did. */}
+            <div
+                ref={railScrollRef}
+                data-rail-scroll-region=""
+                className={clsx('flex-1', (showConversations || mobile) && 'min-h-0 overflow-y-auto')}
+            >
+                <ul className={clsx('space-y-0.5 px-3', onChatPage && 'mt-3')}>
+                    {NAV_ITEMS.map((item) => (
+                        <li key={item.to}>
+                            {(() => {
+                                const label = item.to === '/public' ? publicLabels.plural : item.label;
+                                return (
+                            <NavLink
+                                to={safeNavHref(item.to)}
+                                onClick={item.to === '/chat' ? startNewChatOnArrival : undefined}
+                                title={collapsed ? label : item.hint}
+                                className={({ isActive }) =>
+                                    clsx(
+                                        'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
+                                        collapsed && 'justify-center px-0',
+                                        isActive
+                                            ? 'bg-accent-soft font-medium text-accent'
+                                            : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
+                                    )
+                                }
+                            >
+                                <item.icon size={17} className="shrink-0" />
+                                {!collapsed && <span className="truncate">{label}</span>}
+                            </NavLink>
+                                );
+                            })()}
+                        </li>
+                    ))}
+                </ul>
+
+                {/* Custom pages and external links an administrator configured. Renders
+                    nothing when neither is enabled, which is the default. */}
+                <NavExtras collapsed={collapsed} />
+
+                {/* The Support menu: Latest Features, until the user hides it, and Send
+                    Feedback. Renders nothing when an administrator has offered neither. */}
+                <SupportMenu collapsed={collapsed} />
+
+                {/* The conversation list only belongs in the rail while the chat page is open,
+                    so other pages get the full rail height for their own navigation. */}
+                {showConversations && <ConversationRail scrollRootRef={railScrollRef} />}
+            </div>
+
+            <div className="shrink-0 space-y-1 border-t border-edge p-3">
+                <button
+                    type="button"
+                    onClick={toggleTheme}
+                    title={collapsed ? 'Toggle theme' : undefined}
+                    aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
+                    className={clsx(
+                        'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-sm',
+                        'text-text-2 transition-colors hover:bg-surface-2 hover:text-text-1',
+                        collapsed && 'justify-center px-0',
+                    )}
+                >
+                    {theme === 'dark' ? (
+                        <Sun size={17} className="shrink-0" />
+                    ) : (
+                        <Moon size={17} className="shrink-0" />
+                    )}
+                    {!collapsed && <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>}
+                </button>
+
+                <UserMenu collapsed={collapsed} />
+            </div>
+        </nav>
+    );
+}

@@ -1,7 +1,7 @@
 # test_tabular_analyze_per_document_multifile_state.py
 """
 Functional test for Phase 6 per-document tabular Analyze state preservation.
-Version: 0.250.167
+Version: 0.261.109
 Implemented in: 0.250.162; all-canceled aggregate coverage in 0.250.167
 
 This test ensures recursive per-document Analyze preserves pending tabular
@@ -14,6 +14,7 @@ from pathlib import Path
 import sys
 
 from test_support.versioning import assert_app_version_at_least
+from test_support.app_stubs import import_app_module
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,7 @@ def load_per_document_namespace():
         "_get_per_document_status_label",
         "_get_per_document_fallback_reply",
         "_combine_per_document_analysis_results",
+        "_combine_final_analysis_results",
     }
     selected_nodes = [
         node
@@ -96,6 +98,7 @@ def load_per_document_namespace():
         "_get_tabular_generated_output_status": get_output_status,
         "_is_nonterminal_tabular_generated_output": is_nonterminal_output,
         "_select_preferred_workflow_alert_targets": lambda alert_targets: list(alert_targets or []),
+        "get_workflow_result_text": import_app_module("functions_workflow_results").get_workflow_result_text,
     }
     exec(compile(ast.Module(body=selected_nodes, type_ignores=[]), str(WORKFLOW_RUNNER), "exec"), namespace)
     return namespace

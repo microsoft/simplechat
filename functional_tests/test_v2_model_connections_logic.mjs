@@ -1,0 +1,608 @@
+// test_v2_model_connections_logic.mjs
+//
+// Runtime test for the V2 global model connection form logic.
+// Version: 0.261.410
+// Implemented in: 0.261.059; embeddings added in 0.261.106
+// Automatic Foundry routing and model presets: 0.261.410
+//
+// The classic connection editor decided which fields a provider and auth type needed by
+// toggling `d-none` across two dozen elements from three separate listeners, and reported
+// a validation failure as a toast that named the problem but not the control. Both are why
+// it was hard to tell what a connection still needed.
+//
+// The replacement derives visibility and validation from the draft in one place, so those
+// rules can be executed here rather than inferred from the rendered DOM. The payload
+// builder is checked too, because two of its decisions are silent if wrong: sending a blank
+// secret would erase a stored key, and sending a provider's unused fields would persist
+// coordinates that no longer apply.
+//
+// Run directly with `node functional_tests/test_v2_model_connections_logic.mjs`. Requires
+// Node 22.6 or newer, which strips the TypeScript types so the real module is imported.
+
+import assert from 'node:assert/strict';
+
+import './test_support/tsResolve.mjs';
+
+const {
+    buildConnectionPayload,
+    emptyConnection,
+    defaultEmbeddingApi,
+    enabledModelCount,
+    endpointIncludesProject,
+    isFoundryProvider,
+    mergeDiscoveredModels,
+    projectNameFromEndpoint,
+    providerLabel,
+    toEditableConnection,
+    validateConnection,
+    visibleFields,
+    setEmbeddingOperation,
+    selectModelCatalogProfile,
+} = await import('../application/v2_ui/src/lib/modelConnections.ts');
+const { isNativeFoundryEndpoint, usesMaiChatCompletions } = await import('../application/v2_ui/src/lib/modelInference.ts');
+const { findAutomaticCatalogProfile } = await import('../application/v2_ui/src/lib/modelCatalog.ts');
+
+const checks = [];
+function check(name, fn) {
+    checks.push([name, fn]);
+}
+
+/** A connection that passes validation, so each check can break exactly one thing. */
+function validAoai(overrides = {}) {
+    const base = emptyConnection();
+    return {
+        ...base,
+        ...overrides,
+        name: 'Primary',
+        connection: {
+            ...base.connection,
+            endpoint: 'https://example.openai.azure.com',
+            ...(overrides.connection ?? {}),
+        },
+        management: {
+            subscription_id: '00000000-0000-0000-0000-000000000000',
+            resource_group: 'rg-ai',
+            ...(overrides.management ?? {}),
+        },
+        auth: { ...base.auth, ...(overrides.auth ?? {}) },
+    };
+}
+
+/* ------------------------------- provider shape ------------------------------ */
+
+check('foundry providers are recognised by both stored names', () => {
+    assert.equal(isFoundryProvider('aifoundry'), true);
+    assert.equal(isFoundryProvider('new_foundry'), true);
+    assert.equal(isFoundryProvider('aoai'), false);
+});
+
+check('provider labels fall back to the raw value rather than going blank', () => {
+    assert.equal(providerLabel('aoai'), 'Azure OpenAI');
+    assert.equal(providerLabel('anthropic'), 'anthropic');
+    assert.equal(providerLabel(''), 'Connection');
+});
+
+check('a project endpoint URL yields its project name', () => {
+    assert.equal(endpointIncludesProject('https://x.services.ai.azure.com/api/projects/proj'), true);
+    assert.equal(
+        projectNameFromEndpoint('https://x.services.ai.azure.com/api/projects/my-project'),
+        'my-project',
+    );
+    // A half-typed endpoint is not a parseable URL, but the hint should still work.
+    assert.equal(projectNameFromEndpoint('x.services.ai/api/projects/partial?x=1'), 'partial');
+    assert.equal(projectNameFromEndpoint('https://example.openai.azure.com'), '');
+});
+
+/* ------------------------------- field visibility ---------------------------- */
+
+check('an API key connection hides the Azure discovery fields', () => {
+    // Discovery goes through Azure Resource Manager, which an API key cannot reach, so
+    // asking for a subscription and resource group would be asking for nothing.
+    const shown = visibleFields(validAoai({ auth: { type: 'api_key' } }));
+    assert.equal(shown.apiKey, true);
+    assert.equal(shown.management, false);
+    assert.equal(shown.managementCloud, false);
+    assert.equal(shown.servicePrincipal, false);
+    assert.equal(shown.managedIdentity, false);
+});
+
+check('managed identity shows a client id only when user assigned', () => {
+    const system = visibleFields(validAoai({ auth: { type: 'managed_identity' } }));
+    assert.equal(system.userAssignedClientId, false);
+
+    const user = visibleFields(
+        validAoai({ auth: { type: 'managed_identity', managed_identity_type: 'user_assigned' } }),
+    );
+    assert.equal(user.userAssignedClientId, true);
+});
+
+check('a custom management cloud reveals the authority field', () => {
+    const publicCloud = visibleFields(validAoai({ auth: { type: 'service_principal' } }));
+    assert.equal(publicCloud.customAuthority, false);
+
+    const custom = visibleFields(
+        validAoai({ auth: { type: 'service_principal', management_cloud: 'custom' } }),
+    );
+    assert.equal(custom.customAuthority, true);
+});
+
+check('foundry fields appear only for foundry providers', () => {
+    assert.equal(visibleFields(validAoai()).project, false);
+    const foundry = visibleFields(validAoai({ provider: 'new_foundry' }));
+    assert.equal(foundry.project, true);
+    assert.equal(foundry.foundryScope, true);
+    // Foundry discovery does not use ARM coordinates.
+    assert.equal(foundry.management, false);
+});
+
+check('custom embedding connections show API keys only and never Azure discovery fields', () => {
+    const shown = visibleFields(validAoai({ provider: 'openai_compatible' }));
+    assert.equal(shown.apiKey, true);
+    for (const field of ['project', 'management', 'managementCloud', 'servicePrincipal', 'managedIdentity', 'customAuthority', 'foundryScope', 'userAssignedClientId', 'openAiVersion', 'discovery']) {
+        assert.equal(shown[field], false, field);
+    }
+    assert.equal(toEditableConnection({ id: 'custom', provider: 'openai_compatible' }).auth.type, 'api_key');
+});
+
+check('canonical Custom transport controls and embedding aliases stay distinct', () => {
+    for (const authType of ['api_key', 'bearer', 'oauth2_client_credentials']) {
+        const canonical = toEditableConnection({ id: 'custom', provider: 'custom', api_type: 'openai', auth: { type: authType } });
+        assert.equal(canonical.auth.type, authType);
+        assert.equal(canonical.connection.url_mode, 'auto');
+        const shown = visibleFields(canonical);
+        assert.equal(shown.apiKey, authType === 'api_key');
+        for (const field of ['project', 'management', 'managedIdentity', 'servicePrincipal', 'managementCloud', 'customAuthority', 'userAssignedClientId', 'openAiVersion', 'discovery']) {
+            assert.equal(shown[field], false, `${authType}: ${field}`);
+        }
+    }
+    assert.equal(toEditableConnection({ id: 'alias', provider: 'openai_compatible' }).provider, 'openai_compatible');
+});
+
+/* --------------------------------- validation -------------------------------- */
+
+check('a complete Azure OpenAI connection validates', () => {
+    assert.deepEqual(validateConnection(validAoai()), {});
+});
+
+check('unknown embedding models require verified support and explicit dimensions and token limits', () => {
+    const custom = validAoai({
+        provider: 'openai_compatible', auth: { type: 'api_key', api_key: 'fixture-key' },
+        connection: { endpoint: 'https://gateway.test/api/v1', openai_api_version: '' },
+        models: [{ deploymentName: 'custom-embedding', enabled: true }],
+    });
+    assert.ok(validateConnection(custom).model_0_supportsEmbeddings);
+    custom.models[0].supportsEmbeddings = true;
+    const incomplete = validateConnection(custom);
+    assert.ok(incomplete.model_0_dimensions && incomplete.model_0_max_input_tokens);
+    custom.models[0].embedding_config = { dimensions: 768, max_input_tokens: 2048, model_revision: 'rev-1' };
+    assert.deepEqual(validateConnection(custom), {});
+    for (const invalid of [true, 0, -1, 1.5, '768', NaN]) {
+        assert.ok(validateConnection({ ...custom, models: [{ ...custom.models[0], embedding_config: { dimensions: invalid, max_input_tokens: 2048 } }] }).model_0_dimensions);
+    }
+    assert.ok(validateConnection({ ...custom, auth: { type: 'managed_identity' } }).auth_type);
+    assert.ok(validateConnection(custom, { requireDiscovery: true }).discovery);
+});
+
+check('known embedding models retain catalog defaults and do not acquire an implicit resize', () => {
+    const known = validAoai({ models: [{ deploymentName: 'text-embedding-3-large', enabled: true }] });
+    assert.deepEqual(validateConnection(known), {});
+    assert.equal(buildConnectionPayload(known).models[0].embedding_config, undefined);
+});
+
+check('Cohere gateway attestation retains catalog dimensions and input limits', () => {
+    const connection = validAoai({
+        models: [{ deploymentName: 'cohere-deployment', modelName: 'embed-v-4-0', embedding_config: { openai_compatible: true } }],
+        connection: {
+            endpoint: 'https://gateway.test/openai/v1/',
+            operation_settings: { embeddings: { api: 'openai' } },
+        },
+    });
+    assert.deepEqual(validateConnection(connection), {});
+    assert.deepEqual(buildConnectionPayload(connection).models[0].embedding_config, { openai_compatible: true });
+});
+
+check('Foundry project URLs require an explicit embedding inference base', () => {
+    const foundry = validAoai({
+        provider: 'new_foundry',
+        connection: { endpoint: 'https://resource.test/api/projects/project', openai_api_version: 'v1' },
+        models: [{ deploymentName: 'text-embedding-3-small', enabled: true }],
+    });
+    assert.match(validateConnection(foundry).embedding_endpoint, /project endpoints do not route embeddings/);
+    const configured = setEmbeddingOperation(foundry, 'endpoint', 'https://resource.test/openai/v1/');
+    assert.deepEqual(validateConnection(configured), {});
+    assert.equal(buildConnectionPayload(configured).connection.endpoint, foundry.connection.endpoint);
+    assert.equal(defaultEmbeddingApi(foundry), 'openai');
+    assert.equal(defaultEmbeddingApi(validAoai()), 'azure_openai');
+    assert.equal(defaultEmbeddingApi(validAoai({ connection: { endpoint: 'https://resource.test/openai/v1/' } })), 'openai');
+    assert.ok(validateConnection(setEmbeddingOperation(configured, 'api_version', '2024-01-01')).embedding_api_version);
+});
+
+check('validation reports the field, not just the failure', () => {
+    const errors = validateConnection({ ...validAoai(), name: '' });
+    assert.ok(errors.name, 'expected a name error');
+    assert.equal(Object.keys(errors).length, 1);
+});
+
+check('an endpoint without a scheme is refused', () => {
+    const errors = validateConnection(
+        validAoai({ connection: { endpoint: 'example.openai.azure.com' } }),
+    );
+    assert.ok(errors.endpoint);
+});
+
+check('Azure OpenAI discovery requires the resource coordinates', () => {
+    const errors = validateConnection(
+        validAoai({ management: { subscription_id: '', resource_group: '' } }),
+        { requireDiscovery: true },
+    );
+    assert.ok(errors.subscription_id);
+    assert.ok(errors.resource_group);
+});
+
+check('manual model connections do not require discovery-only resource coordinates', () => {
+    assert.deepEqual(validateConnection(
+        validAoai({ management: { subscription_id: '', resource_group: '' } }),
+    ), {});
+});
+
+check('an API key connection does not demand the discovery coordinates', () => {
+    const errors = validateConnection(
+        validAoai({
+            auth: { type: 'api_key', api_key: 'secret-value' },
+            management: { subscription_id: '', resource_group: '' },
+        }),
+    );
+    assert.deepEqual(errors, {});
+});
+
+check('a stored secret satisfies validation when the input is left blank', () => {
+    // The server strips secrets on the way out, so the editor never holds one. Demanding a
+    // value here would force an administrator to retype the key to change anything else.
+    const stored = {
+        ...validAoai({ auth: { type: 'api_key', api_key: '' } }),
+        has_api_key: true,
+    };
+    assert.deepEqual(validateConnection(stored), {});
+
+    const absent = { ...validAoai({ auth: { type: 'api_key', api_key: '' } }), has_api_key: false };
+    assert.ok(validateConnection(absent).api_key);
+});
+
+check('service principal requires tenant, client and a secret unless one is stored', () => {
+    const missing = validateConnection(validAoai({ auth: { type: 'service_principal' } }));
+    assert.ok(missing.tenant_id);
+    assert.ok(missing.client_id);
+    assert.ok(missing.client_secret);
+
+    const withStored = {
+        ...validAoai({
+            auth: { type: 'service_principal', tenant_id: 't', client_id: 'c', client_secret: '' },
+        }),
+        has_client_secret: true,
+    };
+    assert.deepEqual(validateConnection(withStored), {});
+});
+
+check('native Foundry inference needs project coordinates only when discovering models', () => {
+    const connection = validAoai({
+            provider: 'new_foundry',
+            connection: {
+                endpoint: 'https://x.services.ai.azure.com',
+                openai_api_version: 'v1',
+                project_api_version: 'v1',
+                project_name: '',
+            },
+        });
+    assert.deepEqual(validateConnection(connection), {});
+    const errors = validateConnection(connection, { requireDiscovery: true });
+    assert.ok(errors.project_name);
+
+    const named = validateConnection(
+        validAoai({
+            provider: 'new_foundry',
+            connection: {
+                endpoint: 'https://x.services.ai.azure.com/api/projects/proj',
+                openai_api_version: 'v1',
+                project_api_version: 'v1',
+            },
+        }),
+    );
+    assert.equal(named.project_name, undefined);
+});
+
+check('one native Foundry project saves mixed models with either OpenAI API preference', () => {
+    for (const useResponses of [false, true]) {
+        const connection = validAoai({
+            provider: 'new_foundry',
+            connection: {
+                endpoint: 'https://resource.services.ai.azure.com/api/projects/team',
+                use_responses_api: useResponses, openai_api_version: '',
+            },
+            models: [
+                { id: 'gpt', deploymentName: 'gpt-prod', modelName: 'gpt-4o', enabled: true },
+                { id: 'grok', deploymentName: 'grok-4.7', modelName: 'grok-4.7', enabled: true },
+                { id: 'mai', deploymentName: 'mai-prod', modelName: 'MAI-Thinking-1', enabled: true },
+            ],
+        });
+        assert.deepEqual(validateConnection(connection), {});
+        assert.equal(visibleFields(connection).openAiVersion, false);
+        const payload = buildConnectionPayload(connection);
+        assert.equal(payload.connection.endpoint, connection.connection.endpoint);
+        assert.equal(payload.connection.use_responses_api, useResponses);
+        assert.equal(payload.models.length, 3);
+    }
+});
+
+check('built-in model selection fills canonical identity without changing aliases or overrides', () => {
+    const original = {
+        id: 'mai', deploymentName: 'deployment-alias', modelName: 'gateway-alias',
+        responseLength: 512, contextWindow: 128000, capabilities: { processesImages: false },
+        supportsChat: false, enabled_capabilities: [], capability_status: { chat: { supported: false } },
+    };
+    const before = structuredClone(original);
+    const selected = selectModelCatalogProfile(original, 'mai-thinking-1', { id: 'mai-thinking-1', origin: 'built_in' });
+    assert.equal(selected.catalogModelId, 'mai-thinking-1');
+    assert.equal(selected.catalogProfileId, 'mai-thinking-1');
+    for (const field of ['deploymentName', 'modelName', 'responseLength', 'contextWindow', 'capabilities', 'supportsChat', 'enabled_capabilities']) {
+        assert.deepEqual(selected[field], original[field], field);
+    }
+    assert.equal(selected.capability_status, undefined);
+    assert.deepEqual(original, before);
+    const native = selectModelCatalogProfile(original, 'mai-thinking-1', { id: 'mai-thinking-1', origin: 'built_in' }, 'new_foundry');
+    assert.equal(native.modelName, 'mai-thinking-1');
+    assert.equal(native.deploymentName, original.deploymentName);
+    const gateway = selectModelCatalogProfile(original, 'mai-thinking-1', { id: 'mai-thinking-1', origin: 'built_in' }, 'custom');
+    assert.equal(gateway.modelName, original.modelName);
+    const custom = validAoai({
+        provider: 'custom', api_type: 'openai', models: [selected],
+        connection: { endpoint: 'https://gateway.test/team/proxy', url_mode: 'exact' },
+        auth: { type: 'api_key', api_key: 'offline-key', api_key_header: 'Ocp-Apim-Subscription-Key', api_key_prefix: '' },
+    });
+    const payload = buildConnectionPayload(custom);
+    assert.equal(payload.connection.endpoint, custom.connection.endpoint);
+    assert.equal(payload.models[0].modelName, 'gateway-alias');
+    assert.equal(payload.models[0].catalogModelId, 'mai-thinking-1');
+    assert.equal(payload.auth.api_key_header, 'Ocp-Apim-Subscription-Key');
+});
+
+check('automatic matching and descriptive custom profiles do not invent model identities', () => {
+    const profiles = [
+        { id: 'mai-thinking-1', displayName: 'MAI-Thinking-1', origin: 'built_in', aliases: [], archived: false },
+        { id: 'custom:test', origin: 'custom', aliases: ['unknown-name'], archived: false },
+    ];
+    assert.equal(findAutomaticCatalogProfile(' MAI-Thinking-1 ', profiles)?.id, 'mai-thinking-1');
+    assert.equal(findAutomaticCatalogProfile('unknown-name', profiles), undefined);
+    const linked = { modelName: 'gateway-alias', catalogProfileId: 'mai-thinking-1', catalogModelId: 'mai-thinking-1' };
+    const custom = selectModelCatalogProfile(linked, 'custom:test', { id: 'custom:test', origin: 'custom' });
+    assert.equal(custom.catalogModelId, 'mai-thinking-1');
+    const automatic = selectModelCatalogProfile(linked, '', null);
+    assert.equal(automatic.catalogModelId, undefined);
+    const override = selectModelCatalogProfile({ ...linked, catalogModelId: 'independent-id' }, '', null);
+    assert.equal(override.catalogModelId, 'independent-id');
+});
+
+check('automatic native routing is never inferred from a gateway or misleading hostname', () => {
+    assert.equal(isNativeFoundryEndpoint('new_foundry', 'https://resource.services.ai.azure.com/api/projects/team'), true);
+    for (const [provider, endpoint] of [
+        ['custom', 'https://resource.services.ai.azure.com'],
+        ['new_foundry', 'https://gateway.test/api/projects/team'],
+        ['new_foundry', 'https://resource.services.ai.azure.com.attacker.test'],
+    ]) {
+        assert.equal(isNativeFoundryEndpoint(provider, endpoint), false);
+    }
+    for (const endpoint of ['http://resource.services.ai.azure.com', 'https://user:password@resource.services.ai.azure.com', 'https://resource.services.ai.azure.com?query=1']) {
+        assert.ok(validateConnection(validAoai({ provider: 'new_foundry', connection: { endpoint } })).endpoint);
+    }
+});
+
+check('native MAI inference saves without project discovery coordinates or a dated API version', () => {
+    for (const provider of ['aoai', 'aifoundry', 'new_foundry']) {
+        const connection = validAoai({
+            provider,
+            connection: {
+                endpoint: 'https://resource.services.ai.azure.com/mai/v1',
+                openai_api_version: '', project_api_version: '', project_name: '',
+            },
+            models: [{ id: 'mai', deploymentName: 'production-mai', modelName: 'MAI-Thinking-1', enabled: true }],
+        });
+        assert.deepEqual(validateConnection(connection), {});
+        const payload = buildConnectionPayload(connection);
+        assert.equal(payload.connection.endpoint, connection.connection.endpoint);
+        assert.equal(payload.models[0].deploymentName, 'production-mai');
+        if (provider !== 'aoai') {
+            const discovery = validateConnection(connection, { requireDiscovery: true });
+            assert.ok(discovery.project_name);
+            assert.ok(discovery.project_api_version);
+        }
+    }
+});
+
+check('MAI operation URLs save their native base and keep Responses off', () => {
+    const connection = toEditableConnection(validAoai({
+        connection: { endpoint: 'https://resource.services.ai.azure.com/mai/v1/chat/completions' },
+    }));
+    const payload = buildConnectionPayload(connection);
+    assert.equal(payload.connection.endpoint, 'https://resource.services.ai.azure.com/mai/v1');
+    assert.equal(payload.connection.use_responses_api, false);
+    for (const provider of ['aoai', 'new_foundry', 'custom']) {
+        const invalid = validAoai({
+            provider, api_type: 'openai',
+            connection: { endpoint: 'https://gateway.test/team/mai/v1', use_responses_api: true },
+            auth: { type: 'api_key', api_key: 'offline-key' },
+            models: [{ modelName: 'gateway-mai', enabled: true }],
+        });
+        assert.match(validateConnection(invalid).use_responses_api, /Chat Completions/);
+    }
+});
+
+check('MAI contract detection reads only a complete native path segment', () => {
+    assert.equal(usesMaiChatCompletions('https://gateway.test/team/mai/v1/chat/completions'), true);
+    for (const endpoint of [
+        'https://gateway.test/mai/v10', 'https://gateway.test/openai/v1?next=/mai/v1',
+        'https://mai.example/openai/v1', '',
+    ]) {
+        assert.equal(usesMaiChatCompletions(endpoint), false, endpoint);
+    }
+});
+
+/* ------------------------------- payload building ---------------------------- */
+
+check('a blank secret is omitted so a stored one survives the save', () => {
+    const payload = buildConnectionPayload({
+        ...validAoai({ auth: { type: 'api_key', api_key: '' } }),
+        has_api_key: true,
+    });
+    assert.equal('api_key' in payload.auth, false, 'a blank key must not be sent');
+
+    const replaced = buildConnectionPayload(
+        validAoai({ auth: { type: 'api_key', api_key: 'new-secret' } }),
+    );
+    assert.equal(replaced.auth.api_key, 'new-secret');
+});
+
+check('a provider only sends the auth fields it uses', () => {
+    const payload = buildConnectionPayload(validAoai({ auth: { type: 'api_key', api_key: 'k' } }));
+    assert.equal('tenant_id' in payload.auth, false);
+    assert.equal('managed_identity_type' in payload.auth, false);
+
+    const identity = buildConnectionPayload(validAoai());
+    assert.equal(identity.auth.managed_identity_type, 'system_assigned');
+    assert.equal('client_secret' in identity.auth, false);
+});
+
+check('custom payloads preserve explicit base paths and other operation settings without Azure fields', () => {
+    const operations = {
+        image_generation: { api_version: 'image-version', is_apim: true },
+        embeddings: { api: 'openai', endpoint: 'https://gateway.test/api/v1', is_apim: false, auth_header: 'authorization' },
+    };
+    const custom = validAoai({
+        provider: 'openai_compatible',
+        connection: { endpoint: 'https://gateway.test/api/v1', operation_settings: operations, project_name: 'not-used', project_api_version: 'v1' },
+        auth: { type: 'api_key', api_key: '' }, has_api_key: true,
+        models: [{ deploymentName: 'custom-embedding', supportsEmbeddings: true, enabled_capabilities: [], embedding_config: { dimensions: 768, max_input_tokens: 2048, max_batch_size: 3, query_prefix: 'query: ' } }],
+    });
+    const payload = buildConnectionPayload(custom);
+    assert.deepEqual(payload.auth, { type: 'api_key' });
+    assert.deepEqual(payload.management, {});
+    for (const field of ['project_name', 'project_api_version', 'openai_api_version', 'api_version']) {
+        assert.equal(field in payload.connection, false);
+    }
+    assert.equal(payload.connection.endpoint, 'https://gateway.test/api/v1');
+    assert.deepEqual(payload.connection.operation_settings, operations);
+    assert.deepEqual(payload.models[0].embedding_config, custom.models[0].embedding_config);
+    assert.deepEqual(payload.models[0].enabled_capabilities, []);
+    assert.ok(validateConnection(setEmbeddingOperation(custom, 'api', 'native')).embedding_api);
+    assert.ok(validateConnection(setEmbeddingOperation(custom, 'auth_header', 'X-Arbitrary-Header')).embedding_auth_header);
+});
+
+check('foundry connections send project details and no ARM coordinates', () => {
+    const payload = buildConnectionPayload(
+        validAoai({
+            provider: 'new_foundry',
+            connection: {
+                endpoint: 'https://x.services.ai.azure.com/api/projects/proj',
+                openai_api_version: 'v1',
+                project_api_version: 'v1',
+            },
+        }),
+    );
+    assert.equal(payload.connection.project_api_version, 'v1');
+    // Derived from the endpoint rather than requiring it to be typed twice.
+    assert.equal(payload.connection.project_name, 'proj');
+    assert.deepEqual(payload.management, {});
+});
+
+check('azure openai connections send the ARM coordinates', () => {
+    const payload = buildConnectionPayload(validAoai());
+    assert.equal(payload.management.resource_group, 'rg-ai');
+    assert.equal('project_api_version' in payload.connection, false);
+});
+
+check('a model with no display name falls back to its deployment name', () => {
+    const payload = buildConnectionPayload({
+        ...validAoai(),
+        models: [{ deploymentName: 'gpt-4o', displayName: '', enabled: true }],
+    });
+    assert.equal(payload.models[0].displayName, 'gpt-4o');
+});
+
+check('an id is sent only when the connection already has one', () => {
+    assert.equal('id' in buildConnectionPayload(validAoai()), false);
+    assert.equal(buildConnectionPayload({ ...validAoai(), id: 'ep-1' }).id, 'ep-1');
+});
+
+/* ------------------------------- model discovery ----------------------------- */
+
+check('discovery does not duplicate a model already listed', () => {
+    const { models, added } = mergeDiscoveredModels(
+        [{ deploymentName: 'gpt-4o', displayName: 'Renamed by hand', enabled: true }],
+        [{ deploymentName: 'GPT-4o' }, { deploymentName: 'gpt-4o-mini' }],
+    );
+    assert.equal(added, 1);
+    assert.equal(models.length, 2);
+    // Matching is case-insensitive, so an edited display name is not overwritten.
+    assert.equal(models[0].displayName, 'Renamed by hand');
+});
+
+check('discovered models arrive switched off', () => {
+    // Discovery finding a deployment is not the same as choosing to publish it.
+    const { models } = mergeDiscoveredModels([], [{ deploymentName: 'gpt-4o' }]);
+    assert.equal(models[0].enabled, false);
+    assert.equal(models[0].isDiscovered, true);
+});
+
+check('a deployment with no name is skipped rather than added blank', () => {
+    const { models, added } = mergeDiscoveredModels([], [{ modelName: 'gpt-4o' }, {}]);
+    assert.equal(added, 0);
+    assert.equal(models.length, 0);
+});
+
+check('the deployment field is read under either name the API uses', () => {
+    const { added } = mergeDiscoveredModels([], [{ deployment: 'legacy-shape' }]);
+    assert.equal(added, 1);
+});
+
+check('available model count treats a missing flag as enabled', () => {
+    assert.equal(
+        enabledModelCount({ models: [{ enabled: true }, { enabled: false }, {}] }),
+        2,
+    );
+});
+
+/* --------------------------------- edit shape -------------------------------- */
+
+check('editing a sparse stored connection fills every control', () => {
+    // A connection saved before a field existed has no value for it, and an undefined
+    // value would make React drop the first keystroke into that control.
+    const editable = toEditableConnection({ id: 'ep-1', name: 'Old', provider: 'aoai' });
+    assert.equal(editable.auth.type, 'managed_identity');
+    assert.equal(editable.connection.endpoint, '');
+    assert.equal(editable.identity_header.mode, 'inherit');
+    assert.deepEqual(editable.models, []);
+    assert.equal(editable.id, 'ep-1');
+});
+
+check('editing preserves keys the editor does not know about', () => {
+    const editable = toEditableConnection({ id: 'ep-1', custom_future_field: 'keep me' });
+    assert.equal(editable.custom_future_field, 'keep me');
+});
+
+/* ----------------------------------- runner ---------------------------------- */
+
+let passed = 0;
+let failed = 0;
+
+for (const [name, fn] of checks) {
+    try {
+        await fn();
+        console.log(`ok   ${name}`);
+        passed += 1;
+    } catch (error) {
+        console.log(`FAIL ${name}`);
+        console.log(`     ${error.message}`);
+        failed += 1;
+    }
+}
+
+console.log(`\n${passed}/${passed + failed} runtime checks passed`);
+process.exit(failed > 0 ? 1 : 0);

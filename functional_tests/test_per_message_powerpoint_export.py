@@ -22,6 +22,7 @@ import io
 import json
 import os
 import re
+import sys
 import traceback
 import zipfile
 from html import escape as _escape_html
@@ -29,9 +30,21 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Tuple
 
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'application', 'single_app')
+)
+
 import markdown2
 from bs4 import BeautifulSoup, NavigableString, Tag
 from PIL import Image
+
+from functions_export_visuals import (  # noqa: E402
+    EXPORT_VISUAL_WRAPPER_CLASSES,
+    find_export_visual_caption_node,
+    find_export_visual_wrapper,
+    get_export_visual_kind,
+)
 try:
     from pptx import Presentation
     from pptx.dml.color import RGBColor
@@ -348,6 +361,11 @@ def _load_powerpoint_helpers():
             for citation in message.get('citations', [])
         ],
         'replace_inline_chart_blocks_with_export_html': lambda content: content,
+        'replace_inline_visual_blocks_with_export_html': lambda content, visual_assets=None: content,
+        'find_export_visual_caption_node': find_export_visual_caption_node,
+        'find_export_visual_wrapper': find_export_visual_wrapper,
+        'get_export_visual_kind': get_export_visual_kind,
+        'EXPORT_VISUAL_WRAPPER_CLASSES': EXPORT_VISUAL_WRAPPER_CLASSES,
         'decode_base64_image_data_uri': _decode_base64_image_data_uri,
         'decode_image_content': lambda image_content: ('image/png', _decode_base64_image_data_uri(image_content) or b''),
         'get_complete_image_content': lambda *_args, **_kwargs: ({}, ''),

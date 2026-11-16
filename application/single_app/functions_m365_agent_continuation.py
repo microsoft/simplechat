@@ -1,7 +1,7 @@
 # functions_m365_agent_continuation.py
 """Checkpoint real agent tool history so an approval does not repeat completed calls."""
 
-from contextlib import aclosing
+from contextlib import aclosing, contextmanager
 from contextvars import ContextVar
 from dataclasses import asdict
 from functools import wraps
@@ -14,10 +14,11 @@ from flask import g, has_request_context
 from semantic_kernel.agents import ChatHistoryAgentThread
 from semantic_kernel.contents import AuthorRole, ChatHistory, ChatMessageContent, FunctionCallContent, FunctionResultContent
 from semantic_kernel.filters import FilterTypes
+from semantic_kernel.functions import KernelArguments
 
 from functions_conversation_memory import EvidenceChunk, EvidenceSource
 from functions_m365_approvals import M365ApprovalRequired, M365PolicyError
-from functions_m365_execution import get_m365_execution_context
+from functions_m365_execution import M365ExecutionContext, get_m365_execution_context
 from m365_interaction import M365_AUTH_INTERACTION_CODES, M365SignInRequired
 from functions_model_capabilities import ModelTokenBudget
 from functions_model_budget_runtime import prepare_model_execution_settings
@@ -25,6 +26,7 @@ from functions_model_budget_runtime import prepare_model_execution_settings
 
 _current_journal = ContextVar("m365_agent_journal", default=None)
 _current_call_id = ContextVar("m365_agent_call_id", default=None)
+_current_step_model = ContextVar("m365_step_model", default=None)
 _dependencies = {}
 PAUSED_TOOL_MARKER = "simplechat_m365_tool_waiting"
 
@@ -39,15 +41,98 @@ def configure_m365_agent_continuation(
     )
 
 
-def get_m365_analysis_agent(context):
+class M365AnalysisModel:
+    """The model that runs retained-file analysis batches for one Microsoft 365 request."""
+
+    def __init__(self, context, *, deployment_name, model_token_budget, service_and_settings):
+        self.context = context
+        self.deployment_name = deployment_name
+        self.model_token_budget = model_token_budget
+        self._service_and_settings = service_and_settings
+
+    async def service_and_settings(self):
+        """The chat service and its execution settings; analysis removes their tools."""
+        return await self._service_and_settings()
+
+
+def _same_request(bound, context):
+    return (
+        bound.request_id == context.request_id
+        and bound.data_user_id == context.data_user_id
+        and bound.conversation_id == context.conversation_id
+    )
+
+
+def _agent_analysis_model(journal):
+    agent = journal.agent
+
+    async def service_and_settings():
+        return await agent._get_chat_completion_service_and_settings(
+            kernel=agent.kernel, arguments=agent.arguments or KernelArguments(),
+        )
+
+    return M365AnalysisModel(
+        journal.context,
+        deployment_name=getattr(agent, "deployment_name", None),
+        model_token_budget=getattr(agent, "model_token_budget", None),
+        service_and_settings=service_and_settings,
+    )
+
+
+def get_m365_analysis_model(context):
+    """The model that runs retained-file analysis for this exact Microsoft 365 request.
+
+    In chat it is the selected agent, through its continuation journal. An orchestration
+    action step has no agent, so it is the step's own model, bound by
+    ``m365_step_model_binder``. Neither serves another request, data user or conversation.
+    """
     journal = _current_journal.get()
-    if journal is None or (
-        journal.context.request_id != context.request_id
-        or journal.context.data_user_id != context.data_user_id
-        or journal.context.conversation_id != context.conversation_id
-    ):
-        raise M365PolicyError("m365_analysis_unavailable", "A selected conversation agent is required for deeper analysis.")
-    return journal.agent
+    if journal is not None and _same_request(journal.context, context):
+        return _agent_analysis_model(journal)
+    step_model = _current_step_model.get()
+    if step_model is not None and _same_request(step_model.context, context):
+        return step_model
+    raise M365PolicyError("m365_analysis_unavailable", "A selected conversation agent is required for deeper analysis.")
+
+
+def m365_step_model_binder(context, *, service, model_token_budget, tool_schemas=()):
+    """Validate an orchestration step's own model once, and return its per-call binder.
+
+    A chat agent's continuation journal binds its model's token budget before each tool
+    call, and offers the agent to retained-file analysis. An orchestration action step
+    calls its model without an agent, so file reads were refused with
+    ``model_context_unavailable`` and analysis with ``m365_analysis_unavailable``. The
+    binder sets both for one function call, for the step's own request only.
+    """
+    setter = _dependencies.get("model_context_setter")
+    reset = _dependencies.get("model_context_reset")
+    if setter is None or reset is None:
+        raise M365PolicyError("m365_continuation_unavailable", "Durable agent continuation is not configured.")
+    if not isinstance(context, M365ExecutionContext) or not isinstance(model_token_budget, ModelTokenBudget):
+        raise M365PolicyError("m365_analysis_unavailable", "The step's model is not bound to this Microsoft 365 request.")
+    schemas = list(tool_schemas)
+
+    async def service_and_settings():
+        return service, service.get_prompt_execution_settings_class()(service_id=service.service_id)
+
+    analysis_model = M365AnalysisModel(
+        context,
+        deployment_name=getattr(service, "ai_model_id", None),
+        model_token_budget=model_token_budget,
+        service_and_settings=service_and_settings,
+    )
+
+    @contextmanager
+    def bind(messages):
+        budget_token = setter(model_token_budget, list(messages or ()), tool_schemas=schemas)
+        model_token = _current_step_model.set(analysis_model)
+        try:
+            yield
+        finally:
+            _current_step_model.reset(model_token)
+            reset(budget_token)
+
+    return bind
 
 
 def _approval_error(error):

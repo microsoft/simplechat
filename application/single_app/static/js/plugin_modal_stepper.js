@@ -3,8 +3,9 @@
 import { showToast } from "./chat/chat-toast.js";
 import { getTypeIcon, getMcpRetirementStatus, isMcpActionType } from "./workspace/view-utils.js";
 
-// Action types hidden from the creation UI (backend plugins remain intact)
-const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table'];
+// Action types hidden from the creation UI (backend plugins remain intact).
+// control_center is created in the V2 admin action editor, the one surface that configures it.
+const HIDDEN_ACTION_TYPES = ['sql_schema', 'ui_test', 'queue_storage', 'embedding_model', 'databricks_table', 'control_center'];
 const M365_ACTION_TYPES = ['m365_calendar', 'm365_email', 'm365_onedrive', 'm365_sharepoint'];
 const ACTION_IDENTITY_AUTH_TYPES = ['api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity', 'username_password'];
 const SQL_ACTION_IDENTITY_AUTH_TYPES = ['connection_string', 'managed_identity', 'username_password'];
@@ -103,6 +104,20 @@ const ACTION_CONNECTION_TEST_CONFIG = {
 };
 const CHART_DEFAULT_ENDPOINT = 'chart://internal';
 const INTERNAL_DOCUMENT_SEARCH_ENDPOINT = 'internal://document-search';
+// Call agent action: one explicitly selected target, never a discoverable/dynamic endpoint.
+const AGENT_PLUGIN_TYPE = 'agent';
+const AGENT_DEFAULT_ENDPOINT = 'internal://agent';
+const AGENT_TYPE_LABELS = {
+  local: 'Local (Semantic Kernel)',
+  aifoundry: 'Foundry (classic)',
+  new_foundry: 'New Foundry',
+  foundry_workflow: 'Foundry Workflow'
+};
+const AGENT_SCOPE_LABELS = {
+  personal: 'Personal',
+  group: 'Group',
+  global: 'Global'
+};
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_MANUAL = 'draft_manual';
 const MSGRAPH_MAIL_SEND_MODE_DRAFT_DELAYED = 'draft_delayed';
 const MSGRAPH_MAIL_SEND_MODE_AUTO_SEND = 'auto_send';
@@ -256,7 +271,7 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
   {
     key: 'get_my_events',
     label: 'Read my calendar events',
-    description: 'Allow this action to read upcoming calendar events for the signed-in user.'
+    description: 'Allow this action to read and search calendar events in any past or future time range for the signed-in user.'
   },
   {
     key: 'create_calendar_invite',
@@ -266,7 +281,7 @@ const MSGRAPH_CAPABILITY_DEFINITIONS = [
   {
     key: 'get_my_messages',
     label: 'Read my mail',
-    description: 'Allow this action to read recent mail messages for the signed-in user.'
+    description: 'Allow this action to read and search mail of any age for the signed-in user.'
   },
   {
     key: 'mark_message_as_read',
@@ -383,6 +398,12 @@ export class PluginModalStepper {
     this.blobStorageCapabilityState = this.getDefaultBlobStorageCapabilities();
     this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
     this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
+    // Call agent target picker state: cached catalogue per scope plus the single selected reference.
+    this.selectedAgentTarget = null;
+    this.agentTargetsCache = {};
+    this.agentTargetsLoaded = {};
+    this._agentTargetsRaw = [];
+    this._agentTargetEventsBound = false;
     this.mcpServerPresets = MCP_FALLBACK_SERVER_PRESETS;
     this.mcpServerPresetMap = {};
     this.mcpDefaultServerPreset = MCP_DEFAULT_SERVER_PROFILE;
@@ -753,6 +774,11 @@ export class PluginModalStepper {
     document.getElementById('tableau-auth-method').addEventListener('change', () => this.toggleTableauAuthFields());
     document.getElementById('tableau-identity-select').addEventListener('change', () => this.handleActionIdentityChange('tableau'));
     document.getElementById('yamcs-auth-method').addEventListener('change', () => this.toggleYamcsAuthFields());
+    ['service', 'proxy'].forEach(slot => {
+        document.getElementById(`yamcs-${slot}-credential-source`)?.addEventListener('change', () => {
+            this.applyYamcsCredentialSources(true);
+        });
+    });
     document.getElementById('yamcs-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcs'));
     document.getElementById('yamcs-enable-basic-auth').addEventListener('change', () => this.toggleYamcsBasicAuthFields());
     document.getElementById('yamcs-basic-auth-identity-select').addEventListener('change', () => this.handleActionIdentityChange('yamcsBasicAuth'));
@@ -1487,6 +1513,10 @@ export class PluginModalStepper {
     return !!(type && type.toLowerCase() === 'chart');
   }
 
+  isAgentType(type = this.selectedType) {
+    return !!(type && type.toLowerCase() === AGENT_PLUGIN_TYPE);
+  }
+
   getDefaultSimpleChatCapabilities() {
     const defaults = {};
     SIMPLECHAT_CAPABILITY_DEFINITIONS.forEach(definition => {
@@ -1968,6 +1998,300 @@ export class PluginModalStepper {
 
   getSelectedChartCapabilities() {
     return this.normalizeChartCapabilities(this.chartCapabilityState);
+  }
+
+  // --- Call agent target picker -------------------------------------------------
+  // The picker never accepts a free-form endpoint, credential, or identity. It only
+  // lets the user choose one target from the server-authorized catalogue, and the
+  // runtime re-validates that reference again immediately before invocation.
+
+  formatAgentTypeLabel(agentType) {
+    return AGENT_TYPE_LABELS[agentType] || 'Local (Semantic Kernel)';
+  }
+
+  formatAgentScopeLabel(scopeType) {
+    return AGENT_SCOPE_LABELS[scopeType] || 'Personal';
+  }
+
+  getAgentTargetScope() {
+    const scope = this.actionIdentityScope?.scope || 'personal';
+    if (scope === 'global' || window.location.pathname.includes('admin')) {
+      return 'global';
+    }
+    if (scope === 'group') {
+      return 'group';
+    }
+    return 'personal';
+  }
+
+  getAgentTargetsEndpoint() {
+    const params = new URLSearchParams({ scope: this.getAgentTargetScope() });
+    return `/api/plugins/agent-targets?${params.toString()}`;
+  }
+
+  renderAgentConfiguration() {
+    this.bindAgentTargetEvents();
+    this.fetchAgentTargets();
+  }
+
+  bindAgentTargetEvents() {
+    if (this._agentTargetEventsBound) {
+      return;
+    }
+    this._agentTargetEventsBound = true;
+
+    const searchInput = document.getElementById('agent-target-search');
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        this.renderAgentTargetList(this._agentTargetsRaw || []);
+      });
+    }
+
+    const changeBtn = document.getElementById('agent-target-change-btn');
+    if (changeBtn) {
+      changeBtn.addEventListener('click', () => {
+        this.selectedAgentTarget = null;
+        this.applyAgentTargetSelectionState();
+        searchInput?.focus();
+      });
+    }
+  }
+
+  setAgentTargetLoading(isLoading) {
+    const loadingEl = document.getElementById('agent-target-loading');
+    if (loadingEl) {
+      loadingEl.classList.toggle('d-none', !isLoading);
+    }
+  }
+
+  setAgentTargetError(message) {
+    const errorEl = document.getElementById('agent-target-error');
+    if (!errorEl) {
+      return;
+    }
+    if (message) {
+      errorEl.textContent = message;
+      errorEl.classList.remove('d-none');
+    } else {
+      errorEl.textContent = '';
+      errorEl.classList.add('d-none');
+    }
+  }
+
+  async fetchAgentTargets(forceReload = false) {
+    const scope = this.getAgentTargetScope();
+
+    if (!forceReload && this.agentTargetsLoaded[scope]) {
+      this.renderAgentTargetList(this.agentTargetsCache[scope] || []);
+      return;
+    }
+
+    this.setAgentTargetLoading(true);
+    this.setAgentTargetError('');
+
+    try {
+      const response = await fetch(this.getAgentTargetsEndpoint());
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Unable to load available agents.');
+      }
+
+      const targets = Array.isArray(payload.targets) ? payload.targets : [];
+      this.agentTargetsCache[scope] = targets;
+      this.agentTargetsLoaded[scope] = true;
+      this.renderAgentTargetList(targets);
+    } catch (error) {
+      console.error('Error loading agent targets:', error);
+      this.setAgentTargetError(error.message || 'Unable to load available agents.');
+      this.renderAgentTargetList([]);
+    } finally {
+      this.setAgentTargetLoading(false);
+    }
+  }
+
+  renderAgentTargetList(targets) {
+    this._agentTargetsRaw = Array.isArray(targets) ? targets : [];
+
+    const listEl = document.getElementById('agent-target-list');
+    const emptyEl = document.getElementById('agent-target-empty');
+    if (!listEl || !emptyEl) {
+      return;
+    }
+
+    const searchTerm = (document.getElementById('agent-target-search')?.value || '').trim().toLowerCase();
+    const filtered = searchTerm
+      ? this._agentTargetsRaw.filter(target => {
+        const name = String(target.display_name || target.name || '').toLowerCase();
+        const description = String(target.description || '').toLowerCase();
+        return name.includes(searchTerm) || description.includes(searchTerm);
+      })
+      : this._agentTargetsRaw;
+
+    listEl.innerHTML = '';
+
+    if (!this._agentTargetsRaw.length) {
+      listEl.classList.add('d-none');
+      emptyEl.textContent = 'No eligible agents are available to call from this workspace.';
+      emptyEl.classList.remove('d-none');
+      this.applyAgentTargetSelectionState();
+      return;
+    }
+
+    if (!filtered.length) {
+      listEl.classList.add('d-none');
+      emptyEl.textContent = 'No agents match your search.';
+      emptyEl.classList.remove('d-none');
+      this.applyAgentTargetSelectionState();
+      return;
+    }
+
+    emptyEl.classList.add('d-none');
+    listEl.classList.remove('d-none');
+
+    filtered.forEach(target => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'list-group-item list-group-item-action';
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', 'false');
+      item.dataset.targetId = target.id || '';
+      item.dataset.scopeType = target.scope_type || '';
+
+      const nameEl = document.createElement('div');
+      nameEl.className = 'fw-semibold';
+      nameEl.textContent = target.display_name || target.name || target.id || 'Untitled agent';
+      item.appendChild(nameEl);
+
+      if (target.description) {
+        const descEl = document.createElement('div');
+        descEl.className = 'text-muted small';
+        descEl.textContent = target.description;
+        item.appendChild(descEl);
+      }
+
+      const badgeRow = document.createElement('div');
+      badgeRow.className = 'mt-1';
+
+      const typeBadge = document.createElement('span');
+      typeBadge.className = 'badge bg-secondary me-1';
+      typeBadge.textContent = this.formatAgentTypeLabel(target.agent_type);
+      badgeRow.appendChild(typeBadge);
+
+      const scopeBadge = document.createElement('span');
+      scopeBadge.className = 'badge bg-info text-dark';
+      scopeBadge.textContent = this.formatAgentScopeLabel(target.scope_type);
+      badgeRow.appendChild(scopeBadge);
+
+      item.appendChild(badgeRow);
+
+      item.addEventListener('click', () => this.selectAgentTarget(target));
+      listEl.appendChild(item);
+    });
+
+    this.applyAgentTargetSelectionState();
+  }
+
+  selectAgentTarget(target) {
+    if (!target || !target.id) {
+      return;
+    }
+    this.selectedAgentTarget = {
+      id: target.id,
+      scope_type: target.scope_type,
+      scope_id: target.scope_id
+    };
+    this.applyAgentTargetSelectionState();
+  }
+
+  applyAgentTargetSelectionState() {
+    const listEl = document.getElementById('agent-target-list');
+    const selected = this.selectedAgentTarget;
+
+    if (listEl) {
+      Array.from(listEl.children).forEach(item => {
+        const matches = !!selected
+          && item.dataset.targetId === selected.id
+          && item.dataset.scopeType === selected.scope_type;
+        item.classList.toggle('active', matches);
+        item.setAttribute('aria-selected', matches ? 'true' : 'false');
+      });
+    }
+
+    const summaryEl = document.getElementById('agent-target-selected-summary');
+    const unavailableEl = document.getElementById('agent-target-unavailable');
+
+    if (!selected) {
+      if (summaryEl) {
+        summaryEl.classList.add('d-none');
+      }
+      if (unavailableEl) {
+        unavailableEl.classList.add('d-none');
+      }
+      return;
+    }
+
+    const match = (this._agentTargetsRaw || []).find(target => (
+      target.id === selected.id && target.scope_type === selected.scope_type
+    ));
+
+    if (match) {
+      if (unavailableEl) {
+        unavailableEl.classList.add('d-none');
+      }
+      this.showAgentTargetSummary(match);
+      return;
+    }
+
+    // The stored reference is preserved (never cleared) so an existing binding is
+    // not silently dropped while the catalogue is loading or the target is denied.
+    if (summaryEl) {
+      summaryEl.classList.add('d-none');
+    }
+    if (unavailableEl) {
+      const scope = this.getAgentTargetScope();
+      unavailableEl.textContent = this.agentTargetsLoaded[scope]
+        ? `The previously selected agent (ID: ${selected.id}) is unavailable, disabled, or you are no longer permitted to call it. Select a different agent, or leave this action unchanged to keep the existing reference.`
+        : 'Checking the previously selected agent...';
+      unavailableEl.classList.remove('d-none');
+    }
+  }
+
+  showAgentTargetSummary(target) {
+    const summaryEl = document.getElementById('agent-target-selected-summary');
+    if (!summaryEl) {
+      return;
+    }
+
+    const nameEl = document.getElementById('agent-target-selected-name');
+    const descriptionEl = document.getElementById('agent-target-selected-description');
+    const typeBadgeEl = document.getElementById('agent-target-selected-type-badge');
+    const scopeBadgeEl = document.getElementById('agent-target-selected-scope-badge');
+
+    if (nameEl) {
+      nameEl.textContent = target.display_name || target.name || target.id;
+    }
+    if (descriptionEl) {
+      descriptionEl.textContent = target.description || '';
+    }
+    if (typeBadgeEl) {
+      typeBadgeEl.textContent = this.formatAgentTypeLabel(target.agent_type);
+    }
+    if (scopeBadgeEl) {
+      scopeBadgeEl.textContent = this.formatAgentScopeLabel(target.scope_type);
+    }
+
+    summaryEl.classList.remove('d-none');
+  }
+
+  getSelectedAgentTargetPayload() {
+    if (!this.selectedAgentTarget || !this.selectedAgentTarget.id) {
+      throw new Error('Select an agent to call before saving this action.');
+    }
+    return {
+      id: this.selectedAgentTarget.id,
+      scope_type: this.selectedAgentTarget.scope_type,
+      scope_id: this.selectedAgentTarget.scope_id
+    };
   }
 
   getDefaultBlobStorageCapabilities() {
@@ -2675,9 +2999,11 @@ export class PluginModalStepper {
     const apiKeyGroup = document.getElementById('yamcs-api-key-group');
     const bearerTokenGroup = document.getElementById('yamcs-bearer-token-group');
 
+    const personalService = this.isYamcsPersonalSource('service');
+    document.getElementById('yamcs-action-identity-group')?.classList.toggle('d-none', personalService || !this.getActionIdentitiesForKind('yamcs').length);
     if (authMethodSelect) {
-      authMethodSelect.disabled = Boolean(selectedIdentity);
-      if (selectedIdentity) {
+      authMethodSelect.disabled = Boolean(selectedIdentity) && !personalService;
+      if (selectedIdentity && !personalService) {
         authMethodSelect.value = this.getYamcsIdentityAuthMethod(selectedIdentity);
       }
     }
@@ -2690,7 +3016,7 @@ export class PluginModalStepper {
 
     this.toggleYamcsBasicAuthFields();
 
-    if (selectedIdentity) {
+    if (selectedIdentity || personalService) {
       return;
     }
 
@@ -2706,7 +3032,7 @@ export class PluginModalStepper {
 
   getYamcsAuthMethodForConflictCheck() {
     const selectedIdentity = this.getSelectedActionIdentity('yamcs');
-    if (selectedIdentity) {
+    if (selectedIdentity && !this.isYamcsPersonalSource('service')) {
       return this.getYamcsIdentityAuthMethod(selectedIdentity);
     }
     return document.getElementById('yamcs-auth-method')?.value || YAMCS_AUTH_METHOD_USERNAME_PASSWORD;
@@ -2720,27 +3046,65 @@ export class PluginModalStepper {
     return document.getElementById('yamcs-enable-basic-auth')?.checked === true;
   }
 
+  isYamcsPersonalSource(slot) {
+    return document.getElementById(`yamcs-${slot}-credential-source`)?.value === 'personal';
+  }
+
+  applyYamcsCredentialSources(clearCompeting = false) {
+    if (clearCompeting && this.isYamcsPersonalSource('service')) {
+        this.setSelectedActionIdentity('yamcs', '');
+        ['yamcs-username', 'yamcs-password', 'yamcs-api-key', 'yamcs-bearer-token'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+    }
+    if (clearCompeting && this.isYamcsPersonalSource('proxy')) {
+        this.setSelectedActionIdentity('yamcsBasicAuth', '');
+        ['yamcs-basic-auth-username', 'yamcs-basic-auth-password'].forEach(id => {
+            document.getElementById(id).value = '';
+        });
+    }
+    this.toggleYamcsAuthFields();
+  }
+
+  getYamcsCredentialRequirements() {
+    const slots = {};
+    if (this.isYamcsPersonalSource('service')) {
+        slots.service = { source: 'personal', auth_type: this.getYamcsAuthMethodForConflictCheck() };
+    }
+    if (this.isYamcsBasicAuthEnabled() && this.isYamcsPersonalSource('proxy')) {
+        slots.proxy = { source: 'personal', auth_type: 'username_password' };
+    }
+    return { version: 1, slots };
+  }
+
   toggleYamcsBasicAuthFields() {
     const fields = document.getElementById('yamcs-basic-auth-fields');
     const conflictAlert = document.getElementById('yamcs-basic-auth-conflict');
     const usernameInput = document.getElementById('yamcs-basic-auth-username');
     const passwordInput = document.getElementById('yamcs-basic-auth-password');
     const enabled = this.isYamcsBasicAuthEnabled();
+    const personalProxy = this.isYamcsPersonalSource('proxy');
+    const hasPersonalCredentials = this.isYamcsPersonalSource('service') || (enabled && personalProxy);
+    const testButton = document.getElementById('yamcs-test-connection-btn');
+    if (testButton) testButton.disabled = hasPersonalCredentials;
+    document.getElementById('yamcs-personal-test-note')?.classList.toggle('d-none', !hasPersonalCredentials);
 
     fields?.classList.toggle('d-none', !enabled);
     conflictAlert?.classList.toggle('d-none', !(enabled && this.yamcsBasicAuthConflicts()));
+    document.getElementById('yamcs-basic-auth-identity-group')?.classList.toggle('d-none', personalProxy || !this.getActionIdentitiesForKind('yamcsBasicAuth').length);
+    usernameInput?.closest('.row')?.classList.toggle('d-none', personalProxy);
 
     // A reusable identity supplies both values, so the inline inputs become read-only
     // mirrors of the stored credential rather than a second place to edit it.
     const selectedIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
     if (usernameInput) {
-      usernameInput.disabled = Boolean(selectedIdentity);
-      if (selectedIdentity) {
+      usernameInput.disabled = Boolean(selectedIdentity) || personalProxy;
+      if (selectedIdentity && !personalProxy) {
         usernameInput.value = selectedIdentity.credentials?.username || '';
       }
     }
     if (passwordInput) {
-      passwordInput.disabled = Boolean(selectedIdentity);
+      passwordInput.disabled = Boolean(selectedIdentity) || personalProxy;
       if (selectedIdentity) {
         passwordInput.value = '';
       }
@@ -2748,8 +3112,14 @@ export class PluginModalStepper {
   }
 
   populateYamcsForm(plugin) {
+    ['yamcs-username', 'yamcs-password', 'yamcs-api-key', 'yamcs-bearer-token'].forEach(id => {
+        document.getElementById(id).value = '';
+    });
     const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
     const auth = plugin.auth || {};
+    const slots = plugin.credential_requirements?.slots || {};
+    document.getElementById('yamcs-service-credential-source').value = slots.service?.source === 'personal' ? 'personal' : 'shared';
+    document.getElementById('yamcs-proxy-credential-source').value = slots.proxy?.source === 'personal' ? 'personal' : 'shared';
     const serverUrl = this.normalizeYamcsServerUrl(plugin.endpoint || additionalFields.server_url || '');
 
     document.getElementById('yamcs-server-url').value = serverUrl;
@@ -2759,7 +3129,7 @@ export class PluginModalStepper {
     document.getElementById('yamcs-timeout').value = additionalFields.timeout || 30;
     document.getElementById('yamcs-tls-verify').checked = additionalFields.tls_verify !== false;
     document.getElementById('yamcs-enable-archive-sql').checked = additionalFields.enable_archive_sql === true;
-    document.getElementById('yamcs-enable-basic-auth').checked = additionalFields.enable_basic_auth === true;
+    document.getElementById('yamcs-enable-basic-auth').checked = additionalFields.enable_basic_auth === true || slots.proxy?.source === 'personal';
     document.getElementById('yamcs-basic-auth-username').value = additionalFields.basic_auth_username || '';
     document.getElementById('yamcs-basic-auth-password').value = additionalFields.basic_auth_password || '';
 
@@ -2779,17 +3149,20 @@ export class PluginModalStepper {
       }
     }
 
-    document.getElementById('yamcs-auth-method').value = authMethod;
+    document.getElementById('yamcs-auth-method').value = slots.service?.auth_type || authMethod;
     this.setSelectedActionIdentity('yamcs', plugin.identity_id || '');
     this.setSelectedActionIdentity('yamcsBasicAuth', additionalFields.basic_auth_identity_id || '');
     this.handleActionIdentityChange('yamcs');
     this.handleActionIdentityChange('yamcsBasicAuth');
+    this.applyYamcsCredentialSources(true);
   }
 
   getYamcsConfiguration() {
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
-    const selectedIdentity = this.getSelectedActionIdentity('yamcs');
-    const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
+    const personalService = this.isYamcsPersonalSource('service');
+    const personalProxy = this.isYamcsPersonalSource('proxy');
+    const selectedIdentity = personalService ? null : this.getSelectedActionIdentity('yamcs');
+    const basicAuthIdentity = personalProxy ? null : this.getSelectedActionIdentity('yamcsBasicAuth');
     const enableBasicAuth = this.isYamcsBasicAuthEnabled();
     const authMethod = selectedIdentity
       ? this.getYamcsIdentityAuthMethod(selectedIdentity)
@@ -2803,18 +3176,18 @@ export class PluginModalStepper {
       read_only: true,
       enable_archive_sql: document.getElementById('yamcs-enable-archive-sql')?.checked === true,
       enable_basic_auth: enableBasicAuth,
-      // Only an identity selection blanks the inline credential. Turning the toggle off
+      // Identity selection or personal source explicitly clears inline credentials. Turning the toggle off
       // must keep the stored values, otherwise saving would drop the Key Vault reference
       // and leave its secret orphaned. Runtime and validation already ignore these fields
       // while the toggle is off. An untouched password field still holds the Key Vault
       // placeholder, which the save helper resolves back to the existing reference.
-      basic_auth_identity_id: basicAuthIdentity
+      basic_auth_identity_id: basicAuthIdentity && !personalProxy
         ? (basicAuthIdentity.id || basicAuthIdentity.identity_id || '')
         : '',
-      basic_auth_username: basicAuthIdentity
+      basic_auth_username: basicAuthIdentity || personalProxy
         ? ''
         : (document.getElementById('yamcs-basic-auth-username')?.value.trim() || ''),
-      basic_auth_password: basicAuthIdentity
+      basic_auth_password: basicAuthIdentity || personalProxy
         ? ''
         : (document.getElementById('yamcs-basic-auth-password')?.value || ''),
       max_rows: parseInt(document.getElementById('yamcs-max-rows')?.value, 10) || 500,
@@ -2823,7 +3196,10 @@ export class PluginModalStepper {
     const auth = {};
     let identityId = '';
 
-    if (selectedIdentity) {
+    if (personalService) {
+      Object.assign(auth, { type: 'NoAuth', key: '', identity: '' });
+      additionalFields.identity_auth_type = '';
+    } else if (selectedIdentity) {
       identityId = selectedIdentity.id || selectedIdentity.identity_id || '';
       auth.type = 'identity';
       auth.identity = identityId;
@@ -3817,7 +4193,23 @@ export class PluginModalStepper {
   }
 
   isStructuredConfigType(type = this.selectedType) {
-    return this.isSqlType(type) || this.isCosmosType(type) || this.isRocksDbType(type) || this.isDocumentSearchType(type) || this.isBlobStorageType(type) || this.isDatabricksType(type) || this.isSnowflakeType(type) || this.isTableauType(type) || this.isYamcsType(type) || this.isMicrosoftDecisionType(type) || this.isMcpType(type) || this.isSimpleChatType(type) || this.isMsGraphType(type) || this.isAzureMapsType(type) || this.isChartType(type) || this.isLogAnalyticsType(type);
+    return this.isSqlType(type)
+        || this.isCosmosType(type)
+        || this.isRocksDbType(type)
+        || this.isDocumentSearchType(type)
+        || this.isBlobStorageType(type)
+        || this.isDatabricksType(type)
+        || this.isSnowflakeType(type)
+        || this.isTableauType(type)
+        || this.isYamcsType(type)
+        || this.isMicrosoftDecisionType(type)
+        || this.isMcpType(type)
+        || this.isSimpleChatType(type)
+        || this.isMsGraphType(type)
+        || this.isAzureMapsType(type)
+        || this.isChartType(type)
+        || this.isLogAnalyticsType(type)
+        || this.isAgentType(type);
   }
 
   showConfigSectionForType() {
@@ -3839,7 +4231,8 @@ export class PluginModalStepper {
       mcp: document.getElementById('mcp-config-section'),
       azureMaps: document.getElementById('azure-maps-config-section'),
       logAnalytics: document.getElementById('log-analytics-config-section'),
-      chart: document.getElementById('chart-config-section')
+      chart: document.getElementById('chart-config-section'),
+      agent: document.getElementById('agent-config-section')
     };
 
     const showOnly = (sectionKey) => {
@@ -3903,6 +4296,9 @@ export class PluginModalStepper {
     } else if (this.isChartType()) {
       showOnly('chart');
       this.renderChartConfiguration();
+    } else if (this.isAgentType()) {
+      showOnly('agent');
+      this.renderAgentConfiguration();
     } else {
       showOnly('generic');
     }
@@ -3972,6 +4368,8 @@ export class PluginModalStepper {
           titleEl.textContent = 'Log Analytics Configuration';
         } else if (isChartType) {
           titleEl.textContent = 'Chart Configuration';
+        } else if (this.isAgentType()) {
+          titleEl.textContent = 'Call Agent Configuration';
         } else {
           titleEl.textContent = 'Configuration';
         }
@@ -4164,6 +4562,7 @@ export class PluginModalStepper {
         const azureMapsSection = document.getElementById('azure-maps-config-section');
         const chartSection = document.getElementById('chart-config-section');
         const logAnalyticsSection = document.getElementById('log-analytics-config-section');
+        const agentSection = document.getElementById('agent-config-section');
         const isOpenApiVisible = !openApiSection.classList.contains('d-none');
         const isSqlVisible = !sqlSection.classList.contains('d-none');
         const isCosmosVisible = !cosmosSection.classList.contains('d-none');
@@ -4180,6 +4579,7 @@ export class PluginModalStepper {
         const isAzureMapsVisible = !azureMapsSection.classList.contains('d-none');
         const isChartVisible = !chartSection.classList.contains('d-none');
         const isLogAnalyticsVisible = !!logAnalyticsSection && !logAnalyticsSection.classList.contains('d-none');
+        const isAgentVisible = !!agentSection && !agentSection.classList.contains('d-none');
 
         if (isOpenApiVisible) {
           // Validate OpenAPI fields
@@ -4539,15 +4939,20 @@ export class PluginModalStepper {
             this.showError('Select a supported Yamcs authentication method.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
+          const personalService = this.isYamcsPersonalSource('service');
+          if (personalService && authMethod === YAMCS_AUTH_METHOD_NONE) {
+            this.showError('Personal Yamcs credentials require an authenticated service method. Use shared configuration for No Authentication.');
+            return false;
+          }
+          if (!personalService && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_USERNAME_PASSWORD && (!username || !password)) {
             this.showError('Yamcs username and password are required for username/password authentication.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
+          if (!personalService && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_API_KEY && !apiKey) {
             this.showError('Yamcs API key is required for API key authentication.');
             return false;
           }
-          if (!selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
+          if (!personalService && !selectedIdentity && authMethod === YAMCS_AUTH_METHOD_BEARER_TOKEN && !bearerToken) {
             this.showError('Yamcs bearer token is required for bearer token authentication.');
             return false;
           }
@@ -4559,7 +4964,7 @@ export class PluginModalStepper {
               this.showError('HTTP Basic authentication cannot be combined with username/password or access token authentication. Choose "No Authentication" or "API Key".');
               return false;
             }
-            if (!basicAuthIdentity && (!basicAuthUsername || !basicAuthPassword)) {
+            if (!this.isYamcsPersonalSource('proxy') && !basicAuthIdentity && (!basicAuthUsername || !basicAuthPassword)) {
               this.showError('A proxy username and password are required for HTTP Basic authentication.');
               return false;
             }
@@ -4711,6 +5116,11 @@ export class PluginModalStepper {
           const capabilityValues = Object.values(this.getSelectedChartCapabilities());
           if (!capabilityValues.some(Boolean)) {
             this.showError('Enable at least one chart type before continuing.');
+            return false;
+          }
+        } else if (isAgentVisible) {
+          if (!this.selectedAgentTarget || !this.selectedAgentTarget.id) {
+            this.showError('Select an agent to call before continuing.');
             return false;
           }
         } else if (isDocumentSearchVisible) {
@@ -5428,6 +5838,13 @@ export class PluginModalStepper {
     const resultDiv = document.getElementById('yamcs-test-connection-result');
     const alertDiv = document.getElementById('yamcs-test-connection-alert');
     if (!btn || !resultDiv || !alertDiv) return;
+
+    if (Object.keys(this.getYamcsCredentialRequirements().slots).length) {
+        resultDiv.classList.remove('d-none');
+        alertDiv.className = 'alert alert-info mb-0 py-2 px-3 small';
+        alertDiv.textContent = 'Personal credentials are checked when each user connects in chat. Save this action without shared credentials; this test does not acquire or replace a user identity.';
+        return;
+    }
 
     const serverUrl = this.normalizeYamcsServerUrl(document.getElementById('yamcs-server-url')?.value || '');
     const instance = document.getElementById('yamcs-instance')?.value?.trim() || '';
@@ -6720,6 +7137,13 @@ export class PluginModalStepper {
     } else if (this.isChartType(plugin.type)) {
       const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
       this.setChartCapabilities(additionalFields.chart_capabilities || plugin.chart_capabilities || null);
+    } else if (this.isAgentType(plugin.type)) {
+      const additionalFields = plugin.additionalFields || plugin.additional_fields || {};
+      const targetAgent = additionalFields.target_agent || null;
+      this.selectedAgentTarget = (targetAgent && targetAgent.id && targetAgent.scope_type && targetAgent.scope_id)
+        ? { id: targetAgent.id, scope_type: targetAgent.scope_type, scope_id: targetAgent.scope_id }
+        : null;
+      this.applyAgentTargetSelectionState();
     } else {
       // Populate generic fields
       document.getElementById('plugin-endpoint-generic').value = plugin.endpoint || '';
@@ -7055,6 +7479,10 @@ export class PluginModalStepper {
       endpoint = CHART_DEFAULT_ENDPOINT;
       auth.type = 'user';
       additionalFields.chart_capabilities = this.getSelectedChartCapabilities();
+    } else if (this.isAgentType()) {
+      endpoint = AGENT_DEFAULT_ENDPOINT;
+      auth.type = 'user';
+      additionalFields.target_agent = this.getSelectedAgentTargetPayload();
     } else {
       // Collect generic plugin data
       console.log("Collecting generic plugin data");
@@ -7119,6 +7547,11 @@ export class PluginModalStepper {
     if (identityId) {
       formData.identity_id = identityId;
     }
+    if (isYamcsVisible) {
+        // Empty references are intentional clears, not requests to preserve old secrets.
+        formData.identity_id = identityId || '';
+        formData.credential_requirements = this.getYamcsCredentialRequirements();
+    }
     if (this.isEditMode && this.originalPlugin?.id) {
         formData.id = this.originalPlugin.id;
     }
@@ -7168,6 +7601,7 @@ export class PluginModalStepper {
     const endpointRow = document.getElementById('summary-plugin-endpoint-row');
     const databaseTypeRow = document.getElementById('summary-plugin-database-type-row');
     const isRocksDbType = this.isRocksDbType();
+    const isAgentType = this.isAgentType();
 
     if (isSqlType) {
       // Hide endpoint for SQL plugins since they don't use endpoints
@@ -7242,6 +7676,10 @@ export class PluginModalStepper {
       endpointRow.style.display = 'none';
       document.getElementById('summary-plugin-database-type').textContent = 'Built-in chart action';
       databaseTypeRow.style.display = '';
+    } else if (isAgentType) {
+      endpointRow.style.display = 'none';
+      document.getElementById('summary-plugin-database-type').textContent = 'Call agent action';
+      databaseTypeRow.style.display = '';
     } else {
       // Show endpoint for non-SQL plugins (OpenAPI, generic, etc.)
       const endpoint = this.getEndpointValue();
@@ -7264,10 +7702,10 @@ export class PluginModalStepper {
     }
 
     const databaseType = this.getSqlDatabaseType();
-    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && databaseType) {
+    if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType && databaseType) {
       document.getElementById('summary-plugin-database-type').textContent = databaseType;
       databaseTypeRow.style.display = '';
-    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType) {
+    } else if (!isSqlType && !isCosmosType && !isRocksDbType && !isDocumentSearchType && !isBlobStorageType && !isDatabricksType && !isSnowflakeType && !isTableauType && !isYamcsType && !isMcpType && !isSimpleChatType && !isMsGraphType && !isAzureMapsType && !isChartType && !isLogAnalyticsType && !isAgentType) {
       databaseTypeRow.style.display = 'none';
     }
 
@@ -7286,6 +7724,7 @@ export class PluginModalStepper {
     this.populateSimpleChatSummary();
     this.populateMsGraphSummary();
     this.populateChartSummary();
+    this.populateAgentSummary();
     this.populateAdvancedSummary();
     this.populateChangesSummary();
   }
@@ -7343,6 +7782,8 @@ export class PluginModalStepper {
       return this.isM365Type() ? '' : (this.originalPlugin?.endpoint || '');
     } else if (isChartType) {
       return CHART_DEFAULT_ENDPOINT;
+    } else if (this.isAgentType()) {
+      return AGENT_DEFAULT_ENDPOINT;
     } else {
       return document.getElementById('plugin-endpoint-generic').value.trim();
     }
@@ -7396,6 +7837,9 @@ export class PluginModalStepper {
       }
       return this.formatTableauAuthMethod(document.getElementById('tableau-auth-method')?.value || TABLEAU_AUTH_METHOD_PAT);
     } else if (this.isYamcsType()) {
+      if (this.isYamcsPersonalSource('service')) {
+        return `Personal identity for each user (${this.formatYamcsAuthMethod(this.getYamcsAuthMethodForConflictCheck())})`;
+      }
       if (this.getSelectedActionIdentity('yamcs')) {
         return 'Reusable Identity';
       }
@@ -7422,6 +7866,8 @@ export class PluginModalStepper {
       }
       return this.formatAuthType(document.getElementById('log-analytics-auth-method')?.value || 'identity');
     } else if (isChartType) {
+      return 'User';
+    } else if (this.isAgentType()) {
       return 'User';
     } else {
       const authType = document.getElementById('plugin-auth-type-generic').value;
@@ -7724,7 +8170,9 @@ export class PluginModalStepper {
 
     document.getElementById('summary-yamcs-instance').textContent = document.getElementById('yamcs-instance')?.value.trim() || '-';
     document.getElementById('summary-yamcs-processor').textContent = document.getElementById('yamcs-processor')?.value.trim() || YAMCS_DEFAULT_PROCESSOR;
-    document.getElementById('summary-yamcs-auth-method').textContent = selectedIdentity
+    document.getElementById('summary-yamcs-auth-method').textContent = this.isYamcsPersonalSource('service')
+      ? `Personal identity for each user (${this.formatYamcsAuthMethod(authMethod)})`
+      : selectedIdentity
       ? `Reusable Identity (${this.formatYamcsAuthMethod(authMethod)})`
       : this.formatYamcsAuthMethod(authMethod);
     document.getElementById('summary-yamcs-tls-verify').textContent = document.getElementById('yamcs-tls-verify')?.checked === false ? 'Disabled' : 'Enabled';
@@ -7738,6 +8186,9 @@ export class PluginModalStepper {
   formatYamcsBasicAuthSummary() {
     if (!this.isYamcsBasicAuthEnabled()) {
       return 'Disabled';
+    }
+    if (this.isYamcsPersonalSource('proxy')) {
+        return 'Personal proxy sign-in for each user';
     }
     const basicAuthIdentity = this.getSelectedActionIdentity('yamcsBasicAuth');
     if (basicAuthIdentity) {
@@ -7938,6 +8389,42 @@ export class PluginModalStepper {
     enabledList.textContent = enabledLabels.length ? enabledLabels.join(', ') : 'None';
     disabledList.textContent = disabledLabels.length ? disabledLabels.join(', ') : 'None';
     chartSection.style.display = '';
+  }
+
+  populateAgentSummary() {
+    const agentSection = document.getElementById('summary-agent-section');
+    const nameEl = document.getElementById('summary-agent-target-name');
+    const typeEl = document.getElementById('summary-agent-target-type');
+    const scopeEl = document.getElementById('summary-agent-target-scope');
+    if (!agentSection || !nameEl || !typeEl || !scopeEl) {
+      return;
+    }
+
+    if (!this.isAgentType()) {
+      agentSection.style.display = 'none';
+      return;
+    }
+
+    const selected = this.selectedAgentTarget;
+    const match = selected
+      ? (this._agentTargetsRaw || []).find(target => target.id === selected.id && target.scope_type === selected.scope_type)
+      : null;
+
+    if (!selected) {
+      nameEl.textContent = 'No agent selected';
+      typeEl.textContent = '-';
+      scopeEl.textContent = '-';
+    } else if (match) {
+      nameEl.textContent = match.display_name || match.name || match.id;
+      typeEl.textContent = this.formatAgentTypeLabel(match.agent_type);
+      scopeEl.textContent = this.formatAgentScopeLabel(match.scope_type);
+    } else {
+      nameEl.textContent = `Unavailable agent (ID: ${selected.id})`;
+      typeEl.textContent = '-';
+      scopeEl.textContent = this.formatAgentScopeLabel(selected.scope_type);
+    }
+
+    agentSection.style.display = '';
   }
 
   populateSqlOptionalSetting(inputId, summaryId, rowId) {
@@ -8387,6 +8874,9 @@ export class PluginModalStepper {
         element.dataset[key] = value;
       }
     };
+    safeSetValue('yamcs-service-credential-source', 'shared');
+    safeSetValue('yamcs-proxy-credential-source', 'shared');
+    this.populateYamcsForm({ endpoint: '', auth: { type: 'username_password' }, additionalFields: {} });
 
     // Step 2 fields - Basic Info
     safeSetValue('plugin-name');
@@ -8576,6 +9066,8 @@ export class PluginModalStepper {
     this.blobStorageReadFileTypeState = this.getDefaultBlobStorageReadFileTypes();
     this.blobStorageUploadFileTypeState = this.getDefaultBlobStorageUploadFileTypes();
     this.renderBlobStorageConfiguration();
+    this.selectedAgentTarget = null;
+    this.applyAgentTargetSelectionState();
     this.clearKeyVaultReminderForm();
 
     // Clear any type selection

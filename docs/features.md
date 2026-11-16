@@ -1,84 +1,58 @@
 ---
 layout: page
 title: "Features"
-description: "A data-driven catalog of SimpleChat capabilities, grouped by operating area and tied to the settings that enable them."
+description: "Find the SimpleChat capabilities for your task, with visual explanations, practical guides, and configuration references."
 section: "Features"
 permalink: /features/
+version: "0.261.398"
 ---
 
-SimpleChat capabilities are catalogued from the application surface inventory so every shipped feature toggle is represented once and only once. Use this page to find the capability, understand what it does, and jump to the admin setting that controls it.
+Start with what you need to do, then open a capability for its explanation,
+full-slide illustrations where available, and practical guidance. Availability
+depends on your deployment's enabled services, permissions, and source access;
+not every capability has a separate switch.
 
-This catalog covers **38 capabilities** backed by **111 capability toggles**.
+## Start with the task
 
-## Chat and retrieval
+- **Answer from your documents:** choose a [workspace]({{ '/features/personal-workspace/' | relative_url }}),
+  [process its files]({{ '/features/document-extraction/' | relative_url }}), then
+  [search the permitted knowledge]({{ '/features/grounded-document-search/' | relative_url }})
+  and [inspect citations]({{ '/features/enhanced-citations/' | relative_url }}).
+- **Reuse a way of working:** keep instructions in [saved prompts]({{ '/features/saved-prompts/' | relative_url }}),
+  equip a focused [agent]({{ '/features/agents/' | relative_url }}) with
+  [approved actions]({{ '/features/core-actions/' | relative_url }}), or save a
+  repeatable process as a [workflow]({{ '/features/workflows/' | relative_url }}).
+- **Investigate a question:** [analyze documents]({{ '/features/document-analysis/' | relative_url }}),
+  [compare revisions]({{ '/features/document-compare/' | relative_url }}),
+  [compute spreadsheet results]({{ '/features/tabular-analysis/' | relative_url }}),
+  or use policy-controlled [external research]({{ '/features/deep-research/' | relative_url }}).
+- **Turn a goal into an outcome:** [review an orchestration plan]({{ '/features/chat-orchestration/' | relative_url }})
+  and request [real files and visuals]({{ '/features/generated-deliverables/' | relative_url }}).
+  Check delivery status rather than treating a planned output as a finished file.
+- **Work together without losing context:** use [group knowledge]({{ '/features/group-workspaces/' | relative_url }})
+  or a [collaborative conversation]({{ '/features/collaborative-conversations/' | relative_url }}),
+  understand the [workspace scope lock]({{ '/features/workspace-scope-lock/' | relative_url }}),
+  and inspect [conversation]({{ '/features/conversation-details/' | relative_url }})
+  and [message details]({{ '/features/message-details/' | relative_url }}).
+- **Govern and operate the deployment:** configure [content checks]({{ '/features/content-safety/' | relative_url }}),
+  [document screening]({{ '/features/content-screening/' | relative_url }}),
+  [MCP destination policy]({{ '/features/mcp-governance/' | relative_url }}),
+  [retention]({{ '/features/retention-policies/' | relative_url }}),
+  and [coordinated scale]({{ '/features/scale-and-cache/' | relative_url }}).
 
-| Capability | What it does | Who uses it | Default | Enable it in |
-| --- | --- | --- | --- | --- |
-| [Chat file uploads](/features/chat-file-uploads/) | Lets users attach files directly to a chat so the conversation can use uploaded content as context. | End users | Enabled | [Workspaces](/admin/workspaces/) |
-| [Collaborative conversations](/features/collaborative-conversations/) | Allows shared conversation participation so multiple users can work in the same chat context. | End users | Enabled | [Workspaces](/admin/workspaces/) |
-| [Conversation productivity controls](/features/conversation-productivity/) | Controls chat navigation, appearance, drawers, notifications, and audio cues around conversation work. | End users | Mixed | [General](/admin/appearance/) |
-| [Deep research and source review](/features/deep-research/) | Adds bounded source-page review and deeper web evidence inspection before web-grounded answers are used. | End users | Mixed | [Search and Extract](/admin/knowledge/) |
-| [Enhanced citations](/features/enhanced-citations/) | Adds richer source previews and storage-backed citation rendering for documents used in answers. | End users | Disabled | [Citations](/admin/chat/) |
-| [Grounded document search](/features/grounded-document-search/) | Controls Azure AI Search-backed retrieval, cached search results, and mixed-source evidence reuse in chat. | End users | Mixed | [Search and Extract](/admin/knowledge/) |
-| [Source history summaries](/features/source-history-summaries/) | Summarizes older conversation context so search and long-running chats can keep useful history. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
-| [URL access](/features/url-access/) | Lets chat and workflows fetch approved pasted URLs under admin-controlled limits and domain policy. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
-| [Web search](/features/web-search/) | Grounds a chat message in current public web results through a configured Azure AI Foundry agent using Grounding with Bing Search. Only the current message leaves the application. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
+The catalog below reads directly from the same feature data as the detail pages,
+so summaries and links stay together as capabilities change. Follow each page's
+settings and guide links for prerequisites rather than assuming a catalog entry
+means the feature is enabled.
 
-## Documents and workspaces
+{% assign feature_groups = site.data.features | group_by_exp: "entry", "entry[1].area" | sort: "name" %}
+{% for group in feature_groups %}
+{% assign entries = group.items | sort %}
+## {{ group.name | escape }}
 
-| Capability | What it does | Who uses it | Default | Enable it in |
-| --- | --- | --- | --- | --- |
-| [Document access index](/features/document-access-index/) | Maintains a dedicated document-access index for faster authorization-aware document reads and validation. | Operators | Mixed | [Scale](/admin/scale/) |
-| [File sync](/features/file-sync/) | Lets enabled workspaces ingest content from configured storage sources instead of relying only on manual uploads. | End users | Mixed | [File Sync](/admin/knowledge/) |
-| [Group workspaces](/features/group-workspaces/) | Enables shared group spaces, group creation, and approval-aware file sharing between groups. | End users | Mixed | [Workspaces](/admin/workspaces/) |
-| [Personal workspaces](/features/personal-workspace/) | Gives each user a personal document workspace for uploads, tags, prompts, agents, actions, and workflows where enabled. | End users | Enabled | [Workspaces](/admin/workspaces/) |
-| [Public workspaces](/features/public-workspaces/) | Publishes approved workspace content to a broader public workspace experience. | End users | Disabled | [Workspaces](/admin/workspaces/) |
-| [Retention policies](/features/retention-policies/) | Applies automatic retention rules separately for personal, group, and public workspace content. | Admins | Disabled | [Backup, Migrate & Restore](/admin/backup-recovery/) |
-
-## Media and ingestion
-
-| Capability | What it does | Who uses it | Default | Enable it in |
-| --- | --- | --- | --- | --- |
-| [Audio and video ingestion](/features/media-file-ingestion/) | Allows audio and video files to be processed into searchable transcript-style content. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
-| [Chunk size overrides](/features/chunk-size-overrides/) | Lets admins override default extraction chunk sizes by file type for indexing and retrieval. | Admins | Disabled | [Search and Extract](/admin/knowledge/) |
-| [Cross-format document compare](/features/document-compare/) | Compares documents across supported formats, including staged one-to-many comparison behavior. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
-| [Document extraction](/features/document-extraction/) | Controls Document Intelligence, enhanced extraction, formulas, and embedded Office image analysis during ingestion. | End users | Mixed | [Search and Extract](/admin/knowledge/) |
-| [Document metadata and classification](/features/document-metadata-and-classification/) | Adds AI-assisted metadata extraction and category labels to workspace documents. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
-| [Image generation](/features/image-generation/) | Adds AI image creation from chat using the configured image generation model route. | End users | Disabled | [AI Models](/admin/ai-models/) |
-| [Multimodal vision](/features/multimodal-vision/) | Enables model-based visual analysis for images and visual document content. | End users | Disabled | [Search and Extract](/admin/knowledge/) |
-| [Tabular analysis](/features/tabular-analysis/) | Runs structured CSV and spreadsheet analysis with durable planning, batching, checkpoints, and response controls. | End users | Mixed | [Agents](/admin/agents-actions/) |
-
-## Agents and actions
-
-| Capability | What it does | Who uses it | Default | Enable it in |
-| --- | --- | --- | --- | --- |
-| [Agents](/features/agents/) | Enables Semantic Kernel agents, agent discovery, templates, and multi-agent orchestration options. | End users | Mixed | [Agents](/admin/agents-actions/) |
-| [Core actions](/features/core-actions/) | Controls built-in action plugins for HTTP access, math, text transformation, time, waits, fact memory, and embedding utilities. | End users | Mixed | [Agents](/admin/agents-actions/) |
-| [MCP destination governance](/features/mcp-governance/) | Adds governance controls for Model Context Protocol destinations used by agent actions. | Admins | Disabled | [Governance](/admin/governance/) |
-
-## Governance and safety
-
-| Capability | What it does | Who uses it | Default | Enable it in |
-| --- | --- | --- | --- | --- |
-| [Content safety](/features/content-safety/) | Screens prompts and content through Azure AI Content Safety with optional API Management routing. | Admins | Disabled | [Safety](/admin/security/) |
-| [Feedback and conversation archiving](/features/feedback-and-archiving/) | Collects user feedback, exposes support feedback, and can archive conversations for review or compliance workflows. | End users | Mixed | [Send Feedback](/admin/help/) |
-| [Notices and terms of use](/features/notices-and-terms/) | Shows AI notices and terms-of-use acknowledgement prompts to users. | End users | Disabled | [General](/admin/appearance/) |
-| [Support menu and latest features](/features/support-menu/) | Adds the support menu, latest-feature pages, and optional documentation links for in-app help. | End users | Mixed | [Latest Features New](/admin/help/) |
-
-## Integrations
-
-| Capability | What it does | Who uses it | Default | Enable it in |
-| --- | --- | --- | --- | --- |
-| [Custom pages and external links](/features/custom-navigation/) | Lets admins add trusted in-app custom pages and curated external navigation links. | End users | Disabled | [Custom Pages](/admin/appearance/) |
-| [Key Vault secret storage](/features/key-vault-secrets/) | Stores configured secrets in Azure Key Vault and can remind operators about secret expiration. | Operators | Disabled | [Security](/admin/security/) |
-
-## Platform and operations
-
-| Capability | What it does | Who uses it | Default | Enable it in |
-| --- | --- | --- | --- | --- |
-| [App maintenance and health checks](/features/app-maintenance-and-health/) | Runs startup and recurring maintenance jobs and exposes optional external health-check behavior. | Operators | Mixed | [Control Center](/admin/operations/) |
-| [Front Door and session controls](/features/front-door-and-session-security/) | Supports Azure Front Door routing and optional idle-timeout behavior for browser sessions. | Operators | Disabled | [Security](/admin/security/) |
-| [Logging and diagnostics](/features/logging-and-diagnostics/) | Controls diagnostic logging, Application Insights global logging, and user-visible file processing logs. | Operators | Mixed | [Logging](/admin/operations/) |
-| [Model routing and endpoints](/features/model-routing/) | Configures how chat and embeddings reach approved Azure OpenAI or model endpoint routes. | Admins | Mixed | [AI Models](/admin/ai-models/) |
-| [Scale and cache](/features/scale-and-cache/) | Enables Redis-backed scale-out support and cached conversation reads for faster hot paths. | Operators | Mixed | [Scale](/admin/scale/) |
-| [Thoughts display](/features/thoughts-display/) | Shows configured processing-thought information in supported chat flows. | End users | Enabled | [General](/admin/appearance/) |
+| Capability | What it does |
+| --- | --- |
+{% for entry in entries -%}
+| [{{ entry[1].name | escape }}]({{ '/features/' | append: entry[0] | append: '/' | relative_url }}) | {{ entry[1].summary | escape | replace: '|', '&#124;' }} |
+{% endfor %}
+{% endfor %}

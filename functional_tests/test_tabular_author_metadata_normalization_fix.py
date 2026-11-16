@@ -1,8 +1,9 @@
 # test_tabular_author_metadata_normalization_fix.py
 """
 Functional test for tabular author metadata normalization.
-Version: 0.240.028
+Version: 0.261.268
 Implemented in: 0.240.028
+Chunk author normalization is checked in the background search metadata sync: 0.261.268
 
 This test ensures tabular schema-summary indexing normalizes author metadata
 before Azure AI Search upload so null or blank author entries do not break
@@ -86,7 +87,8 @@ def test_tabular_chunk_indexing_uses_normalized_authors_everywhere():
             "'authors': []",
             '"authors": ensure_list(carried_forward.get("authors"))',
             "author = ensure_list(metadata.get('authors')) if metadata else []",
-            "chunk_updates['author'] = ensure_list(existing_document.get('authors'))",
+            # The background search metadata sync normalizes authors before merging them into chunks.
+            "value = ensure_list(value)",
             "chunk_item[field] = ensure_list(kwargs[field])",
         ]
 

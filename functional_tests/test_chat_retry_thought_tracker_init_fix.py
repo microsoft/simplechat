@@ -2,12 +2,11 @@
 #!/usr/bin/env python3
 """
 Functional test for chat retry thought tracker initialization.
-Version: 0.241.004
+Version: 0.261.317
 Implemented in: 0.241.004
 
 This test ensures retry and edit flows that route through the compatibility
-bridge initialize assistant response tracking before content safety uses the
-thought tracker.
+bridge initialize assistant response tracking before any tracked thought.
 """
 
 import os
@@ -39,8 +38,8 @@ def read_config_version():
     raise AssertionError('VERSION assignment not found in config.py')
 
 
-def test_retry_and_edit_paths_initialize_thought_tracker_before_content_safety():
-    """Verify chat_api uses shared assistant tracking setup before content safety."""
+def test_retry_and_edit_paths_initialize_thought_tracker_before_first_use():
+    """Verify chat_api uses shared assistant tracking setup before tracked thoughts."""
     print('🔍 Testing retry/edit thought-tracker initialization...')
 
     route_source = read_file_text(ROUTE_FILE)
@@ -56,14 +55,15 @@ def test_retry_and_edit_paths_initialize_thought_tracker_before_content_safety()
 
     helper_marker = 'def _initialize_assistant_response_tracking('
     shared_init_marker = 'assistant_message_id, thought_tracker, assistant_thread_attempt, response_message_context = _initialize_assistant_response_tracking('
-    content_safety_marker = "thought_tracker.add_thought('content_safety', 'Checking content safety...')"
+    tracked_thought_marker = "thought_tracker.add_thought("
 
     assert helper_marker in route_source, 'Expected shared assistant-response tracking helper in route_backend_chats.py.'
-    assert "retry_user_message_id = data.get('retry_user_message_id') or data.get('edited_user_message_id')" in chat_api_source
+    assert "data.get('retry_user_message_id')" in chat_api_source
+    assert "data.get('edited_user_message_id')" in chat_api_source
     assert shared_init_marker in chat_api_source, 'Expected chat_api to initialize assistant tracking through the shared helper.'
-    assert content_safety_marker in chat_api_source, 'Expected content safety thought logging in chat_api.'
-    assert chat_api_source.find(shared_init_marker) < chat_api_source.find(content_safety_marker), (
-        'Expected assistant tracking initialization before content safety uses thought_tracker.'
+    assert tracked_thought_marker in chat_api_source, 'Expected tracked thoughts in chat_api.'
+    assert chat_api_source.find(shared_init_marker) < chat_api_source.find(tracked_thought_marker), (
+        'Expected assistant tracking initialization before any thought uses thought_tracker.'
     )
 
     stream_source = route_source[chat_stream_index:]
@@ -91,7 +91,7 @@ def test_version_and_fix_documentation_alignment():
 
 if __name__ == '__main__':
     tests = [
-        test_retry_and_edit_paths_initialize_thought_tracker_before_content_safety,
+        test_retry_and_edit_paths_initialize_thought_tracker_before_first_use,
         test_version_and_fix_documentation_alignment,
     ]
 

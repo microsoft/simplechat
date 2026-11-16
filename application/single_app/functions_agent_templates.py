@@ -49,6 +49,27 @@ _MAX_TEMPLATE_LIST_ITEM_LENGTHS = {
 }
 
 
+def agent_template_submission_decision(settings, is_admin):
+    """Decide whether the caller may submit an agent template.
+
+    The single source of truth for the three sequential gates the submit route
+    enforces, so the group agent editor can hide its submit affordance with the
+    exact same logic instead of re-deriving it. Returns ``(allowed, reason)``
+    where ``reason`` is ``None`` when allowed, otherwise the matching human error
+    string the route returns with a 403. The order matters: gallery first, then
+    workspace agent creation, then user submissions. Admins bypass the last two
+    but not the gallery switch.
+    """
+    settings = settings or {}
+    if not settings.get('enable_agent_template_gallery', False):
+        return False, 'Agent template gallery is disabled.'
+    if not settings.get('allow_user_agents') and not is_admin:
+        return False, 'Agent creation is disabled for your workspace.'
+    if not settings.get('agent_templates_allow_user_submission', True) and not is_admin:
+        return False, 'Template submissions are disabled for users.'
+    return True, None
+
+
 def _utc_now() -> str:
     return datetime.utcnow().isoformat()
 

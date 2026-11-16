@@ -1,3 +1,4 @@
+# utils_cache.py
 """
 Search Result Caching Utility
 
@@ -21,12 +22,15 @@ import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
+from content_screening.contracts import SCREENING_FIELD, hash_payload
+from document_metadata_identity import document_cache_identity
 from config import (
     cosmos_user_documents_container,
     cosmos_group_documents_container,
     cosmos_public_documents_container,
     cosmos_search_cache_container
 )
+from functions_appinsights import sanitize_log_message
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -98,7 +102,11 @@ def _debug_print(message: str, context: str = "CACHE", **kwargs):
     print(debug_message, flush=True)  # Also print to stdout for visibility
 
 
-def get_personal_document_fingerprint(user_id: str) -> str:
+def _document_cache_identity(document):
+    return document_cache_identity(document)
+
+
+def get_personal_document_fingerprint(user_id: str) -> Optional[str]:
     """
     Generate a fingerprint of user's personal documents (including shared with them).
     
@@ -112,12 +120,16 @@ def get_personal_document_fingerprint(user_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version
+            SELECT c.id, c.version, c._etag, c.content_screening
             FROM c
             WHERE c.user_id = @user_id OR ARRAY_CONTAINS(c.shared_user_ids, @user_id)
+                OR ARRAY_CONTAINS(c.shared_user_ids, @approved_user_id)
             ORDER BY c.id
         """
-        parameters = [{"name": "@user_id", "value": user_id}]
+        parameters = [
+            {"name": "@user_id", "value": user_id},
+            {"name": "@approved_user_id", "value": f"{user_id},approved"},
+        ]
         
         documents = list(
             cosmos_user_documents_container.query_items(
@@ -128,7 +140,7 @@ def get_personal_document_fingerprint(user_id: str) -> str:
         )
         
         # Include both ID and version to detect document updates
-        doc_identifiers = [f"{doc['id']}:v{doc['version']}" for doc in documents]
+        doc_identifiers = [_document_cache_identity(doc) for doc in documents]
         doc_identifiers.sort()
         
         fingerprint_string = '|'.join(doc_identifiers)
@@ -146,11 +158,10 @@ def get_personal_document_fingerprint(user_id: str) -> str:
     except Exception as e:
         logger.error(f"Error generating personal document fingerprint for user {user_id}: {e}")
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", user_id=user_id[:8])
-        # Return timestamp-based fingerprint to prevent caching on error
-        return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
+        return None
 
 
-def get_group_document_fingerprint(group_id: str) -> str:
+def get_group_document_fingerprint(group_id: str) -> Optional[str]:
     """
     Generate a fingerprint of group documents (including shared with group).
     
@@ -164,12 +175,16 @@ def get_group_document_fingerprint(group_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version
+            SELECT c.id, c.version, c._etag, c.content_screening
             FROM c
             WHERE c.group_id = @group_id OR ARRAY_CONTAINS(c.shared_group_ids, @group_id)
+                OR ARRAY_CONTAINS(c.shared_group_ids, @approved_group_id)
             ORDER BY c.id
         """
-        parameters = [{"name": "@group_id", "value": group_id}]
+        parameters = [
+            {"name": "@group_id", "value": group_id},
+            {"name": "@approved_group_id", "value": f"{group_id},approved"},
+        ]
         
         documents = list(
             cosmos_group_documents_container.query_items(
@@ -179,7 +194,7 @@ def get_group_document_fingerprint(group_id: str) -> str:
             )
         )
         
-        doc_identifiers = [f"{doc['id']}:v{doc['version']}" for doc in documents]
+        doc_identifiers = [_document_cache_identity(doc) for doc in documents]
         doc_identifiers.sort()
         
         fingerprint_string = '|'.join(doc_identifiers)
@@ -195,12 +210,15 @@ def get_group_document_fingerprint(group_id: str) -> str:
         return fingerprint
         
     except Exception as e:
-        logger.error(f"Error generating group document fingerprint for group {group_id}: {e}")
+        logger.error(
+            f"Error generating group document fingerprint for group {sanitize_log_message(group_id)}: "
+            f"{sanitize_log_message(e)}"
+        )
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", group_id=group_id[:8])
-        return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
+        return None
 
 
-def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
+def get_public_workspace_document_fingerprint(public_workspace_id: str) -> Optional[str]:
     """
     Generate a fingerprint of public workspace documents.
     
@@ -214,7 +232,7 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
     
     try:
         query = """
-            SELECT c.id, c.version
+            SELECT c.id, c.version, c._etag, c.content_screening
             FROM c
             WHERE c.public_workspace_id = @public_workspace_id
             ORDER BY c.id
@@ -229,7 +247,7 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
             )
         )
         
-        doc_identifiers = [f"{doc['id']}:v{doc['version']}" for doc in documents]
+        doc_identifiers = [_document_cache_identity(doc) for doc in documents]
         doc_identifiers.sort()
         
         fingerprint_string = '|'.join(doc_identifiers)
@@ -245,9 +263,12 @@ def get_public_workspace_document_fingerprint(public_workspace_id: str) -> str:
         return fingerprint
         
     except Exception as e:
-        logger.error(f"Error generating public workspace document fingerprint for workspace {public_workspace_id}: {e}")
+        logger.error(
+            "Error generating public workspace document fingerprint for workspace "
+            f"{sanitize_log_message(public_workspace_id)}: {sanitize_log_message(e)}"
+        )
         _debug_print(f"ERROR generating fingerprint: {e}", "FINGERPRINT", workspace_id=public_workspace_id[:8])
-        return hashlib.sha256(str(datetime.now().timestamp()).encode()).hexdigest()
+        return None
 
 
 def get_cache_partition_key(
@@ -322,8 +343,10 @@ def generate_search_cache_key(
     top_n: int = 50,
     enable_file_sharing: bool = True,
     tags_filter: Optional[List[str]] = None,
-    document_filter_mode: str = "intersection"
-) -> str:
+    document_filter_mode: str = "intersection",
+    embedding_profile_id: str = "",
+    scope_fingerprints: Optional[Dict[str, str]] = None,
+) -> Optional[str]:
     """
     Generate a cache key that includes document set fingerprints and tags filter.
     
@@ -369,19 +392,26 @@ def generate_search_cache_key(
 
     # Build fingerprint based on scope
     fingerprints = []
+    scope_fingerprints = scope_fingerprints or {}
 
     if doc_scope in ["personal", "all"]:
-        personal_fp = get_personal_document_fingerprint(user_id)
+        personal_fp = scope_fingerprints.get(f"personal:{user_id}") or get_personal_document_fingerprint(user_id)
+        if personal_fp is None:
+            return None
         fingerprints.append(f"personal:{personal_fp}")
 
     if doc_scope in ["group", "all"] and active_group_ids:
         for gid in sorted(active_group_ids):
-            group_fp = get_group_document_fingerprint(gid)
+            group_fp = scope_fingerprints.get(f"group:{gid}") or get_group_document_fingerprint(gid)
+            if group_fp is None:
+                return None
             fingerprints.append(f"group:{gid}:{group_fp}")
 
     if doc_scope in ["public", "all"] and public_workspace_ids:
         for workspace_id in sorted(public_workspace_ids):
-            public_fp = get_public_workspace_document_fingerprint(workspace_id)
+            public_fp = scope_fingerprints.get(f"public:{workspace_id}") or get_public_workspace_document_fingerprint(workspace_id)
+            if public_fp is None:
+                return None
             fingerprints.append(f"public:{workspace_id}:{public_fp}")
     
     # Build document IDs string for cache key
@@ -419,7 +449,9 @@ def generate_search_cache_key(
             '|'.join(fingerprints)
         ]
     
-    cache_key_string = '|'.join(cache_key_components)
+    if embedding_profile_id:
+        cache_key_components.append(f"embedding:{embedding_profile_id}")
+    cache_key_string = '|'.join(["document-cache-v2", *cache_key_components])
     cache_key = hashlib.sha256(cache_key_string.encode()).hexdigest()
     
     _debug_print(
@@ -478,7 +510,10 @@ def get_cached_search_results(
                 partition_key=partition_key[:25],
                 ttl_remaining=f"{seconds_remaining:.1f}s"
             )
-            logger.info(f"Cache hit for key: {cache_key} (scope: {doc_scope}, partition: {partition_key[:25]})")
+            logger.info(
+                f"Cache hit for key: {sanitize_log_message(cache_key)} "
+                f"(scope: {sanitize_log_message(doc_scope)}, partition: {sanitize_log_message(partition_key[:25])})"
+            )
             return results
         else:
             # Expired - delete from cache
@@ -548,7 +583,11 @@ def cache_search_results(cache_key: str, results: List[Dict[str, Any]], user_id:
             partition_key=partition_key[:25]
         )
         
-        logger.debug(f"Cached search results with key: {cache_key}, scope: {doc_scope}, partition: {partition_key[:25]}, ttl: {ttl_seconds}s, expires at: {expiry_time}")
+        logger.debug(
+            f"Cached search results with key: {sanitize_log_message(cache_key)}, "
+            f"scope: {sanitize_log_message(doc_scope)}, partition: {sanitize_log_message(partition_key[:25])}, "
+            f"ttl: {ttl_seconds}s, expires at: {expiry_time}"
+        )
     except Exception as e:
         logger.error(f"Error caching search results to Cosmos DB: {e}")
         _debug_print(f"Cache write ERROR: {e}", "CACHE", cache_key=cache_key[:16])
@@ -612,7 +651,7 @@ def invalidate_personal_search_cache(user_id: str) -> int:
                 "INVALIDATION",
                 user_id=user_id[:8]
             )
-            logger.info(f"Invalidated {count} cache entries for user {user_id}")
+            logger.info(f"Invalidated {count} cache entries for user {sanitize_log_message(user_id)}")
         
         return count
         
@@ -622,7 +661,7 @@ def invalidate_personal_search_cache(user_id: str) -> int:
         return 0
 
 
-def invalidate_group_search_cache(group_id: str) -> int:
+def invalidate_group_search_cache(group_id: str, *, document_id=None, strict=False) -> int:
     """
     Invalidate all cached searches for a specific group's documents in Cosmos DB.
     
@@ -651,6 +690,14 @@ def invalidate_group_search_cache(group_id: str) -> int:
         # Looking for doc_scope containing group references
         query = "SELECT c.id, c.user_id FROM c WHERE CONTAINS(c.doc_scope, @group_id)"
         parameters = [{"name": "@group_id", "value": group_id}]
+        if document_id is not None:
+            query = (
+                "SELECT c.id, c.user_id FROM c WHERE CONTAINS(c.doc_scope, @group_id) "
+                "OR CONTAINS(c.user_id, @group_id) "
+                "OR EXISTS(SELECT VALUE r FROM r IN c.results WHERE r.document_id = @document_id "
+                "OR r.source_document_id = @document_id OR r.screening_provenance.document_id = @document_id)"
+            )
+            parameters.append({"name": "@document_id", "value": document_id})
         
         items = list(cosmos_search_cache_container.query_items(
             query=query,
@@ -668,6 +715,10 @@ def invalidate_group_search_cache(group_id: str) -> int:
                     partition_key=item['user_id']
                 )
             except Exception as e:
+                if strict:
+                    if getattr(e, "status_code", None) == 404:
+                        continue
+                    raise
                 logger.warning(f"Failed to delete cache item {item['id']}: {e}")
         
         if count > 0:
@@ -676,11 +727,16 @@ def invalidate_group_search_cache(group_id: str) -> int:
                 "INVALIDATION",
                 group_id=group_id[:8]
             )
+            # Rebound rather than wrapped inline so the log line keeps its text, and the
+            # clear-text CodeQL alert already reported on it keeps its identity.
+            group_id = sanitize_log_message(group_id)
             logger.info(f"Invalidated {count} cache entries for group {group_id}")
         
         return count
         
     except Exception as e:
+        if strict:
+            raise
         logger.error(f"Error invalidating group search cache: {e}")
         _debug_print(f"Invalidation ERROR: {e}", "INVALIDATION", group_id=group_id[:8])
         return 0
@@ -739,7 +795,9 @@ def invalidate_public_workspace_search_cache(public_workspace_id: str) -> int:
                 "INVALIDATION",
                 workspace_id=public_workspace_id[:8]
             )
-            logger.info(f"Invalidated {count} cache entries for public workspace {public_workspace_id}")
+            logger.info(
+                f"Invalidated {count} cache entries for public workspace {sanitize_log_message(public_workspace_id)}"
+            )
         
         return count
         

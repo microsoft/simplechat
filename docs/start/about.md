@@ -7,6 +7,7 @@ menubar: docs_menu
 accent: teal
 eyebrow: "Platform Overview"
 description: "Simple Chat combines Azure-hosted chat, grounded retrieval, workspace management, and optional agent orchestration into one application surface."
+version: "0.261.398"
 hero_icons:
   - bi-chat-square-text
   - bi-database
@@ -26,75 +27,107 @@ redirect_from:
   - /about/
 ---
 
-Simple Chat is an enterprise-ready Flask application for teams that want conversational AI grounded in their own data, with admin controls that stay practical instead of sprawling.
+Simple Chat is an open-source Flask application for teams that want to work with
+AI models and their own knowledge in one web experience. It brings conversations,
+workspace documents, administrative settings, and optional tools together, while
+leaving service connections and rollout decisions with the deployment's owners.
 
-<section class="latest-release-card-grid">
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-chat-square-text"></i></div>
-		<h2>Grounded Chat</h2>
-		<p>Users can chat directly with models or switch into retrieval-backed conversations that cite files from personal, group, or public workspaces.</p>
-	</article>
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-folder2-open"></i></div>
-		<h2>Document Workflows</h2>
-		<p>Uploads are processed through document extraction, chunking, embeddings, and search so teams can move from raw files to usable retrieval quickly.</p>
-	</article>
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-sliders"></i></div>
-		<h2>Admin Control Surface</h2>
-		<p>Admins configure branding, models, workspaces, search, safety, logging, and scale features from one settings experience.</p>
-	</article>
-</section>
+## What Simple Chat brings together
 
-<div class="latest-release-note-panel">
-	<h2>What the docs are optimized for</h2>
-	<p>The documentation is organized to help with three common paths: deploy the platform, configure the services behind it, and teach end users how to get value from workspaces, search, and agents.</p>
-</div>
+The product story is more than a chat box: teams can connect their knowledge,
+reuse useful instructions, and decide which AI capabilities people may use.
+The full presentation slide below introduces that combination.
+
+{% include media.html id="slide-product-overview" %}
+
+The illustrations describe capability snapshot **0.261.398**. Their enterprise
+and Azure context is not a certification or a promise that every optional
+connection stays inside one tenant.
+
+## Grounded Chat
+
+Ask a model directly, or ground a question in authorized documents from personal,
+group, or public workspaces. Retrieval supplies relevant excerpts, and citations
+let a reader inspect the supporting material instead of relying on the answer
+alone. Public workspaces are curated content for signed-in application users;
+they are not anonymous public websites.
+
+Start with [uploading documents]({{ '/guides/upload-and-manage-documents/' | relative_url }})
+and the [grounded request walkthrough]({{ '/reference/application-workflows/#grounded-chat-request-walkthrough' | relative_url }}).
+
+## Document Workflows
+
+Supported files move through format-specific extraction, chunking, embeddings,
+and indexing. This makes them useful for retrieval without requiring users to
+paste their contents into every message. The enabled extraction and media
+services determine which processing paths are available.
+
+For a more deliberate review, [Analyze and Compare]({{ '/features/document-analysis/' | relative_url }})
+work with selected sources and report limitations. Saved results are records of
+that review, not proof that the original documents have been checked again.
+
+## Admin Control Surface
+
+Administrators configure models, workspaces, branding, search, content checks,
+logging, and other capabilities through [Admin Settings]({{ '/admin/' | relative_url }}).
+Enabling a capability is separate from granting access to a source or approving
+an external destination.
+
+Teams can begin with chat and expand into [saved prompts]({{ '/features/saved-prompts/' | relative_url }}),
+[agents]({{ '/features/agents/' | relative_url }}),
+[approved actions]({{ '/features/core-actions/' | relative_url }}), and
+[repeatable workflows]({{ '/features/workflows/' | relative_url }}).
+These additions need their own permissions, connections, and operational checks.
+
+## What the docs are optimized for
+
+Use the docs to deploy the platform, configure the services behind a capability,
+or teach a task. The [feature catalog]({{ '/features/' | relative_url }}) connects
+capability explanations to guides and settings; the
+[architecture]({{ '/explanation/architecture/' | relative_url }}) explains the
+application, data, identity, and outbound-service boundaries.
 
 ## Follow the right path
 
-<section class="latest-release-card-grid">
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-rocket-takeoff"></i></div>
-		<h2>Deploy</h2>
-		<p>Use the guided deployment path if you want the fastest route into a working environment.</p>
-		<p><a href="{{ '/start/deployment-options/' | relative_url }}">Open Getting Started</a></p>
-	</article>
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-grid-1x2"></i></div>
-		<h2>Understand capabilities</h2>
-		<p>Review how chat, workspaces, safety, citations, multimedia, and agents fit together before expanding the deployment.</p>
-		<p><a href="{{ '/features/' | relative_url }}">Browse the feature map</a></p>
-	</article>
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-gear"></i></div>
-		<h2>Operate and tune</h2>
-		<p>Use the admin, workflow, scaling, and troubleshooting guides when the platform moves from proof of concept into production support.</p>
-		<p><a href="{{ '/application_scaling/' | relative_url }}">Review scaling guidance</a></p>
-	</article>
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-mortarboard"></i></div>
-		<h2>Teach the team</h2>
-		<p>The tutorial track is written for people who need to go from first login to useful document-grounded chat without reading every reference page first.</p>
-		<p><a href="{{ '/guides/' | relative_url }}">Open tutorials</a></p>
-	</article>
-</section>
+### Deploy
+
+Choose a [deployment path]({{ '/start/deployment-options/' | relative_url }})
+before preparing resources. Then use
+[first configuration]({{ '/guides/admin-first-configuration/' | relative_url }})
+to verify sign-in, models, storage, and retrieval in dependency order.
+
+### Understand capabilities
+
+Browse the [feature catalog]({{ '/features/' | relative_url }}) for what each
+capability does, or use [feature guidance]({{ '/explanation/feature_guidance/' | relative_url }})
+to decide what belongs in your rollout.
+
+### Operate and tune
+
+Use the [day-to-day operations guide]({{ '/guides/admin-operate-simplechat/' | relative_url }})
+for monitoring and review, the [scaling guide]({{ '/guides/scale-simplechat-on-azure/' | relative_url }})
+for demonstrated bottlenecks, and [troubleshooting]({{ '/troubleshooting/' | relative_url }})
+when an expected path fails.
+
+### Teach the team
+
+Start with [getting started]({{ '/guides/getting-started/' | relative_url }}),
+then choose a task from the [guides]({{ '/guides/' | relative_url }}). People do
+not need to read every service reference before asking a useful grounded question.
 
 ## Built as an open repo
 
-The project lives in the open and includes application code, deployment assets, functional tests, UI tests, and deep change documentation under the docs tree.
+The [source repository](https://github.com/microsoft/simplechat) includes the
+application, deployers, documentation, functional tests, and UI tests.
 
-<section class="latest-release-card-grid">
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-github"></i></div>
-		<h2>Source and contribution flow</h2>
-		<p>Contributors can inspect the application, deployment scripts, docs site, and supporting tools in one repository.</p>
-		<p><a href="{{ '/contributing/' | relative_url }}">Read contribution guidance</a></p>
-	</article>
-	<article class="latest-release-card">
-		<div class="latest-release-card-icon"><i class="bi bi-journal-text"></i></div>
-		<h2>Release-by-release traceability</h2>
-		<p>Feature explanations, fixes, and release notes are captured inside the docs site so changes remain searchable after deployment work is done.</p>
-		<p><a href="{{ '/explanation/release_notes/' | relative_url }}">Review release notes</a></p>
-	</article>
-</section>
+### Source and contribution flow
+
+Read [contribution guidance]({{ '/contributing/' | relative_url }}) for local
+development and the fork-based contribution process.
+
+### Release-by-release traceability
+
+Use [latest release highlights]({{ '/latest-release/' | relative_url }}) for a
+tour of changes and [release notes]({{ '/explanation/release_notes/' | relative_url }})
+for release details. Internal implementation and fix records remain available in
+the repository; they are not substitutes for the published user guides.

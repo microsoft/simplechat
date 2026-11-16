@@ -2,8 +2,9 @@
 # test_tabular_large_result_pagination.py
 """
 Functional test for tabular SK large-result pagination and output trimming.
-Version: 0.250.155
+Version: 0.261.408
 Implemented in: 0.242.067; bounded CSV query path in 0.250.060; source descriptor generalization in 0.250.127; serialized row-size estimation in 0.250.152; contains replay semantics in 0.250.155
+Explicit offline source authorization fixtures updated in: 0.261.408
 
 This test ensures row-returning tabular processing tools support start_row/max_rows
 pagination, avoid skipped rows after auto-trimming oversized output, honor
@@ -39,6 +40,15 @@ PLUGIN_SPEC = importlib.util.spec_from_file_location('tabular_processing_plugin'
 PLUGIN_MODULE = importlib.util.module_from_spec(PLUGIN_SPEC)
 PLUGIN_SPEC.loader.exec_module(PLUGIN_MODULE)
 TabularProcessingPlugin = PLUGIN_MODULE.TabularProcessingPlugin
+
+
+def authorize_fixture_source(plugin, container_name, blob_path):
+    """Keep row-shaping unit fixtures restricted to their one mocked source."""
+    def authorize(container, blob, *, purpose="native"):
+        assert (container, blob) == (container_name, blob_path)
+        return None, 'test-user'
+
+    plugin._assert_blob_screening_access = authorize
 
 
 class MockCsvBlobClient:
@@ -103,6 +113,11 @@ def build_workbook_plugin(workbook_frames):
         return workbook_frames[selected_sheet].copy()
 
     plugin._read_tabular_blob_to_dataframe = read_dataframe
+    # These row-shaping fixtures have frames, not an original workbook package.
+    # Real workbook replay and authorization are covered by the table-aware suite.
+    plugin._build_tabular_generated_export_internal_metadata = lambda **kwargs: {
+        'tabular_generated_export_source_error': 'This in-memory fixture has no version-pinned original.',
+    }
     return plugin
 
 
@@ -363,6 +378,7 @@ def test_query_tabular_csv_uses_bounded_shared_engine_and_exact_descriptor():
             'nested/version-7/large-results.csv',
         )
         plugin._get_blob_service_client = lambda: MockCsvBlobServiceClient(csv_content)
+        authorize_fixture_source(plugin, 'mock-container', 'nested/version-7/large-results.csv')
         plugin._read_tabular_blob_to_dataframe = lambda *args, **kwargs: (_ for _ in ()).throw(
             AssertionError('CSV query must not use the whole-DataFrame reader')
         )
@@ -419,6 +435,7 @@ def test_filter_rows_csv_attaches_replayable_descriptor_for_full_cohort():
             'nested/version-7/large-results.csv',
         )
         plugin._get_blob_service_client = lambda: MockCsvBlobServiceClient(csv_content)
+        authorize_fixture_source(plugin, 'mock-container', 'nested/version-7/large-results.csv')
         plugin._read_tabular_blob_to_dataframe = lambda *args, **kwargs: source_frame.copy()
 
         result = asyncio.run(plugin.filter_rows(
@@ -477,6 +494,7 @@ def test_filter_rows_csv_contains_replay_uses_literal_semantics():
             'nested/version-7/large-results.csv',
         )
         plugin._get_blob_service_client = lambda: MockCsvBlobServiceClient(csv_content)
+        authorize_fixture_source(plugin, 'mock-container', 'nested/version-7/large-results.csv')
         plugin._read_tabular_blob_to_dataframe = lambda *args, **kwargs: source_frame.copy()
 
         result = asyncio.run(plugin.filter_rows(
@@ -530,6 +548,7 @@ def test_filter_rows_csv_rejects_non_replayable_normalized_matching():
             'nested/version-7/large-results.csv',
         )
         plugin._get_blob_service_client = lambda: MockCsvBlobServiceClient(csv_content)
+        authorize_fixture_source(plugin, 'mock-container', 'nested/version-7/large-results.csv')
         plugin._read_tabular_blob_to_dataframe = lambda *args, **kwargs: source_frame.copy()
 
         result = asyncio.run(plugin.filter_rows(
@@ -547,7 +566,7 @@ def test_filter_rows_csv_rejects_non_replayable_normalized_matching():
 
         assert payload['total_matches'] == 2, payload
         assert 'tabular_generated_export_source' not in metadata, metadata
-        assert 'normalize_match=true' in metadata['tabular_generated_export_source_error'], metadata
+        assert 'bounded row-local query' in metadata['tabular_generated_export_source_error'], metadata
 
         print('✅ Normalized filter_rows replay rejection passed')
         return True
@@ -579,6 +598,7 @@ def test_search_rows_csv_attaches_replayable_multi_column_descriptor():
             'nested/version-7/large-results.csv',
         )
         plugin._get_blob_service_client = lambda: MockCsvBlobServiceClient(csv_content)
+        authorize_fixture_source(plugin, 'mock-container', 'nested/version-7/large-results.csv')
         plugin._read_tabular_blob_to_dataframe = lambda *args, **kwargs: source_frame.copy()
 
         result = asyncio.run(plugin.search_rows(

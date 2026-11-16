@@ -23,7 +23,7 @@ def _env_bool(name, default):
 bind = os.environ.get('GUNICORN_BIND', f"0.0.0.0:{os.environ.get('PORT', '5000')}")
 worker_class = os.environ.get('GUNICORN_WORKER_CLASS', 'gthread')
 workers = _env_int('GUNICORN_WORKERS', 2)
-threads = _env_int('GUNICORN_THREADS', 8)
+threads = _env_int('GUNICORN_THREADS', 16)
 timeout = _env_int('GUNICORN_TIMEOUT', 900)
 background_tasks_enabled = _env_bool('SIMPLECHAT_RUN_BACKGROUND_TASKS', True)
 graceful_timeout = _env_int('GUNICORN_GRACEFUL_TIMEOUT', 300 if background_tasks_enabled else 60)

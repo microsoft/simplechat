@@ -1543,6 +1543,10 @@ def extract_route_info(app: Flask) -> Dict[str, Any]:
     
     return openapi_spec
 
+# The blueprint the Swagger routes are registered under, which is also how a running
+# process tells whether it is serving them.
+SWAGGER_BLUEPRINT_NAME = 'swagger_docs'
+
 def register_swagger_routes(app: Flask):
     """
     Register swagger documentation routes if enabled in settings.
@@ -1559,7 +1563,7 @@ def register_swagger_routes(app: Flask):
         print("Swagger documentation is disabled in admin settings.")
         return
 
-    swagger_bp = Blueprint('swagger_docs', __name__)
+    swagger_bp = Blueprint(SWAGGER_BLUEPRINT_NAME, __name__)
     swagger_bp.before_request(apply_blueprint_auth('login_required'))
     
     @swagger_bp.route('/swagger')
@@ -2280,6 +2284,17 @@ def register_swagger_routes(app: Flask):
             })
 
     app.register_blueprint(swagger_bp)
+
+
+def are_swagger_routes_registered(app: Flask) -> bool:
+    """Whether this process registered the Swagger routes when it started.
+
+    ``register_swagger_routes`` reads ``enable_swagger`` once, at startup, and adds
+    the blueprint only when it is on. The saved setting and the routes a running
+    process serves can therefore disagree until the App Service restarts, and the
+    admin surface uses this to say so.
+    """
+    return SWAGGER_BLUEPRINT_NAME in app.blueprints
 
 # Utility function to create common response schemas
 def create_response_schema(success_schema: Optional[Dict[str, Any]] = None, error_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

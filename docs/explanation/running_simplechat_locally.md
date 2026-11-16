@@ -45,7 +45,71 @@ Local development is intentionally simpler than Azure production. The goal is fa
 
 This guide explains the recommended local developer workflow for Simple Chat.
 
-Current documentation version: 0.241.009
+Current documentation version: **0.261.402** (tracked in `application/single_app/config.py`).
+
+## Replacement tenant and local sign-in
+
+Implemented in version: **0.261.399**.
+
+Local application identity, Azure data access, and GitHub Actions identity are
+separate configuration boundaries. Switching the Azure CLI tenant alone does
+not migrate an application registration, its secret, data-plane permissions,
+or an old browser session.
+
+Keep local application settings in the ignored
+`application\single_app\.env`. From the repository root, create a template only
+when no local file already exists:
+
+```powershell
+if (-not (Test-Path .\application\single_app\.env)) {
+    Copy-Item .\application\single_app\example.env .\application\single_app\.env
+}
+$env:SIMPLECHAT_ENV_FILE = Join-Path $PWD 'application\single_app\.env'
+```
+
+The existing [dotenv profile selector](features/ENV_FILE_SELECTION.md) keeps the
+choice explicit and fails if the selected file is missing. Process-level
+environment variables still take precedence over profile values; choosing a
+new file does not overwrite old credentials already exported in the terminal.
+
+Configure these values through the approved local secret-handling process:
+
+| Setting | Local purpose |
+|---|---|
+| `TENANT_ID` | Current tenant for the developer's application registration |
+| `CLIENT_ID` | Registration approved for local sign-in, not the Actions workload identity |
+| `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` | That registration's client secret used by MSAL |
+| `SECRET_KEY` | Independent Flask session-signing secret |
+| `AZURE_COSMOS_ENDPOINT` and the selected authentication settings | Explicit development data target and authorized access |
+
+Do not copy staging/beta secrets into a tracked file or assume a hosted app
+registration permits loopback redirects. Debug startup serves HTTPS on port
+5000; the selected registration must allow the exact local callback, such as
+`https://localhost:5000/getAToken`, matching the origin actually used. The debug
+server uses an ad-hoc development certificate; keep local trust handling
+separate from the hosted staging workflow, which retains normal TLS validation.
+
+Use an existing approved development registration, or obtain approval before
+creating one or changing its redirect/role configuration. Azure CLI control-plane
+administration does not itself grant Cosmos DB, Search, or Storage data-plane
+access; verify those permissions for the chosen development resources.
+`DefaultAzureCredential` also tries configured environment credentials before
+the Azure CLI identity. Stale `AZURE_TENANT_ID`/`AZURE_CLIENT_ID` credential
+configuration can therefore keep using the old tenant even after a CLI login.
+
+For live browser tests, keep `SIMPLECHAT_UI_BASE_URL` and signed-in storage state
+specific to the local origin. `ui_tests\artifacts\` is ignored, but browser state
+is still a credential and must not be logged or committed. Actions validates
+the [existing staging deployment](features/STAGING_UI_VALIDATION.md); beta
+remains a manual development target.
+
+Offline functional tests do not require live tenant credentials. From the
+repository root, the complete Cosmos contract command retains its
+pre-collection network guard:
+
+```powershell
+python .\scripts\check_cosmos_response_boundaries.py --run-contracts
+```
 
 ## VS Code Python 3.12 Setup
 
@@ -99,16 +163,13 @@ If VS Code does not detect the environment automatically, reload the window afte
 
 ## Recommended Local Startup
 
-After the `.venv` interpreter is selected in VS Code, start the app directly with Python for normal development:
+After the `.venv` interpreter is selected in VS Code, start the app directly with
+Python for normal development. From the repository root in PowerShell:
 
-```bash
-python app.py
-```
-
-Set:
-
-```bash
-FLASK_DEBUG=1
+```powershell
+Set-Location .\application\single_app
+$env:FLASK_DEBUG = "1"
+python .\app.py
 ```
 
 This keeps Simple Chat on the Flask development server, enables local HTTPS behavior, and avoids unnecessary production-runtime complexity while you are editing and debugging the application.

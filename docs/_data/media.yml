@@ -89,3 +89,474 @@ user-video-agents-actions:
   capture: "Recording planned. Cover what an action is and why you would use one, then build an agent that calls it end to end."
   group: guides
   duration: ""
+
+# BEGIN CUSTOMER PRESENTATION SLIDES
+slide-product-overview:
+  type: image
+  title: "Customer Focused \xB7  Enterprise Ready \xB7  Azure Native"
+  file: slides/product-overview.png
+  alt: Simple Chat combines document-grounded conversations, administrative controls, approved tools, and Azure services in a modular platform.
+  caption: 'Full presentation slide: how Simple Chat brings knowledge, administration, and approved AI capabilities together.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-application-boundaries:
+  type: image
+  title: Application Boundaries
+  file: slides/application-boundaries.png
+  alt: Identity, workspace knowledge, and configured AI services are shown within an application boundary, with optional outbound connections identified separately.
+  caption: 'Full presentation slide: an application boundary is not a promise that every optional connection remains in one tenant.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-feed-anything-get-knowledge:
+  type: image
+  title: Feed Anything, Get Knowledge
+  file: slides/feed-anything-get-knowledge.png
+  alt: Documents, images, text, audio, and video become indexed knowledge that can support hybrid retrieval and cited chat answers.
+  caption: 'Full presentation slide: supported ingestion paths depend on the enabled extraction and media services.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-workspace-scopes:
+  type: image
+  title: The Right Knowledge, at the Right Scope
+  file: slides/workspace-scopes.png
+  alt: Personal, group, and public workspaces separate private work, shared team knowledge, and curated content for signed-in application users.
+  caption: 'Full presentation slide: public workspaces are application-visible collections, not anonymous public websites.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-citations:
+  type: image
+  title: Citations
+  file: slides/citations.png
+  alt: A grounded answer links through a citation to the supporting source document so a reader can inspect the referenced material.
+  caption: 'Full presentation slide: citation inspection connects an answer to its sources; the pictured interface is illustrative.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-saved-prompts:
+  type: image
+  title: Prompts
+  file: slides/saved-prompts.png
+  alt: A reusable saved prompt and a separate user question are combined for the configured model to produce a structured response.
+  caption: 'Full presentation slide: reusable instructions stay distinct from the question; current prompt controls vary by interface.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-agents:
+  type: image
+  title: 'Agents: Focused AI for Your Work'
+  file: slides/agents.png
+  alt: Instructions, assigned knowledge, approved actions, and a chosen model feed a scoped policy-review agent.
+  caption: 'Full presentation slide: a focused assistant combines reusable behavior with the knowledge and tools it is allowed to use.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-approved-actions:
+  type: image
+  title: Connect Answers to Approved Tools
+  file: slides/approved-actions.png
+  alt: A focused agent connects to approved Microsoft 365 tools, APIs or MCP servers, and configured data systems under identity and destination policy.
+  caption: 'Full presentation slide: configured actions extend an agent without granting unrestricted access or permission to change data.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-orchestration:
+  type: image
+  title: From a Goal to a Reviewed Plan
+  file: slides/orchestration.png
+  alt: A user goal moves through proposed-plan review, enabled Gather, Reason, and Render work, and delivery of an answer and actual files.
+  caption: 'Full presentation slide: orchestration is illustrated in review mode; approval behavior depends on deployment settings.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-workflows:
+  type: image
+  title: 'Workflows: Make Good Work Repeatable'
+  file: slides/workflows.png
+  alt: Manual, calendar, and File Sync change triggers start reusable tasks that produce run history, result conversations, and configured alerts.
+  caption: 'Full presentation slide: a workflow makes an approved process repeatable with explicit inputs, execution, and results.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-analyze-and-compare:
+  type: image
+  title: Analyze and Compare Documents
+  file: slides/analyze-and-compare.png
+  alt: Analyze reviews selected documents for retained findings, while Compare explains differences between a baseline and targets with supporting evidence.
+  caption: 'Full presentation slide: read findings and source evidence alongside the limitations of an analysis or comparison.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-tabular-analysis:
+  type: image
+  title: Ask Questions of Spreadsheet Data
+  file: slides/tabular-analysis.png
+  alt: An illustrative table becomes a grouped bar chart through schema inspection, computation, and result presentation.
+  caption: 'Full presentation slide: the data is synthetic; computation and export must use the intended underlying rows, not a planning sample.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-external-research:
+  type: image
+  title: Research Beyond the Workspace
+  file: slides/external-research.png
+  alt: Web search, approved pasted URL access, and deeper source review provide distinct paths for researching public information.
+  caption: 'Full presentation slide: external research is optional and policy-controlled; a web search can send the current request to Bing.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-file-sync:
+  type: image
+  title: 'File Sync: Keep Knowledge Current'
+  file: slides/file-sync.png
+  alt: Approved network shares, Azure Files, and Azure Blob Storage are filtered and synchronized into workspace knowledge.
+  caption: 'Full presentation slide: source credentials and the permissions on imported workspace copies are separate boundaries.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-collaborative-conversations:
+  type: image
+  title: Collaborate in the Same Conversation
+  file: slides/collaborative-conversations.png
+  alt: Invited participants discuss a shared question, receive AI contributions, and review eligible shared files within one conversation.
+  caption: 'Full presentation slide: shared context is deliberate; private agents, credentials, and source access are not automatically shared.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-generated-deliverables:
+  type: image
+  title: From Answers to Useful Deliverables
+  file: slides/generated-deliverables.png
+  alt: Prepared findings and content can feed supported reports, presentations, tables, structured data files, and visuals.
+  caption: 'Full presentation slide: a planned output is not yet a file; formats, publication, and actual delivery remain subject to capability limits.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-workspace-scope-lock:
+  type: image
+  title: Workspace Scope Lock
+  file: slides/workspace-scope-lock.png
+  alt: A locked conversation stays tied to selected workspace contexts; changing to other accessible workspaces requires an intentional permitted scope change.
+  caption: 'Full presentation slide: workspace scope lock prevents accidental source drift; it does not freeze files or replace access controls.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-feedback:
+  type: image
+  title: Feedback That Closes the Loop
+  file: slides/feedback.png
+  alt: A rating and user explanation move through authorized review, retesting, and an optional recorded follow-up.
+  caption: 'Full presentation slide: response feedback supports human-reviewed improvements, not automatic model retraining or the Support email form.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-safety-and-screening:
+  type: image
+  title: Safety and Governance, by Design
+  file: slides/safety-and-screening.png
+  alt: Configured Content Safety checks, content-screening rules, and human review form distinct layers of protection.
+  caption: 'Full presentation slide: checkpoints, reply display, and failure behavior are configurable rather than universally always on.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-governance:
+  type: image
+  title: You Decide What AI Can Reach
+  file: slides/governance.png
+  alt: Governance defines who may use a capability, which actions and destinations it may reach, and which operations require review.
+  caption: 'Full presentation slide: feature enablement, source authorization, destination policy, and review decisions are separate controls.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-identity-and-access:
+  type: image
+  title: Identity and Access
+  file: slides/identity-and-access.png
+  alt: An Entra-authenticated user enters Simple Chat, which checks application and source permissions before using configured data and model services.
+  caption: 'Full presentation slide: sign-in establishes identity; authorization still determines access to application resources and sources.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-scale:
+  type: image
+  title: Scale the Whole Platform
+  file: slides/scale.png
+  alt: Application instances share configured Redis sessions and caching while Cosmos DB, AI Search, and AI-service capacity are coordinated separately.
+  caption: 'Full presentation slide: configure shared sessions before scale-out and size the demonstrated bottleneck, not an assumed user count.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-data-paths:
+  type: image
+  title: Make the Data Paths Explicit
+  file: slides/data-paths.png
+  alt: Core application and workspace data are separated from configured AI, web, Microsoft 365, API, and MCP service connections.
+  caption: 'Full presentation slide: these are logical data paths, not a network topology or a promise that every service stays in one tenant.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-agent-builder:
+  type: image
+  title: Build and Reuse Focused Agents
+  file: slides/agent-builder.png
+  alt: An approved template or Ask AI proposal is equipped with instructions, model, knowledge, and actions before the author reviews and saves it.
+  caption: 'Full presentation slide: assisted editing changes an unsaved draft; it does not enter credentials or grant permissions.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-workflow-logic:
+  type: image
+  title: Workflow Logic and Human Checkpoints
+  file: slides/workflow-logic.png
+  alt: A workflow branches into declared For each and Collect or Repeat until work, with named data flow and a specific approval checkpoint.
+  caption: 'Full presentation slide: branches, bindings, limits, and approvals are explicit; approval cannot repair missing or invalid evidence.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-durable-workflows:
+  type: image
+  title: Durable Runs, Alerts, and Follow-Up
+  file: slides/durable-workflows.png
+  alt: Saved progress supports careful recovery, results delivery, configured alerts, and follow-up on a finished personal workflow run without rerunning it.
+  caption: 'Full presentation slide: durability and follow-up depend on configured capabilities; uncertain external actions still need careful recovery.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-microsoft-365-and-teams:
+  type: image
+  title: Microsoft 365 and Teams
+  file: slides/microsoft-365-and-teams.png
+  alt: Calendar, Email, OneDrive, and SharePoint context is governed by user consent, Run as, and outgoing-action decisions, alongside a configured Teams personal tab.
+  caption: 'Full presentation slide: connecting an account, sharing data, and sending an action are distinct authorizations; Teams is a personal-tab experience.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-model-routing:
+  type: image
+  title: Model Choice, with Governance
+  file: slides/model-routing.png
+  alt: Manual model choice is compared with eligible per-step Auto selection in V2 orchestration, under model catalog profiles and endpoint governance.
+  caption: 'Full presentation slide: automatic model selection is not automatic plan approval and does not grant endpoint access.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-memory-and-preferences:
+  type: image
+  title: A More Personal Working Experience
+  file: slides/memory-and-preferences.png
+  alt: Editable instruction and fact memories, voice and audio preferences, and interface choices personalize the user's working experience.
+  caption: 'Full presentation slide: preferences do not change organization policy, and persistent memories are not a place for secrets.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-conversation-reuse:
+  type: image
+  title: Reuse and Hand Off Conversation Work
+  file: slides/conversation-reuse.png
+  alt: Private conversation excerpts can be referenced in another thread, a task can be queued to a private destination, and supported histories can be exported.
+  caption: 'Full presentation slide: private references and queued handoffs do not widen access to shared or group conversations.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-data-lifecycle:
+  type: image
+  title: Data Lifecycle and Recovery
+  file: slides/data-lifecycle.png
+  alt: Retention, conversation archiving, reviewed backup and restore, and selected-scope migration address different data-lifecycle needs.
+  caption: 'Full presentation slide: archiving is not legal hold, and a configured backup is not proof of a tested recovery.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-personal-workspace:
+  type: image
+  title: Personal Workspace
+  file: slides/personal-workspace.png
+  alt: Each user's documents remain in their own personal workspace rather than becoming visible to other users' document collections.
+  caption: 'Full presentation slide: personal workspace isolation is separate from deliberate sharing and the controls on retained conversation outputs.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-group-workspaces:
+  type: image
+  title: Group Workspaces
+  file: slides/group-workspaces.png
+  alt: Group owners and managers administer documents and membership while users work with the team's permitted knowledge.
+  caption: 'Full presentation slide: group roles distinguish who can manage membership, maintain documents, and use the shared content.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-public-workspaces:
+  type: image
+  title: Public Workspaces
+  file: slides/public-workspaces.png
+  alt: Administrators and document managers curate a public workspace whose approved content can be used by signed-in Simple Chat users.
+  caption: 'Full presentation slide: public means broader application visibility, not unauthenticated internet access.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-file-sharing:
+  type: image
+  title: File Sharing
+  file: slides/file-sharing.png
+  alt: File-sharing approval gives a recipient access without transferring the original owner's deletion or redistribution rights.
+  caption: 'Full presentation slide: access, approval, removal of a shared reference, and deletion of the original are different operations.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-conversation-details:
+  type: image
+  title: Conversation Details
+  file: slides/conversation-details.png
+  alt: Conversation details separate recorded scope and state, source and linked documents, model and agent attribution, and a generated summary.
+  caption: 'Full presentation slide: inspect recorded context; a linked file does not prove that every answer used it.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-message-details:
+  type: image
+  title: Message Details and Sources
+  file: slides/message-details.png
+  alt: Message-level Details, Sources, and recorded processing information explain attribution, capability use, retained references, and limitations.
+  caption: 'Full presentation slide: recorded processing information is not a model''s hidden chain of thought or a guarantee of factual completeness.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-document-classification:
+  type: image
+  title: Document Classification and Metadata
+  file: slides/document-classification.png
+  alt: Document labels and useful metadata carry into indexed chunks and the context of conversations that reference them.
+  caption: 'Full presentation slide: classifications support awareness and review; they are not permission enforcement.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-azure-services:
+  type: image
+  title: Simple Chat
+  file: slides/azure-services.png
+  alt: Simple Chat is shown with its Azure application, identity, AI, data, search, storage, and optional processing services.
+  caption: 'Full presentation slide: services are configured per capability; this is not a mandatory list for every deployment.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-encryption:
+  type: image
+  title: Encryption
+  file: slides/encryption.png
+  alt: The application and configured Azure data and model services are shown with encryption at rest and protected transport paths.
+  caption: 'Full presentation slide: verify the exact Azure service, transport, and deployment settings rather than inferring a compliance certification.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-networking:
+  type: image
+  title: Virtual Network
+  file: slides/networking.png
+  alt: A reference virtual-network pattern places permitted application and service paths under customer-configured network controls.
+  caption: 'Full presentation slide: this is a configured connectivity pattern, not a default or a guarantee that every optional connection is private.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-azure-platform-protection:
+  type: image
+  title: Defender for Cloud
+  file: slides/azure-platform-protection.png
+  alt: Defender for Cloud illustrates an optional Azure platform control for assessing and monitoring the deployment's security posture.
+  caption: 'Full presentation slide: configure Azure platform protection separately and verify resource coverage; Simple Chat does not automatically enable it.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-logging:
+  type: image
+  title: Logging
+  file: slides/logging.png
+  alt: Operational dashboards and telemetry support reliability, usage, security, and configured routing into an organization's monitoring tools.
+  caption: 'Full presentation slide: monitoring and SIEM integration require the applicable logging and Azure routing configuration.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-user:
+  type: image
+  title: User interacts with Simple Chat.
+  file: slides/grounded-request-user.png
+  alt: A signed-in user submits a question to the Simple Chat application to begin the illustrated grounded request.
+  caption: 'Full presentation slide: stage 1 of the illustrative grounded-chat request.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-search:
+  type: image
+  title: '2'
+  file: slides/grounded-request-search.png
+  alt: The application searches the permitted workspace knowledge for relevant source content and retrieval metadata.
+  caption: 'Full presentation slide: stage 2 retrieves relevant source evidence; the source set and current authorization still bound the search.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-context:
+  type: image
+  title: '3'
+  file: slides/grounded-request-context.png
+  alt: The current question, retrieved source excerpts, and applicable conversation history are assembled for the configured model.
+  caption: 'Full presentation slide: stage 3 assembles grounding and history; the model does not remember earlier calls on its own.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-content-checks:
+  type: image
+  title: Azure model services apply their configured content filtering. SimpleChat can add separate application-level Content Safety and Content Screening. Coverage depends on the selected services and configuration.
+  file: slides/grounded-request-content-checks.png
+  alt: The illustrated model path distinguishes provider content filtering from optional Simple Chat Content Safety and Content Screening.
+  caption: 'Full presentation slide: stage 4 illustrates configured checks, not universal or identical coverage across services.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-provider-monitoring:
+  type: image
+  title: Abuse-monitoring and retention terms depend on the Azure service, model, deployment, and approved arrangements. Confirm current Microsoft terms for the customer's environment. Application conversation storage is a separate lifecycle.
+  file: slides/grounded-request-provider-monitoring.png
+  alt: Provider abuse-monitoring and retention arrangements are distinguished from the application's own conversation storage.
+  caption: 'Full presentation slide: stage 5 requires checking the current provider, model, cloud, and approved arrangements.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-model:
+  type: image
+  title: "Prompt (aka User\u2019s message + AI Search Results + Conversation History) is analyzed by Azure OpenAI model to generate a response."
+  file: slides/grounded-request-model.png
+  alt: The configured model analyzes the assembled question, source content, and conversation context to prepare a response.
+  caption: 'Full presentation slide: stage 6 is model execution over the supplied context, not independent verification of every source.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-data-use:
+  type: image
+  title: Use current Azure service data-use terms for the selected model and deployment. Review which optional connections receive request content. Define application retention and access separately.
+  file: slides/grounded-request-data-use.png
+  alt: Provider data-use terms, optional outbound destinations, and application retention are identified as separate responsibilities.
+  caption: 'Full presentation slide: a separate data-use qualification accompanies the model-execution stage.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-response:
+  type: image
+  title: 'Utilizing the relevant customer data, Azure OpenAI generates insightful responses tailored to the user''s specific interactions with Simple Chat, elevating the quality of user interactions. '
+  file: slides/grounded-request-response.png
+  alt: The configured model returns an answer based on the request and supplied customer context.
+  caption: 'Full presentation slide: stage 7 returns a model response; evidence and limitations still matter.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+slide-grounded-request-delivery:
+  type: image
+  title: "Simple Chat provides user with Azure OpenAI insightful information based on their requests to improve the efficiency of their work, speed up tasks, improve reliability, and gain more insights into your agency\u2019s data. "
+  file: slides/grounded-request-delivery.png
+  alt: Simple Chat presents the model's answer in the conversation so the user can read it and inspect supporting material.
+  caption: 'Full presentation slide: stage 8 delivers the answer; displaying it is not a guarantee of correctness.'
+  width: 1600
+  height: 900
+  group: presentation-slides
+# END CUSTOMER PRESENTATION SLIDES

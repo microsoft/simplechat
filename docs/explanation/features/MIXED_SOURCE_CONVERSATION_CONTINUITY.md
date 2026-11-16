@@ -40,3 +40,7 @@ Related version update: `application/single_app/config.py` moved from **0.250.06
 ## Phase 6 Hardening
 
 Version **0.250.070** preserves source version, terminal status, bounded coverage, role, and order through continuity normalization. A fresh manifest decision is now evaluated before history-only reuse, so revoked, changed, partial, failed, or truncated prior grounding forces native execution even when the history assessor would otherwise reuse an earlier answer. Chat-upload hints are filtered through fresh conversation ownership.
+
+## Settings Update (0.261.266)
+
+`enable_mixed_source_conversation_continuity` now follows `enable_enhanced_citations` on every settings load and save, together with `enable_mixed_source_chat_search`, instead of being a default-off stored switch. `SIMPLECHAT_DISABLE_MIXED_SOURCE` turns both off at read time. See `docs/explanation/fixes/MIXED_SOURCE_ADMIN_SETTINGS_FIX.md`.

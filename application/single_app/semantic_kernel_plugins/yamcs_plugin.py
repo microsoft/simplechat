@@ -10,6 +10,9 @@ from decimal import Decimal
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from semantic_kernel.functions import kernel_function
+from action_credential_contracts import (
+    ADAPTERS, ActionCredentialError, credential_slots, validate_credential_requirements,
+)
 
 from functions_appinsights import log_event
 from functions_debug import debug_print
@@ -228,6 +231,7 @@ class YamcsPlugin(BasePlugin):
         ]
 
     def _validate_configuration(self) -> None:
+        personal = validate_credential_requirements(self.manifest)
         if not self.server_url:
             raise ValueError("Yamcs action requires a server URL.")
         if not self.instance:
@@ -241,6 +245,8 @@ class YamcsPlugin(BasePlugin):
                 "Yamcs action supports auth methods username_password, api_key, bearer_token, or none."
             )
         self._validate_basic_auth_configuration()
+        if "service" in personal:
+            return
         if self.auth_type == "identity":
             if not (self._auth.get("identity") or self.manifest.get("identity_id")):
                 raise ValueError("Yamcs reusable identity auth requires auth.identity or identity_id.")
@@ -260,6 +266,8 @@ class YamcsPlugin(BasePlugin):
             return
         if yamcs_basic_auth_conflicts_with_auth_method(self.auth_method):
             raise ValueError(YAMCS_BASIC_AUTH_CONFLICT_MESSAGE)
+        if "proxy" in credential_slots(self.manifest):
+            return
         if not self.basic_auth_username:
             raise ValueError(
                 "Yamcs HTTP Basic authentication requires additionalFields.basic_auth_username."
@@ -276,7 +284,10 @@ class YamcsPlugin(BasePlugin):
             return self._build_basic_auth_credentials() if self.enable_basic_auth else None
 
         try:
-            from yamcs.client import APIKeyCredentials, Credentials
+            try:
+                from yamcs.client import Credentials
+            except ImportError:
+                from yamcs.core.auth import Credentials
         except ImportError as exc:
             raise ImportError(
                 "Yamcs client library is not installed. Install yamcs-client to use Yamcs actions."
@@ -284,6 +295,19 @@ class YamcsPlugin(BasePlugin):
 
         auth_key = str(self._auth.get("key") or "")
         if self.auth_method == YAMCS_AUTH_METHOD_API_KEY:
+            try:
+                from yamcs.client import APIKeyCredentials
+            except ImportError:
+                # yamcs-client 1.8.8 exposes core Credentials, but no API-key
+                # holder. Its Context calls before_request for every request.
+                class APIKeyCredentials(Credentials):
+                    def __init__(self, api_key):
+                        super().__init__()
+                        self.api_key = api_key
+
+                    def before_request(self, session, auth_url):
+                        session.headers.update({"x-api-key": self.api_key})
+
             return APIKeyCredentials(auth_key)
         if self.auth_method == YAMCS_AUTH_METHOD_BEARER_TOKEN:
             return Credentials(access_token=auth_key)
@@ -296,7 +320,10 @@ class YamcsPlugin(BasePlugin):
         running an older yamcs-client keeps working for every non-proxy auth method.
         """
         try:
-            from yamcs.client import BasicAuthCredentials
+            try:
+                from yamcs.client import BasicAuthCredentials
+            except ImportError:
+                from yamcs.core.auth import BasicAuthCredentials
         except ImportError as exc:
             raise ImportError(
                 "Yamcs HTTP Basic authentication requires yamcs-client 1.8.8 or newer. "
@@ -319,9 +346,24 @@ class YamcsPlugin(BasePlugin):
             f"tls_verify={self.tls_verify} timeout={self.timeout} "
             f"basic_auth_enabled={self.enable_basic_auth}"
         )
+        credentials = self._build_credentials()
+        if credentials is not None and getattr(self, "_credential_status_transport", False):
+            plugin = self
+            delegate_credentials = credentials
+
+            class BoundCredentials:
+                def login(self, session, auth_root, on_token_update):
+                    session.request = plugin._with_timeout(session.request)
+                    try:
+                        return delegate_credentials.login(session, auth_root, on_token_update)
+                    except Exception:
+                        session.close()
+                        raise
+
+            credentials = BoundCredentials()
         client = YamcsClient(
             self.server_url,
-            credentials=self._build_credentials(),
+            credentials=credentials,
             tls_verify=self.tls_verify,
             user_agent="SimpleChat",
         )
@@ -353,7 +395,14 @@ class YamcsPlugin(BasePlugin):
 
         def request_with_timeout(*args, **kwargs):
             kwargs.setdefault("timeout", configured_timeout)
-            return request_callable(*args, **kwargs)
+            response = request_callable(*args, **kwargs)
+            if getattr(self, "_credential_status_transport", False) and response.status_code in {401, 403, 407}:
+                # yamcs-client discards HTTP status on several error paths.
+                # Preserve it before the SDK parses provider bodies/exceptions.
+                error = ActionCredentialError("yamcs_authentication_status")
+                error.status_code = response.status_code
+                raise error
+            return response
 
         return request_with_timeout
 
@@ -459,18 +508,55 @@ class YamcsPlugin(BasePlugin):
         """Open a Yamcs client, run a read-only operation, and normalize failures."""
         client = None
         try:
-            client = self._connect()
+            if credential_slots(self.manifest):
+                # Resolve only when a function is actually invoked, never while agents load.
+                from functions_action_credentials import resolve_personal_credentials
+
+                prepared = resolve_personal_credentials(self.manifest)
+                prepared.pop("credential_requirements", None)
+                runtime = YamcsPlugin(prepared)
+                runtime._credential_status_transport = True
+                client = runtime._connect()
+            else:
+                client = self._connect()
             result = operation(client)
             debug_print(
                 f"[YAMCS_PLUGIN] {operation_name} succeeded instance={self.instance} "
                 f"row_count={result.get('row_count')} truncated={result.get('truncated')}"
             )
             return result
+        except ActionCredentialError as error:
+            if error.code != "yamcs_authentication_status":
+                raise
+            from functions_action_credentials import resolve_personal_credentials
+
+            rejected = ADAPTERS["yamcs"].rejected_slots(self.manifest, error)
+            if rejected:
+                resolve_personal_credentials(self.manifest, rejected_slots=rejected)
+            return self._error_response("Yamcs access was denied.", error_type="permission")
         except ValueError as exc:
+            if credential_slots(self.manifest):
+                return self._error_response("Yamcs configuration or response is invalid.", error_type="validation")
             return self._error_response(str(exc), error_type="validation")
         except ImportError as exc:
+            if credential_slots(self.manifest):
+                return self._error_response("The Yamcs client dependency is unavailable.", error_type="dependency")
             return self._error_response(str(exc), error_type="dependency")
         except Exception as exc:
+            if credential_slots(self.manifest):
+                from functions_action_credentials import resolve_personal_credentials
+
+                rejected = ADAPTERS["yamcs"].rejected_slots(self.manifest, exc)
+                if rejected:
+                    resolve_personal_credentials(self.manifest, rejected_slots=rejected)
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status is None:
+                    status = getattr(exc, "status_code", None)
+                # Provider bodies/exception messages can contain submitted credentials.
+                return self._error_response(
+                    "Yamcs access was denied." if status == 403 else "Yamcs is unavailable. Please retry later.",
+                    error_type="permission" if status == 403 else "service", operation=operation_name,
+                )
             message = self._safe_error_message(exc, f"Yamcs {operation_name} failed.")
             debug_print(
                 f"[YAMCS_PLUGIN] {operation_name} failed server_url={self.server_url} "
@@ -491,10 +577,20 @@ class YamcsPlugin(BasePlugin):
         finally:
             if client is not None:
                 try:
-                    client.close()
+                    close_client = getattr(client, "close", None)
+                    if callable(close_client):
+                        close_client()
                     debug_print("[YAMCS_PLUGIN] Yamcs connection closed.")
                 except Exception:
                     pass
+                finally:
+                    session = getattr(getattr(client, "ctx", None), "session", None)
+                    close_session = getattr(session, "close", None)
+                    if callable(close_session):
+                        try:
+                            close_session()
+                        except Exception:
+                            pass
 
     def _first_word(self, statement: str) -> str:
         first_word_match = self._FIRST_WORD_PATTERN.match(statement or "")

@@ -1,13 +1,14 @@
 # test_chat_clipboard_paste_upload_workflow.py
 """
 UI test for chat clipboard paste upload support.
-Version: 0.241.056
-Implemented in: 0.241.056
+Version: 0.261.032
+Implemented in: 0.241.056; expanded in: 0.261.032
 
 This test ensures that pasting a clipboard image into the main chat input
 routes the file through the existing upload flow, auto-creates a conversation,
 normalizes an empty clipboard filename, preserves later text paste events, and
-uploads dropped files through the same chat flow.
+uploads dropped files through the same chat flow. It also verifies that an
+unreadable dropped file produces actionable guidance without an upload request.
 """
 
 import json
@@ -97,6 +98,7 @@ def test_chat_paste_uploads_clipboard_image_with_normalized_filename(playwright)
         (() => {
             const originalFetch = window.fetch.bind(window);
             window.__uploadCapture = [];
+            window.__rejectNextUpload = false;
 
             window.fetch = async (input, init = {}) => {
                 const requestUrl = typeof input === 'string' ? input : (input && input.url) || '';
@@ -108,6 +110,10 @@ def test_chat_paste_uploads_clipboard_image_with_normalized_filename(playwright)
                         fileName: file ? String(file.name || '') : '',
                         fileType: file ? String(file.type || '') : '',
                     });
+                    if (window.__rejectNextUpload) {
+                        window.__rejectNextUpload = false;
+                        throw new DOMException('Failed to fetch', 'NetworkError');
+                    }
                 }
 
                 return originalFetch(input, init);
@@ -254,6 +260,72 @@ def test_chat_paste_uploads_clipboard_image_with_normalized_filename(playwright)
         assert upload_capture[1]["conversationId"] == created_conversation_id
         assert upload_capture[1]["fileName"] == "drop-notes.txt"
         assert upload_capture[1]["fileType"] == "text/plain"
+
+        page.locator("#user-input").evaluate(
+            """
+            (element) => {
+                const unreadableFile = new File(
+                    ['locked document'],
+                    'open-in-onedrive.docx',
+                    { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }
+                );
+                Object.defineProperty(unreadableFile, 'slice', {
+                    value: () => ({
+                        arrayBuffer: () => Promise.reject(new DOMException('The requested file could not be read')),
+                    }),
+                });
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(unreadableFile);
+                const dropEvent = new DragEvent('drop', {
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer,
+                });
+
+                element.dispatchEvent(dropEvent);
+            }
+            """
+        )
+
+        unreadable_file_toast = page.locator("#toast-container .toast").last
+        expect(unreadable_file_toast).to_contain_text(
+            'The browser could not read "open-in-onedrive.docx".'
+        )
+        expect(unreadable_file_toast).to_contain_text(
+            "Close the file in other apps then try again."
+        )
+        assert page.evaluate("() => window.__uploadCapture.length") == 2
+
+        page.evaluate("() => { window.__rejectNextUpload = true; }")
+        page.locator("#user-input").evaluate(
+            """
+            (element) => {
+                const droppedFile = new File(
+                    ['cloud document'],
+                    'open-cloud-document.docx',
+                    { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }
+                );
+                const dataTransfer = new DataTransfer();
+                dataTransfer.items.add(droppedFile);
+                const dropEvent = new DragEvent('drop', {
+                    bubbles: true,
+                    cancelable: true,
+                    dataTransfer,
+                });
+
+                element.dispatchEvent(dropEvent);
+            }
+            """
+        )
+
+        rejected_upload_toast = page.locator("#toast-container .toast").last
+        expect(rejected_upload_toast).to_contain_text(
+            'The browser could not upload "open-cloud-document.docx".'
+        )
+        expect(rejected_upload_toast).to_contain_text(
+            "The file may be open in another app, unavailable from cloud storage, or the network connection may have been interrupted."
+        )
+        expect(rejected_upload_toast).not_to_contain_text("Failed to fetch")
 
         expect(page.locator("#current-conversation-title")).to_have_text("Clipboard Upload Conversation")
     finally:

@@ -12,6 +12,10 @@ param storageAccount string
 param openAiServiceName string
 param videoIndexerArmApiVersion string
 
+@description('''Create a storage account in the Video Indexer region instead of using the application storage account.
+- Set when Video Indexer is deployed to a different region than the application.''')
+param useDedicatedStorageAccount bool = false
+
 param enablePrivateNetworking bool
 
 // Import diagnostic settings configurations
@@ -27,6 +31,64 @@ resource openAiService 'Microsoft.CognitiveServices/accounts@2024-10-01' existin
   name: openAiServiceName
 }
 
+var dedicatedStorageAccountName = toLower('${appName}${environment}vi')
+
+// Video Indexer keeps its media in a storage account in its own region, so a Video Indexer
+// region that differs from the application region gets its own Standard GPv2 account.
+resource videoIndexerStorage 'Microsoft.Storage/storageAccounts@2022-09-01' = if (useDedicatedStorageAccount) {
+  #disable-next-line BCP334 //Name length managed by Bicep parameters.
+  name: dedicatedStorageAccountName
+  location: location
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    accessTier: 'Hot'
+    allowBlobPublicAccess: false
+    minimumTlsVersion: 'TLS1_2'
+    // Only Video Indexer uses this account, and it connects as a trusted Azure service. A disabled
+    // public endpoint would also block that path, so private networking denies all other traffic instead.
+    publicNetworkAccess: 'Enabled'
+    networkAcls: {
+      bypass: 'AzureServices'
+      defaultAction: enablePrivateNetworking ? 'Deny' : 'Allow'
+    }
+  }
+  tags: tags
+}
+
+resource videoIndexerStorageBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-01-01' = if (useDedicatedStorageAccount) {
+  name: 'default'
+  parent: videoIndexerStorage
+}
+
+resource videoIndexerStorageDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging && useDedicatedStorageAccount) {
+  name: '${dedicatedStorageAccountName}-diagnostics'
+  scope: videoIndexerStorage
+  properties: {
+    workspaceId: logAnalyticsId
+    logs: [] // Storage account main resource doesn't have logs
+    #disable-next-line BCP318 // expect one value to be null
+    metrics: diagnosticConfigs.outputs.transactionMetricsCategories
+  }
+}
+
+resource videoIndexerStorageBlobDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (enableDiagLogging && useDedicatedStorageAccount) {
+  name: '${dedicatedStorageAccountName}-blob-diagnostics'
+  scope: videoIndexerStorageBlobService
+  properties: {
+    workspaceId: logAnalyticsId
+    #disable-next-line BCP318 // expect one value to be null
+    logs: diagnosticConfigs.outputs.standardLogCategories
+    #disable-next-line BCP318 // expect one value to be null
+    metrics: diagnosticConfigs.outputs.transactionMetricsCategories
+  }
+}
+
+#disable-next-line BCP318 // the dedicated account exists whenever it is selected
+var videoIndexerStorageAccountId = useDedicatedStorageAccount ? videoIndexerStorage.id : storage.id
+
 var useLegacyVideoIndexerApi = videoIndexerArmApiVersion == '2024-01-01'
 
 resource videoIndexerServiceCurrent 'Microsoft.VideoIndexer/accounts@2025-04-01' = if (!useLegacyVideoIndexerApi) {
@@ -39,7 +101,7 @@ resource videoIndexerServiceCurrent 'Microsoft.VideoIndexer/accounts@2025-04-01'
   properties: {
     publicNetworkAccess: enablePrivateNetworking ? 'Disabled' : 'Enabled'
     storageServices: {
-      resourceId: storage.id
+      resourceId: videoIndexerStorageAccountId
     }
     openAiServices: {
       resourceId: openAiService.id
@@ -61,7 +123,7 @@ resource videoIndexerServiceLegacy 'Microsoft.VideoIndexer/accounts@2024-01-01' 
   }
   properties: {
     storageServices: {
-      resourceId: storage.id
+      resourceId: videoIndexerStorageAccountId
     }
   }
   tags: tags
@@ -95,3 +157,6 @@ resource videoIndexerServiceLegacyDiagnostics 'Microsoft.Insights/diagnosticSett
 output videoIndexerServiceName string = useLegacyVideoIndexerApi ? videoIndexerServiceLegacy.name : videoIndexerServiceCurrent.name
 #disable-next-line BCP318 // exactly one conditional resource exists for the selected API version
 output videoIndexerAccountId string = useLegacyVideoIndexerApi ? videoIndexerServiceLegacy.properties.accountId : videoIndexerServiceCurrent.properties.accountId
+// SimpleChat builds Video Indexer API URLs from this region name, so return it in ARM's normalized form.
+output videoIndexerLocation string = toLower(replace(location, ' ', ''))
+output videoIndexerStorageAccountName string = useDedicatedStorageAccount ? dedicatedStorageAccountName : storage.name

@@ -128,8 +128,8 @@ Recommended flow:
 
 ### Native Python References
 
-- [Manual setup instructions](../setup_instructions_manual.md)
-- [Manual deployment notes](../reference/deploy/manual_deploy.md)
+- [Manual setup instructions]({{ '/setup_instructions_manual/' | relative_url }})
+- [Manual deployment notes]({{ '/reference/deploy/manual_deploy/' | relative_url }})
 
 ## Container-Based App Service Upgrades
 
@@ -189,10 +189,10 @@ This is an **advanced operational option**, not the default repo deployment work
 
 ### Container Upgrade References
 
-- [AZD deployment guide](../reference/deploy/azd-cli_deploy.md)
-- [Azure CLI with PowerShell deployment guide](../reference/deploy/azurecli_powershell_deploy.md)
-- [Bicep deployment guide](../reference/deploy/bicep_deploy.md)
-- [Terraform deployment guide](../reference/deploy/terraform_deploy.md)
+- [AZD deployment guide]({{ '/reference/deploy/azd-cli_deploy/' | relative_url }})
+- [Azure CLI with PowerShell deployment guide]({{ '/reference/deploy/azurecli_powershell_deploy/' | relative_url }})
+- [Bicep deployment guide]({{ '/reference/deploy/bicep_deploy/' | relative_url }})
+- [Terraform deployment guide]({{ '/reference/deploy/terraform_deploy/' | relative_url }})
 
 ## Summary
 

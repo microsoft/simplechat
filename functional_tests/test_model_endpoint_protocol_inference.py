@@ -2,11 +2,12 @@
 #!/usr/bin/env python3
 """
 Functional test for model endpoint protocol inference.
-Version: 0.261.057
+Version: 0.261.428
 Implemented in: 0.241.179; schema-v2 resolver in 0.261.041; live route adapters in 0.261.044
 Capability, async transport, and cancellation coverage added in: 0.261.046
 APIM revision path coverage added in: 0.261.056
 Shared editor control integration verified in: 0.261.057
+Anthropic completion reason normalization: 0.261.103
 
 This test ensures that Foundry model endpoint runtime calls infer Claude as
 Anthropic messages, OpenAI-compatible Foundry endpoints as /openai/v1, and
@@ -60,6 +61,7 @@ from functions_model_endpoint_auth import (  # noqa: E402
     resolve_custom_endpoint_credentials,
 )
 from functions_model_endpoint_providers import get_model_endpoint_provider  # noqa: E402
+from functions_ai_connections import AIConnectionError, require_model_capability  # noqa: E402
 from functions_model_endpoint_validation import ModelEndpointValidationError  # noqa: E402
 from test_custom_model_endpoint_provider import load_model_endpoint_runtime_module, _restore_modules  # noqa: E402
 from functions_model_endpoint_types import get_model_endpoint_api_type, resolve_model_endpoint_request_model  # noqa: E402
@@ -70,6 +72,7 @@ from functions_model_endpoint_urls import (  # noqa: E402
 from semantic_kernel.contents.chat_history import ChatHistory  # noqa: E402
 from semantic_kernel.contents.chat_message_content import ChatMessageContent  # noqa: E402
 from semantic_kernel.contents.utils.author_role import AuthorRole  # noqa: E402
+from semantic_kernel.contents.utils.finish_reason import FinishReason  # noqa: E402
 
 
 def assert_equal(actual, expected, description):
@@ -244,6 +247,31 @@ def test_model_endpoint_protocol_inference():
     assert_equal(sk_payload["max_tokens"], 128, "SK Claude service should copy max_tokens")
     assert_equal(sk_payload["temperature"], 0.2, "SK Claude service should copy temperature")
     assert_equal(sk_payload["stream"], True, "SK Claude service should support streaming")
+
+    for native_reason, expected_reason, expected_sk_reason in (
+        ("end_turn", "stop", FinishReason.STOP),
+        ("stop_sequence", "stop", FinishReason.STOP),
+        ("max_tokens", "length", FinishReason.LENGTH),
+        ("model_context_window_exceeded", "length", FinishReason.LENGTH),
+        ("tool_use", "tool_calls", FinishReason.TOOL_CALLS),
+        ("refusal", "content_filter", FinishReason.CONTENT_FILTER),
+        ("pause_turn", "pause_turn", None),
+        (None, None, None),
+    ):
+        response = client._build_completion_response({
+            "stop_reason": native_reason,
+            "content": [{"type": "text", "text": "Response text"}],
+            "usage": {"input_tokens": 10, "output_tokens": 5},
+        })
+        assert_equal(
+            response.choices[0].finish_reason, expected_reason,
+            f"Anthropic {native_reason} should keep its completion meaning",
+        )
+        message = sk_service._create_chat_message_contents_from_response(response)[0]
+        assert_equal(
+            message.finish_reason, expected_sk_reason,
+            f"SK should receive the normalized {native_reason} completion reason",
+        )
 
     loader_content = (APP_DIR / "semantic_kernel_loader.py").read_text(encoding="utf-8")
     if "create_model_endpoint_chat_completion_service" not in loader_content:
@@ -420,7 +448,21 @@ def test_non_custom_explicit_routing_preserves_provider_contract():
         endpoint = _routing_fixture(base=base)
         endpoint["provider"] = provider
         endpoint["connection"]["api_version"] = "2024-01-01"
-        endpoint["models"] = [{"id": "selected", "deploymentName": deployment, "api_path": "team"}]
+        api_type = (
+            "anthropic"
+            if deployment.startswith("claude-")
+            else "azure_openai" if provider == "aoai" else "azure_openai_v1"
+        )
+        identifier_field = (
+            "deploymentName" if api_type == "azure_openai" else "modelName"
+        )
+        endpoint["models"] = [{
+            "id": "selected",
+            identifier_field: deployment,
+            "api_type": api_type,
+            "url_mode": "auto",
+            "api_path": "team",
+        }]
         route = routing.resolve_model_endpoint_route(endpoint, endpoint["models"][0])
         origin = base.split("/", 3)[:3]
         assert route["operation_url"] == "/".join(origin) + expected
@@ -504,82 +546,61 @@ def test_schema_v2_adapters_send_exact_resolved_operation_urls():
         azure_endpoint, azure_endpoint["models"][0]
     )
     azure_http_client = httpx.Client(transport=httpx.MockTransport(response_for_request))
-    runtime_source = ast.parse(
-        (APP_DIR / "functions_model_endpoint_runtime.py").read_text(encoding="utf-8")
-    )
-    sync_builder = next(
-        node for node in runtime_source.body
-        if isinstance(node, ast.FunctionDef) and node.name == "build_model_endpoint_sync_chat_client"
-    )
-    azure_endpoint_builder = next(
-        node for node in runtime_source.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_azure_endpoint_from_resolved_route"
-    )
     from functions_model_endpoint_providers import (
         MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
         MODEL_ENDPOINT_PROVIDER_CUSTOM,
     )
+    runtime, original_modules = load_model_endpoint_runtime_module()
+    try:
+        with patch.object(
+            runtime,
+            "validate_custom_model_endpoint_url",
+            side_effect=lambda endpoint, **_kwargs: endpoint,
+        ), patch.object(
+            runtime,
+            "build_custom_openai_sync_http_client",
+            return_value=azure_http_client,
+        ):
+            azure_client, protocol = runtime.build_model_endpoint_sync_chat_client(
+                auth_settings=azure_endpoint["auth"],
+                provider=MODEL_ENDPOINT_PROVIDER_CUSTOM,
+                endpoint=azure_endpoint["connection"]["endpoint"],
+                api_version=azure_route["api_version"],
+                deployment_name=azure_route["request_model"],
+                api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
+                url_mode=azure_route["url_mode"],
+                settings={},
+                endpoint_config=azure_endpoint,
+                resolved_route=azure_route,
+            )
+            assert protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
+            azure_client.chat.completions.create(
+                model=azure_route["request_model"],
+                messages=[{"role": "user", "content": "test"}],
+            )
 
-    namespace = {
-        "quote": quote,
-        "build_model_endpoint_identity_headers": lambda *_args, **_kwargs: {},
-        "MODEL_ENDPOINT_PROVIDER_CUSTOM": MODEL_ENDPOINT_PROVIDER_CUSTOM,
-        "MODEL_ENDPOINT_PROTOCOL_ANTHROPIC": MODEL_ENDPOINT_PROTOCOL_ANTHROPIC,
-        "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
-        "MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE": MODEL_ENDPOINT_PROTOCOL_OPENAI_STYLE,
-        "DEFAULT_ANTHROPIC_VERSION": "2023-06-01",
-        "routing_schema_version": importlib.import_module("functions_model_endpoint_urls").routing_schema_version,
-        "normalize_custom_endpoint_auth_type": normalize_custom_endpoint_auth_type,
-        "resolve_client_certificate": resolve_client_certificate,
-        "resolve_custom_endpoint_credentials": resolve_custom_endpoint_credentials,
-        "resolve_model_endpoint_ca_trust": lambda _endpoint, _settings, legacy_path: legacy_path,
-        "get_model_endpoint_provider": get_model_endpoint_provider,
-        "validate_custom_model_endpoint_url": lambda endpoint, **_kwargs: endpoint,
-        "infer_model_endpoint_protocol": infer_model_endpoint_protocol,
-        "build_anthropic_chat_client": build_anthropic_chat_client,
-        "build_openai_style_chat_client": build_openai_style_chat_client,
-        "bind_model_endpoint_request_policy": bind_model_endpoint_request_policy,
-        "AzureOpenAI": AzureOpenAI,
-        "SanitizedCustomChatCompletionClient": SanitizedCustomChatCompletionClient,
-        "build_custom_openai_sync_http_client": lambda **_kwargs: azure_http_client,
-    }
-    exec(compile(ast.Module(body=[azure_endpoint_builder, sync_builder], type_ignores=[]), "<sync-route-client>", "exec"), namespace)
-    azure_client, protocol = namespace["build_model_endpoint_sync_chat_client"](
-        auth_settings=azure_endpoint["auth"],
-        provider=MODEL_ENDPOINT_PROVIDER_CUSTOM,
-        endpoint=azure_endpoint["connection"]["endpoint"],
-        api_version=azure_route["api_version"],
-        deployment_name=azure_route["request_model"],
-        api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
-        url_mode=azure_route["url_mode"],
-        settings={},
-        endpoint_config=azure_endpoint,
-        resolved_route=azure_route,
-    )
-    assert protocol == MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI
-    azure_client.chat.completions.create(
-        model=azure_route["request_model"],
-        messages=[{"role": "user", "content": "test"}],
-    )
-
-    bearer_endpoint = copy.deepcopy(azure_endpoint)
-    bearer_endpoint["auth"] = {"type": "bearer", "bearer_token": "test-bearer"}
-    bearer_client, _ = namespace["build_model_endpoint_sync_chat_client"](
-        auth_settings=bearer_endpoint["auth"],
-        provider=MODEL_ENDPOINT_PROVIDER_CUSTOM,
-        endpoint=bearer_endpoint["connection"]["endpoint"],
-        api_version=azure_route["api_version"],
-        deployment_name=azure_route["request_model"],
-        api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
-        url_mode=azure_route["url_mode"],
-        settings={},
-        endpoint_config=bearer_endpoint,
-        resolved_route=azure_route,
-    )
-    bearer_client.chat.completions.create(
-        model=azure_route["request_model"],
-        messages=[{"role": "user", "content": "test"}],
-    )
+            bearer_endpoint = copy.deepcopy(azure_endpoint)
+            bearer_endpoint["auth"] = {
+                "type": "bearer", "bearer_token": "test-bearer"
+            }
+            bearer_client, _ = runtime.build_model_endpoint_sync_chat_client(
+                auth_settings=bearer_endpoint["auth"],
+                provider=MODEL_ENDPOINT_PROVIDER_CUSTOM,
+                endpoint=bearer_endpoint["connection"]["endpoint"],
+                api_version=azure_route["api_version"],
+                deployment_name=azure_route["request_model"],
+                api_type=MODEL_ENDPOINT_API_TYPE_AZURE_OPENAI,
+                url_mode=azure_route["url_mode"],
+                settings={},
+                endpoint_config=bearer_endpoint,
+                resolved_route=azure_route,
+            )
+            bearer_client.chat.completions.create(
+                model=azure_route["request_model"],
+                messages=[{"role": "user", "content": "test"}],
+            )
+    finally:
+        _restore_modules(original_modules)
 
     assert [str(request.url) for request in captured_requests] == [
         openai_route["operation_url"],
@@ -987,7 +1008,12 @@ def test_schema_v2_background_resolution_rechecks_group_membership():
         assert_group_role=assert_group_role,
         get_group_model_endpoints=read_group_endpoints,
     )
-    governance_module = SimpleNamespace(ensure_governance_access=ensure_governance_access)
+    governance_module = SimpleNamespace(
+        ensure_governance_access=ensure_governance_access,
+        filter_governed_model_endpoints=(
+            lambda _user_id, endpoints, _feature: endpoints
+        ),
+    )
     keyvault_module = SimpleNamespace(
         SecretReturnType=SimpleNamespace(VALUE="value"),
         keyvault_model_endpoint_get_helper=hydrate_endpoint,
@@ -1001,6 +1027,7 @@ def test_schema_v2_background_resolution_rechecks_group_membership():
         "routing_schema_version": importlib.import_module("functions_model_endpoint_urls").routing_schema_version,
         "model_endpoint_route_cache_key": importlib.import_module("functions_model_endpoint_urls").model_endpoint_route_cache_key,
         "resolve_model_endpoint_route": resolve_model_endpoint_route,
+        "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "normalize_ca_bundle_reference": lambda _connection: ("inherit", ""),
         "validate_model_endpoint_routing": lambda endpoint, _settings, *, require_resolvable=False: [
             resolve_model_endpoint_route(endpoint, model) for model in endpoint["models"]
@@ -1019,7 +1046,9 @@ def test_schema_v2_background_resolution_rechecks_group_membership():
         "functions_keyvault": keyvault_module,
         "functions_settings": settings_module,
     }):
-        resolved = namespace["resolve_model_endpoint_from_context"](policy, context)
+        resolved = namespace["resolve_model_endpoint_from_context"](
+            policy, context, authorize=True
+        )
         assert resolved["_resolved_route"]["operation_url"] == (
             "https://gateway.example/team/shared/v1/chat/completions"
         )
@@ -1033,7 +1062,9 @@ def test_schema_v2_background_resolution_rechecks_group_membership():
         legacy_context["active_group_ids"] = ["group-1"]
         reads_before_legacy_context = len(reads)
         try:
-            namespace["resolve_model_endpoint_from_context"](policy, legacy_context)
+            namespace["resolve_model_endpoint_from_context"](
+                policy, legacy_context, authorize=True
+            )
         except ValueError as exc:
             assert "explicit" in str(exc).lower()
         else:
@@ -1042,10 +1073,15 @@ def test_schema_v2_background_resolution_rechecks_group_membership():
         assert secret_scopes == ["group"], "Legacy selection must not hydrate schema-v2 endpoint secrets."
         access["allowed"] = False
         reads_before_revoked_context = len(reads)
-        assert namespace["resolve_model_endpoint_from_context"](policy, legacy_context) is None
+        with pytest.raises(PermissionError):
+            namespace["resolve_model_endpoint_from_context"](
+                policy, legacy_context, authorize=True
+            )
         assert len(reads) == reads_before_revoked_context, "Revoked group membership must stop before endpoint reads."
         try:
-            namespace["resolve_model_endpoint_from_context"](policy, context)
+            namespace["resolve_model_endpoint_from_context"](
+                policy, context, authorize=True
+            )
         except PermissionError:
             pass
         else:
@@ -1105,10 +1141,15 @@ def test_schema_v2_semantic_kernel_helper_uses_resolved_base_url():
 
 def test_schema_v2_metadata_extraction_uses_authorized_route():
     source = ast.parse((APP_DIR / "functions_documents.py").read_text(encoding="utf-8"))
-    metadata_builder = next(
-        node for node in source.body
-        if isinstance(node, ast.FunctionDef) and node.name == "_resolve_metadata_extraction_client"
-    )
+    definitions = {
+        node.name: node
+        for node in source.body
+        if isinstance(node, ast.FunctionDef)
+    }
+    metadata_builders = [
+        definitions["_build_model_endpoint_client_for_model"],
+        definitions["resolve_metadata_extraction_client"],
+    ]
     endpoint = _routing_fixture(
         "openai", "metadata-team", "auto", "https://gateway.example/shared/v1"
     )
@@ -1127,8 +1168,9 @@ def test_schema_v2_metadata_extraction_uses_authorized_route():
     resolved_contexts = []
     client_calls = []
 
-    def resolve_context(current_settings, context):
+    def resolve_context(current_settings, context, *, authorize=False):
         assert current_settings is settings
+        assert authorize is True
         resolved_contexts.append(context)
         hydrated = copy.deepcopy(endpoint)
         hydrated["auth"]["api_key"] = "server-only"
@@ -1154,12 +1196,17 @@ def test_schema_v2_metadata_extraction_uses_authorized_route():
         "resolve_model_endpoint_request_model": resolve_model_endpoint_request_model,
         "get_model_endpoint_api_type": get_model_endpoint_api_type,
         "infer_model_endpoint_protocol": infer_model_endpoint_protocol,
+        "require_model_capability": require_model_capability,
         "MODEL_ENDPOINT_PROVIDER_ALLOWLIST": {"custom", "aoai", "aifoundry", "new_foundry", "anthropic", "claude"},
         "MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI": MODEL_ENDPOINT_PROTOCOL_AZURE_OPENAI,
         "_build_model_endpoint_client": build_client,
     }
-    exec(compile(ast.Module(body=[metadata_builder], type_ignores=[]), "<metadata-route-builder>", "exec"), namespace)
-    client, deployment = namespace["_resolve_metadata_extraction_client"](
+    exec(compile(
+        ast.Module(body=metadata_builders, type_ignores=[]),
+        "<metadata-route-builder>",
+        "exec",
+    ), namespace)
+    client, deployment = namespace["resolve_metadata_extraction_client"](
         settings,
         identity_context={"user_id": "metadata-user"},
     )

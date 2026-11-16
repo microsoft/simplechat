@@ -1,10 +1,24 @@
 # functions_prompts.py
 
 from config import *
+# Conditional-write support for the immutable-target group prompt routes. These
+# are not needed by the legacy active-scoped routes, which never pass an ETag, so
+# they are imported here rather than relied upon from ``config``'s star export.
+from azure.core import MatchConditions
+from azure.cosmos.exceptions import CosmosHttpResponseError
 from functions_chat_bootstrap_cache import (
     bump_chat_bootstrap_global_cache_version,
     bump_chat_bootstrap_user_cache_version,
 )
+
+
+class PromptConflictError(Exception):
+    """A conditional prompt write lost a race with a concurrent edit.
+
+    Raised only when a caller supplies ``expected_etag`` and the stored prompt
+    has since changed. The legacy active-scoped routes never pass an ETag and so
+    never see this; the group immutable-target routes translate it to a 409.
+    """
 
 
 def _invalidate_prompt_chat_bootstrap_cache(user_id, group_id=None, public_workspace_id=None, reason="prompt_changed"):
@@ -12,6 +26,106 @@ def _invalidate_prompt_chat_bootstrap_cache(user_id, group_id=None, public_works
         bump_chat_bootstrap_global_cache_version(reason=reason)
     else:
         bump_chat_bootstrap_user_cache_version(user_id, reason=reason)
+
+
+# A description is the one line shown beside a prompt's name in the workbench list. Capped
+# because it is rendered on a single line: anything longer is truncated on display, so storing
+# the remainder achieves nothing but a larger document.
+PROMPT_DESCRIPTION_MAX_LENGTH = 200
+
+
+def normalize_prompt_description(value):
+    """Trim a description to what the interface can actually show."""
+    return str(value or '').strip()[:PROMPT_DESCRIPTION_MAX_LENGTH]
+
+
+def serialize_prompt_summary(doc):
+    """The shape a write returns to the client.
+
+    Deliberately one function rather than a dict literal at each call site. The client applies
+    this optimistically to its list, so a create that omits a field the update returns would
+    make a newly created prompt render differently from the same prompt after an edit.
+
+    ``description`` and ``is_favorite`` are read defensively: prompts created before those
+    fields existed do not carry them, and neither does a prompt last saved by the classic
+    interface, which sends only ``name`` and ``content``.
+    """
+    doc = doc or {}
+    return {
+        "id": doc.get("id"),
+        "name": doc.get("name", ""),
+        "description": doc.get("description", "") or "",
+        "is_favorite": bool(doc.get("is_favorite", False)),
+        "created_at": doc.get("created_at"),
+        "updated_at": doc.get("updated_at"),
+    }
+
+
+def build_prompt_updates(data, require_fields=True):
+    """Validate a PATCH body into the fields a prompt document may carry.
+
+    Shared by the personal, group and public prompt routes, which previously repeated the same
+    name and content checks three times over. Repeating them once more for every new field is
+    how the three drift apart, and a field accepted on a personal prompt but silently dropped
+    on a group one reads to a user as a save that did not work.
+
+    ``require_fields=False`` is for the create routes, which validate name and content
+    themselves and use this only for the optional fields. An empty result is legitimate there:
+    it means the caller supplied none of them.
+
+    Returns ``(updates, error)``. ``error`` is a message suitable for a 400 response and is
+    ``None`` when ``updates`` is usable.
+    """
+    data = data or {}
+    updates = {}
+
+    if "name" in data:
+        if not isinstance(data["name"], str) or not data["name"].strip():
+            return None, "Invalid 'name' provided"
+        updates["name"] = data["name"].strip()
+
+    if "content" in data:
+        if not isinstance(data["content"], str):
+            return None, "Invalid 'content' provided"
+        updates["content"] = data["content"]
+
+    if "description" in data:
+        # None is accepted as "clear it", which is what the editor sends when the field is
+        # emptied. Any other non-string is a client bug rather than an intention.
+        if data["description"] is not None and not isinstance(data["description"], str):
+            return None, "Invalid 'description' provided"
+        updates["description"] = normalize_prompt_description(data["description"])
+
+    if "is_favorite" in data:
+        if not isinstance(data["is_favorite"], bool):
+            return None, "Invalid 'is_favorite' provided"
+        updates["is_favorite"] = data["is_favorite"]
+
+    if require_fields and not updates:
+        return None, "No fields provided for update"
+
+    return updates, None
+
+
+# The fields a create accepts beyond name and content. Validated through the same function the
+# updates use, so the two paths cannot disagree about what a valid description is.
+PROMPT_OPTIONAL_CREATE_FIELDS = ("description", "is_favorite")
+
+
+def build_prompt_create_options(data):
+    """Validate the optional fields of a create body.
+
+    Returns ``(options, error)`` where ``options`` is ready to splat into ``create_prompt_doc``.
+    """
+    data = data or {}
+    supplied = {key: data[key] for key in PROMPT_OPTIONAL_CREATE_FIELDS if key in data}
+    options, error = build_prompt_updates(supplied, require_fields=False)
+    if error:
+        return None, error
+    return {
+        "description": options.get("description", ""),
+        "is_favorite": options.get("is_favorite", False),
+    }, None
 
 def get_pagination_params(args):
     try:
@@ -51,6 +165,7 @@ def _filter_prompt_items(items, search_term):
     return [
         item for item in items
         if normalized_search in (item.get('name') or '').lower()
+        or normalized_search in (item.get('description') or '').lower()
     ]
 
 
@@ -208,8 +323,16 @@ def list_prompts(user_id, prompt_type, args, group_id=None, public_workspace_id=
 
     if search_term:
         st = search_term[:100]
-        select_query += " AND CONTAINS(c.name, @search, true)"
-        count_query  += " AND CONTAINS(c.name, @search, true)"
+        # `IS_DEFINED` guards the description arm rather than relying on Cosmos three-valued
+        # logic: prompts created before the field existed have no `description` at all, and an
+        # unguarded CONTAINS against a missing property is the kind of thing that quietly
+        # changes which rows come back.
+        match_clause = (
+            " AND (CONTAINS(c.name, @search, true)"
+            " OR (IS_DEFINED(c.description) AND CONTAINS(c.description, @search, true)))"
+        )
+        select_query += match_clause
+        count_query += match_clause
         parameters.append({"name": "@search", "value": st})
 
     select_query += " ORDER BY c.updated_at DESC"
@@ -258,10 +381,12 @@ def list_all_prompts_for_scope(user_id, prompt_type, group_id=None, public_works
 
     return _query_prompt_items(cosmos_container, query, parameters)
 
-def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public_workspace_id=None):
+def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public_workspace_id=None,
+                      description=None, is_favorite=False, return_full=False):
     """
     Create a new prompt for a user or a group.
-    Returns minimal created doc.
+    Returns minimal created doc, or the full stored document when ``return_full``
+    is set (the group routes project their own shape and need the ETag).
     """
     now = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     prompt_id = str(uuid.uuid4())
@@ -281,6 +406,8 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public
         "id": prompt_id,
         "name": name.strip(),
         "content": content,
+        "description": normalize_prompt_description(description),
+        "is_favorite": bool(is_favorite),
         "type": prompt_type,
         "created_at": now,
         "updated_at": now
@@ -301,11 +428,7 @@ def create_prompt_doc(name, content, prompt_type, user_id, group_id=None, public
         public_workspace_id=public_workspace_id,
         reason="prompt_created",
     )
-    return {
-        "id": created["id"],
-        "name": created["name"],
-        "updated_at": created["updated_at"]
-    }
+    return created if return_full else serialize_prompt_summary(created)
 
 def get_prompt_doc(user_id, prompt_id, prompt_type, group_id=None, public_workspace_id=None):
     """
@@ -321,10 +444,17 @@ def get_prompt_doc(user_id, prompt_id, prompt_type, group_id=None, public_worksp
     )
     return item
 
-def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, public_workspace_id=None):
+def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, public_workspace_id=None,
+                      expected_etag=None, return_full=False):
     """
     Update an existing prompt for a user or a group.
     Returns minimal updated doc or None if not found.
+
+    When ``expected_etag`` is supplied the replace is conditional on the stored
+    ETag (Cosmos ``IfNotModified``); a concurrent edit raises
+    ``PromptConflictError`` instead of silently overwriting. ``return_full``
+    yields the stored document (with its new ETag) for callers that project
+    their own shape.
     """
     item, cosmos_container = _get_prompt_doc_with_container(
         user_id,
@@ -341,7 +471,18 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, p
         item[k] = v
     item["updated_at"] = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    updated = cosmos_container.replace_item(item=prompt_id, body=item)
+    try:
+        if expected_etag is not None:
+            updated = cosmos_container.replace_item(
+                item=prompt_id, body=item,
+                etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            updated = cosmos_container.replace_item(item=prompt_id, body=item)
+    except CosmosHttpResponseError as error:
+        if expected_etag is not None and getattr(error, "status_code", None) in (409, 412):
+            raise PromptConflictError("The prompt was changed by someone else before your edit was saved.") from error
+        raise
     _invalidate_prompt_chat_bootstrap_cache(
         user_id,
         group_id=group_id,
@@ -349,16 +490,16 @@ def update_prompt_doc(user_id, prompt_id, prompt_type, updates, group_id=None, p
         reason="prompt_updated",
     )
 
-    return {
-        "id":         updated["id"],
-        "name":       updated["name"],
-        "updated_at": updated["updated_at"]
-    }
+    return updated if return_full else serialize_prompt_summary(updated)
 
-def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=None):
+def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=None, expected_etag=None):
     """
     Delete a prompt for a user or a group.
     Returns True if deleted, False if not found.
+
+    When ``expected_etag`` is supplied the delete is conditional on the stored
+    ETag; a concurrent edit raises ``PromptConflictError`` rather than deleting a
+    prompt the caller has not seen in its current form.
     """
     prompt_type = 'public_prompt' if public_workspace_id is not None else 'group_prompt' if group_id is not None else 'user_prompt'
     item, cosmos_container = _get_prompt_doc_with_container(
@@ -371,7 +512,18 @@ def delete_prompt_doc(user_id, prompt_id, group_id=None, public_workspace_id=Non
     if not item:
         return False
 
-    cosmos_container.delete_item(item=prompt_id, partition_key=prompt_id)
+    try:
+        if expected_etag is not None:
+            cosmos_container.delete_item(
+                item=prompt_id, partition_key=prompt_id,
+                etag=expected_etag, match_condition=MatchConditions.IfNotModified,
+            )
+        else:
+            cosmos_container.delete_item(item=prompt_id, partition_key=prompt_id)
+    except CosmosHttpResponseError as error:
+        if expected_etag is not None and getattr(error, "status_code", None) in (409, 412):
+            raise PromptConflictError("The prompt was changed by someone else before it could be deleted.") from error
+        raise
     _invalidate_prompt_chat_bootstrap_cache(
         user_id,
         group_id=group_id,

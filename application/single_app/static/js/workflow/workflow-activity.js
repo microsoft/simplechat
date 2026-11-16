@@ -1,4 +1,5 @@
 // workflow-activity.js
+import { appendWorkflowCompleteness } from "./completeness.js";
 
 const pageState = {
     snapshot: null,
@@ -313,6 +314,7 @@ function updateResponseBlock(run) {
         <div class="workflow-activity-response-title">${escapeHtml(heading)}</div>
         <p class="workflow-activity-response-text mb-0">${escapeHtml(errorText || previewText)}</p>
     `;
+    appendWorkflowCompleteness(responseEl, run?.task_results);
     syncResponseBlockVisibility();
 }
 

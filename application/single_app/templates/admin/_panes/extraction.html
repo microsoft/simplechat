@@ -1,11 +1,18 @@
             <div class="tab-pane fade{% if admin_landing_tab == 'extraction' %} show active{% endif %}" id="extraction" role="tabpanel" aria-labelledby="extraction-tab">
+                <div class="alert alert-info" role="note">
+                    <strong>Review knowledge before publication:</strong> Content Screening checks extracted text regardless
+                    of its original appearance and holds findings for an authorized reviewer.
+                    <a href="#content-screening" data-screening-open-settings>Configure Security &gt; Content Screening</a>.
+                    Enhanced Citations and its storage are required. Clean derivatives are not in-place PDF redactions.
+                </div>
                 <div class="card p-3 mb-3" id="document-intelligence-section">
                     <h5><i class="bi bi-file-earmark-text me-2"></i>Document Intelligence</h5>
                     <p class="text-muted">
                         Configure Azure Document Intelligence settings. Document Intelligence always powers
                         <strong>Standard</strong> extraction and is required for workspaces and chat file uploads.
                     </p>
-                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
+                    <!-- Enhanced Extraction: the shared navigation's enhanced-extraction-section lands on this switch -->
+                    <div class="form-group form-check form-switch mb-3 d-flex align-items-center" id="enhanced-extraction-section">
                         <input
                             type="checkbox"
                             class="form-check-input me-2"
@@ -241,7 +248,7 @@
                     <div class="card p-3 mb-3 bg-body-tertiary" id="office-embedded-image-section">
                         <h6 class="mb-2"><i class="bi bi-images me-2"></i>Images Inside Office Files</h6>
                         <p class="text-muted small">
-                            Neither extraction engine describes figures inside Word and PowerPoint files. When this is on,
+                            Native extraction does not describe the pixels of images inside Word, PowerPoint, or Excel files. When this is on,
                             embedded images are pulled out of the file, analyzed with whichever engine backs the selected
                             extraction mode, and indexed as their own citable chunks. This works with Standard extraction
                             too, using Document Intelligence.
@@ -255,7 +262,7 @@
                                 {% if settings.enable_office_embedded_image_analysis %}checked{% endif %}
                             >
                             <label class="form-check-label" for="enable_office_embedded_image_analysis">
-                                Analyze images embedded in DOCX and PPTX files
+                                Analyze images embedded in DOCX, PPTX, and Excel files
                             </label>
                         </div>
                         <div class="row g-3 {% if not settings.enable_office_embedded_image_analysis %}d-none{% endif %}" id="office_embedded_image_options">
@@ -590,6 +597,20 @@
                                 <div class="form-text">Slides per chunk after extraction.</div>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <div class="card p-3 mb-3" id="file-size-limit-section">
+                    <h5>
+                        <i class="bi bi-file-earmark-arrow-up me-2"></i>Maximum File Size
+                    </h5>
+                    <p class="text-muted">
+                        The largest file that may be uploaded, whether into a workspace or attached to a chat message.
+                    </p>
+                    <div class="mb-3">
+                        <label for="max_file_size_mb" class="form-label">Maximum File Size (MB)</label>
+                        <input type="number" class="form-control" id="max_file_size_mb" name="max_file_size_mb"
+                            value="{{ settings.max_file_size_mb }}">
                     </div>
                 </div>
 

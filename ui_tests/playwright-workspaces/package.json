@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test:staging": "playwright test staging-chat-smoke.spec.js --config=playwright.config.js --workers=1",
     "test:staging:azure": "playwright test staging-chat-smoke.spec.js --config=playwright.service.config.js --workers=1"
   },
   "devDependencies": {

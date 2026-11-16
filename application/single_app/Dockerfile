@@ -3,6 +3,53 @@ ARG UID=65532
 ARG GID=65532
 ARG INSTALL_PLAYWRIGHT_CHROMIUM=true
 ARG INSTALL_AUDIO_FFMPEG=true
+# Origin of the Flask API for the V2 SPA. Left empty for the default deployment, where
+# Flask serves the SPA from the same App Service and every request is same-origin. Set
+# only when the SPA is deployed to its own App Service, which also requires
+# V2_UI_ALLOWED_ORIGIN on the Flask app so it emits CORS headers and trusts the origin.
+ARG V2_UI_API_BASE=""
+
+# ---------------------------------------------------------------------------
+# V2 React UI build stage
+#
+# Compiles application/v2_ui into a static bundle. Kept in its own stage so Node and
+# node_modules never reach the runtime image, and so a clean checkout produces the same
+# bundle as a developer running `npm run build` locally.
+#
+# Uses the Azure Linux Node image to stay consistent with the Python stages below and to
+# avoid introducing a Docker Hub dependency, which matters for sovereign-cloud builds.
+# ---------------------------------------------------------------------------
+FROM mcr.microsoft.com/azurelinux/base/nodejs:20 AS v2uibuilder
+
+ARG V2_UI_API_BASE
+ENV VITE_API_BASE=${V2_UI_API_BASE}
+
+WORKDIR /v2_ui
+
+# Manifests are copied first so the dependency layer is only rebuilt when they change.
+COPY application/v2_ui/package.json application/v2_ui/package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+
+COPY application/v2_ui/ ./
+
+# Vite is configured to emit into ../single_app/static/v2, so the build output lands at
+# /single_app/static/v2 relative to this stage's working directory.
+RUN npm run build
+
+FROM rust:1.85.1@sha256:e51d0265072d2d9d5d320f6a44dde6b9ef13653b035098febd68cce8fa7c0bc4 AS onenote-builder
+
+COPY docker-customization/custom-ca-certificates/ /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+WORKDIR /build
+COPY application/single_app/native/onenote_extractor/ ./
+COPY LICENSE /onenote-source/wrapper/LICENSE
+RUN cargo build --release --locked \
+    && mkdir -p /onenote-source/wrapper/.cargo \
+    && cargo vendor --locked --versioned-dirs /onenote-source/dependencies > /onenote-source/vendor-config.toml \
+    && sed 's|directory = "/onenote-source/dependencies"|directory = "../dependencies"|' /onenote-source/vendor-config.toml > /onenote-source/wrapper/.cargo/config.toml \
+    && rm /onenote-source/vendor-config.toml \
+    && cp Cargo.toml Cargo.lock /onenote-source/wrapper/ \
+    && cp -R src /onenote-source/wrapper/
 
 FROM mcr.microsoft.com/azurelinux/base/python:3.12 AS builder
 
@@ -99,7 +146,11 @@ RUN set -eux; \
                 nspr \
                 nss \
                 pango; \
+            tdnf install -y dejavu-fonts || tdnf install -y dejavu-sans-fonts || true; \
+            tdnf install -y liberation-fonts || true; \
+            tdnf install -y google-noto-sans-fonts || true; \
             tdnf install -y xorg-x11-fonts-Type1 xorg-x11-fonts-misc || true; \
+            command -v fc-cache >/dev/null 2>&1 && fc-cache -f || true; \
             ;; \
         *) \
             echo "Skipping Chromium runtime package installation because INSTALL_PLAYWRIGHT_CHROMIUM=${INSTALL_PLAYWRIGHT_CHROMIUM}"; \
@@ -181,6 +232,13 @@ FROM mcr.microsoft.com/azurelinux/distroless/python:3.12
 ARG UID
 ARG GID
 
+# OneNote extractor notices and corresponding source, required when redistributing the image.
+# Nothing may be copied under /app before the chowned copy from the builder below creates it,
+# so the non-root runtime user owns its working directory.
+COPY --from=onenote-builder /build/THIRD_PARTY_NOTICES.txt /usr/share/simplechat/onenote-extractor/THIRD_PARTY_NOTICES.txt
+COPY --from=onenote-builder /build/licenses/ /usr/share/simplechat/onenote-extractor/licenses/
+COPY --from=onenote-builder /onenote-source/ /usr/share/simplechat/onenote-extractor/source/
+
 COPY --from=builder /etc/pki /etc/pki
 COPY --from=builder /etc/ssl/certs /etc/ssl/certs
 COPY --from=builder /home/nonroot /home/nonroot
@@ -213,6 +271,15 @@ WORKDIR /app
 
 # Copy application code and set ownership
 COPY --chown=${UID}:${GID} application/single_app ./
+
+# The compiled V2 SPA is copied after the application code so it is not clobbered by the
+# copy above. static/v2 is gitignored, so it is absent from the build context and only
+# ever arrives from the v2uibuilder stage.
+COPY --from=v2uibuilder --chown=${UID}:${GID} /single_app/static/v2 ./static/v2
+
+# The native OneNote extractor is copied after /app already exists with runtime-user
+# ownership. The binary itself stays root-owned: the app user can run it but not replace it.
+COPY --from=onenote-builder /build/target/release/simplechat-onenote-extractor /app/native/onenote_extractor/bin/simplechat-onenote-extractor
 
 # Expose port
 EXPOSE 5000

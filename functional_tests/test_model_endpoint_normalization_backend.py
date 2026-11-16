@@ -1,7 +1,7 @@
 # test_model_endpoint_normalization_backend.py
 """
 Functional test for backend model endpoint normalization.
-Version: 0.261.042
+Version: 0.261.428
 Implemented in: 0.239.155; schema-v2 normalization and migration in 0.261.041
 Editor JSON round-trip coverage added in: 0.261.042
 
@@ -49,6 +49,8 @@ def _load_functions_settings_module():
     cache_stub.update_settings_cache = lambda settings: None
 
     content_safety_stub = types.ModuleType("functions_content_safety")
+    content_safety_stub.CONTENT_SAFETY_CATEGORY_KEYS = ()
+    content_safety_stub.CONTENT_SAFETY_CATEGORY_THRESHOLD_DEFAULT = 2
     content_safety_stub.CONTENT_SAFETY_VIOLATION_MESSAGE_DEFAULT = "Content safety policy violation."
 
     throughput_stub = types.ModuleType("functions_cosmos_throughput")
@@ -413,7 +415,15 @@ def test_mixed_routing_normalization_and_sanitization():
         assert models["messages"]["anthropic_version"] == "2023-06-01"
         assert models["foundry"]["modelName"] == "azure-model"
         sanitized = settings.sanitize_model_endpoints_for_frontend(normalized)
-        assert sanitized[0]["models"] == normalized[0]["models"]
+        for stored_model, projected_model in zip(
+            normalized[0]["models"], sanitized[0]["models"]
+        ):
+            assert {
+                key: value
+                for key, value in projected_model.items()
+                if key != "capability_status"
+            } == stored_model
+            assert "capability_status" in projected_model
         assert "test-only-key" not in json.dumps(sanitized)
         imported = json.loads(json.dumps(sanitized))
         restored = settings.merge_model_endpoints_with_existing(imported, normalized)
@@ -443,7 +453,9 @@ def test_explicit_routing_validation_and_legacy_consumer_boundary():
         selected = normalized[0]["models"][3]
         result = types_module.resolve_model_endpoint_request_model(normalized[0], selected, use_model_routing=True)
         assert result == "gpt-as-messages"
-        _expect_value_error(types_module.resolve_model_endpoint_request_model, normalized[0], selected)
+        assert types_module.resolve_model_endpoint_request_model(
+            normalized[0], selected
+        ) == result
         for field, value in (("api_type", "responses"), ("api_type", ""), ("url_mode", "inherit"), ("url_mode", ""), ("api_path", "../other"), ("request_template", {})):
             invalid = copy.deepcopy(endpoint)
             invalid["models"][0][field] = value

@@ -4,11 +4,12 @@ title: "Create an action"
 description: "Create a reusable tool that an agent can call when chat alone is not enough."
 section: "Guides"
 audience: user
+version: "0.261.333"
 ---
 
 ## What this does
 
-An action is a governed tool definition that lets an agent call an API, database, built-in utility, file source, or MCP server. This guide creates an action in a workspace and leaves it ready to attach to an agent.
+An action is a governed tool definition that lets an agent call an API, database, built-in utility, file source, MCP server, or an explicitly selected agent. This guide creates an action in a workspace and leaves it ready to attach to an agent.
 
 {% include media.html type="video"
                       title="Create an action walkthrough"
@@ -25,7 +26,52 @@ Use an action when a model needs to do more than write an answer, such as query 
 - Workspace actions require `per_user_semantic_kernel` when actions are personal or group scoped.
 - Have the OpenAPI file, endpoint, credential, reusable identity, or MCP server details required by the action type.
 
-## Steps
+## Personal actions in V2
+
+In V2, **My Workspace > Actions > New action** opens the native type chooser and
+full-page editor. Ordinary connectors and Call agent use this same workflow.
+See [Build agents and actions in My Workspace]({{ '/guides/workspace-agents-and-actions/' | relative_url }})
+for the native experience, implemented in **0.261.096** in
+`application/single_app/config.py`.
+
+### Set up the action with Ask AI
+
+Select **Ask AI** in the editor's header and describe the connector, for example
+"an MCP server at
+https://example.com/mcp that only exposes the search tool". The assistant can
+choose the action type and fill in its name, description, configuration and
+sign-in method, highlighting each field it changed. Each turn lists its changes,
+with **Undo this change** to take the whole turn back.
+
+The assistant never sees or enters keys, secrets or other credentials; enter
+those yourself in **Authentication**. It also doesn't upload or fetch OpenAPI
+specifications. Nothing is saved until you choose **Save action**.
+
+Administrators can turn the panel off with **Enable Ask AI in the Action Editor**
+in [Agents settings]({{ '/admin/agents-actions/' | relative_url }}).
+
+### Finish an action while building an agent
+
+An agent's Ask AI answer can include an action setup card. Choose **Finish setup
+in Actions** to open this workbench with that action's draft already filled in.
+The existing configuration and authentication fields show what you still need
+to provide; Ask AI does not collect your credentials.
+
+**Save action and return to agent** saves this action and selects it in the
+agent's unsaved draft. It returns to the previous Ask AI conversation, including
+an unsent follow-up, rather than starting again. Saving the action does not save
+the agent or prove the connection works.
+
+Use **Back to agent** at the top to leave without saving. If the action has
+unsaved edits, choose whether to keep editing or discard them before returning.
+The original agent draft and its pending setup card remain available.
+
+Implemented in **0.261.333** (`application/single_app/config.py`). This return
+keeps the agent's conversation in tab memory only; it is not history that
+survives refreshes or later visits. Actions opened independently keep the normal
+**Save action** command and return to the Actions list.
+
+## Classic interface steps
 
 1. Open **Personal Workspace** or the target **Group Workspace**.
 2. Choose **Your Actions** or the **Actions** tab.
@@ -47,9 +93,19 @@ Use an action when a model needs to do more than write an answer, such as query 
 
 7. Use **Test Connection** when available, then save the action.
 
+For **Call agent**, select an existing target instead of entering connection
+details. Saving does not run the target. See [Call another agent]({{ '/guides/call-another-agent/' | relative_url }})
+for workspace boundaries, context sharing, and nested-call limits.
+
 ## Verify it worked
 
 The action appears in the Actions list or card view. When you create or edit an agent, it is available on the agent **Actions** step.
+
+## Media an action returns
+
+When an agent's reply links to an audio or video file, such as a recording or a camera clip an action returned, the V2 chat plays it in place: audio as a compact player with play, pause, stop, seek, volume, and speed, and video as a card with the browser's own controls. Images in a reply appear as captioned cards that open full size. Only one recording or clip plays at a time.
+
+The browser only plays media from hosts the page's Content-Security-Policy allows. Media served by SimpleChat itself always plays. For media an action serves from its own host, an administrator adds that host to the `CSP_MEDIA_SRC_ORIGINS` app setting as a comma-separated list of `https://` origins, for example `https://media.contoso.com` or `https://*.contoso-env.westus3.azurecontainerapps.io`. Entries that are not bare `https://` origins are ignored. Until a host is allowed, its links show a short notice with a link that opens the file in a new tab.
 
 ## Troubleshooting
 
@@ -57,6 +113,7 @@ The action appears in the Actions list or card view. When you create or edit an 
 | --- | --- | --- |
 | The Actions tab is missing | Actions are disabled for your workspace or account | Ask an admin to enable `enable_semantic_kernel` and the matching action scope. |
 | **Test Connection** fails | The endpoint, identity, or credential cannot reach the target service | Fix the connection details and test again before saving. |
+| A recording or clip the action returned does not play | Its host is not in `CSP_MEDIA_SRC_ORIGINS`, or the action's signed link has expired | Add the host's `https://` origin to `CSP_MEDIA_SRC_ORIGINS` and restart the app, or ask the agent to fetch the record again for a fresh link. |
 
 ## Related
 

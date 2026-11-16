@@ -1,0 +1,535 @@
+// workflowAlertStore.ts
+// What the workflow-alert notice and card are showing, and what happens next.
+//
+// Alerts arrive from the runtime (useWorkflowAlertRuntime.ts), which fetches them when N1's
+// bell poller says something changed. They wait in `queue` until this tab may show them:
+// the tab is visible, the mobile navigation is closed, and no dialog is open. Then every
+// waiting alert is claimed at once (workflowAlertClaims.ts) and the ones this tab won become
+// `entries`: grouped by workflow, loudest first. The notice shows the first entry and says
+// how many more are waiting; the card shows one entry at a time.
+//
+// A presentation ends when the notice tucks into the bell, is closed, or the card closes.
+// Nothing is marked read by ending it. Whatever the reader did not act on stays unread in
+// the bell, and because each alert was claimed it does not pop up again, here or elsewhere.
+//
+//   idle ──alerts claimed──▶ notice ──open──▶ card ──close / last entry handled──▶ idle
+//                              │
+//                              └──timer or close──▶ tucking ──animation done──▶ idle
+//
+// New alerts that arrive while the notice or the card is up join it, re-sorted, so a critical
+// alert takes the notice over from a medium one. The card keeps the entry it was showing.
+// Alerts won while the notice is tucking wait for it to go, then start a notice of their own.
+
+import { create } from 'zustand';
+import type { NotificationTarget } from '../lib/notificationLinks';
+import type { NotificationNavigationContext } from '../lib/notificationNavigation';
+import { claimWorkflowAlerts, resetWorkflowAlertClaims } from '../lib/workflowAlertClaims';
+import { tuckIntoTarget } from '../lib/workflowAlertMotion';
+import { playWorkflowAlertOnce, resetWorkflowAlertSoundForLab, syncWorkflowAlertSound } from '../lib/workflowAlertSound';
+import {
+    WORKFLOW_ALERT_PRIORITY_LABELS,
+    describeWorkflowAlertGroup,
+    groupWorkflowAlerts,
+    isWorkflowAlertPopupEligible,
+    workflowAlertEntryIds,
+    type WorkflowAlert,
+    type WorkflowAlertEntry,
+} from '../lib/workflowAlertNotices';
+import { workflowAlertServerActions, type WorkflowAlertActions } from '../lib/workflowAlertActions';
+
+export type WorkflowAlertPhase = 'idle' | 'notice' | 'card' | 'tucking';
+
+export interface WorkflowAlertAnnouncement {
+    text: string;
+    assertive: boolean;
+    /** Changes with every announcement, so the same words said twice are still said. */
+    token: number;
+}
+
+/** Marks every element that belongs to the alert UI, so the dialog gate and focus tracking can skip it. */
+export const WORKFLOW_ALERT_UI_ATTRIBUTE = 'data-workflow-alert-ui';
+
+interface WorkflowAlertState {
+    /** Eligible alerts this tab has not claimed yet, newest first. */
+    queue: WorkflowAlert[];
+    /** What is being presented: the alerts this tab claimed, grouped and sorted. */
+    entries: WorkflowAlertEntry[];
+    phase: WorkflowAlertPhase;
+    /** The entry the card shows. */
+    cardIndex: number;
+    /** True while something on the page means the notice must wait. */
+    suspended: boolean;
+    /** Bumped when a notice tucks into the bell, which swings once in answer. */
+    ringToken: number;
+    /** Bumped when the presentation gains alerts, which restarts the notice's timer. */
+    batchToken: number;
+    announcement: WorkflowAlertAnnouncement | null;
+    /** A read or dismiss request from the card is on its way. */
+    busy: boolean;
+    /** The notice's box at the moment it was opened, for the card to grow out of. */
+    growFrom: DOMRect | null;
+
+    receiveAlerts: (alerts: WorkflowAlert[], options?: { complete?: boolean }) => void;
+    removeAlerts: (ids: Iterable<string>) => void;
+    /**
+     * Let go of alerts someone acknowledged: here, in another tab or as the bell reports. They
+     * are never shown again on this page, even by a read that left before the acknowledgment.
+     */
+    retireAcknowledged: (ids: Iterable<string>) => void;
+    setSuspended: (suspended: boolean) => void;
+    openCard: () => void;
+    closeCard: () => void;
+    tuck: () => Promise<void>;
+    nextEntry: () => void;
+    markEntryRead: () => Promise<void>;
+    dismissEntry: () => Promise<void>;
+    acknowledgeEntry: () => Promise<void>;
+    markAllRead: () => Promise<void>;
+    /**
+     * Follow a link or an open action from the card. Every alert in the entry shown is marked
+     * read, as Mark read did before Open replaced it, and the card closes.
+     */
+    openFromCard: (target: NotificationTarget, context: NotificationNavigationContext) => Promise<void>;
+}
+
+// Ids that must not be presented again: claimed by any tab, or acted on here.
+const settled = new Set<string>();
+// Alerts acknowledged here, in another tab or as the bell reports. An alert that needs
+// acknowledgment is otherwise offered again by every read, so a read that left before the
+// acknowledgment must not bring it back.
+const acknowledgedIds = new Set<string>();
+let claiming = false;
+// Bumped by a reset, so a claim that was on its way does not present into the new slate.
+let epoch = 0;
+let actions: WorkflowAlertActions = workflowAlertServerActions;
+let announcementToken = 0;
+// A notice presented while the page had to wait -- a dialog opened while its claim was on its
+// way -- is hidden until the page is free, and is announced then rather than unseen.
+let announceWhenShown = false;
+// Alerts this tab won while the notice was tucking into the bell. They are shown once it has
+// gone, rather than joining a notice on its way out.
+let heldWinners: WorkflowAlert[] = [];
+
+// The control that last held focus outside the alert UI, for the card to hand focus back to.
+// The notice never takes focus, so this is where the reader was before they reached for it.
+let lastOutsideFocus: HTMLElement | null = null;
+if (typeof document !== 'undefined') {
+    document.addEventListener('focusin', (event) => {
+        const target = event.target;
+        if (target instanceof HTMLElement && target !== document.body
+            && !target.closest(`[${WORKFLOW_ALERT_UI_ATTRIBUTE}]`)) {
+            lastOutsideFocus = target;
+        }
+    }, true);
+}
+
+/**
+ * Where focus goes when the card closes and nothing else claimed it: back where the reader
+ * was, or to the bell, which is where every alert can be found again.
+ */
+export function workflowAlertReturnFocusTarget(): HTMLElement | null {
+    if (lastOutsideFocus?.isConnected && !lastOutsideFocus.closest('[inert], [hidden]')) {
+        return lastOutsideFocus;
+    }
+    return document.querySelector<HTMLElement>('[data-notification-bell]');
+}
+
+/** Swap the read and dismiss calls. Only the alert lab does, so its samples never reach the server. */
+export function setWorkflowAlertActions(next: WorkflowAlertActions | null): void {
+    actions = next ?? workflowAlertServerActions;
+}
+
+function announcementFor(entries: WorkflowAlertEntry[]): WorkflowAlertAnnouncement | null {
+    const head = entries[0];
+    if (!head) {
+        return null;
+    }
+    const alert = head.lead;
+    const kind = alert.category === 'failure' ? 'workflow run failed' : 'workflow alert';
+    const parts = [`${WORKFLOW_ALERT_PRIORITY_LABELS[head.priority]} priority ${kind}: ${alert.title}, from ${alert.workflowName}.`];
+    if (head.requireAcknowledgment) {
+        parts.push('Needs acknowledgment.');
+    }
+    const group = describeWorkflowAlertGroup(head);
+    if (group) {
+        parts.push(`${group}.`);
+    }
+    if (entries.length > 1) {
+        parts.push(`${entries.length - 1} more waiting.`);
+    }
+    announcementToken += 1;
+    return { text: parts.join(' '), assertive: head.priority === 'critical' || head.requireAcknowledgment, token: announcementToken };
+}
+
+function withoutIds(entries: WorkflowAlertEntry[], ids: Set<string>): WorkflowAlertEntry[] {
+    const kept = entries.flatMap((entry) => entry.alerts).filter((alert) => !ids.has(alert.id));
+    return groupWorkflowAlerts(kept);
+}
+
+export const useWorkflowAlertStore = create<WorkflowAlertState>((set, get) => {
+    /** The index of the entry with `key` in `entries`, or the nearest one that still exists. */
+    const indexFor = (entries: WorkflowAlertEntry[], key: string | undefined, fallback: number): number => {
+        const found = key ? entries.findIndex((entry) => entry.key === key) : -1;
+        if (found >= 0) {
+            return found;
+        }
+        return Math.max(0, Math.min(fallback, entries.length - 1));
+    };
+
+    /** Show alerts this tab won: a new notice, or more for the one or the card already up. */
+    const present = (winners: WorkflowAlert[], queue: WorkflowAlert[]): void => {
+        const current = get();
+        const entries = groupWorkflowAlerts([...current.entries.flatMap((entry) => entry.alerts), ...winners]);
+        playWorkflowAlertOnce(winners);
+        if (current.phase === 'idle') {
+            announceWhenShown = current.suspended;
+            set({
+                queue,
+                entries,
+                phase: entries[0]?.size === 'medium' || entries[0]?.size === 'large' ? 'card' : 'notice',
+                cardIndex: 0,
+                batchToken: current.batchToken + 1,
+                announcement: current.suspended ? null : announcementFor(entries),
+            });
+            return;
+        }
+        const headChanged = current.entries[0]?.key !== entries[0]?.key
+            || current.entries[0]?.priority !== entries[0]?.priority;
+        const announce = current.phase === 'notice' && headChanged;
+        if (announce && current.suspended) {
+            announceWhenShown = true;
+        }
+        set({
+            queue,
+            entries,
+            cardIndex: indexFor(entries, current.entries[current.cardIndex]?.key, current.cardIndex),
+            batchToken: current.batchToken + 1,
+            announcement: announce && !current.suspended ? announcementFor(entries) : current.announcement,
+        });
+    };
+
+    /** Claim what is waiting and present it, if this tab may present anything now. */
+    const pump = (): void => {
+        const state = get();
+        if (claiming || state.suspended || state.phase === 'tucking') {
+            return;
+        }
+        const now = Date.now();
+        // An alert that needs acknowledgment is offered by every read until someone acknowledges it.
+        // One already on screen stays as it is, rather than being presented, and announced, again.
+        const showing = new Set(state.entries.flatMap((entry) => entry.alerts.map((alert) => alert.id)));
+        const candidates = state.queue.filter((alert) =>
+            (alert.requireAcknowledgment && !alert.acknowledged ? !showing.has(alert.id) : !settled.has(alert.id))
+            && isWorkflowAlertPopupEligible(alert, now));
+        if (!candidates.length) {
+            if (state.queue.length) {
+                set({ queue: [] });
+            }
+            return;
+        }
+        claiming = true;
+        const claimEpoch = epoch;
+        const mustAck = candidates.filter((alert) => alert.requireAcknowledgment && !alert.acknowledged);
+        const claimable = candidates.filter((alert) => !alert.requireAcknowledgment || alert.acknowledged);
+        const ids = claimable.map((alert) => alert.id);
+        void claimWorkflowAlerts(ids)
+            .catch(() => [] as string[])
+            .then((won) => {
+                if (claimEpoch !== epoch) {
+                    return;
+                }
+                claiming = false;
+                for (const id of ids) {
+                    settled.add(id);
+                }
+                const current = get();
+                const presentedIds = new Set([...won, ...mustAck.map((alert) => alert.id)]);
+                const queue = current.queue.filter((alert) => !presentedIds.has(alert.id) && !settled.has(alert.id));
+                const wonIds = new Set(won);
+                const winners = candidates.filter((alert) => wonIds.has(alert.id) || mustAck.some((must) => must.id === alert.id));
+                if (!winners.length) {
+                    set({ queue });
+                } else if (current.phase === 'tucking') {
+                    heldWinners = [...heldWinners, ...winners];
+                    set({ queue });
+                    return;
+                } else {
+                    present(winners, queue);
+                }
+                pump();
+            });
+    };
+
+    /** End the presentation. Whatever was not acted on stays unread, and claimed. */
+    const finish = (patch: Partial<WorkflowAlertState> = {}): void => {
+        announceWhenShown = false;
+        set({ entries: [], phase: 'idle', cardIndex: 0, growFrom: null, busy: false, ...patch });
+        if (heldWinners.length) {
+            const winners = heldWinners;
+            heldWinners = [];
+            present(winners, get().queue);
+        }
+        pump();
+    };
+
+    /** Forget alerts that were handled, and close whatever has nothing left to show. */
+    const drop = (ids: Iterable<string>): void => {
+        const gone = new Set(ids);
+        if (!gone.size) {
+            return;
+        }
+        for (const id of gone) {
+            settled.add(id);
+        }
+        const state = get();
+        heldWinners = heldWinners.filter((alert) => !gone.has(alert.id));
+        const queue = state.queue.filter((alert) => !gone.has(alert.id));
+        const entries = withoutIds(state.entries, gone);
+        if (!entries.length && state.phase !== 'idle') {
+            if (state.phase === 'tucking') {
+                set({ queue });
+                return;
+            }
+            finish({ queue });
+            return;
+        }
+        set({
+            queue,
+            entries,
+            cardIndex: indexFor(entries, state.entries[state.cardIndex]?.key, state.cardIndex),
+        });
+    };
+
+    const act = async (ids: string[], request: (ids: string[]) => Promise<string[]>): Promise<void> => {
+        if (!ids.length || get().busy) {
+            return;
+        }
+        set({ busy: true });
+        let done: string[] = [];
+        try {
+            done = await request(ids);
+        } catch {
+            done = [];
+        }
+        set({ busy: false });
+        // Only what the server accepted goes; a group that partly failed stays, smaller.
+        drop(done);
+    };
+
+    return {
+        queue: [],
+        entries: [],
+        phase: 'idle',
+        cardIndex: 0,
+        suspended: true,
+        ringToken: 0,
+        batchToken: 0,
+        announcement: null,
+        busy: false,
+        growFrom: null,
+
+        receiveAlerts: (alerts, { complete = false } = {}) => {
+            const now = Date.now();
+            const queue = alerts.filter((alert) =>
+                !acknowledgedIds.has(alert.id)
+                && (!settled.has(alert.id) || (alert.requireAcknowledgment && !alert.acknowledged))
+                && isWorkflowAlertPopupEligible(alert, now));
+            set({ queue });
+            if (complete) {
+                // A short answer is every unread pop-up alert there is, so one missing from it
+                // was read or dismissed somewhere else.
+                const listed = new Set(alerts.map((alert) => alert.id));
+                const shown = [...get().entries.flatMap(workflowAlertEntryIds), ...heldWinners.map((alert) => alert.id)];
+                drop(shown.filter((id) => !listed.has(id)));
+            }
+            pump();
+        },
+
+        removeAlerts: (ids) => drop(ids),
+
+        retireAcknowledged: (ids) => {
+            const acknowledged = [...ids];
+            acknowledged.forEach((id) => acknowledgedIds.add(id));
+            drop(acknowledged);
+        },
+
+        setSuspended: (suspended) => {
+            if (get().suspended === suspended) {
+                return;
+            }
+            set({ suspended });
+            if (!suspended) {
+                const state = get();
+                if (announceWhenShown && state.phase === 'notice' && state.entries.length) {
+                    announceWhenShown = false;
+                    set({ announcement: announcementFor(state.entries) });
+                }
+                pump();
+            }
+        },
+
+        openCard: () => {
+            if (get().phase !== 'notice' || !get().entries.length) {
+                return;
+            }
+            const notice = document.querySelector(`[data-workflow-alert-notice]`);
+            set({ phase: 'card', cardIndex: 0, growFrom: notice ? notice.getBoundingClientRect() : null });
+        },
+
+        closeCard: () => {
+            if (get().phase === 'card') {
+                const state = get();
+                if (state.entries.some((entry) => entry.requireAcknowledgment)) {
+                    set({ phase: 'notice', growFrom: null, busy: false });
+                } else {
+                    finish();
+                }
+            }
+        },
+
+        tuck: async () => {
+            if (get().phase !== 'notice') {
+                return;
+            }
+            if (get().entries.some((entry) => entry.requireAcknowledgment)) {
+                return;
+            }
+            set({ phase: 'tucking' });
+            await tuckIntoTarget(
+                document.querySelector<HTMLElement>('[data-workflow-alert-notice]'),
+                document.querySelector('[data-notification-bell]'),
+            );
+            if (get().phase === 'tucking') {
+                finish({ ringToken: get().ringToken + 1 });
+            }
+        },
+
+        nextEntry: () => {
+            const { entries, cardIndex } = get();
+            if (entries.length > 1) {
+                set({ cardIndex: (cardIndex + 1) % entries.length });
+            }
+        },
+
+        markEntryRead: async () => {
+            const entry = get().entries[get().cardIndex];
+            if (entry) {
+                await act(
+                    entry.alerts.filter((alert) => !alert.requireAcknowledgment).map((alert) => alert.id),
+                    (ids) => actions.markRead(ids),
+                );
+            }
+        },
+
+        dismissEntry: async () => {
+            const entry = get().entries[get().cardIndex];
+            if (entry) {
+                await act(workflowAlertEntryIds(entry), (ids) => actions.dismiss(ids));
+            }
+        },
+
+        acknowledgeEntry: async () => {
+            const entry = get().entries[get().cardIndex];
+            if (entry) {
+                await act(
+                    entry.alerts.filter((alert) => alert.requireAcknowledgment && !alert.acknowledged).map((alert) => alert.id),
+                    async (ids) => {
+                        const done = await actions.acknowledge(ids);
+                        done.forEach((id) => acknowledgedIds.add(id));
+                        return done;
+                    },
+                );
+            }
+        },
+
+        markAllRead: async () => {
+            await act(
+                get().entries.flatMap((entry) => entry.alerts)
+                    .filter((alert) => !alert.requireAcknowledgment)
+                    .map((alert) => alert.id),
+                (ids) => actions.markRead(ids),
+            );
+        },
+
+        openFromCard: async (target, context) => {
+            const state = get();
+            const entry = state.entries[state.cardIndex];
+            if (state.phase !== 'card' || !entry || state.busy) {
+                return;
+            }
+            const ids = workflowAlertEntryIds(entry);
+            const mustAck = entry.alerts.filter((alert) => alert.requireAcknowledgment && !alert.acknowledged).map((alert) => alert.id);
+            const ordinary = entry.alerts.filter((alert) => !alert.requireAcknowledgment).map((alert) => alert.id);
+            set({ busy: true });
+            const acknowledged = mustAck.length ? await actions.acknowledge(mustAck).catch(() => [] as string[]) : [];
+            if (mustAck.length && acknowledged.length !== mustAck.length) {
+                set({ busy: false });
+                return;
+            }
+            const read = ordinary.length ? actions.markRead(ordinary).catch(() => [] as string[]) : Promise.resolve([] as string[]);
+            acknowledged.forEach((id) => acknowledgedIds.add(id));
+            ids.forEach((id) => settled.add(id));
+            // Other alerts that need acknowledgment stay up, in the notice, rather than going with
+            // the one opened; anything else ends with it, unread in the bell, as before.
+            const waiting = withoutIds(get().entries, new Set(ids)).filter((item) => item.requireAcknowledgment);
+            if (waiting.length) {
+                set({ entries: waiting, phase: 'notice', cardIndex: 0, growFrom: null, busy: false });
+                pump();
+            } else {
+                finish();
+            }
+            // A full page load would cancel a request still on its way, so a link that leaves
+            // the application waits for the read first. Inside it the read carries on regardless.
+            if (target.kind === 'classic') {
+                await read;
+            }
+            await actions.open(target, context);
+        },
+    };
+});
+
+if (typeof BroadcastChannel !== 'undefined') {
+    try {
+        const channel = new BroadcastChannel('simplechat.workflowAlerts');
+        channel.addEventListener('message', (event) => {
+            const data = event.data;
+            if (data && data.type === 'acknowledged' && Array.isArray(data.ids)) {
+                useWorkflowAlertStore.getState().retireAcknowledged(
+                    data.ids.filter((id: unknown): id is string => typeof id === 'string'),
+                );
+            }
+        });
+    } catch {
+        /* Cross-tab acknowledgment is best-effort. */
+    }
+}
+
+// The sound follows what this tab holds, waiting or shown, so it stops with the last alert that
+// wanted it however that alert went: acknowledged, retired by a read, or reset.
+useWorkflowAlertStore.subscribe((state, previous) => {
+    if (state.queue !== previous.queue || state.entries !== previous.entries) {
+        syncWorkflowAlertSound([...state.queue, ...state.entries.flatMap((entry) => entry.alerts)]);
+    }
+});
+
+/** Back to a clean slate: nothing waiting, nothing claimed. Only the alert lab and tests call this. */
+export function resetWorkflowAlertsForLab(): void {
+    epoch += 1;
+    settled.clear();
+    acknowledgedIds.clear();
+    claiming = false;
+    announceWhenShown = false;
+    heldWinners = [];
+    resetWorkflowAlertClaims();
+    resetWorkflowAlertSoundForLab();
+    useWorkflowAlertStore.setState({
+        queue: [],
+        entries: [],
+        phase: 'idle',
+        cardIndex: 0,
+        batchToken: 0,
+        announcement: null,
+        busy: false,
+        growFrom: null,
+    });
+}

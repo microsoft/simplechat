@@ -191,7 +191,7 @@ def test_document_action_capabilities_resolve_in_the_actions_pane():
     actions_markup = (PANES_DIR / "actions.html").read_text(encoding="utf-8")
     agents_markup = (PANES_DIR / "agents.html").read_text(encoding="utf-8")
 
-    for capability_name in ("analyze_capability", "comparison_capability"):
+    for capability_name in ("analyze_capability", "comparison_capability", "merge_capability"):
         assert re.search(rf"\{{%-?\s*set\s+{capability_name}\s*=", actions_markup), (
             f"actions.html uses {capability_name} but never sets it. It has to be "
             "set in this pane, because a sibling pane's {% set %} is not visible here."
@@ -233,6 +233,13 @@ def test_capability_panes_render_as_the_parent_composes_them():
                 "chat_max_documents": 8,
                 "workflow_max_documents": 40,
             },
+            "merge": {
+                "enabled": True,
+                "chat_max_documents": 12,
+                "workflow_max_documents": 140,
+                "chat_max_rows": 90000,
+                "workflow_max_rows": 900000,
+            },
         },
         "agents_page_promoted_popular_agents": [],
     }
@@ -255,10 +262,32 @@ def test_capability_panes_render_as_the_parent_composes_them():
     assert 'id="document-action-capabilities-card"' in markup, (
         "The Document Action Capabilities card did not render."
     )
-    for expected_value in ('value="25"', 'value="120"', 'value="8"', 'value="40"'):
+    for expected_value in (
+        'value="25"', 'value="120"', 'value="8"', 'value="40"',
+        'value="12"', 'value="140"', 'value="90000"', 'value="900000"',
+    ):
         assert expected_value in markup, (
             f"Configured capability limit {expected_value} did not reach the rendered markup."
         )
+
+    # Stored settings written before Merge existed have no "merge" entry. The page must
+    # still render, showing Merge's defaults rather than failing the whole Admin Settings.
+    legacy = {
+        **settings,
+        "document_action_capabilities": {
+            key: value for key, value in settings["document_action_capabilities"].items() if key != "merge"
+        },
+    }
+    legacy_markup = parent.render(
+        settings=legacy, app_settings=legacy, admin_landing_tab="secrets", user_settings={}, mcp_ui_enabled=False,
+    )
+    for expected_value in ('value="10"', 'value="100"', 'value="250000"', 'value="1000000"'):
+        assert expected_value in legacy_markup, (
+            f"The Merge default {expected_value} did not render for settings saved before Merge."
+        )
+    assert re.search(r'id="document_action_merge_enabled"[^>]*checked', legacy_markup), (
+        "Merge must show as enabled by default when the stored settings predate it."
+    )
 
     print("Both panes render together with their capability limits intact.")
 

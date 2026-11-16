@@ -74,8 +74,8 @@ python app.py
 For the full local workflow, environment guidance, and notes about Docker, WSL2, and Gunicorn validation, see:
 
 - [Setup Instructions]({{ '/start/deployment-options/' | relative_url }})
-- [Manual Setup](./setup_instructions_manual.md)
-- [Running Simple Chat Locally](./explanation/running_simplechat_locally.md)
+- [Manual Setup]({{ '/setup_instructions_manual/' | relative_url }})
+- [Running Simple Chat Locally]({{ '/explanation/running_simplechat_locally/' | relative_url }})
 
 ## Pull Request Expectations
 
@@ -97,6 +97,15 @@ Before opening a pull request, run the tests that match your change.
 - If you change Flask routes, keep the existing Swagger route decorator pattern intact.
 
 Pull requests are reviewed by the SimpleChat team and go through repository validation. Depending on the files changed, that can include Python syntax checks, release-note validation, Swagger route validation, and additional maintainer review. Maintainers may also run additional security or AI-assisted review before merge.
+
+## Documentation illustrations
+
+Feature and architecture pages use complete slides from the approved
+customer-facing presentation. Follow
+[Maintain the capability slide screenshots]({{ '/contributing/capability-slides/' | relative_url }})
+to update their images, provenance, accessible captions, and generated feature
+pages together. Presentation slides complement useful task instructions and
+real application screenshots; they do not replace them.
 
 ## Security and Repo Conventions
 

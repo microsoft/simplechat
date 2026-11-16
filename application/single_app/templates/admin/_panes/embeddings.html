@@ -4,12 +4,56 @@
                         <i class="bi bi-vector-pen me-2"></i>Embeddings Configuration
                     </h5>
                     <p class="text-muted small">
-                        Configure your embeddings settings. These are used for semantic search, knowledge-base lookups, etc.
+                        Choose one global embedding model from AI Connections for document ingestion, personal, group and public search, and fact memory. Chat and images keep independent defaults.
                     </p>
-                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-bs-toggle="modal" data-bs-target="#legacyModelDiscoveryIdentityGuideModal">
-                        <i class="bi bi-question-circle me-1"></i>Setup Guide
+                    <button type="button" class="btn btn-sm btn-outline-secondary mb-3 align-self-start" data-open-admin-tab="#model-endpoints">
+                        <i class="bi bi-hdd-network me-1"></i>Manage AI Connections
                     </button>
 
+                {% set shared_embedding_authoritative = settings.embedding_model_selection is defined or (settings.get('ai_connections_embedding_migration_version') is integer and settings.get('ai_connections_embedding_migration_version') >= 1) %}
+                {% set embedding_notice = settings.get('ai_connections_embedding_migration_notice') if settings.get('ai_connections_embedding_migration_notice') is mapping else {} %}
+                {% set embedding_recovery_allowed = not shared_embedding_authoritative and embedding_notice.get('status') in ['error', 'failed'] %}
+                <div id="shared-embedding-model-settings"
+                    data-shared-binding-authoritative="{{ 'true' if shared_embedding_authoritative else 'false' }}"
+                    data-has-shared-selection="{{ 'true' if settings.embedding_model_selection is mapping and settings.embedding_model_selection.get('endpoint_id') and settings.embedding_model_selection.get('model_id') else 'false' }}"
+                    data-migration-status="{{ embedding_notice.get('status', '') }}">
+                    <label for="embedding-default-model" class="form-label">Default embedding model</label>
+                    <select id="embedding-default-model" class="form-select" aria-describedby="embedding-default-help" disabled>
+                        <option value="">Loading models…</option>
+                    </select>
+                    <p id="embedding-default-help" class="form-text">
+                        This default saves immediately and does not require enabling AI Connections for chat.
+                        Save a new or edited connection before selecting it here. Clearing the shared default never restores legacy settings.
+                    </p>
+                    <div id="embedding-model-capability" class="form-text"></div>
+                    <div id="embedding-model-policy" class="form-text"></div>
+                    <div class="alert alert-warning mt-2" role="note">
+                        Matching dimensions do not make two embedding models compatible. Changing a model, revision, dimensions or preprocessing can require a controlled rebuild of search and fact-memory vectors.
+                        Saving never rebuilds, deletes or re-embeds existing data automatically.
+                    </div>
+                    <div id="embedding-model-notice" class="alert alert-warning d-none mt-2" role="status"></div>
+                    <div id="embedding-compatibility-notice" class="alert alert-info d-none mt-2" role="status"></div>
+                    <div id="embedding-migration-notice" class="alert alert-info mt-2{% if not embedding_notice.get('message') %} d-none{% endif %}" role="status">{{ embedding_notice.get('message', '') }}</div>
+                    <div id="embedding-model-error" class="alert alert-danger d-none mt-2" role="alert"></div>
+                    <div id="embedding-model-saving" class="form-text d-none" role="status">Saving…</div>
+                    <div class="d-flex flex-wrap gap-2 mt-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="refresh-embedding-models">Refresh choices</button>
+                        <button type="button" class="btn btn-secondary btn-sm" id="test_embedding_button" disabled>Test embeddings</button>
+                    </div>
+                    <p class="form-text">
+                        The test uses the saved model and may incur inference costs. It validates returned vector dimensions without storing vectors or changing the default.
+                        A successful test does not override vector-store compatibility checks.
+                    </p>
+                    <div id="test_embedding_result" class="mt-2" role="status"></div>
+                </div>
+
+                <div id="legacy-embedding-recovery" class="mt-3{% if not embedding_recovery_allowed %} d-none{% endif %}">
+                    <div class="alert alert-warning" role="status">
+                        Automatic import has not completed. Existing embedding settings are retained.
+                        Recovery fields are used only until a shared embedding default is saved or import completes.
+                    </div>
+                    <fieldset id="legacy-embedding-settings"{% if not embedding_recovery_allowed %} disabled{% endif %}>
+                    <legend class="h6">Legacy embedding configuration recovery</legend>
                 <div class="form-group form-check form-switch mb-3 d-flex align-items-center">
                     <input type="checkbox" class="form-check-input me-2" id="enable_embedding_apim"
                         name="enable_embedding_apim" {% if settings.enable_embedding_apim %}checked{% endif %}>
@@ -18,8 +62,7 @@
                     <i class="bi bi-info-circle ms-2" data-bs-toggle="tooltip" title="Route embedding model requests through Azure API Management instead of directly to Azure OpenAI service for additional governance and monitoring."></i>
                 </div>
 
-                <div id="non_apim_embedding_settings" {% if settings.enable_embedding_apim %}style="display: none;" {%
-                    endif %}>
+                <div id="non_apim_embedding_settings" class="{% if settings.enable_embedding_apim %}d-none{% endif %}">
                     <div class="card p-3 mb-3">
                         <div class="mb-3">
                             <label for="azure_openai_embedding_endpoint" class="form-label">
@@ -58,9 +101,7 @@
                                 name="azure_openai_embedding_resource_group"
                                 value="{{ settings.azure_openai_embedding_resource_group or '' }}">
                         </div>
-                        <div class="mb-3" id="embedding_key_container" {% if
-                            settings.azure_openai_embedding_authentication_type !='key' %}style="display: none;" {%
-                            endif %}>
+                        <div class="mb-3{% if settings.azure_openai_embedding_authentication_type != 'key' %} d-none{% endif %}" id="embedding_key_container">
                             <label for="azure_openai_embedding_key" class="form-label">Azure OpenAI Embedding
                                 Key</label>
                             <div class="input-group">
@@ -107,8 +148,7 @@
                     </div>
                 </div>
 
-                <div id="apim_embedding_settings" class="card p-3 mb-3" {% if not settings.enable_embedding_apim
-                    %}style="display: none;" {% endif %}>
+                <div id="apim_embedding_settings" class="card p-3 mb-3{% if not settings.enable_embedding_apim %} d-none{% endif %}">
                     <div class="mb-3">
                         <label for="azure_apim_embedding_endpoint" class="form-label">Azure APIM Endpoint</label>
                         <input type="text" class="form-control" id="azure_apim_embedding_endpoint"
@@ -140,9 +180,11 @@
                     </div>
                 </div>
 
-                <button type="button" class="btn btn-secondary mt-3" id="test_embedding_button">
-                    Test Embedding Connection
+                <button type="button" class="btn btn-secondary mt-3" id="test_legacy_embedding_button">
+                    Test legacy embedding connection
                 </button>
-                <div id="test_embedding_result" class="mt-2"></div>
+                <div id="test_legacy_embedding_result" class="mt-2" role="status"></div>
+                    </fieldset>
+                </div>
                 </div>
             </div>

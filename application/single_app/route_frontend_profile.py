@@ -8,7 +8,7 @@ from functions_debug import debug_print
 from functions_settings import get_settings, get_user_settings, update_user_settings
 from functions_stats_windows import (
     build_stats_date_series,
-    resolve_stats_time_window,
+    resolve_bounded_stats_time_window,
     stats_window_response_payload,
     timestamp_to_stats_date_key,
 )
@@ -144,7 +144,7 @@ def register_route_frontend_profile(bp):
                 return jsonify({"error": "Unable to identify user"}), 401
             
             try:
-                stats_window = resolve_stats_time_window(request.args)
+                stats_window = resolve_bounded_stats_time_window(request.args)
             except ValueError as ex:
                 return jsonify({"error": str(ex)}), 400
 

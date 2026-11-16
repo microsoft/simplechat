@@ -1,0 +1,216 @@
+name: Staging UI Smoke Tests
+
+on:
+  push:
+    branches:
+      - Staging
+  pull_request:
+    branches:
+      - Staging
+      - paullizer-react-v2-ui  # Temporary: remove when paullizer-react-v2-ui merges into Development (#1571)
+    paths:
+      - .github/workflows/staging-ui-smoke.yml
+      - ui_tests/test_staging_chat_smoke.py
+      - ui_tests/playwright-workspaces/**
+  workflow_dispatch:
+    inputs:
+      pytest_target:
+        description: "pytest target for staging UI validation"
+        required: true
+        default: "ui_tests/test_staging_chat_smoke.py"
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: simplechat-staging-ui-smoke
+  cancel-in-progress: false
+
+jobs:
+  ui-smoke:
+    name: Validate existing staging and run UI smoke tests
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    environment:
+      name: Staging-Validation
+    timeout-minutes: 30
+    env:
+      PYTEST_TARGET: ${{ github.event.inputs.pytest_target || 'ui_tests/test_staging_chat_smoke.py' }}
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID || secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID || secrets.AZURE_TENANT_ID }}
+      SIMPLECHAT_UI_BASE_URL: ${{ vars.SIMPLECHAT_UI_BASE_URL }}
+      SIMPLECHAT_UI_AUTH_RESOURCE: ${{ vars.SIMPLECHAT_UI_AUTH_RESOURCE }}
+      SIMPLECHAT_UI_TERMS_SHA256: ${{ vars.SIMPLECHAT_UI_TERMS_SHA256 }}
+      SIMPLECHAT_UI_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_STORAGE_STATE_B64 }}
+      SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64: ${{ secrets.SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64 }}
+      SIMPLECHAT_UI_ARTIFACT_DIR: ui_tests/artifacts
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Validate required environment values
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          missing=()
+          required=(SIMPLECHAT_UI_BASE_URL)
+          if [[ -n "${SIMPLECHAT_UI_AUTH_RESOURCE:-}" ]]; then
+            required+=(AZURE_CLIENT_ID AZURE_TENANT_ID)
+          fi
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              missing+=("$name")
+            fi
+          done
+
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            printf 'Missing required GitHub Environment variables/secrets:\n'
+            printf '  - %s\n' "${missing[@]}"
+            exit 1
+          fi
+
+          if [[ -z "${SIMPLECHAT_UI_STORAGE_STATE_B64:-}" && -z "${SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64:-}" && -z "${SIMPLECHAT_UI_AUTH_RESOURCE:-}" ]]; then
+            echo "Missing UI authentication. Set SIMPLECHAT_UI_AUTH_RESOURCE for CI bearer auth or SIMPLECHAT_UI_STORAGE_STATE_B64/SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64 for browser session auth."
+            exit 1
+          fi
+
+          base_url="${SIMPLECHAT_UI_BASE_URL%/}"
+          if [[ "$base_url" != https://* || "$base_url" == *$'\n'* || "$base_url" == *$'\r'* ]]; then
+            echo "SIMPLECHAT_UI_BASE_URL must be an HTTPS URL without line breaks."
+            exit 1
+          fi
+          echo "SIMPLECHAT_UI_BASE_URL=$base_url" >> "$GITHUB_ENV"
+          echo "Testing the existing staging deployment at $base_url."
+          echo "This workflow does not deploy code or provision Azure resources."
+
+      - name: Azure login
+        if: ${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Acquire SimpleChat UI access token
+        if: ${{ env.SIMPLECHAT_UI_AUTH_RESOURCE != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          access_token="$(az account get-access-token --resource "$SIMPLECHAT_UI_AUTH_RESOURCE" --query accessToken -o tsv)"
+          if [[ -z "$access_token" ]]; then
+            echo "Failed to acquire SimpleChat UI access token."
+            exit 1
+          fi
+          echo "::add-mask::$access_token"
+          echo "SIMPLECHAT_UI_ACCESS_TOKEN=$access_token" >> "$GITHUB_ENV"
+
+      - name: Wait for staging endpoint reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          no_auth_health_url="$SIMPLECHAT_UI_BASE_URL/external/healthcheckz"
+          auth_health_url="$SIMPLECHAT_UI_BASE_URL/external/healthcheck"
+          chat_url="$SIMPLECHAT_UI_BASE_URL/chats"
+
+          echo "Waiting for the existing staging endpoint to respond."
+          echo "Reachability is not application readiness; authenticated smoke tests below must pass."
+          for attempt in {1..90}; do
+            no_auth_status="$(curl -sS --connect-timeout 10 --max-time 20 -o /dev/null -w '%{http_code}' "$no_auth_health_url" || true)"
+            auth_status="$(curl -sS --connect-timeout 10 --max-time 20 -o /dev/null -w '%{http_code}' "$auth_health_url" || true)"
+            chat_status="$(curl -sS --connect-timeout 10 --max-time 20 -o /dev/null -w '%{http_code}' "$chat_url" || true)"
+
+            if [[ "$no_auth_status" == "200" || "$auth_status" == "200" || "$chat_status" == "302" || "$chat_status" == "401" || "$chat_status" == "403" ]]; then
+              echo "Staging endpoint is reachable; continuing to authenticated application validation."
+              exit 0
+            fi
+
+            echo "Reachability attempt $attempt failed. healthcheckz=$no_auth_status healthcheck=$auth_status chats=$chat_status"
+            sleep 10
+          done
+
+          echo "Staging endpoint did not become reachable within the configured retry window."
+          exit 1
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ui_tests/playwright-workspaces/package-lock.json
+
+      - name: Install UI test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r ui_tests/requirements.txt
+          python -m playwright install --with-deps chromium
+
+      - name: Install JavaScript browser test dependencies
+        shell: bash
+        working-directory: ui_tests/playwright-workspaces
+        run: |
+          set -euo pipefail
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Restore Playwright storage state
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p ui_tests/artifacts/auth
+
+          if [[ -n "${SIMPLECHAT_UI_STORAGE_STATE_B64:-}" ]]; then
+            printf '%s' "$SIMPLECHAT_UI_STORAGE_STATE_B64" | base64 -d > ui_tests/artifacts/auth/storage_state.json
+            echo "SIMPLECHAT_UI_STORAGE_STATE=$PWD/ui_tests/artifacts/auth/storage_state.json" >> "$GITHUB_ENV"
+          fi
+
+          if [[ -n "${SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64:-}" ]]; then
+            printf '%s' "$SIMPLECHAT_UI_ADMIN_STORAGE_STATE_B64" | base64 -d > ui_tests/artifacts/auth/admin_storage_state.json
+            echo "SIMPLECHAT_UI_ADMIN_STORAGE_STATE=$PWD/ui_tests/artifacts/auth/admin_storage_state.json" >> "$GITHUB_ENV"
+            if [[ -z "${SIMPLECHAT_UI_STORAGE_STATE_B64:-}" ]]; then
+              echo "SIMPLECHAT_UI_STORAGE_STATE=$PWD/ui_tests/artifacts/auth/admin_storage_state.json" >> "$GITHUB_ENV"
+            fi
+          fi
+
+      - name: Validate pinned CI onboarding guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -p no:cacheprovider functional_tests/test_staging_terms_onboarding.py -q
+          node --test functional_tests/test_staging_terms_onboarding.mjs
+
+      - name: Run JavaScript staging UI smoke test
+        shell: bash
+        working-directory: ui_tests/playwright-workspaces
+        run: |
+          set -euo pipefail
+          npm run test:staging
+
+      - name: Run staging UI smoke tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest "$PYTEST_TARGET" -m ui -ra
+
+      - name: Upload UI test artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: staging-ui-test-artifacts
+          path: |
+            ui_tests/artifacts/*.png
+            ui_tests/playwright-workspaces/test-results/**/*.png
+          retention-days: 7
+          if-no-files-found: ignore

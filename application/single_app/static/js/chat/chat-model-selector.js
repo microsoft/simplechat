@@ -389,6 +389,8 @@ function rebuildModelOptions(sections, restoreOptions = {}) {
             modelOption.textContent = option.optionLabel;
             modelOption.dataset.selectionKey = option.selection_key || '';
             modelOption.dataset.modelId = option.model_id || '';
+            modelOption.dataset.modelName = option.model_name || '';
+            modelOption.dataset.reasoningCapabilities = JSON.stringify(option.reasoning_capabilities || {});
             modelOption.dataset.displayName = option.display_name || '';
             modelOption.dataset.requestModel = option.request_model || '';
             modelOption.dataset.deploymentName = option.deployment_name || '';
@@ -610,4 +612,59 @@ export function refreshModelSelector() {
     }
 
     modelSelectorController?.refresh();
+}
+
+function findModelOptionForMetadata(modelSelection = {}) {
+    if (!modelSelect || !modelSelection || typeof modelSelection !== 'object') {
+        return null;
+    }
+
+    const endpointId = String(modelSelection.model_endpoint_id || modelSelection.endpoint_id || '').trim();
+    const modelId = String(modelSelection.model_id || '').trim();
+    const selectedModel = String(modelSelection.selected_model || modelSelection.request_model || '').trim();
+    const frontendModel = String(modelSelection.frontend_requested_model || modelSelection.deployment_name || '').trim();
+    const options = Array.from(modelSelect.options).filter(option => !option.disabled);
+
+    if (endpointId && modelId) {
+        const endpointMatch = options.find(option => (
+            option.dataset.endpointId === endpointId
+            && option.dataset.modelId === modelId
+        ));
+        if (endpointMatch) {
+            return endpointMatch;
+        }
+    }
+
+    const modelNames = [frontendModel, selectedModel].filter(Boolean);
+    return options.find(option => modelNames.some(modelName => (
+        option.dataset.requestModel === modelName
+        || option.dataset.deploymentName === modelName
+        || option.value === modelName
+    ))) || null;
+}
+
+export function restoreModelSelectionFromConversationMetadata(modelSelection = {}) {
+    const matchingOption = findModelOptionForMetadata(modelSelection);
+    if (!matchingOption || !modelSelect) {
+        return false;
+    }
+
+    modelSelect.value = matchingOption.value;
+    matchingOption.selected = true;
+    modelSelectorController?.refresh();
+    modelSelect.dispatchEvent(new CustomEvent('change', {
+        bubbles: true,
+        detail: { conversationRestore: true }
+    }));
+    return true;
+}
+
+export function restoreAdminDefaultModelSelection() {
+    if (!window.appSettings?.enable_default_model_for_new_conversations) {
+        return false;
+    }
+
+    return restoreModelSelectionFromConversationMetadata(
+        window.initialChatModelSelection || window.appSettings.default_model_selection || {}
+    );
 }

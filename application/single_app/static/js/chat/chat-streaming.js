@@ -15,15 +15,53 @@ import { showToast } from './chat-toast.js';
 import { applyScopeLock } from './chat-documents.js';
 import { beginStreamingThoughtSession, clearStreamingThoughtSession, handleStreamingThought, markStreamingThoughtContentStarted, stopThoughtPolling } from './chat-thoughts.js';
 import { destroyInlineCharts, hydrateInlineCharts } from './chat-inline-charts.js';
+import { destroyInlineDiagrams, hydrateInlineDiagrams } from './chat-inline-diagrams.js';
 import { hydrateInlineImageProposals } from './chat-inline-image-proposals.js';
 import { hydrateMath } from './chat-math.js';
 import { escapeHtml } from './chat-utils.js';
 import { requestDesktopNotificationPermissionIfNeeded, showDesktopConversationNotification } from './chat-desktop-notifications.js';
+import { getMessageReasoningAdjustments, renderMessageReasoningAdjustments } from './chat-reasoning.js';
+import { getAnalysisContextRevision, offerSavedAnalysis, readSavedAnalyses } from './chat-analysis-results.js';
+import {
+    actionRecoveryHeaders, getActionRecoveryRevision, prepareActionRequest, setActionRecoveryResume, showActionRecovery,
+} from './chat-action-recovery.js';
 
 let currentStreamController = null;
 let currentStreamContext = null;
 const MAX_STREAM_CLIENT_ERROR_LENGTH = 500;
 const USER_MESSAGE_PERSISTED_EVENT_TYPE = 'user_message_persisted';
+
+window.SimpleChatActionCredentials?.setContinuationConsumer(continueActionCredentialStream);
+setActionRecoveryResume(body => {
+    const { action_recovery: previousDecision, ...pending } = body;
+    sendMessageWithStreaming(
+        { ...pending, action_recovery_nonce: crypto.randomUUID() }, null, pending.conversation_id,
+    );
+});
+
+export function continueActionCredentialStream(requestFactory, conversationId) {
+    if (!isConversationCurrentlyActive(conversationId)) {
+        return Promise.reject(new Error('The active conversation changed.'));
+    }
+    return new Promise((resolve, reject) => {
+        let completed = false;
+        consumeStreamingResponse(requestFactory, createStreamingPlaceholder('Continuing'), null, {
+            allowRecovery: false,
+            recoveryConversationId: conversationId,
+            onDone: data => {
+                completed = true;
+                resolve(data);
+            },
+            onError: () => {
+                completed = true;
+                reject(new Error('Unable to continue the blocked action.'));
+            },
+            onFinally: () => {
+                if (!completed) reject(new Error('The continuation was interrupted.'));
+            },
+        });
+    });
+}
 
 window.addEventListener('m365-chat-resumed', event => {
     const conversationId = event.detail?.conversationId;
@@ -250,7 +288,10 @@ function normalizeStreamHttpUrl(value) {
     }
 
     try {
-        const parsedUrl = new URL(rawUrl);
+        const localBase = rawUrl.startsWith('/') && !rawUrl.startsWith('//')
+            ? window.location.origin
+            : undefined;
+        const parsedUrl = new URL(rawUrl, localBase);
         if (!['http:', 'https:'].includes(parsedUrl.protocol) || !parsedUrl.hostname) {
             return '';
         }
@@ -319,7 +360,19 @@ function appendRateLimitMessage(errorBanner, markdownText) {
     errorBanner.appendChild(messageContainer);
 }
 
-function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}) {
+function getStreamErrorPersistenceNote(errorPayload, hasPartialContent) {
+    // Only a persisted assistant reply carries message_id; approval payloads
+    // use message_persisted for the user message alone.
+    if (errorPayload.message_persisted === true && errorPayload.message_id) {
+        return 'The partial content above has been saved.';
+    }
+    if (hasPartialContent) {
+        return 'The partial content above was not saved and will not appear after a reload.';
+    }
+    return '';
+}
+
+function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}, hasPartialContent = false) {
     const errorPayload = getStreamErrorPayload(errorDetails);
     const m365SignInRequired = isM365SignInRequired(errorPayload);
     if (m365SignInRequired && window.SimpleChatM365Connect) {
@@ -382,14 +435,17 @@ function appendStreamErrorBanner(contentElement, errorMessage, errorDetails = {}
     detailRow.className = 'mt-1';
 
     const detailText = document.createElement('small');
+    const persistenceNote = getStreamErrorPersistenceNote(errorPayload, hasPartialContent);
     if (rateLimited) {
-        detailText.textContent = 'Wait a moment before sending the message again. Any partial content above has been saved.';
+        detailText.textContent = ['Wait a moment before sending the message again.', persistenceNote].filter(Boolean).join(' ');
     } else if (m365SignInRequired) {
         detailText.textContent = 'Refresh the page to restore Microsoft 365 connection controls.';
     } else if (authRequired) {
         detailText.textContent = 'After access is granted, send the message again.';
+    } else if (errorPayload.type === 'm365_approval_required') {
+        detailText.textContent = 'The request continues after the approval is decided.';
     } else {
-        detailText.textContent = 'Response may be incomplete. The partial content above has been saved.';
+        detailText.textContent = ['Response may be incomplete.', persistenceNote].filter(Boolean).join(' ');
     }
 
     detailRow.appendChild(detailText);
@@ -605,6 +661,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
         onFinally = null,
         reconnectStatusLabel = 'Reconnecting...',
         persistedUserMessageId = null,
+        analysisContextRevision = getAnalysisContextRevision(),
     } = options;
 
     if (!conversationId) {
@@ -620,6 +677,9 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
                 reattachable: Boolean(statusData?.reattachable),
                 status: statusData?.status || null,
             });
+            return false;
+        }
+        if (!isConversationCurrentlyActive(conversationId)) {
             return false;
         }
 
@@ -656,6 +716,7 @@ async function attemptStreamingRecovery(conversationId, failedMessageId, tempUse
                 recoveryConversationId: conversationId,
                 reconnectStatusLabel,
                 initialPersistedUserMessageId: persistedUserMessageId,
+                analysisContextRevision,
             },
         );
     } catch (error) {
@@ -676,6 +737,9 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         fallbackAgentInfo = null,
         initialPersistedUserMessageId = null,
         onM365Resume = null,
+        actionRecoveryBody = null,
+        actionRecoveryRevision = getActionRecoveryRevision(),
+        analysisContextRevision = getAnalysisContextRevision(),
     } = options;
 
     if (currentStreamController) {
@@ -698,12 +762,14 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     attachStreamingStopButton(tempAiMessageId, streamContext);
     const streamStartedAt = Date.now();
     let accumulatedContent = '';
+    let reasoningAdjustments = [];
     let hasStreamedContent = false;
     let streamError = false;
     let streamCompleted = false;
     let persistedUserMessageId = String(initialPersistedUserMessageId || '').trim() || null;
     let lastChunkAt = null;
     let eventCount = 0;
+    let receivedM365PendingAction = false;
     const pendingActionConversationEpoch = window.SimpleChatM365PendingActions?.getConversationEpoch();
 
     function finalizePendingUserMessageMetadata() {
@@ -712,6 +778,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 updateUserMessageId(
                     tempUserMessageId,
                     persistedUserMessageId,
+                    analysisContextRevision,
                     { refreshExpandedMetadata: true }
                 );
             } else {
@@ -737,7 +804,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     }
 
     function capturePendingActions(data) {
-        if (data?.type === 'm365_pending_action' || Array.isArray(data?.m365_pending_actions)) {
+        const hasPendingAction = data?.type === 'm365_pending_action'
+            || Array.isArray(data?.m365_pending_actions)
+            || Array.isArray(data?.metadata?.m365_pending_action_ids);
+        if (hasPendingAction) {
+            receivedM365PendingAction = true;
             window.SimpleChatM365PendingActions?.handleChatPayload(data, {
                 conversationId: streamContext.conversationId || recoveryConversationId || data.conversation_id,
                 userMessageId: persistedUserMessageId || tempUserMessageId,
@@ -747,9 +818,46 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
     }
 
     function recoverPendingActions() {
+        if (!receivedM365PendingAction) {
+            return;
+        }
         void window.SimpleChatM365PendingActions?.refreshConversation(
             streamContext.conversationId || recoveryConversationId
         );
+    }
+
+    function pauseForActionRecovery(data) {
+        if (data?.type !== 'action_recovery_required' || !actionRecoveryBody) return false;
+        streamCompleted = true;
+        stopThoughtPolling();
+        clearStreamingThoughtSession(tempAiMessageId);
+        removeStreamingStopButton(tempAiMessageId);
+        getStreamingMessageElement(tempAiMessageId)?.remove();
+        clearCurrentStreamController(abortController);
+        showActionRecovery(data, actionRecoveryBody, actionRecoveryRevision);
+        if (typeof onFinally === 'function') onFinally();
+        return true;
+    }
+
+    function pauseForActionCredentials(data) {
+        if (data?.type !== 'action_credentials_required') return false;
+        streamCompleted = true;
+        stopThoughtPolling();
+        clearStreamingThoughtSession(tempAiMessageId);
+        removeStreamingStopButton(tempAiMessageId);
+        clearCurrentStreamController(abortController);
+        finalizePendingUserMessageMetadata();
+        enablePersistedUserMessageActions();
+        if (accumulatedContent) {
+            updateStreamingMessage(tempAiMessageId, accumulatedContent);
+            getStreamingMessageElement(tempAiMessageId)?.querySelector('.streaming-cursor')?.remove();
+        } else {
+            removeStreamingPlaceholder(tempAiMessageId);
+        }
+        window.SimpleChatActionCredentials?.handleEvent(data);
+        if (typeof onDone === 'function') onDone({ status: 'waiting_for_credentials' });
+        if (typeof onFinally === 'function') onFinally();
+        return true;
     }
 
     function pauseForMicrosoft365SignIn(data) {
@@ -788,6 +896,8 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         if (response.headers?.get('Content-Type')?.includes('application/json')) {
             return response.json().then(data => {
                 capturePendingActions(data);
+                if (pauseForActionRecovery(data)) return;
+                if (pauseForActionCredentials(data)) return;
                 if (pauseForMicrosoft365SignIn(data)) {
                     recoverPendingActions();
                     return;
@@ -835,6 +945,18 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         function processStreamData(data) {
             eventCount += 1;
             lastChunkAt = Date.now();
+            if (pauseForActionRecovery(data)) return true;
+            if (pauseForActionCredentials(data)) return true;
+            if (Array.isArray(data.reasoning_adjustments) || Array.isArray(data.metadata?.reasoning_adjustments)) {
+                reasoningAdjustments = getMessageReasoningAdjustments(data, reasoningAdjustments);
+                renderMessageReasoningAdjustments(getStreamingMessageElement(tempAiMessageId), reasoningAdjustments);
+            }
+            if (data.done && reasoningAdjustments.length) {
+                data = {
+                    ...data,
+                    metadata: { ...(data.metadata || {}), reasoning_adjustments: reasoningAdjustments },
+                };
+            }
 
             if (data.type === 'm365_pending_action') {
                 updateStreamContextConversation(streamContext, data.conversation_id);
@@ -906,7 +1028,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     event_count: eventCount,
                     error_message: data.error,
                 });
-                handleStreamError(tempAiMessageId, data.partial_content || accumulatedContent, data.error, data);
+                handleStreamError(tempAiMessageId, resolveStreamContent(data, accumulatedContent), data.error, data);
                 if (
                     data.message_persisted
                     && data.message_id
@@ -976,7 +1098,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 updateStreamContextConversation(streamContext, data.conversation_id || data.conversationId);
             }
 
-            if (data.content) {
+            if (data.replace_content === true) {
+                accumulatedContent = resolveStreamContent(data, '');
+                hasStreamedContent = Boolean(accumulatedContent);
+                updateStreamingMessage(tempAiMessageId, accumulatedContent);
+            } else if (data.content) {
                 accumulatedContent += data.content;
                 hasStreamedContent = true;
                 updateStreamingMessage(tempAiMessageId, accumulatedContent);
@@ -993,7 +1119,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                 finalizePendingUserMessageMetadata();
                 enablePersistedUserMessageActions();
 
-                if (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled') {
+                if (!data.blocked && (data.cancelled || data.canceled || data.type === 'cancelled' || data.type === 'canceled')) {
                     finalizeCancelledStreamingMessage(
                         tempAiMessageId,
                         tempUserMessageId,
@@ -1017,7 +1143,9 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                     tempAiMessageId,
                     tempUserMessageId,
                     data,
-                    fallbackAgentInfo
+                    fallbackAgentInfo,
+                    accumulatedContent,
+                    analysisContextRevision,
                 );
                 showDesktopConversationNotification(data);
 
@@ -1044,6 +1172,10 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
 
             try {
                 const data = JSON.parse(jsonStr);
+                const eventName = eventBlock.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim();
+                if (eventName === 'action_credentials_required' && !data.type) {
+                    data.type = eventName;
+                }
                 return processStreamData(data);
             } catch (error) {
                 console.error('Error parsing SSE data:', error);
@@ -1109,6 +1241,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                                     onFinally,
                                     reconnectStatusLabel,
                                     persistedUserMessageId,
+                                    analysisContextRevision,
                                 },
                             );
                             if (recovered) {
@@ -1188,6 +1321,7 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
                             onFinally,
                             reconnectStatusLabel,
                             persistedUserMessageId,
+                            analysisContextRevision,
                         },
                     );
                     if (recovered) {
@@ -1210,6 +1344,16 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
         readStream();
         
     }).catch(async error => {
+        if (error.actionRecoveryStopped) {
+            stopThoughtPolling();
+            clearStreamingThoughtSession(tempAiMessageId);
+            removeStreamingStopButton(tempAiMessageId);
+            getStreamingMessageElement(tempAiMessageId)?.remove();
+            clearCurrentStreamController(abortController);
+            if (!error.actionRecoveryCancelled && !abortController.signal.aborted && typeof onError === 'function') onError(error.message, error);
+            if (typeof onFinally === 'function') onFinally();
+            return;
+        }
         capturePendingActions(getStreamErrorPayload(error));
         recoverPendingActions();
         if (abortController.signal.aborted) {
@@ -1230,9 +1374,11 @@ function consumeStreamingResponse(requestFactory, tempAiMessageId, tempUserMessa
             return;
         }
 
+        if (pauseForActionRecovery(getStreamErrorPayload(error))) return;
         if (pauseForMicrosoft365SignIn(getStreamErrorPayload(error))) {
             return;
         }
+        if (pauseForActionCredentials(getStreamErrorPayload(error))) return;
 
         stopThoughtPolling();
         console.error('Streaming request error:', error);
@@ -1287,19 +1433,33 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
     const recoveryConversationId = currentConversationId || messageData?.conversation_id || window.currentConversationId || null;
 
     return consumeStreamingResponse(
-        signal => fetch(endpoint, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            credentials: 'same-origin',
-            body: JSON.stringify(messageData),
-            signal,
-        }),
+        async signal => {
+            let prepared;
+            try {
+                prepared = await prepareActionRequest(messageData, signal);
+                if (!prepared || signal.aborted) {
+                    const cancelled = new Error('Request cancelled before sending. Your message is preserved.');
+                    cancelled.actionRecoveryCancelled = true;
+                    throw cancelled;
+                }
+            } catch (error) {
+                error.actionRecoveryStopped = true;
+                throw error;
+            }
+            return fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...actionRecoveryHeaders() },
+                credentials: 'same-origin',
+                body: JSON.stringify(prepared),
+                signal,
+            });
+        },
         tempAiMessageId,
         tempUserMessageId,
         {
             ...options,
+            actionRecoveryBody: messageData,
+            actionRecoveryRevision: getActionRecoveryRevision(),
             recoveryConversationId,
             onM365Resume: approvalData => {
                 const resumedPayload = {
@@ -1327,6 +1487,7 @@ export function sendMessageWithStreaming(messageData, tempUserMessageId, current
 
 export async function reattachStreamingConversation(conversationId, options = {}) {
     const { statusLabel = 'Reconnecting...' } = options;
+    const analysisContextRevision = options.analysisContextRevision ?? getAnalysisContextRevision();
 
     if (!conversationId) {
         return false;
@@ -1335,6 +1496,9 @@ export async function reattachStreamingConversation(conversationId, options = {}
     try {
         const statusData = await getStreamingStatus(conversationId);
         if (!statusData?.pending) {
+            return false;
+        }
+        if (!isConversationCurrentlyActive(conversationId)) {
             return false;
         }
 
@@ -1351,6 +1515,7 @@ export async function reattachStreamingConversation(conversationId, options = {}
                 allowRecovery: false,
                 recoveryConversationId: conversationId,
                 reconnectStatusLabel: statusLabel,
+                analysisContextRevision,
             },
         );
     } catch (error) {
@@ -1375,6 +1540,7 @@ export function updateStreamingMessage(messageId, content) {
             restoreStableStreamingChartNodes(contentElement, stableChartNodes);
             void hydrateMath(contentElement);
             hydrateInlineCharts(messageElement);
+            hydrateInlineDiagrams(messageElement);
             hydrateInlineImageProposals(messageElement);
         } else {
             contentElement.textContent = content;
@@ -1445,6 +1611,7 @@ function restoreStableStreamingChartNodes(contentElement, stableChartNodes) {
         chartNodes.forEach(chartNode => {
             if (!reusedChartNodes.has(chartNode)) {
                 destroyInlineCharts(chartNode);
+                destroyInlineDiagrams(chartNode);
             }
         });
     });
@@ -1493,6 +1660,7 @@ function renderStoppedContent(messageElement, partialContent) {
             contentElement.innerHTML = renderedContent.htmlContent;
             void hydrateMath(contentElement);
             hydrateInlineCharts(messageElement);
+            hydrateInlineDiagrams(messageElement);
         } else {
             contentElement.textContent = normalizedContent;
         }
@@ -1503,9 +1671,18 @@ function renderStoppedContent(messageElement, partialContent) {
     appendStoppedResponseBanner(messageElement, Boolean(normalizedContent));
 }
 
+export function resolveStreamContent(data, fallbackContent = '') {
+    if (typeof data.full_content === 'string') return data.full_content;
+    if (data.replace_content === true) {
+        return typeof data.content === 'string' ? data.content
+            : typeof data.partial_content === 'string' ? data.partial_content : '';
+    }
+    return typeof data.partial_content === 'string' ? data.partial_content : fallbackContent;
+}
+
 function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, fallbackContent = '') {
     const messageElement = getStreamingMessageElement(messageId);
-    const partialContent = finalData.full_content || finalData.partial_content || fallbackContent || '';
+    const partialContent = resolveStreamContent(finalData, fallbackContent);
 
     removeStreamingStopButton(messageId);
 
@@ -1514,7 +1691,11 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
             messageElement.remove();
         }
 
-        const existingFinalMessage = document.querySelector(`[data-message-id="${finalData.message_id}"]`);
+        let existingFinalMessage = document.querySelector(`[data-message-id="${finalData.message_id}"]`);
+        if (existingFinalMessage && finalData.replace_content) {
+            existingFinalMessage.remove();
+            existingFinalMessage = null;
+        }
         if (!existingFinalMessage) {
             const finalMessageObject = {
                 ...finalData,
@@ -1546,6 +1727,10 @@ function finalizeCancelledStreamingMessage(messageId, userMessageId, finalData, 
         appendStoppedResponseBanner(
             document.querySelector(`[data-message-id="${finalData.message_id}"]`),
             Boolean(String(partialContent || '').trim())
+        );
+        renderMessageReasoningAdjustments(
+            getStreamingMessageElement(finalData.message_id),
+            getMessageReasoningAdjustments(finalData),
         );
         notifyConversationDocumentsMayHaveChanged(
             finalData.conversation_id,
@@ -1626,8 +1811,9 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
             contentElement.textContent = finalContent;
         }
         hydrateInlineCharts(messageElement);
+        hydrateInlineDiagrams(messageElement);
 
-        appendStreamErrorBanner(contentElement, displayMessage, errorPayload);
+        appendStreamErrorBanner(contentElement, displayMessage, errorPayload, Boolean(String(partialContent || '').trim()));
     }
 
     if (m365SignInRequired) {
@@ -1642,11 +1828,15 @@ function handleStreamError(messageId, partialContent, errorMessage, errorDetails
     }
 }
 
-function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null) {
+function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackAgentInfo = null, fallbackContent = '', analysisContextRevision = getAnalysisContextRevision()) {
     finalData = applyFallbackAgentIcon(finalData, fallbackAgentInfo);
     notifySuccessfulStreamingCompletion(finalData);
     const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);
     if (!messageElement) return;
+    if (finalData.conversation_id && !isConversationCurrentlyActive(finalData.conversation_id)) {
+        removeStreamingPlaceholder(messageId);
+        return;
+    }
 
     removeStreamingStopButton(messageId);
     
@@ -1661,7 +1851,8 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         showToast(finalData.kernel_fallback_notice, 'warning');
     }
 
-    if (existingFinalMessage) {
+    if (existingFinalMessage && !readSavedAnalyses(finalData.metadata).length && !finalData.replace_content && !finalData.blocked) {
+        renderMessageReasoningAdjustments(existingFinalMessage, getMessageReasoningAdjustments(finalData));
         markStreamingConversationReadIfActive(finalData.conversation_id, 'live streaming completion');
         notifyConversationDocumentsMayHaveChanged(
             finalData.conversation_id,
@@ -1669,10 +1860,11 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
         );
         return;
     }
+    existingFinalMessage?.remove();
 
     const finalMessageObject = {
         ...finalData,
-        content: finalData.full_content || finalData.content || '',
+        content: resolveStreamContent(finalData, typeof finalData.content === 'string' ? finalData.content : fallbackContent),
         role: finalData.role || 'assistant',
     };
 
@@ -1707,7 +1899,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     // Create proper message with all metadata using appendMessage
     appendMessage(
         sender,
-        finalData.full_content || '',
+        finalMessageObject.content,
         finalData.model_deployment_name,
         finalData.message_id,
         finalData.augmented,
@@ -1724,6 +1916,7 @@ function finalizeStreamingMessage(messageId, userMessageId, finalData, fallbackA
     if (finalData.conversation_id && !window.currentConversationId) {
         window.currentConversationId = finalData.conversation_id;
     }
+    offerSavedAnalysis(finalMessageObject, analysisContextRevision);
     
     const metadataUpdates = {};
     if (finalData.conversation_title !== undefined) {

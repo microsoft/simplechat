@@ -1,0 +1,88 @@
+/* content-screening.css */
+.content-screening {
+    min-width: 0;
+}
+
+.content-screening .screening-source,
+.content-screening .screening-diff-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    font-family: Consolas, "Courier New", monospace;
+    max-height: 32rem;
+    overflow: auto;
+    background: var(--bs-tertiary-bg);
+    color: var(--bs-body-color);
+}
+
+.content-screening .screening-source:focus-visible,
+.content-screening .screening-findings button:focus-visible {
+    outline: 2px solid var(--bs-primary);
+    outline-offset: 2px;
+}
+
+.content-screening .screening-source mark {
+    color: var(--bs-warning-text-emphasis);
+    background: var(--bs-warning-bg-subtle);
+}
+
+.content-screening .screening-findings {
+    max-height: 42rem;
+    overflow: auto;
+}
+
+.content-screening .screening-status-filter {
+    width: auto;
+    max-width: 100%;
+}
+
+.content-screening .screening-rule,
+.content-screening .screening-policy-baseline {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.625rem;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.content-screening .screening-policy-baseline {
+    background: var(--bs-tertiary-bg);
+}
+
+.content-screening .screening-model-list {
+    max-height: 18rem;
+    overflow: auto;
+}
+
+.content-screening .screening-diff-before {
+    border-inline-start: 0.25rem solid var(--bs-danger);
+}
+
+.content-screening .screening-diff-after {
+    border-inline-start: 0.25rem solid var(--bs-success);
+}
+
+.content-screening .screening-job-progress {
+    width: 100%;
+    accent-color: var(--bs-primary);
+}
+
+.screening-document-status {
+    white-space: normal;
+    text-align: start;
+    overflow-wrap: anywhere;
+}
+
+.screening-held-document .document-item-card__summary {
+    color: var(--bs-secondary-color);
+}
+
+@media (max-width: 575.98px) {
+    .content-screening .screening-status-filter,
+    .content-screening #screening-span-fields input {
+        width: 100%;
+    }
+
+    .content-screening .screening-source {
+        max-height: 24rem;
+    }
+}

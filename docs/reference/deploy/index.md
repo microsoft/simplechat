@@ -59,11 +59,11 @@ This section is the deployment decision map. Use it after you already understand
 
 ## Recommended order
 
-1. [Azure Developer CLI (`azd up`)](./azd-cli_deploy.md)
-2. [Azure CLI with PowerShell](./azurecli_powershell_deploy.md)
-3. [Bicep](./bicep_deploy.md)
-4. [Terraform](./terraform_deploy.md)
-5. [Manual deployment notes](./manual_deploy.md)
+1. [Azure Developer CLI (`azd up`)]({{ '/reference/deploy/azd-cli_deploy/' | relative_url }})
+2. [Azure CLI with PowerShell]({{ '/reference/deploy/azurecli_powershell_deploy/' | relative_url }})
+3. [Bicep]({{ '/reference/deploy/bicep_deploy/' | relative_url }})
+4. [Terraform]({{ '/reference/deploy/terraform_deploy/' | relative_url }})
+5. [Manual deployment notes]({{ '/reference/deploy/manual_deploy/' | relative_url }})
 
 ## Related guides
 

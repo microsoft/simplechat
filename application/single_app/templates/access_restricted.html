@@ -1,0 +1,191 @@
+<!-- access_restricted.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Access restricted - {{ app_settings.app_title or 'SimpleChat' }}</title>
+    <link href="{{ url_for('static', filename='css/bootstrap.min.css') }}" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/bootstrap-icons.min.css') }}" />
+    <style>
+        :root {
+            color-scheme: light;
+        }
+
+        body {
+            background: #f7f8fb;
+            color: #24262d;
+            display: flex;
+            flex-direction: column;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            margin: 0;
+            min-height: 100vh;
+        }
+
+        .restricted-banner {
+            align-items: center;
+            display: flex;
+            font-weight: 700;
+            justify-content: center;
+            letter-spacing: 0.5px;
+            min-height: 40px;
+            padding: 0.25rem 1rem;
+            text-align: center;
+        }
+
+        .restricted-main {
+            align-items: center;
+            display: flex;
+            flex: 1;
+            justify-content: center;
+            padding: 1.5rem;
+        }
+
+        .restricted-panel {
+            background: #ffffff;
+            border: 1px solid #d9dee8;
+            border-radius: 12px;
+            box-shadow: 0 16px 48px rgba(32, 41, 64, 0.12);
+            max-width: 680px;
+            padding: 2rem;
+            width: 100%;
+        }
+
+        .restricted-identity {
+            align-items: center;
+            display: flex;
+            gap: 0.9rem;
+            margin-bottom: 1.25rem;
+        }
+
+        .restricted-identity img {
+            max-height: 48px;
+            max-width: 48px;
+        }
+
+        .restricted-app-title {
+            color: #667085;
+            font-size: 0.98rem;
+            font-weight: 600;
+            margin: 0;
+        }
+
+        .restricted-eyebrow {
+            color: #b42318;
+            font-size: 0.85rem;
+            font-weight: 700;
+            letter-spacing: 0.04em;
+            margin-bottom: 0.35rem;
+            text-transform: uppercase;
+        }
+
+        .restricted-title {
+            color: #1d2939;
+            font-size: clamp(1.5rem, 3vw, 2rem);
+            font-weight: 700;
+            line-height: 1.2;
+            margin-bottom: 1rem;
+        }
+
+        .restricted-message {
+            background: #f8fafc;
+            border: 1px solid #e4e7ec;
+            border-radius: 10px;
+            color: #344054;
+            line-height: 1.6;
+            max-height: min(45vh, 420px);
+            overflow: auto;
+            padding: 1.1rem 1.25rem;
+            white-space: pre-wrap;
+        }
+
+        .restricted-details {
+            display: grid;
+            gap: 0.35rem 1rem;
+            grid-template-columns: max-content 1fr;
+            margin: 1.25rem 0 0;
+        }
+
+        .restricted-details dt {
+            color: #475467;
+            font-weight: 600;
+        }
+
+        .restricted-details dd {
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .restricted-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            justify-content: flex-end;
+            margin-top: 1.5rem;
+        }
+    </style>
+</head>
+<body>
+    {% if app_settings.classification_banner_enabled and app_settings.classification_banner_text %}
+        <div id="classification-banner" class="restricted-banner" role="note"
+             style="background: {{ app_settings.classification_banner_color or '#ffc107' }}; color: {{ app_settings.classification_banner_text_color or '#ffffff' }};">
+            {{ app_settings.classification_banner_text }}
+        </div>
+    {% endif %}
+
+    <!-- Access restricted panel -->
+    <div class="restricted-main">
+        <main class="restricted-panel" aria-labelledby="access-restricted-title" data-testid="access-restricted">
+            <section class="restricted-identity" aria-label="Application identity">
+                {% if app_settings.show_logo %}
+                    {% if app_settings.custom_logo_base64 %}
+                        <img src="{{ url_for('static', filename='images/custom_logo.png') }}?v={{ app_settings.logo_version | default(1) }}" alt="" />
+                    {% else %}
+                        <img src="{{ url_for('static', filename='images/logo-lightmode.png') }}" alt="" />
+                    {% endif %}
+                {% endif %}
+                {% if not app_settings.hide_app_title %}
+                    <p class="restricted-app-title">{{ app_settings.app_title or 'SimpleChat' }}</p>
+                {% endif %}
+            </section>
+
+            {% if restriction %}
+                <p class="restricted-eyebrow">Access restricted</p>
+                <h1 id="access-restricted-title" class="restricted-title">{{ restriction.title }}</h1>
+                <div class="restricted-message" data-testid="access-restricted-message">{{ restriction.message }}</div>
+
+                <dl class="restricted-details">
+                    <dt>Access returns</dt>
+                    {% if restriction.kind == 'suspended' and restriction.until %}
+                        <dd>
+                            <time datetime="{{ restriction.until }}" data-local-datetime="{{ restriction.until }}">{{ restore_display }}</time>
+                        </dd>
+                    {% else %}
+                        <dd>No automatic restore date. Contact your administrator about this decision.</dd>
+                    {% endif %}
+                    {% if restriction.reference_id %}
+                        <dt>Reference</dt>
+                        <dd>{{ restriction.reference_id }}</dd>
+                    {% endif %}
+                </dl>
+
+                <div class="restricted-actions">
+                    <a class="btn btn-outline-secondary" href="{{ url_for('frontend_authentication.logout') }}">
+                        <i class="bi bi-box-arrow-right me-1" aria-hidden="true"></i>Sign out
+                    </a>
+                </div>
+            {% else %}
+                <h1 id="access-restricted-title" class="restricted-title">Your access is available</h1>
+                <p>Your account is not restricted. You can continue to the application.</p>
+
+                <div class="restricted-actions">
+                    <a class="btn btn-outline-secondary" href="{{ url_for('frontend_authentication.logout') }}">Sign out</a>
+                    <a class="btn btn-primary" href="{{ url_for('public_app.index') }}">Continue</a>
+                </div>
+            {% endif %}
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/access-restricted.js') }}"></script>
+</body>
+</html>

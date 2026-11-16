@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center refresh functionality including groups.
-Version: 0.230.049
+Version: 0.261.160
 Implemented in: 0.230.049
 
 This test ensures that the refresh data functionality refreshes both users and groups,
@@ -91,10 +91,11 @@ def test_group_caching_structure():
             with open(backend_path, 'r', encoding='utf-8') as f:
                 content = f.read()
             
-            # Check for group caching logic
+            # Check for group caching logic: computed first, then written through the
+            # group document guard onto the current copy
             expected_caching = [
                 "group['metrics'] = metrics_cache",
-                'cosmos_groups_container.upsert_item(group)',
+                "update_group_document_with_etag_guard(group_id, apply_metrics, cache_reason=None)",
                 'Cache the computed metrics in the group document',
                 'metrics_cache = {',
                 "'document_metrics': enhanced['activity']['document_metrics']"
