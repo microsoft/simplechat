@@ -103,7 +103,7 @@ EXECUTOR_TYPE = 'thread'
 EXECUTOR_MAX_WORKERS = 30
 CHAT_STREAM_EXECUTOR_MAX_WORKERS = max(8, int(os.getenv('SIMPLECHAT_CHAT_STREAM_WORKERS', '32') or '32'))
 SESSION_TYPE = 'filesystem'
-VERSION = "0.261.450"
+VERSION = "0.261.451"
 IS_DEVELOPMENT = is_development_env_enabled()
 
 # Opt-out for deployments where App Service Easy Auth is active but the platform
@@ -893,6 +893,11 @@ cosmos_public_file_sync_sources_container = cosmos_database.create_container_if_
 
 cosmos_personal_workspace_identities_container_name = "personal_workspace_identities"
 cosmos_action_credential_state_container_name = "action_credential_state"
+cosmos_bitbucket_connections_container = cosmos_database.create_container_if_not_exists(
+    id="bitbucket_connections",
+    partition_key=PartitionKey(path="/user_id"),
+    default_ttl=-1,
+)
 cosmos_action_credential_state_container = cosmos_database.create_container_if_not_exists(
     id=cosmos_action_credential_state_container_name,
     partition_key=PartitionKey(path="/user_id"),

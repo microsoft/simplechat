@@ -9776,6 +9776,74 @@
       ],
       "evidence_scope": "owner-runtime"
     },
+    "application/single_app/functions_bitbucket_connections.py::BitbucketConnections.read": {
+      "boundary": {
+        "sha256": "f9afd2e6f2a7e7e317c24f5803af40b3449b00936671422aabc9fc1c8b0ef851",
+        "points": [
+          {
+            "method": "read_item",
+            "receiver": "self.container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "e2fdd2d30a8d9a52ae571cb32b760f54efe3db2ed8436efdb62eb6401452b48f"
+      },
+      "classification": "normalized-strict",
+      "contract": "Point reads are normalized to a plain top-level dict before ownership checks, encrypted-state inspection and conditional lifecycle transitions; fields and ETags are retained. Only Cosmos not-found means absence.",
+      "tests": [
+        "functional_tests/test_bitbucket_connections.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_bitbucket_connections.py::BitbucketConnections.replace": {
+      "boundary": {
+        "sha256": "6784eab92dc780206ab55bed8286e17b06cb538a1f369f7787746dc17dcfe4c2",
+        "points": [
+          {
+            "method": "replace_item",
+            "receiver": "self.container",
+            "response": "consumed"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "e2fdd2d30a8d9a52ae571cb32b760f54efe3db2ed8436efdb62eb6401452b48f"
+      },
+      "classification": "normalized-strict",
+      "contract": "Conditional replace responses are normalized before the next refresh/callback generation/ETag transition. Conflicts remain visible and fence disconnect races; an uncertain rotating refresh is never replayed.",
+      "tests": [
+        "functional_tests/test_bitbucket_connections.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
+    "application/single_app/functions_bitbucket_connections.py::BitbucketConnections.start": {
+      "boundary": {
+        "sha256": "648d23512582d464d6b148884b6ace2c9971dbb58a5e6d9ea897c81a0cec8487",
+        "points": [
+          {
+            "method": "create_item",
+            "receiver": "self.container",
+            "response": "unused"
+          },
+          {
+            "method": "create_item",
+            "receiver": "self.container",
+            "response": "unused"
+          }
+        ],
+        "queries": [],
+        "batches": [],
+        "module_sha256": "e2fdd2d30a8d9a52ae571cb32b760f54efe3db2ed8436efdb62eb6401452b48f"
+      },
+      "classification": "response-unused",
+      "contract": "Create response values for the private connection and expiring OAuth flow are discarded. Connection state is reread through the normalized owner before conditional generation changes. State/verifiers are actor/session/policy bound.",
+      "tests": [
+        "functional_tests/test_bitbucket_connections.py"
+      ],
+      "evidence_scope": "owner-runtime"
+    },
     "application/single_app/functions_chat_content_review.py::_clear_conversation_projection": {
       "boundary": {
         "sha256": "4e30e4949334e4e6b84adf43440484dca2d5e3fb79c58b975968170d517cdce0",
@@ -27311,10 +27379,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e59833a886b751793747703c811f00fb198e1fa3861ccc6146117f57e033a441"
+        "module_sha256": "2ce402a9b3edab138e788a97dd50ea7bab0731bc8853498f4350b1d91b0da9f2"
       },
       "classification": "normalized-strict",
-      "contract": "create_workspace_identity: normalizes returned create/conditional replace SDK documents before credential submission consumes ETags and copies identity state. Lost-response confirmation reads the owned SDK point record before preserving committed Key Vault references; failed writes retain conflict/error behavior and never delete possibly live secrets.",
+      "contract": "create_workspace_identity: normalizes returned create/conditional replace SDK documents before credential submission consumes ETags and copies identity state. Lost-response confirmation reads the owned SDK point record before preserving committed Key Vault references; failed writes retain conflict/error behavior and never delete possibly live secrets. Renewed module review: Bitbucket adds token auth compatibility and rejects hydration with a mismatched method; storage owners are unchanged. Real SDK identity CRUD and both Bitbucket private-token round trips retain ETags, scoped secrets and rejected-token continuation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_personal_credentials.py"
@@ -27332,10 +27400,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e59833a886b751793747703c811f00fb198e1fa3861ccc6146117f57e033a441"
+        "module_sha256": "2ce402a9b3edab138e788a97dd50ea7bab0731bc8853498f4350b1d91b0da9f2"
       },
       "classification": "response-unused",
-      "contract": "delete_workspace_identity: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "delete_workspace_identity: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Renewed module review: Bitbucket adds token auth compatibility and rejects hydration with a mismatched method; storage owners are unchanged. Real SDK identity CRUD and both Bitbucket private-token round trips retain ETags, scoped secrets and rejected-token continuation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_personal_credentials.py"
@@ -27353,10 +27421,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e59833a886b751793747703c811f00fb198e1fa3861ccc6146117f57e033a441"
+        "module_sha256": "2ce402a9b3edab138e788a97dd50ea7bab0731bc8853498f4350b1d91b0da9f2"
       },
       "classification": "response-unused",
-      "contract": "delete_workspace_identity_conditional: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "delete_workspace_identity_conditional: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Renewed module review: Bitbucket adds token auth compatibility and rejects hydration with a mismatched method; storage owners are unchanged. Real SDK identity CRUD and both Bitbucket private-token round trips retain ETags, scoped secrets and rejected-token continuation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_personal_credentials.py"
@@ -27374,10 +27442,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e59833a886b751793747703c811f00fb198e1fa3861ccc6146117f57e033a441"
+        "module_sha256": "2ce402a9b3edab138e788a97dd50ea7bab0731bc8853498f4350b1d91b0da9f2"
       },
       "classification": "sdk-compatible",
-      "contract": "get_workspace_identity: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
+      "contract": "get_workspace_identity: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Renewed module review: Bitbucket adds token auth compatibility and rejects hydration with a mismatched method; storage owners are unchanged. Real SDK identity CRUD and both Bitbucket private-token round trips retain ETags, scoped secrets and rejected-token continuation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
@@ -27397,10 +27465,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e59833a886b751793747703c811f00fb198e1fa3861ccc6146117f57e033a441"
+        "module_sha256": "2ce402a9b3edab138e788a97dd50ea7bab0731bc8853498f4350b1d91b0da9f2"
       },
       "classification": "sdk-compatible",
-      "contract": "list_workspace_identities: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
+      "contract": "list_workspace_identities: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Renewed module review: Bitbucket adds token auth compatibility and rejects hydration with a mismatched method; storage owners are unchanged. Real SDK identity CRUD and both Bitbucket private-token round trips retain ETags, scoped secrets and rejected-token continuation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",
@@ -27419,10 +27487,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e59833a886b751793747703c811f00fb198e1fa3861ccc6146117f57e033a441"
+        "module_sha256": "2ce402a9b3edab138e788a97dd50ea7bab0731bc8853498f4350b1d91b0da9f2"
       },
       "classification": "response-unused",
-      "contract": "update_workspace_identity: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible.",
+      "contract": "update_workspace_identity: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Renewed module review: Bitbucket adds token auth compatibility and rejects hydration with a mismatched method; storage owners are unchanged. Real SDK identity CRUD and both Bitbucket private-token round trips retain ETags, scoped secrets and rejected-token continuation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_personal_credentials.py"
@@ -27440,10 +27508,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e59833a886b751793747703c811f00fb198e1fa3861ccc6146117f57e033a441"
+        "module_sha256": "2ce402a9b3edab138e788a97dd50ea7bab0731bc8853498f4350b1d91b0da9f2"
       },
       "classification": "normalized-strict",
-      "contract": "update_workspace_identity_conditional: normalizes returned create/conditional replace SDK documents before credential submission consumes ETags and copies identity state. Lost-response confirmation reads the owned SDK point record before preserving committed Key Vault references; failed writes retain conflict/error behavior and never delete possibly live secrets.",
+      "contract": "update_workspace_identity_conditional: normalizes returned create/conditional replace SDK documents before credential submission consumes ETags and copies identity state. Lost-response confirmation reads the owned SDK point record before preserving committed Key Vault references; failed writes retain conflict/error behavior and never delete possibly live secrets. Renewed module review: Bitbucket adds token auth compatibility and rejects hydration with a mismatched method; storage owners are unchanged. Real SDK identity CRUD and both Bitbucket private-token round trips retain ETags, scoped secrets and rejected-token continuation.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_action_personal_credentials.py",

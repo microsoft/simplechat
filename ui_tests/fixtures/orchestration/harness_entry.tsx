@@ -41,6 +41,7 @@ import * as actionRecovery from '../../../application/v2_ui/src/lib/actionRecove
 import * as chatSse from '../../../application/v2_ui/src/lib/sse';
 import * as credentialEvents from '../../../application/v2_ui/src/lib/actionCredentialEvents';
 import { ActionAuthentication } from '../../../application/v2_ui/src/components/workspaceActions/ActionAuthentication';
+import { ActionConfigurationFields } from '../../../application/v2_ui/src/components/workspaceActions/ActionConfigurationFields';
 import type { ActionConfiguration, ActionTypeDefinition } from '../../../application/v2_ui/src/lib/workspaceAuthoring';
 import { OrchestrationPlanPanel } from '../../../application/v2_ui/src/components/chat/OrchestrationPlanPanel';
 import { OrchestrationRunView } from '../../../application/v2_ui/src/components/chat/OrchestrationRunView';
@@ -82,7 +83,11 @@ function ActionCredentialAuthoring({ initial, definition }: {
         <ActionAuthentication draft={draft} definition={definition} onChange={setDraft} original={null}
             readOnly={false} errors={{}} onValidityChange={() => {}} identities={[]}
             identitiesLoading={false} identitiesError={null} identitiesResolvable globalScope />
+        {draft.type === 'bitbucket' ? <ActionConfigurationFields draft={draft} definition={definition} onChange={setDraft} original={null}
+            readOnly={false} errors={{}} onValidityChange={() => {}} identities={[]}
+            identitiesLoading={false} identitiesError={null} identitiesResolvable globalScope /> : null}
         <output aria-label="Action credential requirements">{JSON.stringify(draft.credential_requirements ?? {})}</output>
+        <output aria-label="Bitbucket repository configuration" className="block text-xs" style={{ overflowWrap: 'anywhere' }}>{JSON.stringify(draft.additionalFields.repositories ?? [])}</output>
     </>;
 }
 

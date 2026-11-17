@@ -414,6 +414,7 @@ export function actionAuthModes(type: string, allowed: string[]): ActionAuthMode
 }
 
 export function actionAuthMethod(draft: ActionConfiguration): string {
+    if (draft.type === 'bitbucket') return actionText(draft.additionalFields.auth_method) || 'oauth';
     if (draft.type === 'sql_query' || draft.type === 'sql_schema') {
         return actionText(draft.additionalFields.auth_type) ||
             (draft.auth.type === 'servicePrincipal' ? 'service_principal' : draft.auth.type === 'identity' ? 'managed_identity' : 'username_password');
@@ -456,7 +457,8 @@ export function usesPersonalActionCredential(draft: ActionConfiguration, slot: '
 export function changeActionCredentialSource(
     draft: ActionConfiguration, slot: 'service' | 'proxy', personal: boolean,
 ): ActionConfiguration {
-    if (draft.type !== 'yamcs') throw new Error('Personal credentials are not supported by this action.');
+    if (!['yamcs', 'bitbucket'].includes(draft.type)) throw new Error('Personal credentials are not supported by this action.');
+    if (draft.type === 'bitbucket' && slot !== 'service') throw new Error('Bitbucket supports only service token credentials.');
     const slots = { ...draft.credential_requirements?.slots };
     if (!personal) {
         delete slots[slot];
@@ -611,7 +613,7 @@ export function validateActionDraft(
         errors['/additionalFields/user'] = 'Snowflake user is required for key-pair or OAuth authentication.';
     }
     if (draft.credential_requirements) {
-        if (draft.type !== 'yamcs' || draft.credential_requirements.version !== 1) {
+        if (!['yamcs', 'bitbucket'].includes(draft.type) || draft.credential_requirements.version !== 1) {
             errors['/credential_requirements'] = 'This action does not support these credential requirements.';
         }
         if (!isRecord(draft.credential_requirements.slots)) {
@@ -619,6 +621,7 @@ export function validateActionDraft(
         }
         for (const [slot, requirement] of Object.entries(draft.credential_requirements.slots ?? {})) {
             if (!requirement || requirement.source !== 'personal' || !['service', 'proxy'].includes(slot) ||
+                (draft.type === 'bitbucket' && slot !== 'service') ||
                 !['username_password', 'api_key', 'bearer_token'].includes(requirement.auth_type)) {
                 errors['/credential_requirements'] = 'Choose a supported personal credential source.';
             } else if (slot === 'service' && requirement.auth_type !== actionAuthMethod(draft)) {

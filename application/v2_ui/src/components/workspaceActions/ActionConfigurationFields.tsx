@@ -7,6 +7,7 @@ import { ActionField, ActionJsonInput, ActionLinesInput, ActionSecretInput, ACTI
 import { ActionSchemaFields } from './ActionSchemaFields';
 import { CallAgentActionConfiguration } from './CallAgentActionConfiguration';
 import { DocumentSearchActionConfiguration } from './DocumentSearchActionConfiguration';
+import { BitbucketActionConfiguration } from './BitbucketActionConfiguration';
 import {
     actionFieldError, actionHasStoredArraySecrets, actionText, actionValueAt, changeActionField,
     changeSqlConnectionMethod, deriveBlobEndpoint, displayedActionValue,
@@ -109,7 +110,7 @@ function schemaHasVisibleProperties(definition: ActionTypeDefinition) {
 }
 
 export function hasActionConfigurationFields(definition: ActionTypeDefinition) {
-    if (definition.type === 'agent' || definition.type === 'document_search' || definition.type === 'search' ||
+    if (definition.type === 'bitbucket' || definition.type === 'agent' || definition.type === 'document_search' || definition.type === 'search' ||
         definition.type === 'openapi' || definition.type === 'mcp') return true;
     const native = nativeActionDefinition(definition.type);
     return native.fields.length > 0 || Boolean(capabilityDefinition(definition, native)) || schemaHasVisibleProperties(definition);
@@ -121,6 +122,7 @@ export function ActionConfigurationFields(props: ActionConnectorProps & { defini
     const [confirmParameters, setConfirmParameters] = useState(false);
     const native = nativeActionDefinition(draft.type);
     if (draft.type === 'agent') return <CallAgentActionConfiguration {...props} />;
+    if (draft.type === 'bitbucket') return <BitbucketActionConfiguration {...props} />;
     if (draft.type === 'document_search' || draft.type === 'search') return <DocumentSearchActionConfiguration {...props} />;
     const sql = ['sql_query', 'sql_schema'].includes(draft.type);
     const capabilities = capabilityDefinition(definition, native);

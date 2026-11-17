@@ -78,6 +78,7 @@ LOGIN_ONLY_PATH_PREFIXES = (
 )
 
 USER_SESSION_PATH_PREFIXES = (
+    "/bitbucket/",
     "/conversation/",
     "/content-review",
     "/feedback/submit",

@@ -1,7 +1,7 @@
 # test_action_personal_credentials.py
 """Backend functional tests for actor-bound personal action credentials.
 
-Version: 0.261.348
+Version: 0.261.450
 Implemented in: 0.261.333
 
 Exercises real storage owners, identity CRUD, resolver, schema and Flask routes
@@ -107,6 +107,7 @@ def environment(monkeypatch):
         })
         config.cosmos_collaboration_conversations_container = CredentialContainer("id")
         config.cosmos_collaboration_messages_container = CredentialContainer("conversation_id")
+        config.cosmos_bitbucket_connections_container = CredentialContainer("user_id")
         monkeypatch.setitem(sys.modules, "config", config)
         monkeypatch.setitem(sys.modules, "functions_keyvault", module(
             "functions_keyvault", SecretReturnType=SimpleNamespace(VALUE="value", TRIGGER="trigger", NAME="name"),
@@ -161,9 +162,18 @@ def environment(monkeypatch):
             "route_backend_chats", _authorize_personal_conversation_access=authorize,
             cosmos_conversations_container=CredentialContainer("id"),
         ))
+        def unexpected_input(*args, **kwargs):
+            raise AssertionError("User-input validation is outside this credential-owner fixture.")
+
+        monkeypatch.setitem(sys.modules, "functions_orchestration_context", module(
+            "functions_orchestration_context", normalize_elicitation_answer=unexpected_input,
+            ElicitationContextError=ValueError,
+        ))
         continuation = importlib.import_module("functions_action_credential_continuation")
         monkeypatch.setattr(credentials, "_services", None)
         monkeypatch.setattr(continuation, "_services", None)
+        bitbucket = importlib.import_module("functions_bitbucket_connections")
+        monkeypatch.setattr(bitbucket, "_service", None)
         importlib.import_module("functions_action_credential_runtime").configure_action_credential_runtime()
         monkeypatch.setattr(credentials, "_services", replace(
             credentials.credential_services(), authorize_request_context=None,
@@ -232,6 +242,49 @@ def test_sdk_owner_conditional_request_binding_and_safe_resolution(environment):
     assert claimed["status"] == "continuing"
     with pytest.raises(env.contracts.ActionCredentialError):
         env.state.claim_request("alice", env.state.read("alice", dto["id"]), ready["etag"])
+
+
+@pytest.mark.parametrize("method", ["bearer_token", "username_password"])
+def test_bitbucket_private_identity_roundtrip_and_rejected_token_reprompts(environment, monkeypatch, method):
+    env = environment
+    env.current.update(
+        type="bitbucket", endpoint="https://api.bitbucket.org",
+        auth={"type": "key" if method == "bearer_token" else "username_password", "identity": "", "key": ""},
+        additionalFields={"edition": "cloud", "auth_method": method, "repositories": [
+            {"id": "{repo}", "project": "team", "slug": "repo", "name": "Repository",
+             "branch_mode": "any", "default_branch": "main"},
+        ]},
+        credential_requirements={"version": 1, "slots": {"service": {"source": "personal", "auth_type": method}}},
+    )
+    dto = challenge(env)
+    assert dto["requirements"][0]["label"] == "Bitbucket sign-in"
+    secret = {"auth_type": method, "secret": "PRIVATE_BITBUCKET_TOKEN"} if method == "bearer_token" else {
+        "auth_type": method, "username": "email@example.test", "password": "PRIVATE_BITBUCKET_TOKEN",
+    }
+    ready = submit(env, dto, [{"slot": "service", "name": "Private Bitbucket", "credentials": secret}])
+    assert ready["status"] == "ready"
+    resolved = env.credentials.resolve_personal_credentials(env.current)
+    assert resolved["auth"]["key"] == "PRIVATE_BITBUCKET_TOKEN"
+    assert env.current["auth"]["key"] == ""
+    plugin_module = importlib.import_module("semantic_kernel_plugins.bitbucket_plugin")
+    connections = importlib.import_module("functions_bitbucket_connections")
+    operations = importlib.import_module("functions_bitbucket_operations")
+    monkeypatch.setattr(plugin_module, "actor_context", env.credentials.actor_context)
+    monkeypatch.setattr(plugin_module, "authorized_manifest", lambda *args: env.current)
+    monkeypatch.setattr(connections._service, "authorize", lambda *args: env.current)
+
+    class Rejected:
+        def __init__(self, manifest, auth):
+            assert auth["secret"] == "PRIVATE_BITBUCKET_TOKEN"
+
+        def repositories(self):
+            raise operations.BitbucketError("reconnect_required", "Rejected", 401)
+
+    monkeypatch.setattr(plugin_module, "BitbucketClient", Rejected)
+    plugin = plugin_module.BitbucketPlugin(env.current)
+    with env.credentials.credential_continuation(env.descriptor), pytest.raises(env.contracts.ActionCredentialsRequired):
+        plugin.list_repositories()
+    assert "PRIVATE_BITBUCKET_TOKEN" not in repr(env.store.items)
 
 
 @pytest.mark.parametrize("scope", ["global", "group", "personal"])

@@ -14,6 +14,7 @@ from functions_action_manifest import (
     resolve_action_type,
 )
 from action_credential_contracts import validate_credential_requirements
+from functions_bitbucket_operations import BitbucketError, normalize_bitbucket_manifest
 from functions_mcp_operations import normalize_mcp_transport, validate_mcp_endpoint_for_transport
 from functions_agent_delegation import (
     AGENT_ACTION_VALIDATION_ERROR,
@@ -325,6 +326,13 @@ def validate_plugin(plugin):
     except ValueError:
         return "Invalid Microsoft 365 source configuration."
     plugin_type = str(plugin_copy.get('type', '') or '').strip().lower()
+    if plugin_type == "bitbucket":
+        try:
+            normalize_bitbucket_manifest(plugin_copy, allow_empty=True)
+        except BitbucketError as error:
+            return error.public_message
+        except ValueError:
+            return "Invalid Bitbucket destination or repository configuration."
     if plugin_type == 'mcp':
         fields = plugin_copy.get('additionalFields')
         fields = fields if isinstance(fields, dict) else {}

@@ -149,6 +149,7 @@ from route_backend_content_screening import register_route_backend_content_scree
 from route_frontend_content_screening import register_route_frontend_content_screening
 from route_backend_msgraph_pending_actions import register_route_backend_msgraph_pending_actions
 from route_backend_m365 import configure_m365_routes, register_route_backend_m365
+from route_backend_bitbucket import register_route_backend_bitbucket
 from functions_m365_approvals import configure_m365_approvals
 from functions_m365_connections import configure_m365_connection_authorization
 from functions_m365_execution import configure_m365_execution, validate_m365_workflow_context
@@ -1521,6 +1522,7 @@ configure_m365_history_runtime()
 configure_m365_file_runtime()
 configure_m365_pending_delivery_runtime(app.test_request_context)
 register_route_blueprint('backend_m365', register_route_backend_m365, user_required_blueprint)
+register_route_blueprint('backend_bitbucket', register_route_backend_bitbucket, user_required_blueprint)
 
 
 @app.after_request

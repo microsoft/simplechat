@@ -1,0 +1,28 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "type": "object",
+    "properties": {
+        "edition": {"type": "string", "enum": ["data_center", "cloud"], "default": "data_center"},
+        "auth_method": {"type": "string", "enum": ["oauth", "bearer_token", "username_password"], "default": "oauth"},
+        "repositories": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 50,
+            "default": [],
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "project", "slug", "branch_mode"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "project": {"type": "string"},
+                    "slug": {"type": "string"},
+                    "name": {"type": "string"},
+                    "branch_mode": {"type": "string", "enum": ["fixed", "any"], "default": "any"},
+                    "default_branch": {"type": "string", "default": ""}
+                }
+            }
+        }
+    },
+    "additionalProperties": false
+}
