@@ -1,8 +1,9 @@
 # test_bitbucket_routes.py
 """
 Functional tests for Bitbucket routes, identity hydration and authoring policy.
-Version: 0.261.450
+Version: 0.261.451
 Implemented in: 0.261.450
+Error-boundary regression implemented in: 0.261.451
 
 Real modules run in a fresh offline bootstrap with scoped external/actor seams.
 Exercises canonical callback configuration, CSRF, private status and edit-only discovery.
@@ -82,6 +83,20 @@ with offline_app_imports():
         assert status.status_code == 200 and not status.json["connected"]
         assert status.headers["Cache-Control"] == "no-store"
         csrf = status.json["csrf_token"]
+        for error_type, expected_status, expected_message in (
+            (KeyError, 400, "Invalid Bitbucket configuration or request."),
+            (ValueError, 400, "Invalid Bitbucket configuration or request."),
+            (TypeError, 400, "Invalid Bitbucket configuration or request."),
+            (LookupError, 404, "The Bitbucket action is unavailable."),
+            (IndexError, 404, "The Bitbucket action is unavailable."),
+            (PermissionError, 404, "The Bitbucket action is unavailable."),
+        ):
+            with patch.object(service, "status", side_effect=error_type("private-error-detail")):
+                failed = client.get("/api/bitbucket/connection?action_ref=personal:self:review")
+            assert failed.status_code == expected_status, (error_type.__name__, failed.json)
+            assert failed.json == {"error": expected_message}
+            assert failed.headers["Cache-Control"] == "no-store"
+            assert failed.headers["Referrer-Policy"] == "no-referrer"
         assert client.get("/api/bitbucket/connection?action_ref=personal:other:review").status_code == 404
         assert client.post("/api/bitbucket/connect", json={"action_ref": "personal:self:review"}).status_code == 403
         headers = {"X-CSRFToken": csrf}

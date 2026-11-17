@@ -31,14 +31,14 @@ def _boundary(function):
             response = function(*args, **kwargs)
         except BitbucketError as error:
             response = jsonify({"error": error.public_message, "code": error.code}), error.status
+        except (ValueError, TypeError, KeyError):
+            response = jsonify({"error": "Invalid Bitbucket configuration or request."}), 400
         except (PermissionError, LookupError):
             response = jsonify({"error": "The Bitbucket action is unavailable."}), 404
         except CosmosHttpResponseError as error:
             log_event("[PLUGINS] Bitbucket connection storage operation failed.",
                       level=logging.WARNING, extra={"error_type": type(error).__name__})
             response = jsonify({"error": "Bitbucket connection changed or storage is unavailable. Refresh and retry."}), 409
-        except (ValueError, TypeError, KeyError):
-            response = jsonify({"error": "Invalid Bitbucket configuration or request."}), 400
         result = make_response(response)
         result.headers["Cache-Control"] = "no-store"
         result.headers["Referrer-Policy"] = "no-referrer"

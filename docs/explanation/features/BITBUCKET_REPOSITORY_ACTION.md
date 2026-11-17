@@ -1,6 +1,7 @@
 # Bitbucket repository review action
 
 Fixed/Implemented in version: **0.261.450**.
+Error-boundary correction implemented in version: **0.261.451**.
 The application version is recorded in `application/single_app/config.py`.
 
 ## Overview and dependencies
@@ -116,6 +117,9 @@ Focused coverage is in `functional_tests/test_bitbucket_action_plugin.py`,
 SDK-default Cosmos response doubles and production Classic/V2 components;
 fresh normal/optimized processes verify real application imports without
 network access. Route policy tests cover the registered authentication boundary.
+Error-boundary regressions verify that malformed configuration, including missing
+dictionary keys, returns a safe HTTP 400 response, while unavailable or unauthorized
+actions retain HTTP 404 responses and private-response headers.
 
 Implementation validation passed 30 focused backend cases, 33 route/policy
 cases, 134 dependent action/outbound regressions, and 32 Classic/Bitbucket plus
