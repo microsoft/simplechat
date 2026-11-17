@@ -20,6 +20,11 @@ This page includes the latest release notes inline. Older release sections are s
 
 | Version | Page |
 | --- | --- |
+| v0.261.451 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.448 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.442 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.441 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
+| v0.261.424 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.422 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.421 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.420 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
@@ -27,269 +32,269 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.261.410 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.408 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
 | v0.261.392 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.390 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.385 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.381 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.379 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.378 | [Release notes index]({{ '/explanation/release_notes/' | relative_url }}) |
-| v0.261.333 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.315 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.309 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.308 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.306 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.305 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.304 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.303 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.302 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.301 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.300 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.299 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.298 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.297 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.296 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.295 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.293 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.292 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.291 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.290 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.289 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.288 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.287 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.286 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.285 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.284 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.283 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.282 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.280 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.279 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.278 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.277 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.276 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.275 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.274 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.271 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.270 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.269 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.268 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.267 | [Release notes 0.261.333 – 0.261.267]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
-| v0.261.265 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.264 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.263 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.262 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.261 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.260 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.259 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.258 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.257 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.256 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.253 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.252 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.251 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.250 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.248 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.247 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.246 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.245 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.244 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.243 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.242 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.241 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.240 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.239 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.238 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.237 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.236 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.235 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.234 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.233 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.232 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.231 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.230 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.229 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.228 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.227 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.226 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.225 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.224 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.223 | [Release notes 0.261.265 – 0.261.223]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
-| v0.261.222 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.221 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.220 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.219 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.218 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.217 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.216 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.215 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.214 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.213 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.212 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.210 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.209 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.208 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.207 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.205 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.204 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.203 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.202 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.201 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.200 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.199 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.195 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.194 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.193 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.192 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.191 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.190 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.189 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.188 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.187 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.186 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.185 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.184 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.183 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.182 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.181 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.180 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.179 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.178 | [Release notes 0.261.222 – 0.261.178]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
-| v0.261.177 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.176 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.175 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.174 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.173 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.172 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.171 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.170 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.169 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.168 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.167 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.166 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.165 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.164 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.163 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.162 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.161 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.160 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.159 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.158 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.157 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.156 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.155 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.154 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.153 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.152 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.151 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.150 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.149 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.148 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.147 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.146 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.145 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.144 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.143 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.142 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.141 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.140 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.139 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.138 | [Release notes 0.261.177 – 0.261.138]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
-| v0.261.137 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.136 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.135 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.134 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.133 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.132 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.131 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.129 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.128 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.127 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.123 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.104 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.102 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.100 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.099 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.098 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.096 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.095 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.093 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.092 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.091 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.090 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.089 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.088 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.087 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.086 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.085 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.084 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.083 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.082 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.081 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.074 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.071 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.070 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.065 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.064 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.063 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.062 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.061 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.060 | [Release notes 0.261.137 – 0.261.060]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
-| v0.261.059 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.058 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.057 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.056 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.055 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.054 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.053 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.052 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.051 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.050 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.049 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.048 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.047 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.046 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.045 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.044 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.043 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.042 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.041 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.040 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.039 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.038 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.037 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.036 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.035 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.034 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.033 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.032 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.031 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.030 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.029 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.028 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.027 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.026 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.025 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.024 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.023 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.022 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.021 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.020 | [Release notes 0.261.059 – 0.261.020]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
-| v0.261.019 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.018 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.017 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.016 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.015 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.014 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.013 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.012 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.011 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.010 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.009 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.008 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.007 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.006 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.005 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.004 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.003 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
-| v0.261.002 | [Release notes 0.261.019 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.390 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.385 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.381 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.379 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.378 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.333 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.315 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.309 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.308 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.306 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.305 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.304 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.303 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.302 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.301 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.300 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.299 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.298 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.297 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.296 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.295 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.293 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.292 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.291 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.290 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.289 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.288 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.287 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.286 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.285 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.284 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.283 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.282 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.280 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.279 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.278 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.277 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.276 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.275 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.274 | [Release notes 0.261.390 – 0.261.274]({{ '/explanation/release-notes/v0.261-part-1/' | relative_url }}) |
+| v0.261.271 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.270 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.269 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.268 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.267 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.265 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.264 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.263 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.262 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.261 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.260 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.259 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.258 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.257 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.256 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.253 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.252 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.251 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.250 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.248 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.247 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.246 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.245 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.244 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.243 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.242 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.241 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.240 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.239 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.238 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.237 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.236 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.235 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.234 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.233 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.232 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.231 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.230 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.229 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.228 | [Release notes 0.261.271 – 0.261.228]({{ '/explanation/release-notes/v0.261-part-2/' | relative_url }}) |
+| v0.261.227 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.226 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.225 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.224 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.223 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.222 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.221 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.220 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.219 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.218 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.217 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.216 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.215 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.214 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.213 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.212 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.210 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.209 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.208 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.207 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.205 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.204 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.203 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.202 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.201 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.200 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.199 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.195 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.194 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.193 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.192 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.191 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.190 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.189 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.188 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.187 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.186 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.185 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.184 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.183 | [Release notes 0.261.227 – 0.261.183]({{ '/explanation/release-notes/v0.261-part-3/' | relative_url }}) |
+| v0.261.182 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.181 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.180 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.179 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.178 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.177 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.176 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.175 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.174 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.173 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.172 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.171 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.170 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.169 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.168 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.167 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.166 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.165 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.164 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.163 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.162 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.161 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.160 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.159 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.158 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.157 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.156 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.155 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.154 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.153 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.152 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.151 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.150 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.149 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.148 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.147 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.146 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.145 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.144 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.143 | [Release notes 0.261.182 – 0.261.143]({{ '/explanation/release-notes/v0.261-part-4/' | relative_url }}) |
+| v0.261.142 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.141 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.140 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.139 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.138 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.137 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.136 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.135 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.134 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.133 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.132 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.131 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.129 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.128 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.127 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.123 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.104 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.102 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.100 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.099 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.098 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.096 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.095 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.093 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.092 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.091 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.090 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.089 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.088 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.087 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.086 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.085 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.084 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.083 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.082 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.081 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.074 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.071 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.070 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.065 | [Release notes 0.261.142 – 0.261.065]({{ '/explanation/release-notes/v0.261-part-5/' | relative_url }}) |
+| v0.261.064 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.063 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.062 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.061 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.060 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.059 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.058 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.057 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.056 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.055 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.054 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.053 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.052 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.051 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.050 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.049 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.048 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.047 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.046 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.045 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.044 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.043 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.042 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.041 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.040 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.039 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.038 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.037 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.036 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.035 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.034 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.033 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.032 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.031 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.030 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.029 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.028 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.027 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.026 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.025 | [Release notes 0.261.064 – 0.261.025]({{ '/explanation/release-notes/v0.261-part-6/' | relative_url }}) |
+| v0.261.024 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.023 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.022 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.021 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.020 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.019 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.018 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.017 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.016 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.015 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.014 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.013 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.012 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.011 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.010 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.009 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.008 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.007 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.006 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.005 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.004 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.003 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
+| v0.261.002 | [Release notes 0.261.024 – 0.261.002]({{ '/explanation/release-notes/v0.261-part-7/' | relative_url }}) |
 | v0.261.001 | [Release notes 0.261.001]({{ '/explanation/release-notes/v0.261-part-8/' | relative_url }}) |
 | v0.260.025 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
 | v0.260.024 | [Release notes 0.260 series]({{ '/explanation/release-notes/v0.260/' | relative_url }}) |
@@ -338,6 +343,157 @@ This page includes the latest release notes inline. Older release sections are s
 | v0.235.003 | [Release notes 0.235 series]({{ '/explanation/release-notes/v0.235/' | relative_url }}) |
 
 ## Latest release notes
+
+### **(v0.261.451)**
+
+#### New Features
+
+*   **Read-Only Bitbucket Repository Review Action**
+    *   Review source files and compare branches from self-hosted Bitbucket Data Center or Bitbucket Cloud in chat, without writing to repositories or posting reviews.
+    *   Configure allowed repositories and fixed or unrestricted branches per repository in Classic or V2. Both branches in a comparison must satisfy the action's restrictions; users choose repositories and branches conversationally.
+    *   Connect through per-user Bitbucket OAuth, saved identities or private token credentials. Smart-card/SSO sign-in takes place through Bitbucket's browser authentication; SimpleChat and Microsoft 365 tokens, session cookies and SSH keys are not forwarded.
+    *   OAuth requires deployment configuration for an HTTPS callback and a persistent token-encryption key. Live provider and smart-card acceptance testing remains deployment-specific.
+    *   (Ref: `functions_bitbucket_operations.py`, `functions_bitbucket_connections.py`, `bitbucket_plugin.py`, `BitbucketActionConfiguration.tsx`, `docs/explanation/features/BITBUCKET_REPOSITORY_ACTION.md`, [#1949](https://github.com/microsoft/simplechat/pull/1949))
+
+#### Bug Fixes
+
+*   **Bitbucket Configuration Error Responses**
+    *   Malformed Bitbucket configuration, including missing dictionary keys, returns a safe HTTP 400 response instead of being mistaken for an unavailable action. Unavailable or unauthorized actions retain HTTP 404 responses.
+    *   (Ref: `route_backend_bitbucket.py`, `functional_tests/test_bitbucket_routes.py`, `docs/explanation/fixes/BITBUCKET_ERROR_BOUNDARY_FIX.md`, [#1949](https://github.com/microsoft/simplechat/pull/1949))
+
+### **(v0.261.448)**
+
+#### New Features
+
+*   **V2 Notifications Page**
+    *   The V2 interface has a full Notifications page at `/v2/notifications`: All, Unread and Read filters, search, 10, 20 or 50 notices per page (remembered), numbered paging, **Mark all read**, refresh, and open, mark read, dismiss and acknowledge on each notice. The bell panel's footer and a new **Notifications** entry in the account menu (with the unread count) open it instead of the classic page.
+    *   `GET /api/notifications` accepts optional `status` (`all`, `unread`, `read`) and `q` (search text, up to 100 characters), applied before paging so totals, page numbers and search results cover the whole list. An unknown `status` returns 400; existing callers are unchanged.
+    *   (Ref: `NotificationsPage.tsx`, `functions_notifications.py`, `route_backend_notifications.py`, `docs/explanation/features/V2_NOTIFICATIONS_PAGE.md`)
+
+*   **V2 Workflow Activity Page**
+    *   Workflow runs have an activity page in V2 at `/v2/workflow-activity` that takes the classic page's query (`conversationId`, `workflowId`, `runId`, `scope`, `groupId`), so every existing link maps one to one. It shows the run as a timeline with details and event history, follows a live run, cancels a run, and shows a saved Microsoft 365 email or invitation beside the run that saved it.
+    *   Notifications, Latest Features shortcuts, the chat header of a workflow conversation, a workflow's run history and its header all open the V2 page. No server change was needed: the page reads the same activity routes as classic, and a regression test pins their gates to the classic page's.
+    *   (Ref: `WorkflowActivityPage.tsx`, `workflowActivity*.ts`, `docs/explanation/features/V2_WORKFLOW_ACTIVITY.md`, `docs/guides/view-workflow-activity.md`)
+
+*   **Custom Pages Open Inside V2**
+    *   A custom page chosen from the V2 rail opens at `/v2/custom/<slug>` with the rail still on screen, framing a chrome-less same-origin copy (`/custom/<slug>?embed=1`) instead of leaving for the classic layout. Pages set to open in a new tab, and Python-backed pages that have not set `supports_embed = True`, keep opening in their own tab. Pages open to any signed-in user stay standalone, because those visitors cannot use V2.
+    *   Only the embed response relaxes `X-Frame-Options` from `DENY` to `SAMEORIGIN` (the Content Security Policy already limits `frame-ancestors`); every other response, and Teams SSO deployments, are unchanged. The host's **Open in a new tab** opens the chrome-less document at `/custom/<slug>?embed=1`, which the classic-to-V2 redirect never sends back to V2.
+    *   (Ref: `route_custom_pages.py`, `functions_custom_pages.py`, `custom_page_extension.py`, `custom_page_embed_shell.html`, `CustomPageHost.tsx`, `docs/explanation/features/V2_CUSTOM_PAGES.md`)
+
+*   **Public Workspace Tags, Native Workspace Delete And Manage Sections For Inactive Workspaces In V2**
+    *   A public workspace has a native **Tags** section: everyone who can view the workspace browses its tags, and an Owner, Admin or DocumentManager of an active workspace creates, recolours, renames, merges and deletes them.
+    *   An owner deletes a group or public workspace in V2: the document count is read again at the click and at the confirmation, then the workspace is deleted and V2 returns to the group or public list. The group and public pickers no longer keep a deleted or left workspace selectable.
+    *   The Owner and Admins of a locked, inactive or unrecognised-status group keep Members, Settings, Activity and Statistics in V2, as the classic manage page does. Adding a member stays closed with a read-only note. The **Manage group (classic)** and **Classic tools** buttons are gone.
+    *   The Owner and Admins of a locked, inactive or unrecognised-status public workspace keep Members, Settings and Activity, and every stored role keeps Statistics. The profile and logo stay read-only, and adding members and changing roles stay closed, which is stricter than the classic page. The change-role control no longer shows in a locked public workspace, where the server refuses it.
+    *   (Ref: `functions_workspace_context.py`, `WorkspaceSettingsSection.tsx`, `TagsSection.tsx`, `MembersSection.tsx`, `docs/explanation/features/V2_PUBLIC_TAGS.md`, `docs/explanation/features/V2_GROUP_SETTINGS.md`, `docs/explanation/features/V2_PUBLIC_SETTINGS.md`)
+
+*   **Legacy Document Upgrade In V2**
+    *   The Documents explorer shows the **Update older documents** notice for personal, group and public documents that predate progress tracking, and upgrades them without leaving V2.
+    *   Adds `POST /api/groups/<group_id>/documents/upgrade_legacy` and `POST /api/public-workspaces/<workspace_id>/documents/upgrade_legacy`. Each is authorized as a metadata edit on an active workspace, re-checks the role before every document, accepts no request body, upgrades at most 500 documents per request (the receipt says when more remain) and answers 207 when some could not be updated. Personal documents use the existing classic route.
+    *   (Ref: `functions_legacy_document_upgrade.py`, `route_backend_group_documents.py`, `route_backend_public_document_management.py`, `LegacyUpgradeBanner.tsx`, `docs/explanation/features/V2_LEGACY_DOCUMENT_UPGRADE.md`)
+
+*   **Control Center Refresh, Duplicate Global Agents And Actions, And Administrator-Managed File Sources In V2**
+    *   The V2 Control Center has a **Refresh data** strip with the last refresh and the next scheduled run; it recalculates the user and group figures through the existing refresh routes and reloads the section on screen.
+    *   Global agents and global actions can be duplicated from V2 admin.
+    *   The V2 File Sync card has **Manage sources for someone else**: search for a user, a group or a public workspace (or paste an ID) and open the same file sources workbench a workspace manager uses, over the administrator routes. Adds the administrator-only `GET /api/admin/file-sync/<scope_type>/<scope_id>/source-options` (it takes no parameters or body).
+    *   (Ref: `RefreshDataStrip.tsx`, `FileSyncTargetManager.tsx`, `route_backend_file_sync.py`, `docs/explanation/features/V2_CONTROL_CENTER_REFRESH.md`, `docs/explanation/features/V2_ADMIN_FILE_SYNC_TARGETS.md`)
+
+*   **Global Identities In V2 Admin**
+    *   Administrators can create, edit and delete Global Identities, the deployment-wide saved credentials that File Sync sources and actions use, in V2 under Admin Settings > Security > Global Identities. It is the shared identity editor with a global scope over the existing administrator routes, with the same sign-in methods the classic pane offers. A global record has no version marker, so a save replaces the stored record as in classic.
+    *   A delete is refused while an action still uses the identity, and the refusal lists them.
+    *   Every V2 link to the classic admin page names the tab and carries `ui=classic`, so it is not sent back to V2 once the redirect is on.
+    *   (Ref: `identityWorkbench.ts`, `GlobalIdentitiesList.tsx`, `adminOperations.ts`, `docs/explanation/features/V2_ADMIN_SECTION_LINKS.md`, `docs/explanation/features/V2_WORKSPACE_IDENTITIES.md`)
+
+*   **Conversation Scope Lock Editing And Generated-File Actions In V2 Chat**
+    *   V2 chat can lock and unlock a conversation's workspace scope, with a dialog that lists what the lock covers, using the existing `PATCH /api/conversations/<id>/scope_lock`.
+    *   A generated-file card has **Add to Workspace** and **Create PowerPoint** beside Download and View, using the existing `POST /api/chat_artifacts/promote` and `POST /api/message/export-powerpoint`.
+    *   (Ref: `ScopeLockControl.tsx`, `GeneratedArtifactActions.tsx`, `docs/explanation/features/V2_CONVERSATION_SCOPE_LOCK.md`, `docs/explanation/features/V2_GENERATED_ARTIFACT_ACTIONS.md`, `docs/guides/reuse-generated-files.md`)
+
+*   **User Agreement Before Uploads In V2**
+    *   When an administrator requires the User Agreement (`enable_user_agreement`), V2 now asks for it before every upload it makes: chat attach, paste, drop and retry, the files in an inline follow-up question, and personal, group and public workspace uploads. Acceptance is recorded as in classic and **Accept once per day** is shared with classic.
+    *   While the check runs or the agreement is open, the chat composer and the follow-up card hold Send and the next step and say why, so a message cannot go without a file that is still being checked. The check and the acceptance each give up after 20 seconds and offer Try again or Cancel.
+    *   Unlike classic, V2 holds the upload and says so when the agreement check or the acceptance fails. No upload route enforces the agreement on the server, in either interface.
+    *   (Ref: `userAgreement.ts`, `useUserAgreementGate.ts`, `UserAgreementDialog.tsx`, `ComposerEditor.tsx`, `ElicitationCard.tsx`, `docs/explanation/features/V2_USER_AGREEMENT_GATE.md`)
+
+*   **Idle Session Warning And Profile Photo Refresh In V2**
+    *   When **Sign out inactive users** is on, V2 warns before the sign-out with a countdown, offers **Stay signed in** or **Logout now**, and reports activity to the server so someone who is working is not signed out. The same four idle settings drive both interfaces; the V2 bootstrap carries them (`session.idle_timeout`).
+    *   V2 Settings has **Refresh photo**, which fetches the Microsoft Graph photo again through `POST /api/profile/image/refresh`.
+    *   (Ref: `functions_idle_timeout.py`, `IdleSessionDialog.tsx`, `ProfilePhotoStatus.tsx`, `docs/explanation/features/V2_IDLE_SESSION_WARNING.md`)
+
+*   **Modern Standalone Pages For Visitors V2 Cannot Serve**
+    *   Adds modern variants of the pages that must stay server-rendered because the people who see them cannot use V2: the signed-out and no-role home page, the Acceptable Use Policy, the rate-limited (429) page and the Microsoft 365 sign-in result. They share one small standalone layout with the V2 look and no classic navigation.
+    *   The variants are inactive: a single helper chooses between the classic and modern templates from `get_ui_mode()`, which answers classic for everyone until the interface selector exists, so nothing changes for any user today.
+    *   (Ref: `functions_ui_pages.py`, `templates/modern/`, `modern-standalone.css`, `docs/explanation/features/V2_MODERN_STANDALONE_PAGES.md`)
+
+*   **Classic-To-V2 Page Parity Registry And Interface-Selection Prerequisites**
+    *   Adds one registry of every classic page route and its V2 answer (`ui_route_map.json`, with a loader, a generator for the browser copy and the documentation table, and a guard test that fails when a classic page has no V2 answer). No classic page is left without one.
+    *   Adds the groundwork for choosing "fully modern" or "fully classic": the `functions_ui_mode.get_ui_mode()` seam, a disabled-by-default edge redirect from classic page URLs to their V2 pages (302, `no-store`, query and fragment translated, `?ui=classic` to skip it for one request, never when the V2 bundle is missing), V2 translation of classic fragments, and **Back to classic UI** that opens the counterpart of the current page. All of it is inert until an interface is selected.
+    *   (Ref: `ui_route_map.json`, `ui_routing.py`, `functions_ui_redirect.py`, `classicLinks.ts`, `docs/explanation/features/V2_CLASSIC_PAGE_PARITY.md`, `docs/explanation/features/V2_INTERFACE_SELECTION_PREREQUISITES.md`)
+
+#### Bug Fixes
+
+*   **Admin Settings Links Stay In V2**
+    *   A related-section link, a prerequisite and a Latest Features shortcut open the V2 section when V2 draws it, instead of leaving for the classic admin page. The links that still leave name the classic tab, which the classic page reads, and carry `ui=classic`; the old Global Identities link addressed `/admin_settings#...`, which was never a route, and that section no longer links out. The chat mode notice now points to **Use AI Connections for chat**.
+    *   The stale `classic_only` flag on `enable_dai_debug` is removed, because the V2 Document Access Index panel already draws its diagnostics.
+    *   (Ref: `lib/adminOperations.ts`, `lib/latestFeatures.ts`, `admin_settings_fields.py`, `docs/explanation/features/V2_ADMIN_SECTION_LINKS.md`)
+
+*   **Global Identity Delete Names What Still Uses It**
+    *   Deleting a global identity that a global action still uses answered 400 with one sentence. It now answers 409 with `error_code: identity_in_use` and the referencing actions, as the strict personal, group and public identity routes do. The sentence is unchanged, so the classic editor shows the same text, and the other identity routes are not changed.
+    *   (Ref: `route_backend_workspace_identities.py`, `functional_tests/test_global_identity_admin_routes.py`, `docs/explanation/fixes/GLOBAL_IDENTITY_IN_USE_DELETE_FIX.md`)
+
+*   **Python Custom Page Example Renders**
+    *   The Python-backed custom page example no longer raises a `url_for` build error when rendered.
+    *   (Ref: `docs/how-to/custom_pages_examples/python-jinja-api/`, `docs/explanation/features/V2_CUSTOM_PAGES.md`)
+
+*   **Terms Of Use Return Path Stays On The Site**
+    *   Accepting the Terms of Use in the classic interface could redirect to another site: a `next` value that held a TAB, such as `/terms-of-use?next=/%09/evil.example`, was kept and then sent as `//evil.example`. A return path with any control character now falls back to the default page, and ordinary return paths are unchanged. The V2 terms page already refused such paths in the browser.
+    *   (Ref: `functions_terms_of_use.py`, `functional_tests/test_terms_of_use.py`, `docs/explanation/fixes/TERMS_OF_USE_RETURN_PATH_CONTROL_CHARACTER_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **Identity Rows Wrap At Narrow Widths**
+    *   Identity names no longer disappear at phone width: the rows in the personal, group, public and global identity lists wrap their badges and buttons.
+    *   (Ref: `IdentityWorkbenchSection.tsx`, `docs/explanation/features/V2_WORKSPACE_IDENTITIES.md`)
+
+### **(v0.261.442)**
+
+#### Bug Fixes
+
+*   **Yamcs TLS Verification Setting**
+    *   Yamcs actions and Test Yamcs Connection now honor the selected TLS verification setting even when an environment CA bundle is configured.
+    *   Initial login and token renewal use the same configured TLS policy and timeout as action requests. Verification remains enabled by default, with no automatic insecure retry.
+    *   Existing organization CA support, deployment settings, destination guards, and personal credential recovery are unchanged.
+    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `route_backend_plugins.py`, `docs/explanation/fixes/YAMCS_TLS_VERIFY_ENV_OVERRIDE_FIX.md`, [#1934](https://github.com/microsoft/simplechat/issues/1934), main fix [#1937](https://github.com/microsoft/simplechat/pull/1937))
+
+### **(v0.261.441)**
+
+#### Bug Fixes
+
+*   **Custom Favicon Persistence Across Instances**
+    *   Restores the saved custom favicon when an instance starts and reconciles it before serving the favicon, preventing fresh or scaled-out instances from displaying the bundled icon instead in classic and V2 interfaces.
+    *   Preserves existing favicon versioning and works with Redis-backed settings or direct Cosmos reads. Changed files are replaced atomically; unchanged icons are not rewritten.
+    *   (Ref: `app.py`, `ensure_custom_favicon_file_exists()`, `docs/explanation/fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md`, [#1932](https://github.com/microsoft/simplechat/issues/1932), main fix [#1935](https://github.com/microsoft/simplechat/pull/1935))
+
+### **(v0.261.424)**
+
+#### Bug Fixes
+
+*   **Native Document Evidence Keeps Its Source Meaning**
+    *   Distinguishes absent fields, stored empty values, actual values, and information that could not be inspected instead of treating them as interchangeable blanks.
+    *   Recovers supported PDF native properties, text-to-tag reading-order bindings, separate raster/vector evidence, and footer Artifact associations.
+    *   Includes supported PowerPoint shapes, object-linked formatting, slide-local footer/number origins, and qualified solid-color contrast findings.
+    *   (Ref: `functions_accessibility.py`, `functions_pdf_native_evidence.py`, `functions_pptx_native_evidence.py`, `NATIVE_DOCUMENT_FIDELITY_FIX.md`)
+
+*   **Excel Native Attributes And In-Cell Checkboxes**
+    *   Preserves actual picture/chart description and title presence, and recognizes supported saved in-cell checkboxes through their native style/control bindings rather than guessing from Boolean values.
+    *   Keeps invalid control bindings and checked states explicitly inaccessible; native inventory schema/cursors prevent older normalized records from being replayed as current evidence.
+    *   (Ref: `functions_excel_accessibility.py`, `functions_excel_inventory.py`, `EXCEL_NATIVE_INSPECTION.md`)
+
+*   **Source-Backed Inspection And Grounded Native Audit Answers**
+    *   Inspects retained authorized active PDF/PPTX sources locally on request, preserves native evidence through screened publication, and prevents stale original metadata from describing a different sanitized active file.
+    *   Source-only native audit reports validate fact references and render factual values without accepting invented paragraph bindings or absent-as-empty drafts. Existing Word comment behavior remains preserved.
+    *   Starts no bulk re-ingestion or new OCR/vision job. Existing indexed Search evidence still requires explicit processing when it needs refreshing.
+    *   (Ref: `functions_native_document_inspection.py`, `functions_native_audit.py`, `functions_orchestration_composition.py`, `content_screening/extraction.py`, `docs/reference/actions/document-search.md`)
 
 ### **(v0.261.422)**
 
@@ -449,49 +605,3 @@ This page includes the latest release notes inline. Older release sections are s
     *   Added automatic fallback from `query_type="semantic"` to vector + BM25 keyword hybrid search (`query_type="simple"`) in `hybrid_search` when Azure AI Search Semantic Ranker monthly free quota is exhausted, while keeping the persisted service-health warning active.
     *   Added resolution for bracketed full and 8-character hex prefix chunk citation IDs (`[8ed56431_1]`, `[15dce0d4_2; 8ed56431_2]`) in V2 `citations.ts`, Classic `chat-citations.js`, and `functions_citation_tracking.py`.
     *   (Ref: `route_backend_chats.py`, `functions_mixed_source_orchestration.py`, `functions_search.py`, `functions_citation_tracking.py`, `citations.ts`, `chat-citations.js`, [Retrieval, Narrative/XML Fidelity, System Prompt, and Inline Citation Restoration Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/RETRIEVAL_CITATION_SYSTEM_PROMPT_RESTORATION_FIX.md), [#1855](https://github.com/microsoft/simplechat/issues/1855))
-
-### **(v0.261.390)**
-
-#### New Features
-
-*   **Word Document Review Comment Extraction (`.docx`, `.docm`, `.doc`, `.dotx`)**
-    *   Added local extraction of review comments from modern OOXML Word documents (`.docx`, `.docm`, `.dotx`) and legacy Word 97–2003 binary OLE documents (`.doc`), which were previously omitted by Azure Document Intelligence and `docx2txt` or flattened without metadata in piece tables.
-    *   OOXML extraction parses `word/comments.xml`, `word/commentsExtended.xml`, and `word/document.xml` to capture comment authors, initials, timestamps, resolved states, threaded replies, quoted anchor text (`w:commentRangeStart`/`w:commentRangeEnd`), and reading-order word offsets. Legacy `.doc` extraction parses the MS-DOC File Information Block (`FibRgLw97` `ccpAtn`, `PlcfandTxt`, `PlcfandRef`, `GrpXstAtnOwners`, and annotation bookmarks) while keeping raw annotation streams separate from body text.
-    *   Workspace ingestion merges each comment thread into the document chunk containing its anchored text, and direct chat uploads, `.docm` processing, M365 extraction, and content screening include the extracted comments.
-    *   (Ref: `functions_office_media.py`, `functions_content.py`, `functions_documents.py`, `route_frontend_chats.py`, [Word Comment Extraction](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/features/WORD_COMMENT_EXTRACTION.md), [#1850](https://github.com/microsoft/simplechat/issues/1850))
-
-### **(v0.261.385)**
-
-#### Bug Fixes
-
-*   **Orchestration Unfound Source Information And Linked PDF Coverage Handling**
-    *   Fixed an issue where source-grounded orchestration requests failed with `completeness_incomplete` (`"The answer did not satisfy the requested requirements within its correction allowance."`) when the searched document or linked URL did not contain the requested item or setting. `compose` and task completeness verification now treat an evidence-backed response that clearly states the searched content does not contain the requested information, reports the inspected page/source coverage, and summarizes what the content covers as a completed answer.
-    *   Added `application/pdf` extraction support to Source Review and `url_fetch` using PyMuPDF (`fitz`), tracking total and inspected PDF page counts (`[Page X of Y]`) and surfacing `source_coverage` metadata when `document_search` or `document_analyze` returns empty matches.
-    *   (Ref: `functions_source_review.py`, `functions_orchestration_adapters.py`, `functions_orchestration_result_runtime.py`, `functions_orchestration_composition.py`, `functions_task_completeness.py`, [Orchestration Unfound Source Coverage Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_UNFOUND_SOURCE_COVERAGE_FIX.md))
-
-### **(v0.261.381)**
-
-#### User Interface Enhancements
-
-*   **Standardized Durable Workflows With Legacy Upgrade Option**
-    *   Removed the **Durable execution** toggle when creating new workflows or editing already-durable workflows in the V2 workflow editor, ensuring all new and durable workflows always save with durable execution enabled.
-    *   Preserved existing legacy non-durable workflows when edited without upgrading, while retaining the **Durable execution** upgrade switch in **Execution** (and automatic upgrade when task approval is enabled) until the legacy workflow is saved as durable.
-    *   (Ref: `WorkflowEditorDialog.tsx`, `workflowEditor.ts`, `functions_workflow_assist_editor.py`, `docs/admin/workflow.md`)
-
-### **(v0.261.379)**
-
-#### Bug Fixes
-
-*   **Mixed-Mode Conversation History Ordering And Superseded Saved-Memory Handling**
-    *   Fixed `sort_messages_by_thread` so unthreaded orchestration turns (`user_orchestration_*` and `assistant_orchestration_*`) are interleaved chronologically with threaded manual chat turns based on each thread's earliest timestamp rather than placing all orchestration turns before all manual turns.
-    *   Clarified saved `Instruction Memory`, `Fact Memory`, and orchestration composition/planning prompts so updated profile memories supersede earlier assistant prefixes, names, call signs, and roles without quoting, contrasting, or flagging the earlier values as note inconsistencies during consistency checks.
-    *   (Ref: `functions_chat.py`, `functions_fact_memory_context.py`, `functions_orchestration_composition.py`, `functions_orchestration_planner.py`, [Mixed-Mode History Order and Superseded Memory Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/MIXED_MODE_HISTORY_ORDER_AND_SUPERSEDED_MEMORY_FIX.md))
-
-### **(v0.261.378)**
-
-#### Bug Fixes
-
-*   **V2 Chat Orchestration Unseeded Agent Availability And Catalog Ranking Fix**
-    *   Fixed an issue where V2 chat orchestration turns without a manually pinned composer agent (`seeds.agent: null`) dropped `agent_invoke` whenever `user_settings.settings.enable_agents` had been persisted as `false` (for example after saving any user setting when `enable_agents` was not yet stored). V2 orchestration now evaluates `agent_invoke` using admin capability settings, governance, scope/group membership, and optional `seeds.agent` narrowing rather than the Classic `/chats` composer toggle.
-    *   Updated `update_user_settings()` to default missing `enable_agents` to `True`, ranked agents and external sources named in `request_text` ahead of unnamed entries before applying the 25-item workflow planning catalog cap, and preserved `group` scope metadata when background chat upload ingestion completes.
-    *   (Ref: `functions_settings.py`, `route_backend_orchestration.py`, `functions_orchestration_bootstrap.py`, `functions_orchestration_external_sources.py`, `functions_orchestration_workflow_context.py`, `functions_documents.py`, [Orchestration Unseeded Agent Availability Fix](https://github.com/microsoft/simplechat/blob/13db876626a043e2c7b30f054354f07c9a1633b9/docs/explanation/fixes/ORCHESTRATION_UNSEEDED_AGENT_AVAILABILITY_FIX.md))
