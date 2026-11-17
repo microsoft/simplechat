@@ -1,0 +1,85 @@
+{# templates/modern/acceptable_use_policy.html -#}
+{#-
+    Modern variant of templates/acceptable_use_policy.html. Like the classic page this is an
+    example policy: change the text in both files to publish your own, or point the landing
+    page text at your own policy.
+-#}
+{%- extends "modern/standalone_base.html" -%}
+{% block title %}Acceptable Use Policy - {{ ms_app_title }}{% endblock %}
+{% block page_class %}ms-page-wide{% endblock %}
+{% block content %}
+
+<article class="ms-panel" aria-labelledby="acceptable-use-policy-title">
+    <h1 id="acceptable-use-policy-title" class="ms-title">Acceptable Use Policy</h1>
+
+    <!-- Example notice -->
+    <div class="ms-note" id="example-notice" role="note">
+        <svg class="ms-note-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 11v5" />
+            <path d="M12 7.5h.01" />
+        </svg>
+        <p class="ms-note-text">
+            This is an example.
+            Modify this template to create your own Acceptable Use Policy or
+            Update the Landing Page content in the application settings
+            to link to your own Acceptable Use Policy.
+        </p>
+    </div>
+
+    <!-- Policy text -->
+    <div class="ms-prose">
+        <p>Last Updated: January 30, 2025</p>
+
+        <p>
+            Welcome to our AI-powered chat service. By using this service,
+            you agree to follow this Acceptable Use Policy (AUP) to ensure
+            a safe and respectful experience for all users.
+        </p>
+
+        <h2>1. Prohibited Activities</h2>
+        <p>You must not use this service to:</p>
+        <ul>
+            <li>Engage in illegal, fraudulent, or harmful activities.</li>
+            <li>Distribute, promote, or encourage violence, hate speech, or discrimination.</li>
+            <li>Share offensive, explicit, or inappropriate content.</li>
+            <li>Impersonate individuals, companies, or organizations.</li>
+            <li>Use the AI to generate misleading or deceptive information.</li>
+            <li>Spam, harass, or disrupt the experience for others.</li>
+            <li>Attempt to reverse-engineer, hack, or exploit the AI system.</li>
+        </ul>
+
+        <h2>2. Data Privacy</h2>
+        <p>We respect your privacy. Please do not share personal, confidential, or sensitive information while using this service.</p>
+
+        <h2>3. Responsible AI Use</h2>
+        <p>
+            The AI assistant provides information based on patterns in data and
+            should not be considered a replacement for professional advice (legal,
+            medical, financial, etc.). Use AI-generated content responsibly.
+        </p>
+
+        <h2>4. Enforcement</h2>
+        <p>
+            Violations of this policy may result in temporary or permanent
+            suspension of access to the service.
+        </p>
+
+        <h2>5. Changes to This Policy</h2>
+        <p>
+            We may update this AUP from time to time. Continued use of the service
+            after any modifications constitutes your acceptance of the new terms.
+        </p>
+
+        <p>
+            <strong>By using this service, you agree to this Acceptable Use Policy.</strong>
+        </p>
+    </div>
+
+    <!-- Return link -->
+    <div class="ms-actions">
+        <a class="ms-button ms-button-secondary" href="{{ url_for('public_app.index') }}">Return to the home page</a>
+    </div>
+</article>
+
+{% endblock %}

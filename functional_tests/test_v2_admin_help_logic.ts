@@ -169,8 +169,8 @@ check('admin shortcuts land on a drawn card, the catalogue card, or the classic 
         sectionId: 'latest-features',
     });
     assert.deepEqual(resolveAdminActionTarget(adminAction('backup'), NAV, rendered), { kind: 'classic', tab: 'backup' });
-    assert.equal(safeClassicAdminTabHref('backup'), '/admin/settings#backup');
-    assert.equal(safeClassicAdminTabHref('a b"c'), '/admin/settings#a%20b%22c');
+    assert.equal(safeClassicAdminTabHref('backup'), '/admin/settings?ui=classic#backup');
+    assert.equal(safeClassicAdminTabHref('a b"c'), '/admin/settings?ui=classic#a%20b%22c');
 });
 
 check('only same-origin paths and http(s) addresses may become a shortcut href', () => {

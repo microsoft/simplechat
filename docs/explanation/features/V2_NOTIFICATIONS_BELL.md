@@ -72,8 +72,11 @@ Selecting the bell opens a panel with your notices, newest first, 20 at a time
 with **Load more**. Each row shows what kind of notice it is, its title, up to
 three lines of its message, how long ago it arrived, and **Mark as read** (unread
 notices only) and **Dismiss**. **Mark all read** is in the header. The footer link
-**Open all in the classic interface** leads to the classic Notifications page,
-which adds search and filters.
+**View all notifications** opens the [Notifications page](V2_NOTIFICATIONS_PAGE.md),
+inside V2 and not the classic page, which adds the **All**, **Unread** and **Read**
+filter, search and numbered pages. The panel closes when you follow it. The account
+menu at the foot of the rail has the same page as its **Notifications** entry, with
+the unread count as a badge.
 
 Read, dismiss and mark all read call `POST /api/notifications/<id>/read`,
 `DELETE /api/notifications/<id>/dismiss` and
@@ -132,8 +135,9 @@ in classic rather than leaving the notice with nowhere to go.
 |---|---|
 | `/chats`, `/chat` or `/v2/chat` with `conversationId` or `conversation_id` | The conversation in V2 chat |
 | The same with `m365_pending_action` | The V2 conversation, scrolled to that saved action's card and highlighted |
-| `/approvals` | Classic Approvals |
-| `/workflow-activity` | Classic workflow activity (see the Phase 6b seams below) |
+| `/approvals` | The V2 Approvals page, with the query and fragment the link carries |
+| `/notifications` | The V2 [Notifications page](V2_NOTIFICATIONS_PAGE.md). `status`, `q`, `page` and `per_page` in the link are kept, and nothing else |
+| `/workflow-activity` | The V2 [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md), with the query the link carries |
 | `/workspace` | Your V2 document list; there is no per-document link yet |
 | `/group_workspaces` | The notice's group's documents in V2, or the group list |
 | `/groups/<id>` | That group's V2 overview |
@@ -171,23 +175,29 @@ Phase 6b-2 (0.261.251) filled in all three; see
 [Chat Workflow Result Delivery](CHAT_WORKFLOW_RESULT_DELIVERY.md) for the V2 side.
 
 - **Run pages.** `v2WorkflowRunPath(scope, workflowId, runId)` in
-  `lib/notificationLinks.ts` returns the V2 address of a workflow run. There's no
-  separate run page: it's the Workflows section of the workspace the workflow lives
-  in, with that workflow's run history open on the run,
+  `lib/notificationLinks.ts` returns the V2 address of a workflow run's history. It's the
+  Workflows section of the workspace the workflow lives in, with that workflow's run
+  history open on the run,
   `/workspace/workflows?workflow_id=<id>&run_id=<id>` or
   `/groups/<group id>/workflows?workflow_id=<id>&run_id=<id>`. It returns `null` when
-  the workspace, the workflow or the run is unknown.
-  - A `/workflow-activity` link opens there only when the link's `scope` (and
-    `groupId`) agree with the notice's `workflow_scope` (and `workflow_group_id`) and
-    its `workflowId` and `runId` agree with the ids the notice wrote. Anything else,
-    including a link the notice doesn't place, keeps opening classic.
+  the workspace, the workflow or the run is unknown. A notice's own link goes to the
+  activity page instead (below); this run history is where a workflow notice with no
+  link of its own, and a workflow alert card's **Open run**, lead.
+  - A `/workflow-activity` link opens the V2 [Workflow Activity
+    page](V2_WORKFLOW_ACTIVITY.md) (0.261.448), with the query it carries
+    (`conversationId`, `workflowId`, `runId`, `scope`, `groupId`) kept whole. The page
+    reads the same query the classic page does, so what the notice says about its own
+    workflow, run or workspace no longer decides where the link goes. A link whose ids
+    or scope the page can't read is refused with a message on the row, as any
+    malformed link is, and isn't opened as something else.
   - A workflow notice with no link of its own (`workflow_priority_alert` or
     `workflow_chat_delivery`) opens its run when its metadata names the workspace,
-    workflow and run. Any other notice without a link gets none.
-  - A Microsoft 365 notice, one with `m365_pending_action_id` in its metadata or link
-    context, never opens a V2 run page. The classic workflow-activity page draws the
-    saved action beside the run, and V2's run page doesn't. A notice about an action
-    saved in a conversation opens that conversation in V2 instead; see
+    workflow and run. Any other notice without a link gets none, and neither does a
+    Microsoft 365 notice, which always carries its own link.
+  - A Microsoft 365 notice about an action in a workflow run links to the same activity
+    page, which draws the saved action beside the run, where it can be sent or
+    cancelled. A notice about an action saved in a conversation opens that conversation
+    in V2 instead; see
     [V2 Microsoft 365 Pending-Action Cards](V2_M365_PENDING_ACTION_CARDS.md).
   - The workspace is never read from `metadata.group_id`, which classic treats as the
     group to make active.
@@ -273,8 +283,8 @@ conversations keep their own read tracking, so neither is affected.
 | File | Change |
 |---|---|
 | `application/v2_ui/src/components/layout/NotificationBell.tsx` | New: the bell, its badge and dot |
-| `application/v2_ui/src/components/layout/NotificationPanel.tsx` | New: the panel |
-| `application/v2_ui/src/components/layout/Sidebar.tsx` | The bell in the rail's header, and under the brand mark when collapsed |
+| `application/v2_ui/src/components/layout/NotificationPanel.tsx` | New: the panel. Its rows are now the shared `components/notifications/NotificationRow.tsx`, and its footer link goes to the Notifications page |
+| `application/v2_ui/src/components/layout/Sidebar.tsx` | The bell in the rail's header, and under the brand mark when collapsed; the account menu's **Notifications** entry and badge |
 | `application/v2_ui/src/lib/notifications.ts` | New: the route calls, normalization and labels |
 | `application/v2_ui/src/stores/notificationStore.ts` | New: the count, poller, list and actions, and `subscribeNotificationCount` |
 | `application/v2_ui/src/lib/notificationLinks.ts` | New: link resolution and `v2WorkflowRunPath` |
@@ -293,10 +303,9 @@ conversations keep their own read tracking, so neither is affected.
 
 ## Known limitations
 
-- Microsoft 365 approvals and workflow activity open in classic until V2 has those
-  pages. That includes a notice about a Microsoft 365 action inside a workflow run.
-  A notice about an action saved in a conversation opens that conversation in V2
-  with the card brought into view.
+- A notice about a Microsoft 365 action saved in a conversation opens that conversation
+  in V2 with the card brought into view, and one about an action in a workflow run
+  opens the V2 workflow activity page, which draws the card.
 - A personal document notice opens your document list, not the document.
 - The count is polled. While the tab is visible and nothing is changing, a new
   notice can take up to five minutes to appear; returning to the tab reads it at
@@ -333,6 +342,7 @@ data.
 ## Related
 
 - [Desktop Conversation Notifications](DESKTOP_CONVERSATION_NOTIFICATIONS.md)
+- [V2 Notifications Page](V2_NOTIFICATIONS_PAGE.md)
 - [V2 Workflow Alert Notices](V2_WORKFLOW_ALERT_NOTICES.md)
 - [V2 Microsoft 365 Pending-Action Cards](V2_M365_PENDING_ACTION_CARDS.md)
 - [Chat Orchestration Workflows Roadmap](CHAT_ORCHESTRATION_WORKFLOWS_ROADMAP.md), Track N

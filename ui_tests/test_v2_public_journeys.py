@@ -2,11 +2,14 @@
 """M11 public end-to-end journeys: the role x status x File-Sync matrix, mid-session
 transitions, Settings activation and the classic handoff, driven through the real SPA.
 
-Version: 0.261.323
+Version: 0.261.448
 Implemented in: 0.261.185
 The classic handoff follows the Documents header's renamed Classic tools button: 0.261.188
+The Documents header has no classic handoff now that the legacy document upgrade is native: 0.261.448
 A locked overview entry is outlined, never faded, and its text stays readable: 0.261.188
 The overview describes what a public workspace offers, and its Manage group who manages it: 0.261.188
+A status that bars viewing keeps the owner's and admins' Manage sections, and a document manager's
+Statistics, in the rail: 0.261.448
 
 These journeys are the public twin of test_v2_group_journeys.py. They ride one composite
 public store (public_journeys_ui) across the whole public surface in one session and assert
@@ -22,6 +25,7 @@ Its rail label must then be added to PUBLIC_SECTION_LABELS below.
 
 Coverage of M11 contract sec 2.3 (public role x status x feature):
     role x status matrix (rail + header + overview) . test_jp_rail_matches_the_pinned_context_matrix
+    the Manage sections a barring status keeps ...... test_jp_a_status_that_bars_viewing_keeps_the_managers_manage_sections
     the File-Sync feature axis ...................... test_jp_file_sync_gates_the_connection_sections
     a reader's locked connection sections .......... test_jp_overview_lists_locked_connections_with_their_reason
     locked entries outlined, readable (2.4) ........ test_jp_locked_overview_entries_stay_readable
@@ -29,7 +33,7 @@ Coverage of M11 contract sec 2.3 (public role x status x feature):
     status revoked mid-session (2.2) ............... test_jp_status_locked_then_barred_mid_session
     access revoked mid-session, 403 (2.2) ......... test_jp_access_revoked_mid_session_is_surfaced
     Settings activation refresh (2.2) ............. test_jp_settings_activation_makes_the_surface_available
-    classic handoff round trip .................... test_jp_classic_handoff_carries_the_public_workspace
+    classic handoff ............................... test_jp_documents_header_offers_no_classic_handoff
     the picker reaches another workspace .......... test_jp_picker_moves_between_public_workspaces
 """
 
@@ -96,6 +100,15 @@ def refocus(ui):
     ui.page.evaluate("window.dispatchEvent(new Event('focus'))")
 
 
+def open_rail(ui):
+    """The section rail, opened on a phone, where it sits behind its opener and out of the accessibility
+    tree until then; at a desktop width there is no opener and this only finds the rail."""
+    opener = ui.page.get_by_role("button", name="Workspace sections", exact=True)
+    if opener.is_visible():
+        opener.click()
+    return ui.page.get_by_role("navigation", name="Workspace sections", exact=True)
+
+
 def setactive_writes(ui):
     return [entry for entry in ui.writes if entry.path == "/api/public_workspaces/setActive"]
 
@@ -129,16 +142,55 @@ def test_jp_rail_matches_the_pinned_context_matrix(public_journeys_ui, role, raw
     # public surface publishes to everyone, so it withholds the viewer's own role.
     expect(ui.page.get_by_text(f"Status: {PUBLIC_STATUS_LABELS[status]}", exact=True)).to_be_visible()
     expect(ui.page.get_by_text("Role:", exact=False)).to_have_count(0)
-    nav = ui.page.get_by_role("navigation", name="Workspace sections", exact=True)
+    nav = open_rail(ui)
     # Every rail section is present or absent exactly as the context says; a disabled section is
     # never a live link, so nothing offers a control the context withholds.
     for sectionId, label in PUBLIC_SECTION_LABELS.items():
         expected = 1 if rail_enabled(context, sectionId) else 0
         expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(expected)
     if status in ("inactive", "unknown"):
-        # A status that bars viewing leaves nothing in the rail; the overview carries the reason.
+        # A status that bars viewing closes every content section, and the overview carries the reason.
+        # The Manage sections the classic manage page keeps for the people it names stay in the rail
+        # (the matrix above reads them from the context; the journey below pins them independently).
         reason = PUBLIC_INACTIVE_REASON if status == "inactive" else PUBLIC_STATUS_UNKNOWN_REASON
         expect(ui.page.get_by_text(reason, exact=False).first).to_be_visible()
+
+
+# What a status that bars viewing leaves in the rail, by role, written out here rather than read from the
+# fixture's context: the owner and admins keep every Manage section, a document manager keeps Statistics,
+# and a reader keeps nothing. Content sections stay closed for everyone.
+_KEPT_WHERE_VIEWING_IS_BARRED = {
+    "Owner": ("Members", "Settings", "Activity", "Statistics"),
+    "Admin": ("Members", "Settings", "Activity", "Statistics"),
+    "DocumentManager": ("Statistics",),
+    "User": (),
+}
+
+
+@pytest.mark.parametrize("width,height", [(1440, 900), (390, 844)], ids=["desktop", "mobile"])
+@pytest.mark.parametrize("raw,coerced", [("inactive", "inactive"), ("frozen", "unknown")])
+@pytest.mark.parametrize("role", _ROLES)
+def test_jp_a_status_that_bars_viewing_keeps_the_managers_manage_sections(
+    public_journeys_ui, role, raw, coerced, width, height,
+):
+    ui = public_journeys_ui
+    ui.set_matrix("pub-a", role=role, status=raw)
+    ui.open("/public/pub-a", width=width, height=height)
+    expect(ui.page.get_by_text(f"Status: {PUBLIC_STATUS_LABELS[coerced]}", exact=True)).to_be_visible()
+    nav = open_rail(ui)
+    kept = _KEPT_WHERE_VIEWING_IS_BARRED[role]
+    for label in ("Members", "Settings", "Activity", "Statistics"):
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(1 if label in kept else 0)
+    for label in ("Documents", "Tags", "Prompts", "File sources", "Identities"):
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(0)
+    reason = PUBLIC_INACTIVE_REASON if coerced == "inactive" else PUBLIC_STATUS_UNKNOWN_REASON
+    expect(ui.page.get_by_text(reason, exact=False).first).to_be_visible()
+    if role in ("Owner", "Admin"):
+        # The kept Members section opens and says why adding is withheld; no content section is reached.
+        nav.get_by_role("link", name="Members", exact=True).click()
+        expect(ui.page.get_by_role("heading", name="Members", exact=True)).to_be_visible()
+        expect(ui.page.get_by_test_id("members-add-blocked")).to_be_visible()
+        assert not [entry for entry in ui.requests if "/documents" in entry.path or "/prompts" in entry.path]
 
 
 def test_jp_file_sync_gates_the_connection_sections(public_journeys_ui):
@@ -323,13 +375,15 @@ def test_jp_settings_activation_makes_the_surface_available(public_journeys_ui):
     expect(ui.page.get_by_role("combobox", name="Public Workspace", exact=True)).to_be_visible()
 
 
-def test_jp_classic_handoff_carries_the_public_workspace(public_journeys_ui):
+def test_jp_documents_header_offers_no_classic_handoff(public_journeys_ui):
     ui = public_journeys_ui
     ui.open("/public/pub-a/documents")
-    # The Documents header's hand-off is "Classic tools", named for the legacy document upgrade (M11 2.4).
-    ui.page.get_by_role("button", name="Open classic tools to upgrade legacy public workspace documents", exact=True).click()
-    expect(ui.page).to_have_url(f"{ORIGIN}/public_workspaces")
-    assert ("/public_workspaces", "pub-a") in ui.classic_visits
+    # The legacy document upgrade is native (ui_tests/test_v2_legacy_document_upgrade.py), so the
+    # Documents header no longer carries a "Classic tools" hand-off to the classic page.
+    expect(ui.page.get_by_role("searchbox", name="Search documents. Press Enter to search immediately.", exact=True)).to_be_visible()
+    expect(ui.page.get_by_role("button", name="Open classic tools to upgrade legacy public workspace documents", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_text("Classic tools", exact=True)).to_have_count(0)
+    assert not ui.classic_visits, "Public documents must never fall through to a classic page."
 
 
 def test_jp_picker_moves_between_public_workspaces(public_journeys_ui):

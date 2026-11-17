@@ -1,8 +1,10 @@
 # test_public_membership_apis.py
 """
 Functional tests for the immutable-target native public workspace membership APIs.
-Version: 0.261.184
+Version: 0.261.448
 Implemented in: 0.261.179 (requester-side request/cancel added in 0.261.184)
+Status: the member list, requests, removal and an ownership transfer stay open to an owner and an admin
+in every status, and only adding a member and changing a role are withheld: 0.261.448
 
 The real public membership logic module, its route registrar, the pure policy and
 disclosure projectors, and the real ``get_user_role_in_public_workspace`` resolver run
@@ -715,6 +717,90 @@ def test_transfer_to_the_current_owner_writes_nothing(environment):
     assert response.status_code == 200
     assert response.get_json()["changed"] is False
     assert len(environment.cache_reasons) == before
+
+
+# ---------------------------------------------------------------------------
+# Status: what the V2 Members section of a locked, inactive or unrecognized-status workspace relies on
+# (0.261.448). The classic manage page keeps the member list, removal, the requests and an ownership
+# transfer for an owner and an admin whatever the status, and the V2 Members section keeps them for the
+# same callers, so the routes must keep answering them; only adding a member and changing a role need an
+# active or upload-disabled workspace, and the member list's hint must withhold exactly those.
+# ---------------------------------------------------------------------------
+
+# workspace id -> whether its status takes new members and role changes.
+STATUS_WORKSPACES = {"ws-a": True, "locked-ws": False, "inactive-ws": False, "haunted-ws": False}
+WITHHELD_STATUS_WORKSPACES = [workspace_id for workspace_id, takes in STATUS_WORKSPACES.items() if not takes]
+
+
+def status_paths(workspace_id):
+    base = f"/api/public-workspaces/{workspace_id}/membership"
+    return f"{base}/members", f"{base}/requests", f"{base}/owner"
+
+
+@pytest.mark.parametrize("workspace_id", list(STATUS_WORKSPACES))
+@pytest.mark.parametrize("caller", [OWNER, ADMIN, MANAGER])
+def test_a_stored_member_reads_in_every_status_and_the_hint_withholds_what_the_status_refuses(
+    environment, workspace_id, caller,
+):
+    login(environment, caller)
+    members, requests, _owner = status_paths(workspace_id)
+    listed = environment.client.get(members)
+    assert listed.status_code == 200
+    operations = listed.get_json()["membership_management"]["operations"]
+    if caller == MANAGER:
+        # A document manager reads the list but manages nothing, and never reads the requests.
+        assert operations == []
+        refused = environment.client.get(requests)
+        assert refused.status_code == 403
+        assert refused.get_json()["error_code"] == "membership_permission"
+        return
+    expected = ["review_requests", "remove_member"]
+    if STATUS_WORKSPACES[workspace_id]:
+        expected = ["add_member", "review_requests", "change_role", "remove_member"]
+    if caller == OWNER:
+        expected.append("transfer_ownership")
+    assert operations == expected
+    pending = environment.client.get(requests)
+    assert pending.status_code == 200
+    assert [row["userId"] for row in pending.get_json()["requests"]] == [PENDING]
+
+
+@pytest.mark.parametrize("workspace_id", WITHHELD_STATUS_WORKSPACES)
+@pytest.mark.parametrize("caller", [OWNER, ADMIN])
+def test_adding_and_changing_a_role_are_refused_where_the_status_withholds_them(environment, workspace_id, caller):
+    login(environment, caller)
+    members, _requests, _owner = status_paths(workspace_id)
+    before = deepcopy(environment.store[workspace_id])
+    added = environment.client.post(members, json={"userId": OUTSIDER, "role": "Admin"})
+    changed = environment.client.patch(f"{members}/{MANAGER}", json={"role": "Admin"})
+    for response in (added, changed):
+        assert response.status_code == 403
+        assert response.get_json()["error_code"] == "public_status_unavailable"
+    assert environment.store[workspace_id] == before
+
+
+@pytest.mark.parametrize("workspace_id", WITHHELD_STATUS_WORKSPACES)
+@pytest.mark.parametrize("caller", [OWNER, ADMIN])
+def test_removing_members_and_approving_requests_work_in_every_status(environment, workspace_id, caller):
+    login(environment, caller)
+    members, requests, _owner = status_paths(workspace_id)
+    assert environment.client.post(f"{requests}/{PENDING}/approve").status_code == 200
+    assert environment.client.delete(f"{members}/{MANAGER}").status_code == 200
+    stored = environment.store[workspace_id]
+    assert {entry["userId"] for entry in stored["documentManagers"]} == {PENDING}
+    assert not stored["pendingDocumentManagers"]
+
+
+@pytest.mark.parametrize("workspace_id", WITHHELD_STATUS_WORKSPACES)
+def test_rejecting_a_request_and_transferring_ownership_work_in_every_status(environment, workspace_id):
+    _members, requests, owner = status_paths(workspace_id)
+    assert environment.client.post(f"{requests}/{PENDING}/reject").status_code == 200
+    transferred = environment.client.put(owner, json={"userId": ADMIN})
+    assert transferred.status_code == 200
+    assert transferred.get_json()["changed"] is True
+    stored = environment.store[workspace_id]
+    assert stored["owner"]["userId"] == ADMIN
+    assert not stored["pendingDocumentManagers"]
 
 
 # ---------------------------------------------------------------------------

@@ -6,10 +6,13 @@ Group owners and admins can now manage a group's profile, logo, download policy
 and retention in V2, read its recent activity, and chart and export its
 statistics, without leaving for the classic manage page. The three views sit
 with **Members** in the **Manage** part of the group workspace navigation.
-Deleting a group is still done on the classic page, which V2 hands off to from
-a danger zone in Settings.
+From version **0.261.448** the owner also deletes an empty group from a danger
+zone in Settings, natively, and an inactive, locked or unrecognized-status
+group's owner and admins keep all four Manage sections, so V2 no longer hands
+off to classic from the group workspace.
 
-Implemented in version **0.261.165**.
+Implemented in version **0.261.165**. The native delete and the managers'
+access to inactive groups: **0.261.448**.
 
 Dependencies:
 - the native group settings, activity and statistics routes from version
@@ -24,10 +27,16 @@ The server decides, and V2 follows it. The selected-group context lists
 Settings, Activity and Statistics as sections of the **Manage** group.
 
 - **Settings, Activity and Statistics** are open to the group's Owner and Admins
-  while the group can be viewed. Other members see them as locked, with the
-  reason "Only the group owner or an admin can do this."
-- In an **inactive** group, or one whose status isn't recognized, all three are
-  locked with the status's own explanation.
+  in every group status. Other members see them as locked, with the reason
+  "Only the group owner or an admin can do this." (or the status's own
+  explanation when the group can't be viewed).
+- In a **locked**, **inactive** or **unrecognized-status** group the owner and
+  admins still get all three, as on the classic manage page, but the profile
+  and logo are read-only with the status explained: "This group is locked or
+  inactive, so its name, description, color and logo can't be changed.", or the
+  server's own sentence for a status it doesn't recognize. Downloads, retention
+  and the owner's danger zone follow their own rules and are not tied to the
+  status.
 - Which controls work comes from the server's `settings_management` hint, never
   from a guess in the browser. The hint in the context is replaced by the
   fresher one each settings read and save returns, so a control locks as soon
@@ -39,9 +48,10 @@ Settings, Activity and Statistics as sections of the **Manage** group.
     an administrator has turned on group downloads or group retention.
   - A locked control says why.
 
-The header's **Manage group (classic)** button now appears only for an inactive
-group or one whose status isn't recognized, since everything else it offered is
-native.
+The header no longer has a **Manage group (classic)** button for any status:
+there is nothing left that it opened. Before version 0.261.448 it appeared for
+an inactive group or one whose status wasn't recognized, because those groups
+had no native Manage sections.
 
 ## Settings
 
@@ -59,9 +69,47 @@ native.
   limits stays selectable, even after you pick another option, so opening the
   editor never changes it, and only the period you change is sent.
 - **Delete this group:** shown only to the owner. It shows how many documents
-  the group holds, explains that they have to be removed first, and **Delete
-  group (classic)** opens the classic page after a confirmation, once the group
-  is confirmed as the active one.
+  the group holds, says what a delete does and doesn't remove, and holds the
+  **Delete group** button until the group is empty. See *Deleting a group*
+  below.
+
+### Deleting a group
+
+The danger zone deletes the group in V2, with the same
+`DELETE /api/groups/<group_id>` route the classic manage page calls. The route
+removes the group's own record at once and creates no approval request.
+
+1. **Count.** The section reads how many documents the group holds when it
+   opens, and again when you press **Delete group**, as classic does. If the
+   group still holds documents nothing opens: the zone says the group "wasn't
+   deleted because it still holds documents" and to remove them first. If the
+   count can't be read, the group isn't deleted either, and the zone says so.
+2. **Confirm.** For an empty group a confirmation names the group, says every
+   member loses access right away and that this can't be undone, and says the
+   group's conversations, prompts, agents, actions and other saved items are
+   left behind, not deleted with it.
+3. **Count again, then send.** Confirming reads the count once more, because a
+   document can arrive while the confirmation is open and the server doesn't
+   check, and then sends the delete once. While it is in flight the
+   confirmation can't be dismissed or confirmed a second time.
+4. **Leave.** On success V2 reads your groups again, so the picker and your saved
+   active group drop the deleted one, shows "<name> was deleted.", and returns
+   to the group list. If another group is your active group, that group opens.
+5. **If it's refused,** the dialog stays open and shows why, so the same dialog
+   can try again:
+   - a 403 shows the server's words: "Only the owner can delete the group", or
+     "Insufficient permissions (CreateGroups role required)" where the
+     deployment restricts group creation to that role, since the same role gate
+     protects this route;
+   - a 404 means the group is already gone: V2 says so and leaves as it does
+     after a delete;
+   - any other 4xx shows the server's message;
+   - a 5xx or a dropped connection shows "The group couldn't be deleted. Try
+     again.", never a raw server error.
+
+Unsaved profile or retention edits hold the **Delete group** button, with a hint,
+instead of being thrown away. Only the group's own record is removed; an
+administrator's separate group deletion in Control Center is unchanged.
 
 ### Unsaved edits and conflicts
 
@@ -140,19 +188,34 @@ section.
   keeping an earlier settings save; the retention choices; and a bad logo
   image.
 - **The journeys (`test_v2_group_journeys.py`):**
-  - J4 checks the classic button for active, inactive and unknown-status
-    groups;
-  - J8 opens classic from the danger zone, confirming the active group first;
+  - J4 checks that an inactive and an unrecognized-status group bar the content
+    sections but keep the managers' Manage sections, with no classic button;
+  - J8 deletes the group natively while the active group changed elsewhere,
+    without visiting classic or re-activating the deleted group;
+  - J10 reads the Manage sections for every role and status from the context;
   - J9's unsaved-editor sweep includes the Settings editor.
+- **The native delete (`test_v2_group_settings.py`):** the count gate (including
+  a document that arrives while the confirmation is open), the confirmation,
+  every refusal and its retry, a dropped connection, a group already deleted
+  elsewhere, a second click while the delete is in flight, unsaved edits holding
+  the button, and the confirmation at both breakpoints in both themes.
+  `test_v2_group_classic_handoffs.py` pins that no role or status shows a
+  classic button, and that the danger zone never opens classic.
 - **Fixture parity:**
+  - `functional_tests/test_v2_workspace_delete_fixture_parity.py` runs the real
+    delete route bodies, behind the real CreateGroups decorator, beside the
+    browser fixture's answers, and pins that the route checks no status and no
+    documents and creates no approval request;
   - `functional_tests/test_group_settings_fixture_parity.py` holds the browser
     fixture to the real routes, including the refusal texts, the conflict text
     and the statistics window's bounds and messages;
   - `test_group_settings_refusal_text_parity.py` holds the browser's refusal
     texts to the server's;
-  - `test_group_context_fixture_parity.py` and
-    `test_group_settings_context_seam.py` hold the three sections to the policy
-    the routes enforce.
+  - `test_group_context_fixture_parity.py`,
+    `test_v2_group_workspace_context.py` and
+    `test_group_settings_context_seam.py` hold the Manage sections, including
+    the owner's and admins' access in every status, to the policy the routes
+    enforce.
 - **Statistics export:**
   - `functional_tests/test_v2_stats_export_contracts.py` pins the unchanged
     personal export and the group CSV format;
@@ -162,8 +225,12 @@ section.
 
 ## Known limitations
 
-- Deleting a group is still done on the classic page. V2 shows the prerequisite
-  and hands off to classic.
+- The delete route removes only the group's own record and checks neither the
+  group's status nor its documents; the document gate is the page's, as it is
+  on the classic page. A script that calls the route directly can delete a
+  group that still holds documents, as before.
+- The count the gate reads is the group's current documents, the same figure as
+  the Documents section and as classic's own check.
 - An administrator's own tools for managing any group are unchanged and remain
   in Control Center.
 

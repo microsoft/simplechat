@@ -1,15 +1,16 @@
 # public_settings.py
 """
 Closed M10C public workspace Settings, Activity and Statistics HTTP fixtures for the real V2 SPA.
-Version: 0.261.185
+Version: 0.261.448
 Implemented in: 0.261.185
+The owner's DELETE of the workspace is served natively, not trapped: 0.261.448
 
 The fixture serves the native public settings and insights family the V2 Settings, Activity and
 Statistics sections read and write -- `GET /api/public-workspaces/<w>/settings`,
 `PATCH .../settings/profile`, `PUT`/`DELETE .../settings/logo`, `PATCH .../settings/downloads`,
 `PATCH .../settings/retention`, and `GET .../insights/activity|stats|file-count` -- plus the logo image
-`GET /api/public_workspaces/<w>/logo` the previews load and the classic manage page
-`/public_workspaces/<w>` the danger zone hands off to. It models the server's rules rather than a
+`GET /api/public_workspaces/<w>/logo` the previews load and the owner's `DELETE
+/api/public_workspaces/<w>` the danger zone calls. It models the server's rules rather than a
 convenient shape:
 
 - the decision is `public_workspace.public_settings_management`, the port of
@@ -35,10 +36,11 @@ convenient shape:
 
 Only the write conflict (`public_workspace_write_conflict`), a stale revision the page never sent and a
 reviewed 400, which no single state models, are scripted. The classic public settings routes -- the
-workspace PATCH/PUT/DELETE, the classic logo writes, `download-settings`, the classic retention route,
+workspace PATCH/PUT, the classic logo writes, `download-settings`, the classic retention route,
 `/activity`, `/stats`, `/fileCount` and `/promptCount` -- are trapped as unexpected: the native sections
-must never call them. `functional_tests/test_public_settings_fixture_parity.py` holds every shape,
-status, code and message here to the real routes.
+must never call them. The owner's DELETE of the workspace is the one classic route they do call, and
+the fixture answers it as the real route does. `functional_tests/test_public_settings_fixture_parity.py`
+holds every shape, status, code and message here to the real routes.
 """
 
 import ast
@@ -159,6 +161,7 @@ _SETTINGS_ROUTE = re.compile(
     r"^/api/public-workspaces/(?P<ws>[^/]+)/(?P<family>settings|insights)(?:/(?P<rest>[^/]+))?$"
 )
 _LOGO_IMAGE_ROUTE = re.compile(r"^/api/public_workspaces/(?P<ws>[^/]+)/logo$")
+_OWNER_DELETE_ROUTE = re.compile(r"^/api/public_workspaces/(?P<ws>[^/]+)$")
 _CLASSIC_SETTINGS_ROUTE = re.compile(
     r"^/api/public_workspaces/[^/]+/(download-settings|activity|stats|fileCount|promptCount)$"
     r"|^/api/retention-policy/public/[^/]+$"
@@ -276,6 +279,8 @@ class PublicSettingsFixture(PublicWorkspaceFixture):
         self.public_file_count = {}
         self.activity_unavailable = set()
         self.stats_unavailable = set()
+        # The workspaces the owner's DELETE removed, in order, so a test can prove a delete was sent once.
+        self.deleted_workspaces = []
         self.settings_force_changed = set()
         self.settings_force_write_conflict = set()
         self.next_settings_write_error = None
@@ -532,11 +537,15 @@ class PublicSettingsFixture(PublicWorkspaceFixture):
         if logo and method == "GET":
             self._logo_image(route, logo.group("ws"))
             return
+        if method == "DELETE" and _OWNER_DELETE_ROUTE.fullmatch(path):
+            # The one classic route the native sections call: the owner's DELETE of the workspace.
+            self._delete_workspace(route, path.rsplit("/", 1)[-1])
+            return
         if (
             _CLASSIC_SETTINGS_ROUTE.fullmatch(path)
             or (logo and method != "GET")
             or (
-                re.fullmatch(r"/api/public_workspaces/[^/]+", path) and method in ("PATCH", "PUT", "DELETE")
+                re.fullmatch(r"/api/public_workspaces/[^/]+", path) and method in ("PATCH", "PUT")
                 and path != "/api/public_workspaces/setActive"
             )
         ):
@@ -552,6 +561,25 @@ class PublicSettingsFixture(PublicWorkspaceFixture):
             self.expected_http_errors.add((route.request.url, status))
         route.fulfill(status=status, json=payload,
                       headers={"Cache-Control": "no-store", "Content-Type": "application/json"})
+
+    def _delete_workspace(self, route, workspace_id):
+        """`route_backend_public_workspaces.api_delete_public_workspace`: a 404 for a workspace that does
+        not exist and a 403 for anyone but the owner, then the record is deleted at once. The route
+        checks no status, no documents and no prompts, and creates no approval request.
+
+        functional_tests/test_v2_workspace_delete_fixture_parity.py holds these answers to the real route.
+        """
+        context = self.workspaces.get(workspace_id)
+        if context is None:
+            self._json(route, {"error": "Workspace not found"}, 404)
+        elif context["role"] != "Owner":
+            self._json(route, {"error": "Only owner can delete"}, 403)
+        else:
+            self.deleted_workspaces.append(workspace_id)
+            del self.workspaces[workspace_id]
+            if self.active_workspace == workspace_id:
+                self.active_workspace = None
+            self._json(route, {"message": "Deleted"})
 
     def _logo_image(self, route, workspace_id):
         store = self.native_settings.get(workspace_id)

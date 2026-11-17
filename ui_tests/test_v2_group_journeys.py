@@ -1,9 +1,11 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.323
+Version: 0.261.448
 Implemented in: 0.261.161
 The workflow editor is a routed page whose draft freezes the group switcher, as Settings does: 0.261.271
+No journey hands off to classic any more: the group is deleted natively and an inactive group's
+managers keep their Manage sections: 0.261.448
 
 These ride one composite group store (`group_journeys_ui`) that answers the
 directory, membership, prompt, document-collaboration and native-authoring routes
@@ -12,7 +14,7 @@ journeys the release gate names, driving each into the built SPA rather than
 asserting a static inventory: the "active group changed elsewhere" reconciliation,
 a status or role change taking effect mid-session across every section, the selector
 reaching an off-page group, the unsaved-editor guard across every authoring editor,
-the classic round trip, the backend-generated deep links, and the full role x status
+the native delete and a classic-side change reaching V2, the backend-generated deep links, and the full role x status
 x section rail-and-overview matrix read straight from the pinned context. Journeys the
 per-section suites already cover end to end (chat handoffs, the directory-to-member
 flow, the cross-editor conflict) are cited by test name in the coverage table rather
@@ -31,7 +33,7 @@ Coverage table (contract sec 4 / M8_GROUP_PARITY_MATRIX sec 8; every row names i
                                     test_list_search_ignores_case_and_matches_descriptions_like_the_server
   J3  revocation ............... test_j3_membership_revoked_mid_session_clears_documents_and_authoring (here)
   J4  status change ............ test_j4_lock_disables_write_controls_across_sections (here)
-                                  + test_j4_inactive_status_bars_viewing_and_keeps_the_classic_link (here)
+                                  + test_j4_inactive_status_bars_content_but_keeps_the_managers_sections (here)
   J5  role change .............. test_j5_role_demotion_removes_manage_writes_and_manager_sections (here)
                                   + test_j5_demoted_admin_keeps_members_but_loses_its_controls (here)
   J6  chat handoffs ............ documents test_v2_group_documents.py::test_chat_handoff_keeps_source_identity
@@ -47,11 +49,10 @@ Coverage table (contract sec 4 / M8_GROUP_PARITY_MATRIX sec 8; every row names i
                                   workflow  shell::test_legacy_workflow_target_survives_restore_but_not_a_group_switch
                                   off-page  test_v2_group_document_collaboration.py::
                                             test_off_page_deep_link_reads_exact_document_and_never_executes_a_decision
-  J8  classic round trip ....... test_j8_manage_classic_confirms_setactive_before_leaving (here)
-                                  + test_j8_a_classic_side_change_shows_in_v2_after_a_refocus (here)
-                                  documents test_v2_group_classic_handoffs.py::test_documents_section_shows_the_relabelled_classic_link
-                                  shell     shell::test_classic_handoff_reconfirms_the_selected_group
-                                  Settings delete link (sec 8.10) test_j8_manage_classic_confirms_setactive_before_leaving (here)
+  J8  classic surface in step .. test_j8_a_classic_side_change_shows_in_v2_after_a_refocus (here)
+                                  documents (no classic link any more) test_v2_group_classic_handoffs.py::test_documents_section_has_no_classic_tools_link
+                                  Settings delete (native, sec 8.10) test_j8_deleting_a_group_leaves_through_the_bootstrap_and_never_visits_classic (here)
+                                  + test_v2_group_settings.py::test_the_owner_deletes_an_empty_group_and_returns_to_the_list
   J9  unsaved-editor guard ..... test_j9_unsaved_editor_guards_every_authoring_section (here, 8-editor sweep)
                                   + shell::test_group_delegation_editing_and_navigation_keep_the_correct_scope
                                   Settings editor test_j9_unsaved_editor_guards_every_authoring_section[settings] (here)
@@ -96,8 +97,10 @@ SECTION_LABELS = {
     "documents": "Documents", "tags": "Tags", "sync": "File sources",
     "prompts": "Prompts", "agents": "Agents", "actions": "Actions",
     "workflows": "Workflows", "identities": "Identities", "endpoints": "Endpoints",
-    "members": "Members",
+    "members": "Members", "settings": "Settings", "activity": "Activity", "statistics": "Statistics",
 }
+# The group's Manage sections, which an owner or admin keeps in a locked, inactive or unknown group.
+MANAGE_LABELS = ("Members", "Settings", "Activity", "Statistics")
 
 # The header's friendly role and status strings, mirrored from lib/groupWorkspaceNavigation.ts
 # (GROUP_ROLE_LABELS / GROUP_STATUS_LABELS). A raw "DocumentManager" or "locked" would leak
@@ -113,10 +116,16 @@ STATUS_LABELS = {
 }
 
 
-def section(page, label):
+def open_rail(page):
+    # At a phone width the rail sits in a drawer that a button opens, and a closed drawer is not
+    # in the accessibility tree; at wider widths there is no button and the rail is always shown.
     opener = page.get_by_role("button", name="Workspace sections", exact=True)
     if opener.is_visible():
         opener.click()
+
+
+def section(page, label):
+    open_rail(page)
     page.get_by_role("navigation", name="Workspace sections", exact=True).get_by_role(
         "link", name=label, exact=True).click()
 
@@ -331,30 +340,38 @@ def test_j4_lock_disables_write_controls_across_sections(group_journeys_ui):
             expect(ui.page.get_by_role("button", name=control, exact=True)).to_have_count(0)
 
 
-def test_j4_inactive_status_bars_viewing_and_keeps_the_classic_link(group_journeys_ui):
+def test_j4_inactive_status_bars_content_but_keeps_the_managers_sections(group_journeys_ui):
     ui = group_journeys_ui
     ui.open("/groups/group-a")
     expect(ui.page.get_by_text("Status: Active", exact=True)).to_be_visible()
-    # An active group no longer shows the header's classic escape hatch: sec 8.9 restricts it to the
-    # barred statuses, where the native sections are unavailable. In an active group the only classic
-    # link lives in the Settings danger zone (see test_j8_manage_classic_confirms_setactive_before_leaving).
-    expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_have_count(0)
+    # No status shows a classic escape hatch in the header: every Manage section is native.
+    classic = ui.page.get_by_role("button", name="Manage group (classic)", exact=True)
+    expect(classic).to_have_count(0)
     ui.set_status("group-a", "inactive")
     refocus(ui)
     expect(ui.page.get_by_text("Status: Inactive", exact=True)).to_be_visible()
     expect(ui.page.get_by_text(GROUP_INACTIVE_REASON, exact=False).first).to_be_visible()
-    # The rail no longer offers the sections a viewable status would.
+    # The rail no longer offers the content sections a viewable status would, but the owner keeps
+    # the Manage sections, as classic's manage page does for a locked or inactive group.
     nav = ui.page.get_by_role("navigation", name="Workspace sections", exact=True)
     expect(nav.get_by_role("link", name="Documents", exact=True)).to_have_count(0)
-    # The owner still has the classic escape hatch in the barred status.
-    expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_be_visible()
-    # The unknown status is barred the same way, with its own reason, and nothing else covers it here.
+    for label in MANAGE_LABELS:
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(1)
+    expect(classic).to_have_count(0)
+    # The unknown status is the same, with its own reason; nothing but the Manage sections remains.
     ui.set_status("group-a", "unknown")
     refocus(ui)
     expect(ui.page.get_by_text("Status: Status unavailable", exact=True)).to_be_visible()
     expect(ui.page.get_by_text(GROUP_STATUS_UNKNOWN_REASON, exact=False).first).to_be_visible()
     expect(nav.get_by_role("link", name="Documents", exact=True)).to_have_count(0)
-    expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_be_visible()
+    for label in MANAGE_LABELS:
+        expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(1)
+    expect(classic).to_have_count(0)
+    # A manager of an inactive group opens Members from the rail, without any hand-off.
+    section(ui.page, "Members")
+    expect(ui.page.get_by_role("heading", name="Members", exact=True)).to_be_visible()
+    expect(ui.page.get_by_test_id("members-add-blocked")).to_be_visible()
+    assert not ui.classic_visits
 
 
 # --- J5: role change mid-session -----------------------------------------------------------------
@@ -430,27 +447,31 @@ def test_j7_backend_group_links_open_the_named_section(group_journeys_ui, sectio
     expect(ui.page.get_by_text("Opening the requested view...", exact=True)).to_have_count(0)
 
 
-# --- J8: the classic round trip ------------------------------------------------------------------
+# --- J8: the classic surface stays in step; the delete is native ----------------------------------
 
-def test_j8_manage_classic_confirms_setactive_before_leaving(group_journeys_ui):
+def test_j8_deleting_a_group_leaves_through_the_bootstrap_and_never_visits_classic(group_journeys_ui):
     ui = group_journeys_ui
+    ui.group_file_count["group-a"] = 0
     ui.open("/groups/group-a")
     expect(ui.page.get_by_text("Role: Owner", exact=True)).to_be_visible()
-    # The classic escape hatch for an active group lives in the Settings danger zone now, not the header.
+    # The delete lives in the Settings danger zone, native, as classic's manage page does it.
     section(ui.page, "Settings")
     expect(ui.page.get_by_test_id("group-settings-danger")).to_be_visible()
-    # Another tab moved the active group to B while this page stayed on A.
+    # Another tab moved the active group to B while this page stayed on A. The delete names A in its
+    # own path, so it never depends on, or re-activates, whichever group happens to be active.
     ui.active_group = "group-b"
-    ui.page.get_by_role("button", name="Delete group (classic)", exact=True).click()
-    # The danger-zone confirm explains the classic hand-off before leaving.
-    dialog = ui.page.get_by_role("dialog")
-    expect(dialog.get_by_role("heading", name="Delete this group in classic?", exact=True)).to_be_visible()
-    dialog.get_by_role("button", name="Open classic", exact=True).click()
-    # The classic hand-off re-activates A before it navigates: the setActive write names A, and the
-    # classic page is entered with A active, never B.
-    expect(ui.page).to_have_url(f"{ORIGIN}/groups/group-a")
-    assert [entry.body.get("groupId") for entry in setactive_writes(ui)] == ["group-a"]
-    assert ui.classic_visits[-1] == ("/groups/group-a", "group-a")
+    ui.page.get_by_test_id("group-settings-delete").click()
+    dialog = ui.page.get_by_role("dialog", name="Delete this group?", exact=True)
+    dialog.get_by_role("button", name="Delete group", exact=True).click()
+    # The groups are read again, A is gone from the account, and the user lands on the group that is
+    # active now, B, rather than on a deleted group or a classic page.
+    expect(ui.page).to_have_url(f"{ORIGIN}/v2/groups/group-b")
+    expect(ui.page.get_by_text("Role: Member", exact=True)).to_be_visible()
+    assert ui.deleted_groups == ["group-a"]
+    assert not [entry for entry in ui.writes if entry.path == "/api/groups/setActive" and entry.body.get("groupId") == "group-a"]
+    assert not ui.classic_visits
+    picker = ui.page.get_by_role("combobox", name="Group workspace", exact=True)
+    expect(picker.get_by_role("option", name="Research group", exact=True)).to_have_count(0)
 
 
 def test_j8_a_classic_side_change_shows_in_v2_after_a_refocus(group_journeys_ui):
@@ -624,6 +645,7 @@ def test_j10_rail_matches_the_pinned_context_matrix(group_journeys_ui, role, raw
     # The header names the role and the status exactly as the pinned context does.
     expect(ui.page.get_by_text(f"Role: {ROLE_LABELS[role]}", exact=True)).to_be_visible()
     expect(ui.page.get_by_text(f"Status: {STATUS_LABELS[status]}", exact=True)).to_be_visible()
+    open_rail(ui.page)
     nav = ui.page.get_by_role("navigation", name="Workspace sections", exact=True)
     # Every rail section is present or absent exactly as the context says; a disabled section is
     # never a live link, so nothing offers a control the context withholds.
@@ -631,9 +653,16 @@ def test_j10_rail_matches_the_pinned_context_matrix(group_journeys_ui, role, raw
         expected = 1 if rail_enabled(context, section_id) else 0
         expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(expected)
     if status in ("inactive", "unknown"):
-        # A status that bars viewing leaves nothing in the rail; the overview carries the reason.
+        # A status that bars viewing leaves only a manager's own sections in the rail (the loop above
+        # read each one from the context); the overview still carries the reason for the rest.
         reason = GROUP_INACTIVE_REASON if status == "inactive" else GROUP_STATUS_UNKNOWN_REASON
         expect(ui.page.get_by_text(reason, exact=False).first).to_be_visible()
+        # The rule this change introduced, stated independently of the fixture's own arithmetic: an
+        # owner or admin keeps every Manage section, everyone else keeps none of them.
+        for label in MANAGE_LABELS:
+            expect(nav.get_by_role("link", name=label, exact=True)).to_have_count(
+                1 if role in ("Owner", "Admin") else 0)
+        expect(ui.page.get_by_role("button", name="Manage group (classic)", exact=True)).to_have_count(0)
 
 
 def test_j10_overview_lists_locked_sections_with_their_reason(group_journeys_ui):

@@ -267,15 +267,23 @@ roles allowed to manage group workflows. From version
 Sync finds changes, or to sync first before each run. From **0.261.144**,
 workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
 From version **0.261.153** every section of the group workspace is native, so
-none of them sends you to the classic page. **Classic tools**, in Documents,
-still opens the classic group workspace for its one remaining tool: upgrading
-legacy documents. It confirms the selected group before navigating.
+none of them sends you to the classic page. From version **0.261.448**, the
+legacy-document upgrade is native as well. When some of the group's documents
+were uploaded with an older version, owners, admins and document managers of an
+active group see an **Update older group documents** notice at the top of
+Documents. **Update now** updates them and reports the result, naming any
+document it couldn't update, and **Maybe later** hides the notice until you
+open Documents again. The upgrade clears the title, authors, keywords and
+abstract of the documents it updates, so extract or edit their metadata
+afterwards. The **Classic tools** button is gone.
 
 From version **0.261.165**, a group's settings, activity and statistics are
-native too (see **Settings, activity and statistics** below), so **Manage group
-(classic)** only appears in an inactive group, or one whose status isn't
-recognized, where it's still how an administrator manages members. The classic
-manage page itself keeps working. From version **0.261.151**, membership
+native too (see **Settings, activity and statistics** below). From version
+**0.261.448** the last exits to classic are gone: **Manage group (classic)** no
+longer appears for any status, because the owner and admins of a locked,
+inactive or unrecognized-status group keep Members, Settings, Activity and
+Statistics in V2, and **Delete group** deletes natively. The classic manage page
+itself keeps working. From version **0.261.151**, membership
 changes made there no longer overwrite each other. For example, two admins
 approving and removing members at the same time both take effect. Approving
 someone who is already a member no longer adds them twice, and a bulk removal
@@ -299,8 +307,8 @@ group and explains the difference. **Make this group active** selects it again.
 After an uncertain switch, use **Refresh workspace selection** to reconcile the
 server's selection without repeating the change.
 
-Public workspace management, beyond its documents, still uses the classic
-interface.
+Public workspaces are native in V2 too; see
+[Use public workspaces]({{ '/guides/use-public-workspaces/' | relative_url }}).
 
 ### Manage members
 
@@ -314,14 +322,20 @@ email, and filter by role.
   member's result is shown, and the ones that failed stay selected.
 - The owner can **Make owner** another member, which makes you a member.
 - Anyone except the owner can **Leave this group**.
-- Members isn't available in an inactive group. Use **Manage group (classic)**
-  there.
+- In a locked, inactive or unrecognized-status group, owners and admins still
+  see Members, but **Add member** and **Import CSV** are off and a note says why
+  (from version **0.261.448**). Changing roles, removing members and reviewing
+  requests still work. Other members are told Members isn't available in an
+  inactive group.
 
 ### Settings, activity and statistics
 
 From version **0.261.165**, **Settings**, **Activity** and **Statistics** sit
 under **Manage** beside Members. They're for the group's owner and admins; other
-members see them locked, with the reason.
+members see them locked, with the reason. From version **0.261.448** they stay
+available to the owner and admins when the group is locked, inactive or has an
+unrecognized status, with the name, description, colour and logo read-only and
+the reason shown.
 
 - **Settings:**
   - the owner edits the group's name, description and colour, with a preview
@@ -335,8 +349,14 @@ members see them locked, with the reason.
   **Discard changes** puts them back to the saved settings. If someone else
   changed the settings meanwhile, your edits are kept on top of theirs.
 - **Delete this group** is at the bottom of Settings, for the owner. It shows
-  how many documents the group still holds, and **Delete group (classic)**
-  opens the classic page to finish, after asking.
+  how many documents the group still holds. While it holds any, the group can't
+  be deleted, so remove them first. When it holds none, **Delete group** asks
+  you to confirm, says that every member loses access right away and that the
+  group's conversations, prompts, agents, actions and other saved items are left
+  behind rather than deleted with it, and then deletes the group and takes you
+  back to your groups (from version **0.261.448**; before, it opened the classic
+  page). Save or discard any unsaved settings edits first. If the delete is
+  refused, the dialog says why and you can try again.
 - **Activity** lists the group's recent events: what happened, who did it and
   when. Choose to show 10, 20 or 50.
 - **Statistics** charts the group's documents, token usage and storage over 7,

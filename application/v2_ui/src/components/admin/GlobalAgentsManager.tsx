@@ -3,16 +3,19 @@
 //
 // The agents themselves are edited in the same V2 agent editor workspaces use, at
 // /admin/agents/<id>. This list carries what the classic admin table offered around it:
-// creating one (from scratch or an approved template), enabling or disabling one, making
-// one the default, and deleting one. Each change saves on its own rather than through the
-// settings save bar, because these are records, not settings.
+// creating one (from scratch, from an approved template, or as a copy of another), enabling or
+// disabling one, making one the default, and deleting one. Each change except a copy saves on
+// its own rather than through the settings save bar, because these are records, not settings.
+// A copy opens in the editor as an unsaved draft, so nothing is stored until it is saved there.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, Loader2, Pencil, Plus, Power, RefreshCw, Sparkles, Star, Trash2 } from 'lucide-react';
+import { AlertCircle, Copy, Loader2, Pencil, Plus, Power, RefreshCw, Sparkles, Star, Trash2 } from 'lucide-react';
 import { api } from '../../lib/apiClient';
+import { describeDuplicate, duplicateAgentDraft } from '../../lib/adminDuplicate';
 import { fetchGlobalAgentCatalog, GLOBAL_AGENT_WORKBENCH } from '../../lib/agentWorkbench';
-import { AGENT_TYPE_LABELS } from '../../lib/workspaceAgentAuthoring';
+import { AGENT_TYPE_LABELS, newAgentDraft } from '../../lib/workspaceAgentAuthoring';
+import { seedDuplicateEditorDraft } from '../../lib/workspaceEditorDrafts';
 import { GLOBAL_AGENTS_BASE_PATH, type AgentConfiguration } from '../../lib/workspaceAuthoring';
 import { toast } from '../../stores/toastStore';
 import { GlassButton } from '../ui/primitives';
@@ -115,6 +118,31 @@ export function GlobalAgentsManager({ help, templatesEnabled }: { help?: string;
         return `${agentLabel(agent)} deleted.`;
     });
 
+    /**
+     * Open the editor on a copy of an agent.
+     *
+     * The copy is built from a fresh read of the agent rather than from the list row, because
+     * only the editor read says which fields hold stored credentials, and those are left out.
+     * It is handed to the editor as an unsaved draft; saving it there creates the agent.
+     */
+    const duplicate = async (agent: AgentConfiguration) => {
+        setBusy(`duplicate:${agent.id}`);
+        setError(null);
+        try {
+            const resource = await GLOBAL_AGENT_WORKBENCH.fetchEditor(agent.id, 'global');
+            const copy = duplicateAgentDraft(resource, (agents ?? []).map((item) => item.name));
+            if (!seedDuplicateEditorDraft('agents', copy.draft, newAgentDraft(), GLOBAL_AGENT_WORKBENCH.draftScope)) {
+                throw new Error('You have an unsaved new agent. Finish or discard it from New agent, then duplicate again.');
+            }
+            toast.info(describeDuplicate(agentLabel(agent), copy.omittedSecrets));
+            navigate(`${GLOBAL_AGENTS_BASE_PATH}/new`);
+        } catch (cause) {
+            setError(failure(cause, 'The agent could not be duplicated.'));
+        } finally {
+            setBusy(null);
+        }
+    };
+
     return (
         <div className="min-w-0 space-y-3 py-3" data-testid="global-agents-manager">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -205,6 +233,9 @@ export function GlobalAgentsManager({ help, templatesEnabled }: { help?: string;
                                     <RowAction icon={<Power size={15} />} label={`${enabled ? 'Disable' : 'Enable'} ${label}`}
                                         busy={busy === `enabled:${agent.id}`} disabled={busy !== null}
                                         onClick={() => void toggleEnabled(agent)} />
+                                    <RowAction icon={<Copy size={15} />} label={`Duplicate ${label}`}
+                                        busy={busy === `duplicate:${agent.id}`} disabled={busy !== null}
+                                        onClick={() => void duplicate(agent)} />
                                     <RowAction icon={<Pencil size={15} />} label={`Edit ${label}`} onClick={() => navigate(editorPath)} />
                                     {!isDefault ? (
                                         <ConfirmAction icon={<Trash2 size={15} />} label={`Delete ${label}`} confirmLabel="Delete agent"

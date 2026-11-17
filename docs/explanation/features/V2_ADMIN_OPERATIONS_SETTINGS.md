@@ -24,7 +24,7 @@ renderer (`AdminSettingsPage.tsx`, `SettingsSection.tsx`, `fields.tsx`).
 
 | Section | V2 before | V2 after |
 | --- | --- | --- |
-| Automatic Data Refresh | Not rendered | Switch, time picker, timezone with **Use my timezone**, next and last refresh in both zones, link to the Control Center |
+| Automatic Data Refresh | Not rendered | Switch, time picker, timezone with **Use my timezone**, next and last refresh in both zones, link to the V2 Control Center, which has the **Refresh data** action (see [V2 Control Center refresh](V2_CONTROL_CENTER_REFRESH.md)) |
 | Control Center Access | Two switches | Two switches, an access table that follows unsaved edits, copyable role values, **Role setup guide** |
 | Application Insights | One switch | Global logging switch, connection status, running state against the saved value, and the mixed-source telemetry switch declared beside them |
 | Debug Logging | Switch plus a raw "Dai debug" switch | Switch, nested timer with per-unit limits, turnoff time in the reader's zone, Document Access Index diagnostics with a link to DAI Metrics |
@@ -67,7 +67,7 @@ both logs and logs `[LOGGING_TIMERS]` when it turns one off.
 | `watches`, `runtime_flag`, `runtime_requires` | Compare a saved switch with how the running process started |
 | `timer_keys` | Bind a turnoff readout to one entry of `LOGGING_TIMERS` |
 | `endpoints` | Addresses a section exposes, with access level and live-state gate |
-| `related_section` | Point a setting at the section its effect appears in; `classic_only` links the classic page |
+| `related_section` | Point a setting at the section its effect appears in. The link moves within the page for any section V2 draws; `classic_only` forces the classic page and no field sets it now (see [V2 admin section links](V2_ADMIN_SECTION_LINKS.md)) |
 | `ADMIN_SECTION_GUIDES` | Which section header offers which in-app guide, and its documentation anchor |
 
 Five derived keys are added to `NON_PATCHABLE_KEYS`:
@@ -149,12 +149,16 @@ Open **Admin Settings** in V2 and choose **Operations**. Administrator documenta
 
 ## Known limitations
 
-- The Document Access Index diagnostics are drawn only by the classic Scale > Cosmos card,
-  so the V2 switch links there.
+- The Document Access Index diagnostics switch links to the DAI Metrics card within Admin
+  Settings. Until **0.261.448** it was marked `classic_only` on the belief that only the
+  classic card drew the diagnostics; the V2 card draws the manual backfill and reset controls
+  and the shadow validation figures too.
 - Application Insights global logging and Swagger still need an App Service restart; V2
   reports whether one is pending but cannot perform it.
 - A manual Control Center refresh updates the last-refreshed time only. The next scheduled
-  run moves when the schedule is saved or a scheduled refresh completes.
+  run moves when the schedule is saved or a scheduled refresh completes. The readout in Admin
+  Settings reads the time when the page loads, so it shows a refresh made in the Control
+  Center after the page is next opened.
 - The timezone suggestions come from the browser. The server validates the saved name
   against its own `zoneinfo` data.
 - The classic page's own modals are unchanged and still carry the statements corrected

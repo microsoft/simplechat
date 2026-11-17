@@ -112,7 +112,7 @@ card, so the four sub-links only scrolled within it.
 
 | File | Change |
 | --- | --- |
-| `application/single_app/admin_settings_fields.py` | One `file-sync-section`, nested workspace types, anchored Access groups, Source types group; `anchor` documented. |
+| `application/single_app/admin_settings_fields.py` | One `file-sync-section`, nested workspace types, anchored Access groups, Source types group; `anchor` documented. In 0.261.448 it also declares the `file-sync-target-manager` component (see [V2 Admin File Sync Targets](V2_ADMIN_FILE_SYNC_TARGETS.md)). |
 | `application/single_app/admin_settings_nav.py` | File Sync tab lists one section. |
 | `application/single_app/admin_app_roles.py` | PersonalFileSyncUser links to `file-sync-section`. |
 | `application/v2_ui/src/lib/adminFields.ts` | `anchor` on `AdminFieldGroup` and `RenderedFieldGroup`. |
@@ -155,4 +155,7 @@ See [Knowledge settings](../../admin/knowledge.md#file-sync-section).
 - An anchor must be an ungrouped switch. A panel cannot hang beneath a switch that is
   itself inside a collapsible group.
 - The summary is specific to a lone choice list; other groups still report a count.
-- The classic page's administrator-managed source search has no V2 equivalent yet.
+- The classic page's administrator-managed source search, **Manage sources for someone else**,
+  was added to the card in **0.261.448**; see
+  [V2 Admin File Sync Targets](V2_ADMIN_FILE_SYNC_TARGETS.md) for how it works and what the
+  server still refuses.

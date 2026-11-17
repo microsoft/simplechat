@@ -12,6 +12,12 @@ The V2 Control Center is a separate administration pane for users assigned Contr
 
 The section rail is filtered to your permissions. The Dashboard is available to dashboard readers and Control Center administrators. Users, Groups and Public Workspaces have native V2 management.
 
+## Refresh the stored figures
+
+The Users and Groups lists, and the Dashboard figures that come from them, read stored snapshots of each person's and group's activity. Control Center administrators see a strip under the page title that says when those figures were **last refreshed** and when the **automatic refresh** runs next. It runs daily by itself; choose **Refresh data** to run it now, for example when Users shows "Not refreshed" on a deployment whose schedule has not fired yet.
+
+While it runs the button reads "Refreshing data…". When it finishes the strip says how many users and groups were updated and reloads the section you are on. If some could not be refreshed the message is a warning and stays on screen, because those figures are as old as before; a failure shows the server's reason and reloads nothing. The refresh covers users and groups. Public workspace figures are read from stored records, so **Refresh workspaces** there rereads them rather than recalculating. Dashboard readers do not see the strip. The daily schedule is set under **Admin Settings → Operations → Automatic Data Refresh**.
+
 ## Manage users
 
 Open **Users** to find accounts by email or display name, filter by access, upload permission, recent login, or document ownership, and sort usage columns. Accounts without a recorded value for the sort column, such as users whose metrics have not been refreshed yet, are listed after the others in either direction. Filters and sorting are reflected in the URL, so a filtered view can be bookmarked or opened from a Dashboard drill-through. The list reports when its cached usage metrics were calculated and how many accounts on the current page have not yet received a metrics refresh.

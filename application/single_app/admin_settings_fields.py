@@ -104,9 +104,10 @@ Beyond a field's type, six optional descriptors shape how a section reads:
     the opposite direction: it names a prerequisite a field waits on. The page
     says where the section sits and offers a jump to it, or a link to the
     classic page when ``"classic_only": True`` says only that page draws what
-    the setting changes. The Document Access Index diagnostics switch points at
-    DAI Metrics; the Latest Features destination points at the User-Facing
-    Latest Features choices it publishes.
+    the setting changes (no declaration needs that today). The Document Access
+    Index diagnostics switch points at DAI Metrics, whose card draws the
+    diagnostics itself; the Latest Features destination points at the
+    User-Facing Latest Features choices it publishes.
 
 The Appearance, Agents & Actions, Chat, Data Lifecycle, Governance, Help, Knowledge,
 Operations, Scale, Workflow, Workspaces and Security groups are described in full.
@@ -3753,6 +3754,21 @@ ADMIN_SETTINGS_FIELDS = {
                 },
             ],
             "group": {"id": "source-types", "label": "Source types", "variant": "behavior"},
+            "depends_on": {"key": "enable_file_sync", "equals": True},
+        },
+        {
+            # Sources for a user, a group or a public workspace that someone else owns. It
+            # reads and writes through /api/admin/file-sync, never the settings draft, so each
+            # change saves on its own, and it follows the saved switches because the server
+            # refuses a kind of workspace that is off.
+            "type": "component",
+            "component": "file-sync-target-manager",
+            "label": "Manage sources for someone else",
+            "help": (
+                "Set up, change or remove the file sources of a user, a group or a public "
+                "workspace on their behalf. Search by name or paste an ID. Each kind of "
+                "workspace follows its switch above, as saved."
+            ),
             "depends_on": {"key": "enable_file_sync", "equals": True},
         },
     ],
@@ -8606,9 +8622,6 @@ ADMIN_SETTINGS_FIELDS = {
             "related_section": {
                 "section_id": "document-access-index-section",
                 "label": "DAI Metrics",
-                # The diagnostics this reveals are drawn by the server-rendered pane
-                # only; V2's card for the section holds its switches, not them.
-                "classic_only": True,
             },
         },
     ],

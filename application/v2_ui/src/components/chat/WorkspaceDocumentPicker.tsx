@@ -10,6 +10,7 @@ import type { ContextCandidate } from '../../lib/contextMentions';
 import { documentDisplayName } from '../../lib/documentExplorer';
 import { isScreeningAvailable } from '../../lib/contentScreening';
 import { ScreeningStatusBadge } from '../screening/ScreeningStatusBadge';
+import { ScopeLockControl } from './ScopeLockControl';
 
 export function WorkspaceDocumentPicker({
     searchAll, selectedKeys, onToggleSearchAll, onToggle, onClear, onClose, conversationId,
@@ -186,6 +187,8 @@ export function WorkspaceDocumentPicker({
                 </div>
                 <button type="button" aria-label="Close document sources" onClick={onClose} className="rounded-lg p-2 text-text-2 hover:bg-surface-2"><X size={16} /></button>
             </div>
+            {/* The picker closes when the dialog it opens is used, so the dialog is hosted elsewhere. */}
+            <ScopeLockControl variant="notice" onActivate={onClose} />
             <div className="shrink-0 space-y-3 border-b border-edge p-3">
                 <div className="flex flex-wrap gap-2" aria-label="Document search mode">
                     <button type="button" aria-pressed={searchAll} onClick={() => { if (!searchAll) onToggleSearchAll?.(); }}

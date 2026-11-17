@@ -591,6 +591,10 @@ TS_SUPPRESSION_ADVICE = f"or add '{SUPPRESSION_TOKEN}' with a justification."
 # navigation and strict (script/iframe) contexts. Re-review before adding names.
 TS_SAME_ORIGIN_URL_BUILDERS = frozenset({
     'actionDetailPath',
+    # The Workflow Activity page's own paths (lib/workflowActivity.ts, workflowActivitySnapshot.ts):
+    # '/workflow-activity' over ids that passed isWorkflowActivityIdentifier, written with
+    # URLSearchParams, and workflowRunHref's run path for the workspace the page was opened for.
+    'activityRunHref',
     'artifactDownloadPath',
     'chatHrefForAgent',
     'chatHrefForConversation',
@@ -599,6 +603,10 @@ TS_SAME_ORIGIN_URL_BUILDERS = frozenset({
     'chatHrefForPendingAction',
     'chatHrefForPrompt',
     'chatUploadTabularDownloadUrl',
+    # classicBackHref and withClassicEscape (lib/classicLinks.ts): a classic path built from the page
+    # registry, or the classic chat page, which withClassicEscape has checked is a same-site path
+    # before it adds the ui=classic pair.
+    'classicBackHref',
     'classicChatHref',
     'enhancedCitationImageUrl',
     'enhancedCitationVisioUrl',
@@ -614,8 +622,11 @@ TS_SAME_ORIGIN_URL_BUILDERS = frozenset({
     'tabularWorkspaceDownloadUrl',
     # Prefixes the build-time Vite BASE_URL; callers pass VENDOR_PATHS constants.
     'vendorUrl',
+    'withClassicEscape',
     'workflowEditorHref',
     'workflowListHref',
+    'workflowActivityHref',
+    'workflowConversationActivityHref',
     'workflowProposalLink',
     'workflowRunHref',
     'workspaceBasePath',

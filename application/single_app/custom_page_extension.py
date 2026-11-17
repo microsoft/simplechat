@@ -20,6 +20,13 @@ class CustomPageExtension:
 
     metadata: Dict[str, Any] = {}
 
+    # Opt in to being shown inside the V2 interface. V2 embeds a chrome-less copy of the page in
+    # a frame so its navigation rail stays visible. The host asks for that copy with
+    # ``context["embed"] is True``, and the extension must then render a page without the
+    # classic navigation (``{% extends "custom_page_embed_base.html" %}`` does that). An
+    # extension that leaves this False is never asked, and V2 offers "Open in a new tab".
+    supports_embed: bool = False
+
     def __init__(self, metadata_override: Optional[Dict[str, Any]] = None):
         if metadata_override:
             merged_metadata = dict(self.metadata or {})

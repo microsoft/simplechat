@@ -127,6 +127,9 @@ navigation:
         - title: Trigger a workflow
           url: /guides/trigger-a-workflow/
           icon: bi bi-play-btn
+        - title: View workflow activity
+          url: /guides/view-workflow-activity/
+          icon: bi bi-activity
         - title: Ask about workflow results
           url: /guides/ask-about-workflow-results/
           icon: bi bi-chat-square-quote

@@ -158,6 +158,9 @@ class UsersFixture:
             route.fulfill(status=200, content_type="text/csv",
                           headers={"Content-Disposition": 'attachment; filename="control-center-users.csv"'},
                           body="id,email\nuser-123,ada@example.test\n")
+        elif path == "/api/admin/control-center/refresh-status" and request.method == "GET":
+            # The refresh strip every section shows a full Control Center administrator.
+            route.fulfill(json={"last_refresh": None, "auto_refresh_enabled": False})
         else:
             self.unexpected.append(f"{request.method} {path}")
             route.fulfill(status=404, json={"error": "Unexpected fixture request."})

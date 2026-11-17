@@ -240,7 +240,7 @@ access projection problems. The index's background maintenance runs either way. 
 | Turn off automatically | Switches debug logging off once the duration below has passed, counted from the save that starts the timer. | Off | `debug_logging_timer_enabled` |
 | Duration | How long debug logging stays on. | 1 | `debug_timer_value`; limited by the unit |
 | Time Unit | Minutes, hours, days or weeks. | hours | `debug_timer_unit` |
-| Document Access Index diagnostics | Shows the support-only backfill, checkpoint and shadow validation controls on the classic DAI Metrics card. | Off | `enable_dai_debug`; V2 only |
+| Document Access Index diagnostics | Shows the support-only backfill and checkpoint controls and the shadow validation figures on the DAI Metrics card (Scale > Cosmos). | Off | `enable_dai_debug`; V2 only |
 
 ### Support Log Export {#support-log-export-section}
 

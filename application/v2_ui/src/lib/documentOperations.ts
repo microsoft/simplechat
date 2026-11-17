@@ -5,6 +5,9 @@ import { v2ApiFetch } from './v2SourcePolicy';
 import { isScreeningAvailable } from './contentScreening';
 import { readConversationParam } from './conversationUrl';
 import { documentId, generatedArtifactRestriction, normalizeStringList, supportsExtractionModeChange } from './documentExplorer';
+import {
+    canUpgradeLegacyDocuments, inspectLegacyUpgrade, legacyUpgradePath, type LegacyUpgradeOutcome,
+} from './documentLegacyUpgrade';
 import type { DocumentReadScope } from './documentReadAdapter';
 import {
     bulkDeletePersonalDocuments, bulkTagPersonalDocuments, createPersonalDocumentTag,
@@ -101,6 +104,10 @@ export interface DocumentOperationAdapter {
     createTag: (name: string, color?: string) => Promise<TagMutationOutcome>;
     updateTag: (name: string, changes: { new_name?: string; color?: string }) => Promise<TagMutationOutcome>;
     deleteTag: (name: string) => Promise<TagMutationOutcome>;
+    /** Whether the viewer may bring this workspace's older documents up to date. */
+    canUpgradeLegacy: boolean;
+    /** Backfills this workspace's documents that predate progress tracking. */
+    upgradeLegacy: () => Promise<LegacyUpgradeOutcome>;
 }
 
 /**
@@ -567,6 +574,19 @@ function createOperations(
             const tagName = tagTargetName(name);
             return tagMutation(() => native
                 ? nativeRequest('DELETE', `${base}/tags/${encodeURIComponent(tagName)}`) : deletePersonalDocumentTag(name));
+        },
+        canUpgradeLegacy: canUpgradeLegacyDocuments(supported),
+        upgradeLegacy: async () => {
+            if (!canUpgradeLegacyDocuments(supported)) {
+                throw new Error('Updating older documents is not available for this workspace.');
+            }
+            const path = legacyUpgradePath(scope);
+            // A group or public workspace answers 200, or 207 with the documents it could not update;
+            // the personal route answers only a sentence.
+            const receipt = native
+                ? await nativeRequest('POST', path)
+                : (await requestWithStatus<unknown>(path, { method: 'POST' })).data;
+            return inspectLegacyUpgrade(receipt, scope);
         },
     };
 }

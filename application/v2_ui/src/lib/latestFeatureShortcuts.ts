@@ -5,14 +5,15 @@
 // shortcuts name classic pages: `/chats#chatbox`, `/workspace#documents-tab`,
 // `/profile?tab=stats`. Followed as written, every one of them would drop a V2 reader into the
 // classic interface. Where V2 has rebuilt the page, the shortcut is translated to the V2 route;
-// where it has not -- workflow activity -- the page opens as written, the
-// same choice notificationLinks.ts makes for a notification. Documentation links leave the site
-// and open in a new tab.
+// where it has not, the page opens as written, the same choice notificationLinks.ts makes for
+// a notification. Documentation links leave the site and open in a new tab.
 //
 // Every V2 destination is a constant from the tables below, never assembled from the link, so a
-// router target can only ever be one of these paths relative to the `/v2` base (#1698). Page and
-// external destinations go through `safeLatestFeatureHref`, which refuses anything but a path on
-// this site or an http(s) address.
+// router target can only ever be one of these paths relative to the `/v2` base (#1698). The one
+// exception is workflow activity, whose address carries ids: it is rebuilt from ids that passed the
+// page's own checks (lib/workflowActivity.ts), and the allowlist accepts it only in that exact form.
+// Page and external destinations go through `safeLatestFeatureHref`, which refuses anything but a
+// path on this site or an http(s) address.
 //
 // Classic-only behaviour carried in the link -- `feature_action=` opening a dialog, a fragment
 // scrolling to a control -- has no V2 counterpart and is dropped. The two tutorial launchers are
@@ -22,6 +23,7 @@
 
 import { safeLatestFeatureHref } from './latestFeatures';
 import { SUPPORT_LATEST_FEATURES_PATH, SUPPORT_SEND_FEEDBACK_PATH } from './supportMenu';
+import { buildWorkflowActivityPath, isWorkflowActivityRoute, readWorkflowActivityQuery } from './workflowActivity';
 
 /** A V2 guided tour a shortcut asks the destination page to start. Ids match lib/tours.ts. */
 export type LatestFeatureShortcutTour = 'chat' | 'workspace';
@@ -53,6 +55,7 @@ const GROUPS_PATH = '/groups';
 const PUBLIC_PATH = '/public';
 const PUBLIC_DIRECTORY_PATH = '/public/directory';
 const APPROVALS_PATH = '/approvals';
+const NOTIFICATIONS_PATH = '/notifications';
 
 /** Classic workspace tabs and controls, by fragment, and the V2 section each lives in now. */
 const WORKSPACE_FRAGMENT_SECTIONS: Readonly<Record<string, string>> = {
@@ -87,6 +90,7 @@ const V2_SHORTCUT_PATHS: ReadonlySet<string> = new Set([
     PUBLIC_PATH,
     PUBLIC_DIRECTORY_PATH,
     APPROVALS_PATH,
+    NOTIFICATIONS_PATH,
     SUPPORT_LATEST_FEATURES_PATH,
     SUPPORT_SEND_FEEDBACK_PATH,
     ...Object.values(WORKSPACE_FRAGMENT_SECTIONS),
@@ -127,6 +131,19 @@ function settingsTarget(tab: string): LatestFeatureShortcutRoute {
     return route(SETTINGS_PATH);
 }
 
+/**
+ * Workflow activity, with the ids the shortcut named when they are ones the page can read.
+ *
+ * The catalogue's own shortcut names no run, which opens the page's empty state; a link that does
+ * is rebuilt from its validated ids, not copied, and one with an id or scope the page could not
+ * read is left to open as written, as any page V2 cannot vouch for is.
+ */
+function workflowActivityTarget(url: URL): LatestFeatureShortcutRoute | null {
+    const read = readWorkflowActivityQuery(url.searchParams);
+    const path = read.ok ? buildWorkflowActivityPath(read.query) : null;
+    return path ? route(path) : null;
+}
+
 /** The V2 route for a classic path, or null when V2 has not rebuilt that page. */
 function v2RouteFor(url: URL): LatestFeatureShortcutRoute | null {
     const path = url.pathname.replace(/(.)\/$/, '$1');
@@ -152,6 +169,10 @@ function v2RouteFor(url: URL): LatestFeatureShortcutRoute | null {
             return route(PUBLIC_DIRECTORY_PATH);
         case '/approvals':
             return route(APPROVALS_PATH);
+        case '/notifications':
+            return route(NOTIFICATIONS_PATH);
+        case '/workflow-activity':
+            return workflowActivityTarget(url);
         case '/support/latest-features':
             return route(SUPPORT_LATEST_FEATURES_PATH);
         case '/support/send-feedback':
@@ -192,8 +213,9 @@ export function resolveLatestFeatureShortcut(href: unknown): LatestFeatureShortc
  * The router path for a translated shortcut: always one of the allowlisted V2 destinations.
  *
  * A path that is not on the list -- which only a caller bypassing the resolver could hand in --
- * falls back to the Latest Features page itself rather than reaching the router.
+ * falls back to the Latest Features page itself rather than reaching the router. Workflow activity
+ * is on the list in the one form `buildWorkflowActivityPath` writes for ids that passed its checks.
  */
 export function safeShortcutRouteHref(path: string): string {
-    return V2_SHORTCUT_PATHS.has(path) ? path : SUPPORT_LATEST_FEATURES_PATH;
+    return V2_SHORTCUT_PATHS.has(path) || isWorkflowActivityRoute(path) ? path : SUPPORT_LATEST_FEATURES_PATH;
 }

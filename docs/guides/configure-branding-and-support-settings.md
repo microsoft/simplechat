@@ -118,6 +118,12 @@ Use **General > Home Page Text** to control the copy users see before entering t
 
 Good home page text usually answers three questions: who the app is for, what data handling expectations apply, and where users can get help. If you link to policy pages or internal guidance, use full URLs or application-relative paths that work in the deployed environment.
 
+### Where the home page text and branding appear
+
+The title, logo, home page text and classification banner you set here are shown on the home page for visitors who are signed out or signed in without a role, and on the Acceptable Use Policy and rate limited pages. A modern version of each of those pages exists, reads the same settings and follows the same rules, but it is not served yet: it is switched on only when the interface selector is released, so these pages do not change for your users today. See [V2 Modern Standalone Pages](../explanation/features/V2_MODERN_STANDALONE_PAGES.md) for what the modern pages show.
+
+The default home page text links to `acceptable_use_policy.html`, which is an example policy. To publish your own wording, change both `templates/acceptable_use_policy.html` and `templates/modern/acceptable_use_policy.html`, or point the home page text at a policy you host.
+
 ## Health Checks
 
 Use **General > Health Check** when an uptime monitor, load balancer, or platform probe needs a lightweight endpoint.

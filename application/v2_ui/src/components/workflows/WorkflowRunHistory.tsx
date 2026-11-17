@@ -8,6 +8,7 @@ import { WorkflowDocumentChoiceDetails } from './WorkflowDocumentChoiceDetails';
 import { WorkflowRuntimePanel } from './WorkflowRuntimePanel';
 import { WorkflowFlowView } from './WorkflowFlowView';
 import { WorkflowRunAskInChat } from './WorkflowRunAskInChat';
+import { WorkflowRunActivityLink } from '../workflowActivity/WorkflowActivityLinks';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { TaskCompletenessDetails } from '../ui/TaskCompletenessDetails';
 import { Pill, RowAction } from '../workspace/primitives';
@@ -484,7 +485,7 @@ export function WorkflowRunHistory({
                         }}
                         aria-current={linked ? 'true' : undefined}
                         className={linked ? 'rounded-xl border border-accent' : 'rounded-xl border border-edge'}>
-                        <div className="flex items-center gap-2 p-2 text-xs text-text-3">
+                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 p-2 text-xs text-text-3">
                             <RowAction
                                 icon={expanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
                                 label={expanded ? 'Hide run task results' : 'Show run task results'}
@@ -496,10 +497,12 @@ export function WorkflowRunHistory({
                                 }}
                             />
                             <Pill tone={statusTone(status)}>{workflowStatusLabel(status)}</Pill>
-                            <span className="min-w-0 flex-1 truncate">
+                            {/* The links wrap under the time when the row is narrow, so the run stays identifiable. */}
+                            <span className="min-w-[9rem] flex-1 max-sm:whitespace-normal sm:truncate">
                                 {formatTimestamp(run.started_at) || 'Not started'}
                                 {run.completed_at ? ` → ${formatTimestamp(run.completed_at)}` : ''}
                             </span>
+                            <WorkflowRunActivityLink scope={scope} workflowId={workflowId} run={run} />
                             <WorkflowRunAskInChat scope={scope} workflowId={workflowId} run={run} />
                         </div>
                         {validation ? <p className="flex flex-wrap items-center gap-1.5 px-3 pb-2 text-xs text-text-3">

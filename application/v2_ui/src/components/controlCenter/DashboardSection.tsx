@@ -23,6 +23,7 @@ import { cartesianOptions, StatsChart, type StatsChartConfigBuilder } from '../s
 import { GlassPanel } from '../ui/primitives';
 import { APPROVALS_URL } from './ControlCenterPrimitives';
 import { DashboardChatButton } from './DashboardChat';
+import { useReloadOnDataRefresh } from './refreshContext';
 
 type Metric = DashboardMetric;
 
@@ -403,6 +404,8 @@ export function DashboardSection() {
     const [filterError, setFilterError] = useState<string | null>(null);
     const [refreshVersion, setRefreshVersion] = useState(0);
     const handledRefreshVersion = useRef(0);
+    // A refresh from the strip above reads the same way as this section's own Refresh button.
+    useReloadOnDataRefresh(() => setRefreshVersion((current) => current + 1));
     const [exporting, setExporting] = useState(false);
     const [actionError, setActionError] = useState<string | null>(null);
 

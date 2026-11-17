@@ -169,16 +169,43 @@ SimpleChat does not send the reminder emails. It raises them in-app and emits an
 A global identity is a credential for a system SimpleChat connects out to -- a SharePoint
 site, an HTTP API behind a key, a database -- saved once and referenced by name everywhere it
 is used. It is not an account for signing in to SimpleChat. Two things consume them: File
-Sync sources, which authenticate when they pull documents, and actions, which authenticate
-when an agent calls out.
+Sync, which authenticates when it pulls documents, and actions, which authenticate when an
+agent calls out.
 
 Storing the credential once and referencing it by name means the secret itself never travels
 with a source or action configuration, never appears in an export, and can be rotated in one
 place. Where Key Vault is configured, the secret is held there rather than in the settings
 document, which is why this sits next to Secrets rather than with the features that use it.
 
-An identity that is still referenced by a File Sync source or an action cannot be deleted;
-remove the reference first.
+### Add, change and remove a global identity
+
+Open **Admin Settings > Security > Global Identities** in either interface. The classic interface
+and the React V2 interface offer the same editor, so a deployment can run on either one.
+
+- **New identity** asks for a name, an optional description, and what the identity is **Used for**:
+  File Sync, Actions, or both. A new identity starts on Actions. The authentication methods offered
+  follow that choice: API key, bearer token, client secret, connection string, username and
+  password, or managed identity. An identity used only for File Sync is offered username and
+  password, managed identity, client secret and connection string. Anonymous is not offered here.
+- **Edit** changes any of that. A stored secret is never shown. Leave the secret blank to keep it,
+  or type a new value to rotate it in one place. A stored secret cannot be cleared, only replaced
+  or dropped by choosing another authentication method.
+- **Delete** asks you to confirm before it removes the identity.
+
+Each change saves as soon as you confirm it; it does not wait for the page's **Save changes**. If
+two administrators edit the same identity, the later save wins, because the server does not version
+these records.
+
+An identity that a global action still references cannot be deleted. SimpleChat leaves it as it is
+and says it is still in use. V2 also lists the actions that use it, and the classic interface shows
+only the message. Point those actions at another identity or remove them (**Admin Settings >
+Agents & Actions > Global Actions**), then delete the identity again.
+
+Only global actions are checked. OneDrive File Sync takes its Microsoft Graph application
+credentials from a global File Sync identity that has a client secret, found by what it is for rather
+than by a stored reference, and from the application's own client credentials when there is none.
+Deleting that identity is therefore never refused, so confirm that no OneDrive source relies on it
+before you delete it.
 
 {% include media.html src="admin-settings/global-identity.png" alt="Screenshot of the Global Identities tab in Admin Settings." title="Global Identities" %}
 
@@ -278,6 +305,10 @@ This is a client-side timer, not a token lifetime. It closes the "walked away fr
 
 The warning has to arrive before the sign-out it warns about. Set the two values equal to skip the warning entirely; a warning time beyond the sign-out time is lowered to match on save.
 
+Both the classic interface and the React V2 interface show the warning, with a countdown and two choices: **Stay signed in** keeps the session and **Logout now** ends it. If nobody answers, the page signs the person out when the countdown reaches zero. Anyone who keeps working is never warned, because both interfaces report activity to the server, at most once a minute. In V2, open tabs share their activity, so a tab nobody is using does not sign out a session that is in use in another tab. The engineering note `docs/explanation/features/V2_IDLE_SESSION_WARNING.md` in the repository has the exact behavior and the differences between the two interfaces.
+
+The sign-out is local: it ends the SimpleChat session without taking the person through the Microsoft Entra sign-out page, the same as classic.
+
 #### Settings
 
 | Setting | What it does | Default | Notes |
@@ -285,7 +316,7 @@ The warning has to arrive before the sign-out it warns about. Set the two values
 | Sign out inactive users | Ends the local session after a period without interaction. | Off | `enable_idle_timeout`; capability toggle |
 | Sign out after (minutes) | Inactivity before sign-out. Minimum 10, since anything shorter interrupts people reading a long response. | 30 | `idle_timeout_minutes` |
 | Warn after (minutes) | When the warning dialog appears. Equal to the sign-out time disables the warning. | 28 | `idle_warning_minutes` |
-| Idle Warning Message | Heading of the dialog offering to keep the session alive. | You've been inactive for a while. | `idle_warning_message` |
+| Idle Warning Message | The first line of the warning dialog, shown as plain text under the dialog's fixed title. | You've been inactive for a while. | `idle_warning_message`; up to 200 characters |
 
 ## Network {#network}
 

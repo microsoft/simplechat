@@ -14,6 +14,10 @@ import { apiUrl } from './apiClient';
 import { asBoolean } from './adminFields';
 import type { AdminNavGroup } from './types';
 
+// The classic Admin Settings tab, for a shortcut V2 cannot follow in place. It lives with the
+// other admin link helpers, and is re-exported here because the shortcuts were its first user.
+export { safeClassicAdminTabHref } from './adminOperations';
+
 export interface LatestFeatureImage {
     url: string;
     alt: string;
@@ -184,12 +188,30 @@ export type AdminActionTarget =
     | { kind: 'classic'; tab: string };
 
 /**
+ * Element ids inside the classic panes that shortcuts still name, and the V2 section that
+ * holds the same thing now.
+ *
+ * Release announcements were written against the classic page, whose shortcuts point at an
+ * element such as the global actions table rather than at a navigation section. V2 draws
+ * each of those as a section of its own, and a section the navigation does not list under
+ * the shortcut's tab -- Global Actions sits under Actions, where the shortcut says Agents --
+ * is found only through this map, since the tab search below would land on its neighbour.
+ */
+const CLASSIC_ELEMENT_SECTIONS: Readonly<Record<string, string>> = {
+    'model-endpoints-wrapper': 'multi-endpoint-configuration',
+    'plugins-table': 'actions-config',
+    'agents-configuration': 'organization-agents-section',
+    'global-workspace-identities-root': 'workspace-identities-section',
+};
+
+/**
  * Resolve an admin shortcut to a card V2 draws, or to the classic tab when it draws none.
  *
- * A named section wins when V2 renders it. Shortcuts often name an element inside a classic
- * pane rather than a navigation section -- `plugins-table`, `model-endpoints-wrapper` -- so
- * those fall through to the first card V2 draws for the tab. A tab V2 does not draw at all,
- * such as Backup, opens on the classic page, which is where that work still lives.
+ * A named section wins when V2 renders it, directly or as the home of a classic element the
+ * shortcut names. Other elements inside a classic pane fall through to the first card V2
+ * draws for the tab. A tab V2 draws no card for opens on the classic page, which is where
+ * that work would still live; every tab the shipped catalogue names has a card today, so
+ * this is the honest fallback for a catalogue entry written ahead of its V2 section.
  */
 export function resolveAdminActionTarget(
     action: Pick<LatestFeatureAction, 'admin_tab' | 'admin_section'>,
@@ -199,6 +221,10 @@ export function resolveAdminActionTarget(
     const tabId = action.admin_tab ?? '';
     if (action.admin_section && renderedSectionIds.has(action.admin_section)) {
         return { kind: 'section', sectionId: action.admin_section };
+    }
+    const mapped = action.admin_section ? CLASSIC_ELEMENT_SECTIONS[action.admin_section] : undefined;
+    if (mapped && renderedSectionIds.has(mapped)) {
+        return { kind: 'section', sectionId: mapped };
     }
 
     for (const group of nav) {
@@ -250,9 +276,4 @@ export function safeLatestFeatureImageUrl(url: unknown): string | undefined {
         return undefined;
     }
     return apiUrl(url);
-}
-
-/** The classic Admin Settings tab, for a shortcut V2 cannot follow in place. */
-export function safeClassicAdminTabHref(tab: string): string {
-    return `/admin/settings#${encodeURIComponent(tab)}`;
 }

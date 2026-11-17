@@ -3,7 +3,8 @@
 Browser regressions for the V2 notification bell, its panel and desktop notifications.
 Version: 0.261.307
 Implemented in: 0.261.195
-Notices about a chat-started run's results, and workflow-activity links, open the run in V2: 0.261.251
+Notices about a chat-started run's results open the run in V2: 0.261.251
+Workflow-activity links open the V2 workflow-activity page, with the query they carry: 0.261.448
 Notices about a Microsoft 365 pending action open its card in V2 chat, not classic chat: 0.261.307
 
 Exercises the real rail, bell, panel, chat page, preferences tab, stores and notification
@@ -50,7 +51,8 @@ STATIC = ROOT / "application" / "single_app" / "static"
 ORIGIN = "https://simplechat.test"
 BASE_TIME = datetime(2025, 6, 2, 15, 0, tzinfo=timezone.utc)
 CLOCK_START = datetime(2025, 6, 3, 9, 0, tzinfo=timezone.utc)
-CLASSIC_PAGES = {"/approvals", "/workflow-activity", "/chats", "/notifications"}
+# Pages the notices can still lead to that V2 has not rebuilt (`/admin/settings` is the example).
+CLASSIC_PAGES = {"/approvals", "/admin/settings", "/chats"}
 DEFAULT_FEATURES = {"enable_desktop_notifications": True}
 DEFAULT_BRANDING = {"app_title": "Contoso Chat"}
 CONVERSATIONS = {
@@ -1029,9 +1031,11 @@ def test_bell_sits_beside_the_brand_and_its_panel_lists_every_kind_of_notice(har
     assert workflow.locator("img, b, script").count() == 0
     assert harness.js("() => window.__xss") is None
 
-    expect(panel.get_by_role("link", name="Open all in the classic interface")).to_have_attribute(
-        "href", "/notifications",
-    )
+    # The panel is the short list; the page behind this link adds search, filters and every page
+    # of it. The harness routes without the application's /v2 base, so the address is the route.
+    footer = panel.get_by_role("link", name="View all notifications")
+    expect(footer).to_have_attribute("href", "/notifications")
+    expect(panel.get_by_role("link", name="Open all in the classic interface")).to_have_count(0)
     page.keyboard.press("Escape")
     expect(panel).to_have_count(0)
     expect(bell).to_be_focused()
@@ -1461,6 +1465,21 @@ ROUTE_LINKS = [
         "n-m365-approval", "/approvals?m365_approval=appr-1", {"approval_id": "appr-1", "group_id": "user-1"},
         "/approvals?m365_approval=appr-1",
     ),
+    # V2 has its own workflow-activity page, which reads the classic page's query, so a run's
+    # notice opens it whole -- a Microsoft 365 notice included -- and makes no group active.
+    (
+        "n-workflow-activity", "/workflow-activity?workflowId=wf-1&runId=run-1&scope=personal", {},
+        "/workflow-activity?workflowId=wf-1&runId=run-1&scope=personal",
+    ),
+    (
+        "n-workflow-activity-group", "/workflow-activity?workflowId=wf-2&runId=run-2&scope=group&groupId=grp-4",
+        {"group_id": "grp-4", "m365_pending_action_id": "act-9"},
+        "/workflow-activity?workflowId=wf-2&runId=run-2&scope=group&groupId=grp-4",
+    ),
+    # V2 has the full Notifications page, so classic's own address for it opens that. Only the view
+    # the page can show is carried across, in its canonical form.
+    ("n-notifications", "/notifications", {}, "/notifications"),
+    ("n-notifications-view", "/notifications?status=UNREAD&q=ledger&page=2&ignored=1#top", {}, "/notifications?status=unread&q=ledger&page=2"),
 ]
 
 
@@ -1486,9 +1505,12 @@ def test_classic_links_open_the_matching_v2_page(harness):
 
 # (notice, page it is opened from, classic page, groups made active on the way, setActive status)
 CLASSIC_LINKS = {
-    "workflow-alert": (
-        lambda: workflow_notice("n-classic", "The digest step timed out.", group_id="grp-9"),
-        "/elsewhere", "/workflow-activity?workflowId=wf-1&runId=run-1", [{"groupId": "grp-9"}], 200,
+    "admin-settings": (
+        lambda: notice(
+            "n-classic", "system_announcement", "Review the retention settings",
+            link_url="/admin/settings?tab=general", link_context={"group_id": "grp-9"},
+        ),
+        "/elsewhere", "/admin/settings?tab=general", [{"groupId": "grp-9"}], 200,
     ),
 }
 
@@ -2457,9 +2479,9 @@ def test_a_chat_run_notice_reads_as_workflow_results_and_opens_its_run_in_v2(har
     expect(row.locator("[data-notification-link-error]")).to_have_count(0)
     expect(row.locator("img")).to_have_count(0)
 
-    # 6b-1 links it to the classic run page; the notice and the link agree, so it opens in V2.
+    # 6b-1 links it to the workflow-activity page, which V2 has, so it opens there with the query it carries.
     harness.action("n-results", "open").click()
-    expect(current_route(harness)).to_have_text(RUN_ROUTE)
+    expect(current_route(harness)).to_have_text(RUN_ACTIVITY_LINK)
     expect(harness.panel).to_have_count(0)
     harness.wait_for(lambda: harness.read_calls == ["n-results"], "Opening the notice should mark it read.")
     harness.page.wait_for_timeout(200)
@@ -2486,7 +2508,7 @@ def test_a_workflow_notice_without_a_link_opens_the_run_it_names(harness):
             "n-unscoped", "\"Weekly digest\" didn't finish", UNDELIVERABLE_NOTICE,
             delivery_status="undeliverable", link_url="", workflow_scope=None,
         ),
-        # A Microsoft 365 action is resolved on classic pages, so V2 does not guess at one.
+        # A Microsoft 365 notice carries its own link; without one V2 does not guess where its action is drawn.
         chat_delivery_notice(
             "n-m365", "\"Weekly digest\" was cancelled", UNDELIVERABLE_NOTICE,
             delivery_status="undeliverable", link_url="", link_context={"m365_pending_action_id": "act-7"},
@@ -2505,12 +2527,12 @@ def test_a_workflow_notice_without_a_link_opens_the_run_it_names(harness):
 
 
 @pytest.mark.parametrize("written_in", ["metadata", "link_context"])
-def test_a_microsoft_365_notice_keeps_its_classic_run_page(harness, written_in):
-    # Everything else about it would open the run in V2; the Microsoft 365 action keeps it classic,
+def test_a_microsoft_365_run_notice_opens_the_v2_activity_page_that_draws_its_action(harness, written_in):
+    # The V2 page draws the saved action beside the run, so the notice no longer needs classic,
     # wherever the action id was written.
     marker = {"m365_pending_action_id": "act-7"}
     harness.add(notice(
-        "n-classic", "system_announcement", "Microsoft 365 action awaiting review",
+        "n-m365-run", "system_announcement", "Microsoft 365 action awaiting review",
         "Review the calendar invite before it is sent.", link_url=RUN_ACTIVITY_LINK,
         link_context=marker if written_in == "link_context" else None,
         metadata={
@@ -2520,15 +2542,13 @@ def test_a_microsoft_365_notice_keeps_its_classic_run_page(harness, written_in):
     ))
     harness.open("/elsewhere")
     harness.open_panel()
-    harness.action("n-classic", "open").click()
+    harness.action("n-m365-run", "open").click()
 
-    harness.page.wait_for_url(f"{ORIGIN}{RUN_ACTIVITY_LINK}")
-    expect(harness.page.get_by_role("heading", name="Classic interface")).to_be_visible()
-    assert harness.read_calls == ["n-classic"]
+    expect(current_route(harness)).to_have_text(RUN_ACTIVITY_LINK)
+    expect(harness.panel).to_have_count(0)
+    harness.wait_for(lambda: harness.read_calls == ["n-m365-run"], "Opening the notice should mark it read.")
+    harness.page.wait_for_timeout(200)
+    expect(harness.page.get_by_role("heading", name="Classic interface")).to_have_count(0)
+    assert harness.count_requests("GET", "/workflow-activity") == 0
     assert harness.set_active_calls == []
-    # A full page load cancels whatever is still on its way, so the read goes first.
-    order = [(method, target) for method, target, _ in harness.requests]
-    read_at = order.index(("POST", "/api/notifications/n-classic/read"))
-    page_at = order.index(("GET", RUN_ACTIVITY_LINK))
-    assert read_at < page_at
 

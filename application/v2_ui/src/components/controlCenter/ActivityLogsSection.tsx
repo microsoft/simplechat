@@ -27,6 +27,7 @@ import { ActivityFilterBar, type FilterChangeOptions } from './activityLogs/Acti
 import { ActivityTable, fallbackPresentation } from './activityLogs/ActivityTable';
 import { ActivityTrendStrip } from './activityLogs/ActivityTrendStrip';
 import { ActivityViewsMenu } from './activityLogs/ActivityViewsMenu';
+import { useReloadOnDataRefresh } from './refreshContext';
 import { RuntimeUsagePanel } from './RuntimeUsagePanel';
 
 const PAGE_SIZE = 50;
@@ -190,6 +191,8 @@ export function ActivityLogsSection() {
         setPaging({ query, cursors: [null], index: 0 });
         setRefresh((value) => value + 1);
     };
+    // A refresh from the strip above reads the log the way this section's own Refresh does.
+    useReloadOnDataRefresh(reload);
 
     const exportCsv = async () => {
         // Read the clock now, so a relative range exports the window it names today.

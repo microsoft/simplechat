@@ -4,10 +4,12 @@
 // Some settings act somewhere else entirely: the Document Access Index diagnostics switch
 // lives with Debug Logging but changes what Scale > Cosmos > DAI Metrics draws. Saying where,
 // with a way to get there, saves an administrator from flipping a switch and then hunting
-// for what changed. The server-rendered page addresses a tab rather than a section, so a
-// link there opens the tab that holds it.
+// for what changed. The link moves within this page whenever V2 draws the section. Only a
+// section V2 does not draw sends the reader to the server-rendered page, which addresses a
+// tab rather than a section, so that link opens the tab that holds it.
 
 import { ArrowRight, ArrowUpRight } from 'lucide-react';
+import { safeClassicAdminTabHref } from '../../lib/adminOperations';
 
 export function RelatedSectionLink({
     label,
@@ -17,7 +19,7 @@ export function RelatedSectionLink({
     label: string;
     /** Where the section sits in the navigation, or null when it is not in it. */
     location: { groupLabel: string; tabId: string; tabLabel: string; sectionLabel: string } | null;
-    /** Present when the section is shown on this page; otherwise the classic page is linked. */
+    /** Present when V2 draws the section; otherwise the classic page is linked. */
     onNavigate?: () => void;
 }) {
     if (!location) {
@@ -38,7 +40,7 @@ export function RelatedSectionLink({
                 </button>
             ) : (
                 <a
-                    href={`/admin/settings#${encodeURIComponent(location.tabId)}`}
+                    href={safeClassicAdminTabHref(location.tabId)}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 font-medium text-accent hover:underline"

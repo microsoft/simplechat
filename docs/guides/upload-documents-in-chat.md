@@ -72,6 +72,41 @@ File paste depends on what the browser receives from the source application. Sim
 attach actual clipboard files, but a copied path, link, or HTML image is not automatically a
 file upload. If pasting does not provide a file, use **Attach a file** instead.
 
+## Accept the user agreement first
+
+Fixed/Implemented in version: **0.261.448**
+(`application/single_app/config.py`).
+
+Some organizations require people to accept a user agreement before they upload files. When an
+administrator has turned this on for chat, choosing, pasting or dropping a file shows the agreement
+first, and nothing is uploaded until you choose **Accept**. **Retry** on a failed attachment asks
+again, because a retry sends the file again.
+
+- **Accept** records your acceptance and starts the upload. When the administrator allows
+  acceptance once per day, the dialog says your acceptance will be remembered for today, and you are
+  not asked again for chat uploads until the day changes (the day is counted in UTC).
+- **Cancel**, **Escape**, the close button and a click outside the dialog all stop the upload.
+  The message you have written and the files already attached are left as they were.
+- If SimpleChat cannot check whether an agreement applies, or cannot record your acceptance, it tells
+  you and holds the upload. Choose **Try again** or **Accept** again, or cancel. Nothing is uploaded
+  in the meantime. A check or an acceptance that gets no answer at all counts as failed after 20 seconds,
+  with the same choices, so SimpleChat never waits on one without end.
+- While the agreement is being checked, and while its dialog is open, **Send** is unavailable and a line
+  under the message box says "Checking the user agreement before attaching your file…". Pressing
+  Enter does nothing meanwhile, so a message is never sent without the file you just added. Send
+  is available again once the file has been attached and uploaded, or straight away if you cancel.
+- If you open another conversation while the agreement is being checked, the file is not attached
+  there. SimpleChat tells you, and you can attach it again where you want it.
+- A file you add to an agent's follow-up question is asked about in the same way. **Next** and **Review
+  answers** wait, and the line under the buttons says "Checking the user agreement before attaching your
+  file…", until the file is attached or you cancel. **Continue without answers**, **Cancel** and **Back**
+  are never held; going back while a file is waiting drops that file.
+- Links in the agreement open in a new tab, so your selection is still waiting when you come back.
+
+Files that SimpleChat refuses before sending, such as an unsupported type or a file over the size
+limit, do not show the agreement because they are never uploaded. See
+[V2 user agreement gate](../explanation/features/V2_USER_AGREEMENT_GATE.md) for how the gate works.
+
 ## Switching conversations in V2
 
 Fixed/Implemented in version: **0.261.414**

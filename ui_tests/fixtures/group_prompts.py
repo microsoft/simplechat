@@ -115,9 +115,12 @@ class GroupPromptsFixture(GroupWorkspaceFixture):
         self.deleted_prompt_conflicts.add((group_id, identifier))
 
     def catalog_prompts(self):
-        """Group prompts as the chat composer catalog carries them, with explicit scope."""
+        """Group prompts as the chat composer catalog carries them, with explicit scope. Only the caller's
+        own groups contribute, as the server builds it, so a deleted group's prompts leave the catalog."""
         catalog = []
         for group_id, rows in self.prompts.items():
+            if group_id not in self.groups:
+                continue
             scope_name = self.groups[group_id]["workspace"]["name"]
             for row in rows:
                 catalog.append({

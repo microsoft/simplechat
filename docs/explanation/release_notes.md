@@ -2,6 +2,100 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.448)**
+
+#### New Features
+
+*   **V2 Notifications Page**
+    *   The V2 interface has a full Notifications page at `/v2/notifications`: All, Unread and Read filters, search, 10, 20 or 50 notices per page (remembered), numbered paging, **Mark all read**, refresh, and open, mark read, dismiss and acknowledge on each notice. The bell panel's footer and a new **Notifications** entry in the account menu (with the unread count) open it instead of the classic page.
+    *   `GET /api/notifications` accepts optional `status` (`all`, `unread`, `read`) and `q` (search text, up to 100 characters), applied before paging so totals, page numbers and search results cover the whole list. An unknown `status` returns 400; existing callers are unchanged.
+    *   (Ref: `NotificationsPage.tsx`, `functions_notifications.py`, `route_backend_notifications.py`, `docs/explanation/features/V2_NOTIFICATIONS_PAGE.md`)
+
+*   **V2 Workflow Activity Page**
+    *   Workflow runs have an activity page in V2 at `/v2/workflow-activity` that takes the classic page's query (`conversationId`, `workflowId`, `runId`, `scope`, `groupId`), so every existing link maps one to one. It shows the run as a timeline with details and event history, follows a live run, cancels a run, and shows a saved Microsoft 365 email or invitation beside the run that saved it.
+    *   Notifications, Latest Features shortcuts, the chat header of a workflow conversation, a workflow's run history and its header all open the V2 page. No server change was needed: the page reads the same activity routes as classic, and a regression test pins their gates to the classic page's.
+    *   (Ref: `WorkflowActivityPage.tsx`, `workflowActivity*.ts`, `docs/explanation/features/V2_WORKFLOW_ACTIVITY.md`, `docs/guides/view-workflow-activity.md`)
+
+*   **Custom Pages Open Inside V2**
+    *   A custom page chosen from the V2 rail opens at `/v2/custom/<slug>` with the rail still on screen, framing a chrome-less same-origin copy (`/custom/<slug>?embed=1`) instead of leaving for the classic layout. Pages set to open in a new tab, and Python-backed pages that have not set `supports_embed = True`, keep opening in their own tab. Pages open to any signed-in user stay standalone, because those visitors cannot use V2.
+    *   Only the embed response relaxes `X-Frame-Options` from `DENY` to `SAMEORIGIN` (the Content Security Policy already limits `frame-ancestors`); every other response, and Teams SSO deployments, are unchanged. The host's **Open in a new tab** opens the chrome-less document at `/custom/<slug>?embed=1`, which the classic-to-V2 redirect never sends back to V2.
+    *   (Ref: `route_custom_pages.py`, `functions_custom_pages.py`, `custom_page_extension.py`, `custom_page_embed_shell.html`, `CustomPageHost.tsx`, `docs/explanation/features/V2_CUSTOM_PAGES.md`)
+
+*   **Public Workspace Tags, Native Workspace Delete And Manage Sections For Inactive Workspaces In V2**
+    *   A public workspace has a native **Tags** section: everyone who can view the workspace browses its tags, and an Owner, Admin or DocumentManager of an active workspace creates, recolours, renames, merges and deletes them.
+    *   An owner deletes a group or public workspace in V2: the document count is read again at the click and at the confirmation, then the workspace is deleted and V2 returns to the group or public list. The group and public pickers no longer keep a deleted or left workspace selectable.
+    *   The Owner and Admins of a locked, inactive or unrecognised-status group keep Members, Settings, Activity and Statistics in V2, as the classic manage page does. Adding a member stays closed with a read-only note. The **Manage group (classic)** and **Classic tools** buttons are gone.
+    *   The Owner and Admins of a locked, inactive or unrecognised-status public workspace keep Members, Settings and Activity, and every stored role keeps Statistics. The profile and logo stay read-only, and adding members and changing roles stay closed, which is stricter than the classic page. The change-role control no longer shows in a locked public workspace, where the server refuses it.
+    *   (Ref: `functions_workspace_context.py`, `WorkspaceSettingsSection.tsx`, `TagsSection.tsx`, `MembersSection.tsx`, `docs/explanation/features/V2_PUBLIC_TAGS.md`, `docs/explanation/features/V2_GROUP_SETTINGS.md`, `docs/explanation/features/V2_PUBLIC_SETTINGS.md`)
+
+*   **Legacy Document Upgrade In V2**
+    *   The Documents explorer shows the **Update older documents** notice for personal, group and public documents that predate progress tracking, and upgrades them without leaving V2.
+    *   Adds `POST /api/groups/<group_id>/documents/upgrade_legacy` and `POST /api/public-workspaces/<workspace_id>/documents/upgrade_legacy`. Each is authorized as a metadata edit on an active workspace, re-checks the role before every document, accepts no request body, upgrades at most 500 documents per request (the receipt says when more remain) and answers 207 when some could not be updated. Personal documents use the existing classic route.
+    *   (Ref: `functions_legacy_document_upgrade.py`, `route_backend_group_documents.py`, `route_backend_public_document_management.py`, `LegacyUpgradeBanner.tsx`, `docs/explanation/features/V2_LEGACY_DOCUMENT_UPGRADE.md`)
+
+*   **Control Center Refresh, Duplicate Global Agents And Actions, And Administrator-Managed File Sources In V2**
+    *   The V2 Control Center has a **Refresh data** strip with the last refresh and the next scheduled run; it recalculates the user and group figures through the existing refresh routes and reloads the section on screen.
+    *   Global agents and global actions can be duplicated from V2 admin.
+    *   The V2 File Sync card has **Manage sources for someone else**: search for a user, a group or a public workspace (or paste an ID) and open the same file sources workbench a workspace manager uses, over the administrator routes. Adds the administrator-only `GET /api/admin/file-sync/<scope_type>/<scope_id>/source-options` (it takes no parameters or body).
+    *   (Ref: `RefreshDataStrip.tsx`, `FileSyncTargetManager.tsx`, `route_backend_file_sync.py`, `docs/explanation/features/V2_CONTROL_CENTER_REFRESH.md`, `docs/explanation/features/V2_ADMIN_FILE_SYNC_TARGETS.md`)
+
+*   **Global Identities In V2 Admin**
+    *   Administrators can create, edit and delete Global Identities, the deployment-wide saved credentials that File Sync sources and actions use, in V2 under Admin Settings > Security > Global Identities. It is the shared identity editor with a global scope over the existing administrator routes, with the same sign-in methods the classic pane offers. A global record has no version marker, so a save replaces the stored record as in classic.
+    *   A delete is refused while an action still uses the identity, and the refusal lists them.
+    *   Every V2 link to the classic admin page names the tab and carries `ui=classic`, so it is not sent back to V2 once the redirect is on.
+    *   (Ref: `identityWorkbench.ts`, `GlobalIdentitiesList.tsx`, `adminOperations.ts`, `docs/explanation/features/V2_ADMIN_SECTION_LINKS.md`, `docs/explanation/features/V2_WORKSPACE_IDENTITIES.md`)
+
+*   **Conversation Scope Lock Editing And Generated-File Actions In V2 Chat**
+    *   V2 chat can lock and unlock a conversation's workspace scope, with a dialog that lists what the lock covers, using the existing `PATCH /api/conversations/<id>/scope_lock`.
+    *   A generated-file card has **Add to Workspace** and **Create PowerPoint** beside Download and View, using the existing `POST /api/chat_artifacts/promote` and `POST /api/message/export-powerpoint`.
+    *   (Ref: `ScopeLockControl.tsx`, `GeneratedArtifactActions.tsx`, `docs/explanation/features/V2_CONVERSATION_SCOPE_LOCK.md`, `docs/explanation/features/V2_GENERATED_ARTIFACT_ACTIONS.md`, `docs/guides/reuse-generated-files.md`)
+
+*   **User Agreement Before Uploads In V2**
+    *   When an administrator requires the User Agreement (`enable_user_agreement`), V2 now asks for it before every upload it makes: chat attach, paste, drop and retry, the files in an inline follow-up question, and personal, group and public workspace uploads. Acceptance is recorded as in classic and **Accept once per day** is shared with classic.
+    *   While the check runs or the agreement is open, the chat composer and the follow-up card hold Send and the next step and say why, so a message cannot go without a file that is still being checked. The check and the acceptance each give up after 20 seconds and offer Try again or Cancel.
+    *   Unlike classic, V2 holds the upload and says so when the agreement check or the acceptance fails. No upload route enforces the agreement on the server, in either interface.
+    *   (Ref: `userAgreement.ts`, `useUserAgreementGate.ts`, `UserAgreementDialog.tsx`, `ComposerEditor.tsx`, `ElicitationCard.tsx`, `docs/explanation/features/V2_USER_AGREEMENT_GATE.md`)
+
+*   **Idle Session Warning And Profile Photo Refresh In V2**
+    *   When **Sign out inactive users** is on, V2 warns before the sign-out with a countdown, offers **Stay signed in** or **Logout now**, and reports activity to the server so someone who is working is not signed out. The same four idle settings drive both interfaces; the V2 bootstrap carries them (`session.idle_timeout`).
+    *   V2 Settings has **Refresh photo**, which fetches the Microsoft Graph photo again through `POST /api/profile/image/refresh`.
+    *   (Ref: `functions_idle_timeout.py`, `IdleSessionDialog.tsx`, `ProfilePhotoStatus.tsx`, `docs/explanation/features/V2_IDLE_SESSION_WARNING.md`)
+
+*   **Modern Standalone Pages For Visitors V2 Cannot Serve**
+    *   Adds modern variants of the pages that must stay server-rendered because the people who see them cannot use V2: the signed-out and no-role home page, the Acceptable Use Policy, the rate-limited (429) page and the Microsoft 365 sign-in result. They share one small standalone layout with the V2 look and no classic navigation.
+    *   The variants are inactive: a single helper chooses between the classic and modern templates from `get_ui_mode()`, which answers classic for everyone until the interface selector exists, so nothing changes for any user today.
+    *   (Ref: `functions_ui_pages.py`, `templates/modern/`, `modern-standalone.css`, `docs/explanation/features/V2_MODERN_STANDALONE_PAGES.md`)
+
+*   **Classic-To-V2 Page Parity Registry And Interface-Selection Prerequisites**
+    *   Adds one registry of every classic page route and its V2 answer (`ui_route_map.json`, with a loader, a generator for the browser copy and the documentation table, and a guard test that fails when a classic page has no V2 answer). No classic page is left without one.
+    *   Adds the groundwork for choosing "fully modern" or "fully classic": the `functions_ui_mode.get_ui_mode()` seam, a disabled-by-default edge redirect from classic page URLs to their V2 pages (302, `no-store`, query and fragment translated, `?ui=classic` to skip it for one request, never when the V2 bundle is missing), V2 translation of classic fragments, and **Back to classic UI** that opens the counterpart of the current page. All of it is inert until an interface is selected.
+    *   (Ref: `ui_route_map.json`, `ui_routing.py`, `functions_ui_redirect.py`, `classicLinks.ts`, `docs/explanation/features/V2_CLASSIC_PAGE_PARITY.md`, `docs/explanation/features/V2_INTERFACE_SELECTION_PREREQUISITES.md`)
+
+#### Bug Fixes
+
+*   **Admin Settings Links Stay In V2**
+    *   A related-section link, a prerequisite and a Latest Features shortcut open the V2 section when V2 draws it, instead of leaving for the classic admin page. The links that still leave name the classic tab, which the classic page reads, and carry `ui=classic`; the old Global Identities link addressed `/admin_settings#...`, which was never a route, and that section no longer links out. The chat mode notice now points to **Use AI Connections for chat**.
+    *   The stale `classic_only` flag on `enable_dai_debug` is removed, because the V2 Document Access Index panel already draws its diagnostics.
+    *   (Ref: `lib/adminOperations.ts`, `lib/latestFeatures.ts`, `admin_settings_fields.py`, `docs/explanation/features/V2_ADMIN_SECTION_LINKS.md`)
+
+*   **Global Identity Delete Names What Still Uses It**
+    *   Deleting a global identity that a global action still uses answered 400 with one sentence. It now answers 409 with `error_code: identity_in_use` and the referencing actions, as the strict personal, group and public identity routes do. The sentence is unchanged, so the classic editor shows the same text, and the other identity routes are not changed.
+    *   (Ref: `route_backend_workspace_identities.py`, `functional_tests/test_global_identity_admin_routes.py`, `docs/explanation/fixes/GLOBAL_IDENTITY_IN_USE_DELETE_FIX.md`)
+
+*   **Python Custom Page Example Renders**
+    *   The Python-backed custom page example no longer raises a `url_for` build error when rendered.
+    *   (Ref: `docs/how-to/custom_pages_examples/python-jinja-api/`, `docs/explanation/features/V2_CUSTOM_PAGES.md`)
+
+*   **Terms Of Use Return Path Stays On The Site**
+    *   Accepting the Terms of Use in the classic interface could redirect to another site: a `next` value that held a TAB, such as `/terms-of-use?next=/%09/evil.example`, was kept and then sent as `//evil.example`. A return path with any control character now falls back to the default page, and ordinary return paths are unchanged. The V2 terms page already refused such paths in the browser.
+    *   (Ref: `functions_terms_of_use.py`, `functional_tests/test_terms_of_use.py`, `docs/explanation/fixes/TERMS_OF_USE_RETURN_PATH_CONTROL_CHARACTER_FIX.md`)
+
+#### User Interface Enhancements
+
+*   **Identity Rows Wrap At Narrow Widths**
+    *   Identity names no longer disappear at phone width: the rows in the personal, group, public and global identity lists wrap their badges and buttons.
+    *   (Ref: `IdentityWorkbenchSection.tsx`, `docs/explanation/features/V2_WORKSPACE_IDENTITIES.md`)
+
 ### **(v0.261.442)**
 
 #### Bug Fixes

@@ -1,0 +1,85 @@
+{# templates/modern/standalone_base.html -#}
+{#-
+    Layout for the server-rendered pages that stay outside the V2 app.
+
+    These pages are shown to visitors who are not signed-in application users, so they cannot
+    live inside the single-page app, but they should not wear the classic chrome either. This
+    layout has no navigation, no Bootstrap and no script bundle: a skip link, the
+    classification banner, the application's branding and one main landmark, styled by
+    static/css/modern-standalone.css with the V2 design tokens.
+
+    Blocks: title, head, page_class (ms-page-narrow or ms-page-wide), brand, content, scripts.
+    Every page that extends this layout must give the content block an h1.
+-#}
+{%- from "modern/_branding.html" import brand_logo with context -%}
+{%- set ms_settings = app_settings if app_settings is defined and app_settings else {} -%}
+{%- set ms_app_title = ms_settings.app_title or "SimpleChat" -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>{% block title %}{{ ms_app_title }}{% endblock %}</title>
+
+    {% if ms_settings.custom_favicon_base64 %}
+        <link rel="icon" href="{{ url_for('static', filename='images/favicon.ico') }}?v={{ ms_settings.favicon_version | default(1) }}" type="image/x-icon" />
+    {% else %}
+        <link rel="icon" href="{{ url_for('static', filename='images/favicon.ico') }}" type="image/x-icon" />
+    {% endif %}
+
+    <!-- Theme, applied before first paint so a dark-mode visitor never sees a light flash -->
+    <script>
+        // Mirrors the V2 shell: a theme chosen in V2 wins, otherwise the operating system
+        // preference decides. Without storage or script the stylesheet follows the OS.
+        (function () {
+            try {
+                var stored = localStorage.getItem('simplechat.v2.theme');
+                var dark = stored === 'dark'
+                    || (stored !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                var root = document.documentElement;
+                root.classList.add(dark ? 'dark' : 'light');
+                root.style.colorScheme = dark ? 'dark' : 'light';
+            } catch (error) {
+                /* localStorage can be unavailable (private mode). */
+            }
+        })();
+    </script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/modern-standalone.css') }}{% if config['VERSION'] %}?v={{ config['VERSION'] }}{% endif %}" />
+    {% block head %}{% endblock %}
+</head>
+<body class="ms-body">
+    <a class="ms-skip-link" href="#main-content">Skip to main content</a>
+
+    <!-- Classification banner -->
+    {% if ms_settings.classification_banner_enabled and ms_settings.classification_banner_text %}
+        <div id="classification-banner" class="ms-classification-banner" role="note"
+             style="background: {{ ms_settings.classification_banner_color or '#ffc107' }}; color: {{ ms_settings.classification_banner_text_color or '#ffffff' }};">
+            {{ ms_settings.classification_banner_text }}
+        </div>
+    {% endif %}
+
+    <div class="ms-page {% block page_class %}{% endblock %}">
+        <!-- Brand -->
+        {% block brand %}
+            {% if ms_settings.show_logo or not ms_settings.hide_app_title %}
+                <header class="ms-header">
+                    <div class="ms-brand">
+                        {{ brand_logo(alt=ms_app_title if ms_settings.hide_app_title else "") }}
+                        {% if not ms_settings.hide_app_title %}
+                            <p class="ms-brand-title">{{ ms_app_title }}</p>
+                        {% endif %}
+                    </div>
+                </header>
+            {% endif %}
+        {% endblock %}
+
+        <!-- Main content -->
+        <main id="main-content" class="ms-main" tabindex="-1">
+            {% block content %}{% endblock %}
+        </main>
+    </div>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

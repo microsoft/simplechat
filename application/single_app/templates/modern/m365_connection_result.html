@@ -1,0 +1,56 @@
+{# templates/modern/m365_connection_result.html -#}
+{#-
+    Modern variant of templates/m365_connection_result.html, the page that ends a Microsoft 365
+    sign-in. Every element id and the JSON result block are the contract of
+    static/js/profile/profile-m365-connection-result.js, which this page loads unchanged: in a
+    popup it reports to the window that opened it and closes, on a full page it shows the
+    outcome with a link back. The script toggles the d-none class, which modern-standalone.css
+    defines.
+-#}
+{%- extends "modern/standalone_base.html" -%}
+{% block title %}{{ title }} - {{ ms_app_title }}{% endblock %}
+{% block head %}
+    <meta name="robots" content="noindex" />
+{% endblock %}
+{% block page_class %}ms-page-narrow{% endblock %}
+{% block content %}
+
+<!-- Microsoft 365 sign-in result -->
+<div id="m365-connection-result" class="ms-panel">
+    <div class="ms-panel-heading">
+        {% if result is defined and result and result.outcome == "connected" %}
+            <span class="ms-icon ms-icon-ok">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="m8.5 12.5 2.5 2.5 4.5-5" />
+                </svg>
+            </span>
+        {% else %}
+            <span class="ms-icon ms-icon-danger">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                    <circle cx="12" cy="12" r="9" />
+                    <path d="M12 7.5v5.5" />
+                    <path d="M12 16.5h.01" />
+                </svg>
+            </span>
+        {% endif %}
+        <h1 id="m365-connection-result-title" class="ms-title">{{ title }}</h1>
+    </div>
+
+    <p id="m365-connection-result-message" class="ms-lead" role="status" aria-live="polite">{{ message }}</p>
+    <p id="m365-connection-result-closing" class="ms-muted d-none">
+        SimpleChat has the result. You can close this window if it stays open.
+    </p>
+
+    <div class="ms-actions">
+        <a id="m365-connection-result-continue" class="ms-button ms-button-primary" href="{{ continue_url }}">{{ continue_label }}</a>
+        <button type="button" id="m365-connection-result-close" class="ms-button ms-button-secondary d-none">Close window</button>
+    </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+    <!-- Result data for the completion script; JSON-encoded and HTML-safe -->
+    <script type="application/json" id="m365-connection-result-data">{{ result | tojson }}</script>
+    <script src="{{ url_for('static', filename='js/profile/profile-m365-connection-result.js') }}"></script>
+{% endblock %}
