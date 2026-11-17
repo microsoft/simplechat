@@ -59,6 +59,8 @@ def invalid_proposal(rule):
         declaration["quantity"] = 1
     elif rule in ("answer_producer_mismatch", "missing_final_response"):
         plan.pop("final_response")
+        # A second unread text output: the server selects an answer only when exactly one exists.
+        plan["steps"].append(compose_step("second"))
         if rule == "missing_final_response":
             plan["steps"][0].pop("delivers")
     elif rule == "unsupported_deliverable_field":

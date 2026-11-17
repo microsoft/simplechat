@@ -225,6 +225,7 @@ def test_relational_arguments_and_legacy_single_source_contracts_are_distinct():
     [
         None, "body", "request", "selector", "saved_unsupported",
         "saved_wrong_sources", "resume_correction",
+        "two_corrections", "correction_exhausted",
     ],
 )
 def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(monkeypatch, mutation):
@@ -351,9 +352,16 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
         spec["datasets"][0]["document_id"] = "source-1"
         spec["datasets"][1]["document_id"] = "source-2"
         calls = []
+        prompts = []
+        faulty_replies = {"two_corrections": 2, "correction_exhausted": 3}.get(mutation, 0)
 
-        def invoke(_prompt, *, stage, metadata):
+        def invoke(prompt, *, stage, metadata):
             calls.append((stage, metadata))
+            prompts.append(json.loads(prompt))
+            if len(calls) <= faulty_replies:
+                faulty = deepcopy(spec)
+                faulty["steps"][0]["on"][0]["right"] = "catalog.missing"
+                return json.dumps(faulty)
             return json.dumps(spec)
 
         invoke.enforces_complete_generation = True
@@ -433,7 +441,13 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
                 "header_row"
             ] = 2
         result = execute(runtime)
-        if mutation is not None and mutation != "resume_correction":
+        if mutation == "correction_exhausted":
+            assert result["status"] == "failed", result
+            assert len(calls) == module.LOWERING_MAX_CALLS == checkpoints.LOWERING_STATE_MAX_CALLS == 3
+            assert len(commits(runtime)) == initial_commits
+            assert "catalog.missing" not in json.dumps(failures, default=str)
+            return
+        if mutation not in (None, "resume_correction", "two_corrections"):
             assert result["status"] == "failed", result
             assert result["failure"]["native_code"] in {
                 "native_inputs_unsupported", "native_access_unavailable",
@@ -444,15 +458,23 @@ def test_prepared_relational_owner_uses_complete_input_and_checkpoints_program(m
         assert result["status"] == "completed", json.dumps(
             {"result": result, "diagnostics": failures}, default=str, indent=2,
         )
-        assert len(calls) == 1
+        assert len(calls) == (3 if mutation == "two_corrections" else 1)
         assert calls[0][1]["require_complete_generation"] is True
+        if mutation == "two_corrections":
+            assert "rejection" not in prompts[0]
+            for corrected in prompts[1:]:
+                feedback = corrected["rejection"]["feedback"]
+                assert feedback["missing_columns"] == ["catalog.missing"]
+                assert "catalog.sku" in feedback["available_columns"]
+                assert corrected["rejected_program"]["steps"][0]["on"][0]["right"] == "catalog.missing"
+            assert "catalog.missing" not in json.dumps(failures, default=str)
         state = checkpoint_store.load_lowering_state(
             "compute", binding=binding, input_fingerprint=fingerprint(
                 runtime.step, runtime.context,
             ),
         )
         assert state["phase"] == "retained"
-        assert state["calls_used"] == (2 if mutation == "resume_correction" else 1)
+        assert state["calls_used"] == {"resume_correction": 2, "two_corrections": 3}.get(mutation, 1)
         assert state["completion_confirmed"] is True
         assert state["program_sha256"] == hashlib.sha256(
             contracts.canonical_bytes(spec)
@@ -557,6 +579,18 @@ def test_program_correction_never_repairs_genuine_interval_or_numeric_faults():
         "check": "column_missing",
         "step_index": 0,
     }
+    named = relational._missing_columns_error(
+        ("catalog.sku", "catalog.price"), ["catalog.missing"], "join_right_key",
+        frozenset({"catalog"}), {"step_index": 0, "step_op": "join"},
+    )
+    assert "catalog.missing" not in json.dumps(named.detail)
+    assert "catalog.missing" not in json.dumps(relational.native_error_diagnostics(named))
+    named_correction = native._safe_program_correction(named)
+    assert named_correction["feedback"] == {
+        "missing_columns": ["catalog.missing"],
+        "available_columns": ["catalog.sku", "catalog.price"],
+    }
+    assert named_correction["location"]["role"] == "join_right_key"
     prompt = json.loads(native._prepared_program_prompt(
         "Approved request.", {"version": "tabular-calculation-context-v1"},
         {"type": "object"}, correction={

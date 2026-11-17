@@ -104,7 +104,9 @@ from content_screening.access import (
     assert_current_request_sources_available, guard_model_callable, strict_source_authority,
 )
 from content_screening.contracts import DocumentHeldError, ScreeningError
-from functions_appinsights import log_chat_execution_outcome, log_event, workflow_log_context
+from functions_appinsights import (
+    exception_log_fields, log_chat_execution_outcome, log_event, workflow_log_context,
+)
 from functions_orchestration_adapters import resolve_context_source_manifest
 from functions_orchestration_checkpoints import (
     CheckpointError, fingerprint, orchestration_answer_message_id, publication_documents_match,
@@ -299,7 +301,8 @@ def _log_failure(message, record, error, *, stage="execution"):
                 turn_id=record.get("turn_id"),
             ),
             "stage": getattr(diagnostic, "stage", None) or stage, "response_type": response_type,
-            "error_type": type(error).__name__, "execution_code": _failure(error)["code"],
+            # Class and application code location only, so a failure with no rule can be found.
+            **exception_log_fields(error), "execution_code": _failure(error)["code"],
             "validation_rule": getattr(diagnostic, "validation_rule", None),
             "producer_capability_id": getattr(diagnostic, "producer_capability_id", None),
             "authority_reason": (

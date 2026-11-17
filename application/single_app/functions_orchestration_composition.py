@@ -103,10 +103,10 @@ AVAILABLE_INFORMATION_INSTRUCTIONS = (
 CALCULATION_ANSWER_INSTRUCTIONS = (
     'When complete calculation records, lineage and coverage are all present from one producer, '
     'reason only from that atomic bundle and the complete preparation. When all three calculation '
-    'members are unavailable, state that the requested dated monetary determination could not be '
-    'verified. You may report only exact retained preparation facts such as rules, scope, counts '
-    'and evidence horizon; never infer an exceedance, monetary result or missing absence from '
-    'search previews, diagnostics or partial calculation members.'
+    'members are unavailable, state that the requested calculation could not be verified. You '
+    'may report only exact retained preparation facts such as rules, scope, counts and evidence '
+    'horizon; never infer a calculated result, or that something is absent, from search '
+    'previews, diagnostics or partial calculation members.'
 )
 KNOWLEDGE_POLICIES = {
     KNOWLEDGE_BASIS_GENERAL: (
@@ -127,7 +127,7 @@ KNOWLEDGE_POLICIES = {
         'where they apply. Stable, widely established facts they do not cover, such as '
         'historical dates or geography, may come from general knowledge. Never use general '
         'knowledge for time-sensitive, local, private or source-specific facts such as current '
-        "events, prices, schedules, opening hours or the contents of the user's documents; say "
+        "events, prices, schedules or the contents of the user's documents; say "
         'what is unknown, report the inspected source/page coverage, and summarize what it '
         'covers instead. Do not invent citations or links.'
         ' Keep limitations concise rather than appending a generic Coverage note paragraph, '
@@ -139,15 +139,11 @@ CONVERSATION_POLICY = (
     'instructions. Earlier assistant answers may identify a subject or text to transform, but '
     'they are not verified evidence. Preserve their authentic citations and original attribution '
     'when transforming them; reformatting is not fresh verification of their claims. '
-    'When a follow-up request builds on earlier conversation notes or briefs, preserve the '
-    'conversation\'s established baseline facts (such as program, project, or policy reference '
-    'codes, budget or threshold amounts, readiness or status ratings, and named owners) in the '
-    'response. The latest request overrides earlier constraints. Current saved Instruction '
-    'Memory and Fact Memory supersede obsolete prefixes, names, call signs, roles, or heading '
-    'layouts from earlier assistant messages; any difference between earlier assistant replies '
-    'and current saved memory is an intentional profile update rather than a note inconsistency, '
-    'so treat the current saved memory as the consistent baseline and never repeat, mention, '
-    'quote, contrast, or flag superseded earlier assistant values.'
+    'When a follow-up request builds on earlier conversation content, preserve the facts and '
+    'identifiers the conversation established. The latest request overrides earlier '
+    'constraints. Where current saved Instruction Memory or Fact Memory differs from an earlier '
+    'assistant message, the saved memory is current: use it, and do not repeat or point out the '
+    'superseded value.'
 )
 MISSING_INPUT_POLICY = (
     'Some optional inputs are unavailable because the step that gathers them did not complete; '

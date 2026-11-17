@@ -736,7 +736,7 @@ def test_compose_completeness_receives_saved_memory_and_conversation_history(har
     checker_payload = json.loads(checker_call["messages"][1]["content"])
     assert "saved_memory" in checker_payload["evidence"]
     assert "conversation_history" in checker_payload["evidence"]
-    assert "Current saved Instruction Memory and Fact Memory supersede" in checker_payload["contract"]["generation_policy"]
+    assert "the saved memory is current: use it" in checker_payload["contract"]["generation_policy"]
 
 
 def test_scoped_memory_candidates_do_not_leak_into_unmatched_conversations():

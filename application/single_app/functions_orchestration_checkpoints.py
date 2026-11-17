@@ -58,6 +58,10 @@ INPUT_FIELDS = (
 )
 
 
+# Must equal functions_orchestration_native_results.LOWERING_MAX_CALLS.
+LOWERING_STATE_MAX_CALLS = 3
+
+
 class CheckpointError(OrchestrationInvocationControlError):
     def __init__(
         self, code='checkpoint_unavailable', *, rule=None, stage=None, producer_capability_id=None,
@@ -657,7 +661,7 @@ class CheckpointStore:
             type(step_id) is not str or not step_id
             or type(state) is not dict or type(binding) is not str
             or not isinstance(state.get('calls_used'), int)
-            or not 0 <= state['calls_used'] <= 2
+            or not 0 <= state['calls_used'] <= LOWERING_STATE_MAX_CALLS
             or state.get('version') != 'tabular-program-lowering-v1'
             or state.get('phase') not in {
                 'context_checked', 'call_reserved', 'program_saved',
@@ -706,7 +710,7 @@ class CheckpointStore:
             }
             or type(state.get('calls_used')) is not int
             or isinstance(state.get('calls_used'), bool)
-            or not 0 <= state['calls_used'] <= 2
+            or not 0 <= state['calls_used'] <= LOWERING_STATE_MAX_CALLS
             or set(state) - {
                 'version', 'phase', 'calls_used', 'completion_contract_version',
                 'program', 'program_sha256', 'completion_confirmed', 'last_failure',

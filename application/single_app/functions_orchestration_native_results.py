@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sys
 import hashlib
 
 from jsonschema import Draft202012Validator
@@ -41,6 +42,8 @@ from functions_orchestration_results import MAX_VALUE_BYTES, NamedOutput, Orches
 
 
 NATIVE_WAIT_KIND = "native_tabular_compute"
+# One authoring call and up to two corrections of an authoring fault, counted durably.
+LOWERING_MAX_CALLS = 3
 _MESSAGES = {
     "native_binding_required": "The native computation bridge is not configured.",
     "native_runtime_invalid": "The native computation has no valid owning runtime.",
@@ -74,6 +77,10 @@ _MESSAGES = {
 }
 # Service codes meaning the approved source no longer matches what would be read.
 _SOURCE_CHANGED_CODES = frozenset({"native_compute_source_identity_mismatch"})
+
+
+class _NoHarnessExecutionError(Exception):
+    """Stands in for the harness error class while its module is not loaded; never raised."""
 
 
 class NativeOrchestrationBridgeError(ValueError):
@@ -925,15 +932,15 @@ def _prepared_program_prompt(question, context_value, schema, *, correction=None
         "selection, new sources, SQL, Python, tools, or an external action. Keep every declared "
         "source, preserve exact identifiers and signed decimal values, and declare complete records, "
         "lineage and coverage through the relational result/output contract. Classify the complete "
-        "relevant population before filtering: retain explicit unknown and excluded dispositions, "
-        "including prior-period, status and horizon exclusions, instead of turning an excluded "
-        "record into a missing chain or dropping it."
+        "relevant population before filtering: retain explicit unknown and excluded dispositions "
+        "instead of turning an excluded record into a missing one or dropping it."
     )
     if correction is not None:
         instructions += (
             f" Correct the prior authored program. The closed validation category is "
             f"{correction.get('category')}, check {correction.get('check')}, "
-            f"step index {correction.get('step_index')}. Do not change the approved sources, "
+            f"step index {correction.get('step_index')}. When a rejection object is supplied, it "
+            "states what was wrong; use it. Do not change the approved sources, "
             "question, horizon, output fields, token budget or requested effects."
         )
     payload = {
@@ -942,6 +949,14 @@ def _prepared_program_prompt(question, context_value, schema, *, correction=None
     }
     if isinstance((correction or {}).get("program"), dict):
         payload["rejected_program"] = deepcopy(correction["program"])
+    rejection = {
+        key: deepcopy(correction[key]) for key in ("location", "feedback")
+        if isinstance((correction or {}).get(key), dict)
+    }
+    if rejection:
+        # What was wrong, in the terms the authoring model already has: its own program and the
+        # prepared headers. Never logged; the telemetry path reads the closed detail only.
+        payload["rejection"] = rejection
     return json.dumps(payload, sort_keys=True, ensure_ascii=False)
 
 
@@ -980,11 +995,17 @@ def _safe_program_correction(error):
         and detail.get("check") != "column_missing"
     ):
         return None
-    return {
+    correction = {
         "category": category,
         "check": detail.get("check") or "closed_validation",
         "step_index": detail.get("step_index", 0),
     }
+    location = {key: value for key, value in detail.items() if key not in ("check", "step_index")}
+    if location:
+        correction["location"] = location
+    if isinstance(getattr(error, "feedback", None), dict):
+        correction["feedback"] = deepcopy(error.feedback)
+    return correction
 
 
 def _approved_preparation_request_digest(context, request, *, question=None):
@@ -1066,7 +1087,7 @@ def _source_with_content_fence(source, expected_digest):
 def _execute_prepared_relational(
     step, context, service, producer, manifest, snapshots, binding, settings, cancel_requested,
 ):
-    """Lower one prepared calculation, with a durable two-call ceiling and no tools."""
+    """Lower one prepared calculation, with a durable call ceiling and no tools."""
     from functions_orchestration_checkpoints import CheckpointError, CheckpointStore
     from functions_orchestration_merge import build_tabular_merge_sources, tabular_merge_limits
     from functions_orchestration_result_runtime import read_complete_input, resolve_step_inputs
@@ -1286,7 +1307,7 @@ def _execute_prepared_relational(
             ):
                 program = deepcopy(state["program"])
             else:
-                if state["calls_used"] >= 2:
+                if state["calls_used"] >= LOWERING_MAX_CALLS:
                     raise NativeOrchestrationBridgeError(
                         "native_execution_failed", rule="lowering_call_limit",
                     )
@@ -1305,7 +1326,7 @@ def _execute_prepared_relational(
 
                 def reserve_response_format_retry():
                     nonlocal state
-                    if state["calls_used"] >= 2:
+                    if state["calls_used"] >= LOWERING_MAX_CALLS:
                         raise NativeOrchestrationBridgeError(
                             "native_execution_failed", rule="lowering_call_limit",
                         )
@@ -1350,7 +1371,12 @@ def _execute_prepared_relational(
                         }, binding=checkpoint_binding, input_fingerprint=fingerprint,
                     )
                 except Exception as exc:
-                    from functions_orchestration_execution import HarnessExecutionError
+                    # Read the already-loaded class instead of importing here: an import that
+                    # fails inside this handler would replace the authoring fault being handled.
+                    # No instance can exist unless that module is loaded.
+                    HarnessExecutionError = getattr(
+                        sys.modules.get("functions_orchestration_execution"), "HarnessExecutionError", None,
+                    ) or _NoHarnessExecutionError
 
                     if not isinstance(exc, (json.JSONDecodeError, TabularRelationalError, HarnessExecutionError)):
                         raise
@@ -1382,7 +1408,7 @@ def _execute_prepared_relational(
                             step["step_id"], failed,
                             binding=checkpoint_binding, input_fingerprint=fingerprint,
                         )
-                        if state["calls_used"] >= 2:
+                        if state["calls_used"] >= LOWERING_MAX_CALLS:
                             raise
                         continue
                     candidate = program if isinstance(locals().get("program"), dict) else None
@@ -1407,7 +1433,7 @@ def _execute_prepared_relational(
                         step["step_id"], failed,
                         binding=checkpoint_binding, input_fingerprint=fingerprint,
                     )
-                    if correction is None or state["calls_used"] >= 2:
+                    if correction is None or state["calls_used"] >= LOWERING_MAX_CALLS:
                         raise
                     continue
             state = store.save_lowering_state(
@@ -1438,7 +1464,7 @@ def _execute_prepared_relational(
                     step["step_id"], failed,
                     binding=checkpoint_binding, input_fingerprint=fingerprint,
                 )
-                if correction is None or state["calls_used"] >= 2:
+                if correction is None or state["calls_used"] >= LOWERING_MAX_CALLS:
                     raise
                 continue
             break

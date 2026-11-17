@@ -36,6 +36,11 @@ REQUEST = (
     "$175,000 budget, amber readiness and Morgan as owner. Give me a short "
     "baseline summary addressed to my usual review name and role. Use the details above."
 )
+# An earlier turn, for tests whose subject is what the resolver is given rather than the first turn.
+EARLIER_TURN = [{
+    "id": "earlier", "role": "user", "content": "Discuss equipment readiness.",
+    "timestamp": "2026-10-19T11:00:00Z",
+}]
 FACT = "For this equipment readiness review, address me as Blair, the quality reviewer."
 INSTRUCTION = "For equipment readiness briefs, use Decision, Evidence and Next step headings."
 
@@ -81,19 +86,21 @@ def resolver_payload(harness, index=0):
     "This supplier review has two open risks and an owner named Morgan. " +
     "Shorten that into a baseline note for the review team.",
 ])
-def test_first_turn_inline_facts_reach_semantic_resolution(real_http_harness, request_text):
+def test_first_turn_with_nothing_to_refer_to_is_planned_whatever_its_wording(real_http_harness, request_text):
     runtime = real_http_harness
     _replace_history(runtime.harness, [])
-    runtime.harness.replies = [_new_topic(request_text), _compose_only_plan()]
+    runtime.harness.replies = [_compose_only_plan()]
 
     plan = _planned(runtime, request_text)
 
-    payload = resolver_payload(runtime.harness)
-    assert payload["original_message"] == request_text
-    assert payload["conversation"] == []
+    # No history and no saved memory: the wording does not send the request to the resolver.
+    assert len(runtime.harness.model_calls) == 1
+    planning = runtime.harness.model_calls[0]["messages"]
+    assert planning[0]["content"] != runtime.harness.planner.RESOLUTION_SYSTEM_PROMPT
+    assert json.loads(planning[1]["content"])["message"] == request_text
     assert [step["capability_id"] for step in plan["steps"]] == ["compose"]
     stored = runtime.harness.runs.read_item(plan["run_id"], "conversation-1")
-    assert stored["request_resolution"]["requires_retrieval"] is False
+    assert stored["request_resolution"]["requires_retrieval"] is None
     assert stored["user_message"] == request_text
 
 
@@ -256,6 +263,7 @@ def test_unavailable_facts_do_not_suppress_valid_questions(real_http_harness, me
 
         memories.embedding.return_value = (QueryVector([1.0, 0.0]), None)
         memories.container.items[("owner", "memory-0")]["embedding_profile_id"] = "old-profile"
+    _replace_history(runtime.harness, EARLIER_TURN)
     runtime.harness.replies = [json.dumps({
         "relationship": "clarification", "resolved_message": REQUEST,
         "message_ids": [], "requires_retrieval": False,
@@ -281,6 +289,7 @@ def test_withheld_memory_is_not_read_before_resolution(real_http_harness, memori
         runtime.harness.settings["enable_fact_memory_plugin"] = False
     else:
         runtime.harness.conversations.items[("conversation-1", "conversation-1")]["is_hidden"] = True
+    _replace_history(runtime.harness, EARLIER_TURN)
     runtime.harness.replies = [_new_topic(REQUEST), _compose_only_plan()]
 
     _planned(runtime, REQUEST)

@@ -54,7 +54,7 @@ from flask import Response, copy_current_request_context, g, has_request_context
 from config import cosmos_conversations_container, cosmos_messages_container, cosmos_orchestration_runs_container
 from content_screening.contracts import DocumentHeldError, ScreeningError
 from functions_activity_logging import log_workflow_creation
-from functions_appinsights import log_event, workflow_log_context
+from functions_appinsights import exception_log_fields, log_event, workflow_log_context
 from functions_interaction_csrf import get_interaction_csrf_token
 from functions_assist_submissions import SubmissionIdError, normalize_submission_id
 from public_chat_scope import prepare_public_chat_scope, public_chat_execution_scope, public_chat_scope_required
@@ -537,7 +537,7 @@ def _stream_planning(events, holder, context, user_id, settings, run_plan):
         except Exception as exc:
             log_event(
                 '[ORCHESTRATION] Background planning could not finish.',
-                level=logging.ERROR, extra={'stage': 'planning_worker', 'error_type': type(exc).__name__},
+                level=logging.ERROR, extra={'stage': 'planning_worker', **exception_log_fields(exc)},
             )
             fail('Planning could not finish. Reload to check the saved question and retry.')
         finally:
@@ -664,7 +664,7 @@ def _stream_execution(execution, *, run_id, conversation_id, settings=None):
                     '[ORCHESTRATION_RUNS] Headless execution could not return its saved outcome.',
                     level=logging.ERROR, extra={
                         **workflow_log_context(run_id=run_id, conversation_id=conversation_id),
-                        'stage': 'execution_stream', 'error_type': type(exc).__name__,
+                        'stage': 'execution_stream', **exception_log_fields(exc),
                     },
                 )
                 emit(build_error_event(
@@ -2973,7 +2973,10 @@ def register_route_backend_orchestration(bp):
                 release_elicitation_submission(submission)
                 log_event(
                     '[ORCHESTRATION] Clarification could not be resumed.',
-                    extra={'exception_type': type(exc).__name__}, level=logging.ERROR,
+                    extra={
+                        **workflow_log_context(conversation_id=conversation_id),
+                        'stage': 'clarification_resume', **exception_log_fields(exc),
+                    }, level=logging.ERROR,
                 )
                 return jsonify({'error': 'The answer could not be checked. Please retry.'}), 503
 
@@ -3801,7 +3804,10 @@ def register_route_backend_orchestration(bp):
             except Exception as exc:
                 log_event(
                     '[ORCHESTRATION] Planning failed.',
-                    extra={'exception_type': type(exc).__name__}, level=logging.ERROR,
+                    extra={
+                        **workflow_log_context(conversation_id=resolved_conversation_id),
+                        'stage': 'planning_stream', **exception_log_fields(exc),
+                    }, level=logging.ERROR,
                 )
                 yield build_error_event('The request could not be planned or saved. Please retry.', conversation_id)
             finally:

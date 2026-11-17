@@ -196,6 +196,9 @@ NATIVE_DIAGNOSTIC_KEYS = {
 }
 
 
+MODEL_FEEDBACK_MAX_NAMES = 200
+
+
 def safe_native_detail(detail):
     """Keep only closed tokens and counts, so a source value or model-supplied name never rides along."""
     safe = {}
@@ -210,11 +213,16 @@ def safe_native_detail(detail):
 
 
 class TabularRelationalError(ValueError):
-    """A stable failure code and content-free location, without source values or storage locations."""
+    """A stable failure code and content-free location, without source values or storage locations.
 
-    def __init__(self, code, *, detail=None):
+    ``feedback`` is for the model that authored the rejected program only. It may name columns
+    that model was already given, so it must never be logged or shown outside that correction.
+    """
+
+    def __init__(self, code, *, detail=None, feedback=None):
         self.code = code
         self.detail = safe_native_detail(detail)
+        self.feedback = deepcopy(feedback) if isinstance(feedback, dict) and feedback else None
         super().__init__("The complete cross-file calculation could not be completed.")
 
 
@@ -427,6 +435,9 @@ def _missing_columns_error(columns, requested, role, prefixes, where):
     return TabularRelationalError("relational_column_missing", detail={
         "check": "column_missing", "role": role, "missing_count": len(missing),
         "category": _column_category(missing[0], columns, prefixes), **where,
+    }, feedback={
+        "missing_columns": missing[:MODEL_FEEDBACK_MAX_NAMES],
+        "available_columns": list(columns)[:MODEL_FEEDBACK_MAX_NAMES],
     })
 
 

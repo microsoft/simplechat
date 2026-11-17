@@ -65,6 +65,7 @@ from functions_orchestration_registry import (
     CAPABILITY_ACTION_INVOKE,
     CAPABILITY_COMPOSE,
     CAPABILITY_DOCUMENT_MERGE,
+    CAPABILITY_DOCUMENT_SEARCH,
     CAPABILITY_GENERATE_IMAGE,
     CAPABILITY_TABULAR_ANALYZE,
     CAPABILITY_TABULAR_INSPECT,
@@ -242,21 +243,166 @@ PLAN_BUDGET_EXCEEDED_CODE = 'plan_budget_exceeded'
 class PlanValidationError(ValueError):
     """Raised when a plan cannot be repaired into something safe to run."""
 
-    def __init__(self, message, *, code='plan_invalid', rule=None, diagnostics=None):
+    def __init__(self, message, *, code='plan_invalid', rule=None, diagnostics=None, feedback=None):
         self.code = code
         self.rule = rule
         self.diagnostics = diagnostics or {}
+        # Names and values the planner itself wrote or was shown. It goes back only to that
+        # planner in a correction request and is never logged; diagnostics stay content-free.
+        self.feedback = deepcopy(feedback) if isinstance(feedback, dict) and feedback else None
         super().__init__(message)
 
 
-def _step_contract_error(message, step, *, code, rule, **diagnostics):
+def _step_contract_error(message, step, *, code, rule, feedback=None, **diagnostics):
     step_id = step.get('step_id')
-    return PlanValidationError(message, code=code, rule=rule, diagnostics={
+    return PlanValidationError(message, code=code, rule=rule, feedback=feedback, diagnostics={
         **({'step_id_hash': hashlib.sha256(step_id.encode('utf-8')).hexdigest()}
            if isinstance(step_id, str) else {}),
         'capability_id': step.get('capability_id'),
         **diagnostics,
     })
+
+
+PLAN_FEEDBACK_MAX_STEPS = 16
+PLAN_FEEDBACK_MAX_PROBLEMS = 8
+PLAN_FEEDBACK_MAX_TEXT = 300
+STEP_FIELDS = frozenset({
+    'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
+    'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
+    # Auto routing: the planner may name a task category; only the server assigns a binding.
+    'model_task', 'model_binding',
+    # Deliverables: the planner names what a step delivers; the server derives its brief.
+    'delivers', 'deliverable_context',
+})
+
+
+def _misplaced_step_fields(raw, fields):
+    """Describe unknown step fields for telemetry using the server's own vocabulary only.
+
+    A name the planner invented is counted, never recorded. A name that is one of the step's
+    capability arguments is recorded: it is registry vocabulary, and it shows that the planner
+    wrote an argument beside ``arguments`` instead of inside it.
+    """
+    if type(raw) is not dict:
+        return {'step_type_invalid': True}
+    unknown = set(raw) - fields
+    capability = get_capability(raw.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
+    known = set((capability['inputs'].get('properties') or {})) if capability else set()
+    misplaced = sorted(str(name) for name in unknown if name in known)
+    return {
+        'unknown_field_count': len(unknown),
+        **({'capability_id': capability['id']} if capability else {}),
+        **({'misplaced_arguments': ','.join(misplaced)[:200]} if misplaced else {}),
+    }
+
+
+def plan_argument_feedback(raw_steps):
+    """Every step's argument problems, by name, for the planner that wrote them.
+
+    The validator stops at the first failing step and its diagnostics name no argument, so a
+    planner corrected one step at a time spends its corrections rediscovering the next one.
+    This reports all steps at once. It is model-only: see ``PlanValidationError.feedback``.
+    """
+    reported = []
+    for raw in raw_steps if type(raw_steps) is list else ():
+        if type(raw) is not dict or type(raw.get('arguments', {})) is not dict:
+            continue
+        capability = get_capability(raw.get('capability_id'), contract_version=DEPENDENCY_PLAN_CONTRACT_VERSION)
+        if capability is None:
+            continue
+        arguments, schema = raw.get('arguments', {}), capability['inputs']
+        problems = []
+        unknown = sorted(str(name) for name in set(arguments) - set(schema.get('properties') or {}))
+        if unknown:
+            problems.append({
+                'problem': 'unknown_argument', 'arguments': unknown,
+                'allowed_arguments': sorted(schema.get('properties') or {}),
+            })
+        for error in Draft202012Validator(schema).iter_errors(arguments):
+            if len(problems) >= PLAN_FEEDBACK_MAX_PROBLEMS:
+                break
+            if error.validator == 'additionalProperties' and not error.absolute_path:
+                continue
+            expected = error.validator_value
+            problems.append({
+                'problem': str(error.validator), 'path': [str(part) for part in error.absolute_path],
+                **({'expected': expected} if isinstance(expected, (str, int, float, bool)) or (
+                    isinstance(expected, list) and len(json.dumps(expected, default=str)) <= PLAN_FEEDBACK_MAX_TEXT
+                ) else {}),
+            })
+        if problems:
+            reported.append({
+                'step_id': raw.get('step_id') if isinstance(raw.get('step_id'), str) else None,
+                'capability_id': capability['id'], 'problems': problems,
+            })
+        if len(reported) >= PLAN_FEEDBACK_MAX_STEPS:
+            break
+    return {'steps': reported} if reported else None
+
+
+def derive_plan_defaults(raw):
+    """Fill what the server can determine from a new proposal, before it is validated.
+
+    Three things a planner used to be rejected for, each with exactly one valid value:
+
+    - a compose step that declares no outputs prepares one Markdown answer;
+    - complete tabular composition never uses the available-information policy, so a declared
+      one is removed (the stricter reading is kept);
+    - when no answer is selected and exactly one enabled compose step leaves a single narrative
+      output that no step reads, that output is the answer.
+
+    Returns the plan and the names of the derivations applied. Stored plans are not passed here.
+    """
+    if type(raw) is not dict or type(raw.get('steps')) is not list:
+        return raw, []
+    plan, derived = deepcopy(raw), []
+    steps = [step for step in plan['steps'] if type(step) is dict]
+    for step in steps:
+        if step.get('capability_id') != CAPABILITY_COMPOSE:
+            continue
+        if step.get('outputs') is None:
+            step['outputs'] = [{'name': 'answer', 'kind': 'markdown-v1'}]
+            derived.append('compose_outputs')
+        arguments = step.get('arguments')
+        if (
+            type(arguments) is dict and type(arguments.get('tabular_requirement')) is dict
+            and arguments['tabular_requirement'].get('mode') in ('complete_records', 'calculation')
+            and arguments.get('response_policy') == AVAILABLE_INFORMATION_POLICY
+        ):
+            del arguments['response_policy']
+            derived.append('complete_tabular_policy')
+    if plan.get('final_response') in (None, {}):
+        consumed = set()
+        for step in steps:
+            for value in (step.get('inputs') or {}).values() if type(step.get('inputs')) is dict else ():
+                binding = value.get('binding') if type(value) is dict else None
+                if type(binding) is dict and isinstance(binding.get('step_id'), str):
+                    consumed.add((binding['step_id'], binding.get('output_name')))
+        candidates = []
+        for step in steps:
+            if (
+                step.get('capability_id') != CAPABILITY_COMPOSE or step.get('enabled', True) is not True
+                or not isinstance(step.get('step_id'), str) or type(step.get('outputs')) is not list
+            ):
+                continue
+            narrative = [
+                output for output in step['outputs']
+                if type(output) is dict and output.get('kind') in ('text-v1', 'markdown-v1')
+                and isinstance(output.get('name'), str)
+            ]
+            unread = [output for output in narrative if (step['step_id'], output['name']) not in consumed]
+            if len(narrative) == 1 and unread:
+                candidates.append((step['step_id'], unread[0]['name']))
+        if len(candidates) == 1:
+            try:
+                plan['final_response'] = InputBinding(
+                    step_id=candidates[0][0], output_name=candidates[0][1],
+                ).to_dict()
+                derived.append('final_response')
+            except ResultContractError:
+                # An invalid identifier is reported by validation, not guessed around here.
+                pass
+    return plan, derived
 
 
 class LegacyPlanError(PlanValidationError):
@@ -1116,21 +1262,19 @@ def validate_dependency_plan(
         if isinstance(raw, dict) and raw.get('capability_id') == CAPABILITY_WORKFLOW_RUN
         and isinstance(raw.get('arguments'), dict) and isinstance(raw['arguments'].get('workflow'), str)
     }
-    fields = {
-        'step_id', 'capability_id', 'title', 'rationale', 'arguments', 'depends_on',
-        'optional', 'enabled', 'estimated_cost', 'role', 'status', 'inputs', 'outputs',
-        # Auto routing: the planner may name a task category; only the server assigns a binding.
-        'model_task', 'model_binding',
-        # Deliverables: the planner names what a step delivers; the server derives its brief.
-        'delivers', 'deliverable_context',
-    }
+    fields = STEP_FIELDS
     try:
         for step_index, raw in enumerate(raw_steps):
             if type(raw) is not dict or set(raw) - fields:
                 raise PlanValidationError(
                     'The plan contains an invalid step field.',
                     code='plan_structure_invalid', rule='step_shape_invalid',
-                    diagnostics={'step_index': step_index},
+                    diagnostics={'step_index': step_index, **_misplaced_step_fields(raw, fields)},
+                    feedback={
+                        'step_index': step_index, 'allowed_step_fields': sorted(fields),
+                        'unknown_step_fields': sorted(str(name) for name in set(raw) - fields)
+                        if type(raw) is dict else [],
+                    },
                 )
             try:
                 output_name(raw.get('step_id'))
@@ -1231,6 +1375,7 @@ def validate_dependency_plan(
                     code='plan_arguments_invalid',
                     rule='unknown_argument' if keyword == 'additionalproperties' else 'argument_schema_invalid',
                     schema_keyword=keyword, argument_field=field, argument_problems=argument_problems,
+                    feedback=plan_argument_feedback(raw_steps),
                     **{
                         name: first[name]
                         for name in ('argument_keyword', 'argument_path', 'argument_branch', 'expected_type')
@@ -1768,6 +1913,9 @@ def validate_plan_native_source_schemas(plan, selected_sources):
         if (
             not step.get('enabled', True) or step.get('capability_id') != CAPABILITY_TABULAR_ANALYZE
             or arguments.get('native_operation') != 'relate'
+            # A prepared calculation carries no program at planning time: its native owner
+            # authors one at run time and checks it against the real table there.
+            or not isinstance(arguments.get('relational_spec'), dict)
         ):
             continue
         headers = {}
@@ -1832,6 +1980,10 @@ def validate_plan_requirements(plan, seeds=None, *, allow_changes=False):
     if messages and not allow_changes:
         raise PlanValidationError(
             ' '.join(messages), code='selected_requirements_missing',
+            feedback={
+                'unused_selected_document_ids': sorted(selected_documents - used_documents),
+                'unused_selected_capabilities': sorted(missing),
+            },
             rule=(
                 'selected_documents_and_capabilities_missing' if missing and selected_documents - used_documents
                 else 'selected_capabilities_missing' if missing else 'selected_documents_missing'
