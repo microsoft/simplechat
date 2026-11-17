@@ -5,6 +5,7 @@ import { clsx } from 'clsx';
 import { Check, FileText, Loader2, Paperclip, RotateCcw, Search, X } from 'lucide-react';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
+import { toast } from '../../stores/toastStore';
 import {
     addContextItem,
     contextDocumentIds,
@@ -56,6 +57,9 @@ import {
     isReferenceImageFileName,
 } from '../../lib/imageReferences';
 import { uploadDocument, type ChatUploadResponse } from '../../lib/endpoints';
+import { AGREEMENT_PENDING_MESSAGE, CHAT_AGREEMENT_SCOPE } from '../../lib/userAgreement';
+import { useUserAgreementGate } from '../../lib/useUserAgreementGate';
+import { UserAgreementDialog } from '../ui/UserAgreementDialog';
 import {
     addComposerMention,
     composerMentionFromSuggestion,
@@ -131,6 +135,12 @@ export interface ComposerEditorProps {
     onBlur?: () => void;
     onEscape?: () => boolean;
     onUploadComplete?: (response: ChatUploadResponse, ownerConversationId: string | null) => void;
+    /**
+     * Reports whether a file is still waiting on the user agreement and so is not in the draft yet, which
+     * lets the owner hold its own Send until the file has arrived. It reports false again when this stops
+     * reporting, so an editor that goes away cannot leave its owner held.
+     */
+    onAgreementPendingChange?: (pending: boolean) => void;
     /** Assist inputs: no `/` prompts, `@` mentions, uploads or conversation files. */
     restricted?: boolean;
     /** Restricted mode only: also offer `#` documents and tags and the Add context control. */
@@ -213,6 +223,7 @@ export function ComposerEditor({
     onBlur,
     onEscape,
     onUploadComplete,
+    onAgreementPendingChange,
     restricted = false,
     allowContext = false,
     allowConversationReferences,
@@ -706,7 +717,10 @@ export function ComposerEditor({
         if (event.key === 'Enter' && !event.shiftKey && onSubmit) {
             event.preventDefault();
             event.stopPropagation();
-            onSubmit();
+            // A file is still on its way into the draft, so sending now would leave it behind.
+            if (!agreementGate.pending) {
+                onSubmit();
+            }
         }
     };
 
@@ -729,6 +743,16 @@ export function ComposerEditor({
     const uploadQueue = useRef<Promise<void>>(Promise.resolve());
     const uploadConversation = useRef<string | null>(conversationId);
     const retryFileId = useRef<string | null>(null);
+    // No file leaves the browser until the user agreement, when an administrator requires one, is settled.
+    const agreementGate = useUserAgreementGate();
+    const agreementRetries = useRef(new Set<string>());
+    // Until the agreement is settled the file has no chip, so nothing else says an upload is coming. The owner
+    // is told so it can hold its Send. A layout effect, so the hold begins in the commit that raises the flag
+    // and not a frame later; the cleanup lowers it whenever this stops reporting, including on unmount.
+    useLayoutEffect(() => {
+        onAgreementPendingChange?.(agreementGate.pending);
+        return () => onAgreementPendingChange?.(false);
+    }, [agreementGate.pending, onAgreementPendingChange]);
     useEffect(() => {
         owner.active = true;
         uploadConversation.current = conversationId ?? draft.uploads.find((upload) => upload.conversationId)?.conversationId ?? null;
@@ -903,6 +927,23 @@ export function ComposerEditor({
             return;
         }
         const selectedFiles = multipleFiles ? chosen : chosen.slice(0, 1);
+        // Only files that will really be sent need the user agreement; a file refused below never
+        // leaves the browser. Cancel leaves the composer as it was, and ends a retry-by-picker.
+        const sendable = selectedFiles.filter((file) => !(referenceUploadValidationError(file)
+            ?? chatUploadValidationError(file, uploadsEnabled, bootstrap?.settings?.max_file_size_mb)));
+        const gatedOwner = owner;
+        if (sendable.length > 0 && !(await agreementGate.confirm(CHAT_AGREEMENT_SCOPE, sendable))) {
+            retryFileId.current = null;
+            return;
+        }
+        // The composer may have moved to another conversation while the agreement was being settled. The
+        // files are not attached there, and a selection that vanishes without a word looks like a lost file.
+        if (currentOwner.current !== gatedOwner || !gatedOwner.active) {
+            toast.error(sendable.length === 1
+                ? 'Your file was not attached because you left the conversation. Attach it again here.'
+                : 'Your files were not attached because you left the conversation. Attach them again here.');
+            return;
+        }
         const replacing = retryFileId.current;
         const replacedUpload = draft.uploads.find((upload) => upload.id === replacing);
         retryFileId.current = null;
@@ -972,10 +1013,21 @@ export function ComposerEditor({
             updateUpload(upload.id, { state: 'failed', error });
             return;
         }
-        const controller = new AbortController();
-        requests.current.set(upload.id, controller);
-        updateUpload(upload.id, { state: 'uploading', interrupted: undefined, error: undefined });
-        void queueUpload(upload, file, controller);
+        // A second click while the agreement is being settled must not start a second upload.
+        if (agreementRetries.current.has(upload.id)) {
+            return;
+        }
+        agreementRetries.current.add(upload.id);
+        const gatedOwner = owner;
+        void agreementGate.withAgreement(CHAT_AGREEMENT_SCOPE, [file], () => {
+            if (currentOwner.current !== gatedOwner || !gatedOwner.active) {
+                return;
+            }
+            const controller = new AbortController();
+            requests.current.set(upload.id, controller);
+            updateUpload(upload.id, { state: 'uploading', interrupted: undefined, error: undefined });
+            return queueUpload(upload, file, controller);
+        }).finally(() => agreementRetries.current.delete(upload.id));
     };
     const removeUpload = (localId: string) => {
         cancelRetainedComposerUpload(localId, conversationId);
@@ -1247,6 +1299,9 @@ export function ComposerEditor({
                     </div>
                 </details>
             )}
+            {agreementGate.pending && (
+                <p role="status" className="px-1 pb-1 text-xs text-text-3">{AGREEMENT_PENDING_MESSAGE}</p>
+            )}
             {draft.uploads.length > 0 && (
                 <ul className="space-y-1 px-1 pb-1" aria-label="Attached files" aria-live="polite">
                     {draft.uploads.map((upload) => (
@@ -1296,6 +1351,7 @@ export function ComposerEditor({
                     ))}
                 </ul>
             )}
+            <UserAgreementDialog gate={agreementGate} />
         </div>
     );
 }

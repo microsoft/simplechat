@@ -1,0 +1,4 @@
+/* control-center-usage.css */
+#runtimeUsagePanel .runtime-usage-table {
+    min-width: 960px;
+}

@@ -1,0 +1,36 @@
+{# templates/modern/errors/429.html -#}
+{#-
+    Modern variant of templates/errors/429.html, shown when a request is rate limited.
+    It needs nothing but the stylesheet: no API call and no V2 bundle, so it still renders
+    while the application is throttling or the bundle has not been built.
+    rate_limit_message_html is the administrator's message after Markdown conversion and
+    sanitising, so it is a Markup value and is written out as is.
+-#}
+{%- extends "modern/standalone_base.html" -%}
+{% block title %}Rate limited - {{ ms_app_title }}{% endblock %}
+{% block page_class %}ms-page-narrow{% endblock %}
+{% block content %}
+
+<div class="ms-panel">
+    <div class="ms-panel-heading">
+        <span class="ms-icon ms-icon-warn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <path d="M6 3h12" />
+                <path d="M6 21h12" />
+                <path d="M7 3v3l5 6-5 6v3" />
+                <path d="M17 3v3l-5 6 5 6v3" />
+            </svg>
+        </span>
+        <h1 id="rate-limit-title" class="ms-title">Rate limited</h1>
+    </div>
+
+    <div class="ms-prose rate-limit-message">
+        {{ rate_limit_message_html }}
+    </div>
+
+    <div class="ms-actions">
+        <a class="ms-button ms-button-primary" href="{{ url_for('public_app.index') }}">Return to the home page</a>
+    </div>
+</div>
+
+{% endblock %}

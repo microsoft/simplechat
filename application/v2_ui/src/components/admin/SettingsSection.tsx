@@ -57,6 +57,7 @@ import {
     type SectionStatus,
 } from '../../lib/adminSections';
 import { GlassPanel } from '../ui/primitives';
+import { safeClassicAdminTabHref, type AdminSectionLink } from '../../lib/adminOperations';
 import { FALLBACK_SECTION_ICON } from './adminSectionIcons';
 import { SectionStatusContext } from './sectionStatusContext';
 import { presentSectionStatus } from './sectionStatusPresentation';
@@ -143,9 +144,14 @@ export interface SettingsSectionProps {
     runtimeFlags?: Record<string, boolean>;
     /**
      * Move the page to another section, for prerequisite links and "Used by". Without it
-     * a prerequisite links to the classic page, and "Used by" names sections unlinked.
+     * a prerequisite links nowhere, and "Used by" names sections unlinked.
      */
     onNavigate?: (sectionId: string) => void;
+    /**
+     * Where a prerequisite's target section is: in this page, or only on the classic one.
+     * The page knows which sections V2 draws; absent, every target is taken to be here.
+     */
+    sectionLink?: (sectionId: string) => AdminSectionLink | null;
     /** Sections whose settings rely on this one. */
     dependents?: SectionDependent[];
     children?: ReactNode;
@@ -155,10 +161,12 @@ function RequirementNotice({
     requirement,
     satisfied,
     onNavigate,
+    sectionLink,
 }: {
     requirement: NonNullable<AdminField['requires']>;
     satisfied: boolean;
     onNavigate?: (sectionId: string) => void;
+    sectionLink?: SettingsSectionProps['sectionLink'];
 }) {
     if (satisfied) {
         return null;
@@ -166,6 +174,15 @@ function RequirementNotice({
 
     const blocking = (requirement.mode ?? 'block') === 'block';
     const targetSection = requirement.target_section;
+    // Without a resolver every target is taken to be on this page, which is where the page
+    // always sends them. With one, a target V2 never draws is linked on the classic page.
+    const link: AdminSectionLink | null = !targetSection
+        ? null
+        : sectionLink
+            ? sectionLink(targetSection)
+            : onNavigate
+                ? { kind: 'section', sectionId: targetSection }
+                : null;
 
     return (
         <div
@@ -190,22 +207,25 @@ function RequirementNotice({
                 {requirement.description ? (
                     <p className="mt-0.5 text-text-3">{requirement.description}</p>
                 ) : null}
-                {/* Within the page when the page can take the reader there; the classic
-                    page otherwise, which is where these links always used to lead. */}
-                {targetSection && onNavigate ? (
+                {/* Within the page whenever V2 draws the target. The classic tab that holds it
+                    is linked only for a target V2 does not draw. */}
+                {link?.kind === 'section' && onNavigate ? (
                     <button
                         type="button"
-                        onClick={() => onNavigate(targetSection)}
+                        onClick={() => onNavigate(link.sectionId)}
                         className="mt-1 inline-block text-accent underline"
                     >
                         Configure {requirement.label}
                     </button>
-                ) : targetSection ? (
+                ) : link?.kind === 'classic' ? (
                     <a
-                        href={`/admin/settings#${encodeURIComponent(targetSection)}`}
+                        href={safeClassicAdminTabHref(link.tabId)}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         className="mt-1 inline-block text-accent underline"
                     >
-                        Configure {requirement.label}
+                        Configure {requirement.label} on the classic admin page
+                        <span className="sr-only"> (opens in a new tab)</span>
                     </a>
                 ) : null}
             </div>
@@ -397,6 +417,7 @@ export function SettingsSection({
     guide,
     runtimeFlags,
     onNavigate,
+    sectionLink,
     dependents,
     children,
 }: SettingsSectionProps) {
@@ -631,6 +652,7 @@ export function SettingsSection({
                             requirement={requirement}
                             satisfied={asBoolean(readSectionValue(settings, draft, requirement.key, fieldsByKey))}
                             onNavigate={onNavigate}
+                            sectionLink={sectionLink}
                         />
                     ))}
 

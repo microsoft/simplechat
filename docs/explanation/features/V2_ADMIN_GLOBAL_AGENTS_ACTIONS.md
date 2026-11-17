@@ -2,9 +2,9 @@
 
 ## Overview
 
-V2 Admin Settings can now list, create, edit, enable, disable, delete, and choose
+V2 Admin Settings can now list, create, edit, enable, disable, delete, duplicate, and choose
 the default among the organisation's global agents, and list, create, edit,
-enable, disable, and delete global actions. Both use the full-page agent and
+enable, disable, delete, and duplicate global actions. Both use the full-page agent and
 action editors that personal and group workspaces already use, so a global agent
 gets the same model, action, knowledge, instruction, advanced, and template
 sections, and a global action gets the same connector catalogue, MCP presets,
@@ -16,7 +16,8 @@ delegation** card that created **Call agent** actions on its own. That card is
 removed: a Call agent action is an ordinary global action with the **Call agent**
 type, and a global agent attaches it in its editor like any other action.
 
-**Implemented in version:** 0.261.271 (`application/single_app/config.py`)
+**Implemented in version:** 0.261.271 (`application/single_app/config.py`); Duplicate was added in
+**0.261.448**
 
 **Dependencies:** `functions_workspace_authoring.py` (the shared editor engine),
 `functions_global_editor_access.py`, `route_backend_v2_admin_agents_actions.py`,
@@ -126,6 +127,44 @@ asks before leaving for a global editor while settings are unsaved (the same
 **Discard unsaved changes?** prompt the editors use), and the approvals link opens
 in a new tab.
 
+### Duplicate
+
+The classic tables offered **Duplicate** for both. It deep-copied the row, dropped its id, named the
+copy `<name>_copy` and opened the Add modal prefilled, storing nothing until Save. V2 does the same
+with the differences a record that can hold stored credentials needs
+(`lib/adminDuplicate.ts`, used by `GlobalAgentsManager.tsx` and `GlobalActionsManager.tsx`):
+
+- **It opens the editor, not a save.** The list reads the record again with
+  `GLOBAL_AGENT_WORKBENCH.fetchEditor` / `GLOBAL_ACTION_WORKBENCH.fetchEditor`, builds the copy,
+  seeds it as the new-record editor's unsaved draft, and navigates to `/admin/agents/new` or
+  `/admin/actions/new`. Creating the copy server-side would fail for any connector that requires
+  a key, because the server reports only "Invalid action configuration." and cannot say why. In
+  the editor the person sees what is missing, and the server's name and validation errors appear
+  where they can be read.
+- **No stored credential is copied.** The editor read lists each secret by JSON pointer
+  (`secret_paths`). The copy is built without them: an object key is removed, an array entry
+  becomes an empty string so later entries keep their positions. A placeholder such as
+  `***REDACTED***` therefore never reaches the write, which the server would refuse as "A stored
+  secret is unavailable. Re-enter its value." Stored ownership, audit and server-stamped fields
+  (`id`, `user_id`, `created_at`, `last_updated`, `scope`, `_etag` and similar) are dropped too.
+- **It starts disabled** (`is_enabled: false`). A global record is live for everyone the moment it
+  is enabled, and a copy that has none of its credentials yet should not be published by accident.
+  The notice says so: "Editing a copy of Research assistant. It starts disabled; enable it from
+  the list once it is ready." and, when credentials were left out, "The stored credential was not
+  copied, so enter new ones before saving." (or "The N stored credentials were not copied ...").
+- **Names stay unique.** The copy is `<name>_copy`, then `_copy_2`, `_copy_3`, the first not taken
+  (compared ignoring case, as the server does), within the 100-character name limit and the
+  characters a name allows; its display name is `<display name> Copy` within 200 characters. The
+  server still checks on save, so a name taken meanwhile is reported in the editor.
+- **An unsaved new record is never replaced.** `seedDuplicateEditorDraft`
+  (`lib/workspaceEditorDrafts.ts`) refuses while the person has an unsaved new agent or action
+  in this tab, and the list shows "You have an unsaved new agent. Finish or discard it from New
+  agent, then duplicate again." The draft keys it writes (`personal:new` for agents and
+  `["personal","new",null]` for actions, in the global scope) are the ones the editor pages read;
+  a functional test pins them against the pages.
+- **Failures are visible.** A failed read of the record, or a refused seed, shows in the list's
+  alert and opens no editor.
+
 ### Shared editor design
 
 The agent and action editors are one implementation for personal, group, and
@@ -199,6 +238,9 @@ document.
 - `application/v2_ui/src/components/workspace/EditorLayout.tsx` (new)
 - `application/v2_ui/src/components/workspace/WorkspaceEditorFrame.tsx` (redesigned)
 - `application/v2_ui/src/pages/AdminGlobalEditorPages.tsx` (new)
+- `application/v2_ui/src/lib/adminDuplicate.ts` (new, 0.261.448): the copy's name, display name,
+  credential-free record and notice
+- `application/v2_ui/src/lib/workspaceEditorDrafts.ts` (0.261.448): `seedDuplicateEditorDraft`
 
 ## Usage instructions
 
@@ -212,6 +254,10 @@ document.
    Call agent action, pick the **Call agent** type and a global target agent.
 5. Disable an agent or action to keep its configuration without offering it, or
    delete it after confirming. The default agent cannot be deleted.
+6. To make a variant of an agent or action, choose **Duplicate** on its row. The editor
+   opens on an unsaved copy that starts disabled and has none of the original's stored
+   credentials. Change what differs, enter new credentials if the connector needs them, and
+   save; then enable the copy from the list.
 
 See [Agents & Actions settings](../../admin/agents-actions.md) for the
 administrator reference.
@@ -225,13 +271,17 @@ administrator reference.
 | `functional_tests/test_v2_admin_global_editor_logic.mjs` | The global adapters, return paths, stripped server fields, connector and template scopes, and admin routes, against the real TypeScript |
 | `functional_tests/test_v2_admin_agents_parity.py`, `test_v2_admin_actions_parity.py` | Section and component declarations |
 | `functional_tests/route_tests/` | Blueprint policy and admin-only access for all 13 routes |
-| `ui_tests/test_v2_admin_global_agents_actions.py` | The built SPA: lists, default, enable/disable, delete, agent creation from scratch and from a template, template publishing, a global Call agent action attached to a global agent, credential-preserving edits, load failures and revision conflicts, the unsaved-settings prompt, and non-administrator refusal |
+| `functional_tests/test_v2_admin_parity.py`, `test_v2_admin_parity_logic.ts` | Duplicate: the copy's names, the removal of every secret path, the stripped server fields, the seeded draft reaching the global editors' draft keys (and no other scope's), the refusal over an unsaved new record, and the source contract that pins those keys to the editor pages |
+| `ui_tests/test_v2_admin_global_agents_actions.py` | The built SPA: lists, default, enable/disable, delete, Duplicate for an agent (also at 390px) and for an action with a stored credential (an unsaved, disabled copy with no credential that must be given its own before it saves, original untouched) and a failed read for a copy, agent creation from scratch and from a template, template publishing, a global Call agent action attached to a global agent, credential-preserving edits, load failures and revision conflicts, the unsaved-settings prompt, and non-administrator refusal |
 | `ui_tests/test_v2_workspace_authoring.py`, `test_v2_workspace_draft_navigation.py`, `test_v2_group_agents.py`, `test_v2_group_actions.py`, `test_v2_cross_scope_journeys.py` | The redesigned editors in personal and group scope: section navigation, every field and connector, draft protection, and saving |
 
 ### Known limitations
 
-- Duplicating a global agent or action, which the classic tables offer, is not
-  yet available in V2.
+- The server's own create path for a copy of a key-based connector was read, not run: it reports
+  only "Invalid action configuration." for a missing key, which is why Duplicate opens the editor
+  instead of creating the copy itself.
+- A copy of an agent whose editor shows "Your unsaved draft was restored from this tab's
+  memory." says so because a seeded draft and a restored one are the same thing to the editor.
 - Global agent types are not gated by the Foundry tenant flags, matching the
   classic admin editor, which offers every type to administrators.
 - Mixing editors on one credential has two Key Vault side effects, the same ones

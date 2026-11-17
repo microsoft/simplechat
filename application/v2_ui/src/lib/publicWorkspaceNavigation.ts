@@ -31,12 +31,6 @@ export const PUBLIC_GROUP_BLURBS: Partial<Record<WorkspaceSectionGroup, string>>
     manage: 'Who manages this workspace, and how it is run.',
 };
 
-export function classicPublicSectionLabel(section: string, label: string): string {
-    if (section === 'tags') return 'Documents, then Manage Tags';
-    if (section === 'sync') return 'Sync';
-    return label;
-}
-
 export function isPublicWorkspaceSection(value: string | undefined): value is PublicWorkspaceSectionId {
     return PUBLIC_WORKSPACE_SECTION_IDS.some((id) => id === value);
 }

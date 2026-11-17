@@ -2,7 +2,7 @@
 #!/usr/bin/env python3
 """
 Functional test for Control Center activity logs hardening.
-Version: 0.261.284
+Version: 0.261.447
 Implemented in: 0.241.021
 
 This test ensures that the Control Center activity logs flow validates
@@ -36,7 +36,7 @@ def test_activity_logs_backend_hardening_present() -> bool:
     required_snippets = [
         "ACTIVITY_LOGS_MAX_PER_PAGE = 200",
         "def validate_activity_logs_pagination(request_args):",
-        "def build_activity_logs_query_context(activity_type_filter='all', search_term=''):",
+        "def build_activity_logs_query_context(activity_type_filter='all', search_term='', usage_args=None):",
         "def normalize_activity_log_record(log_record):",
         "coerce_activity_log_user_id(normalized_record.get(field_name))",
         "(log_record.get('admin') or {}).get('user_id')",

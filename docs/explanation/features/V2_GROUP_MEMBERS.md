@@ -8,7 +8,8 @@ from a CSV file, and transfer ownership, without leaving V2. Every other member
 sees who belongs to the group and can leave it.
 
 Implemented in version: **0.261.155**, tracked in
-`application/single_app/config.py`.
+`application/single_app/config.py`. An inactive or unrecognized-status group's
+owner and admins keep the section: **0.261.448**.
 
 Dependencies:
 - the group membership routes from version 0.261.151
@@ -29,8 +30,11 @@ The selected-group context reports it as `sections.members`, in the `manage`
 group:
 - it's available to every member while the group's status lets them view it:
   `active`, `locked` and `upload_disabled`;
-- it's unavailable in an `inactive` group, or one with an unrecognized status,
-  with the status as the reason;
+- from version 0.261.448 it's also available to the **owner and admins** of an
+  `inactive` group or one with an unrecognized status, as the classic manage
+  page keeps the member list for them;
+- for everyone else it's unavailable in an `inactive` group, or one with an
+  unrecognized status, with the status as the reason;
 - its `can_manage` is for navigation only. The controls come from the member
   list's own hints.
 
@@ -53,8 +57,13 @@ With the rules from the membership routes, that gives:
 | Admin | Add and import members, review requests, change roles (including other admins' and their own), remove members, leave |
 | DocumentManager, User | See the members, and leave the group |
 
-In a `locked` group, adding and importing are refused, as on the classic page.
-Everything else works in every status that shows the section.
+In a `locked`, `inactive` or unrecognized-status group, adding and importing are
+refused by the server, as on the classic page, so the owner and admins get no
+**Add member** or **Import CSV**. In their place the section says why: "This
+group is locked, so members can't be added or imported. Changing roles, removing
+members and reviewing requests to join still work." (or "inactive", or "status
+isn't recognized"). Everything else works in every status that shows the
+section: the membership routes check the group's status only for an add.
 
 ## Using it
 
@@ -111,17 +120,17 @@ Everything else works in every status that shows the section.
 
 | Suite | Cases | Coverage |
 |---|---|---|
-| `ui_tests/test_v2_group_members.py` | 36 | The real V2 page: navigation, every role and status, search and paging in the address, add, CSV import, role changes, remove, leave, bulk actions, transfer, requests, every refusal, malformed responses, both themes at both sizes |
+| `ui_tests/test_v2_group_members.py` | 43 | The real V2 page: navigation, every role and status (including a locked, inactive or unrecognized-status group, where an owner or admin keeps the list, role changes, removal and requests but not adding, and any other member is told why Members is unavailable), search and paging in the address, add, CSV import, role changes, remove, leave, bulk actions, transfer, requests, every refusal, malformed responses, both themes at both sizes |
 | `functional_tests/test_group_membership_fixture_parity.py` | 58 | The browser fixture's responses, statuses, error codes and messages against the real membership routes and `/api/userSearch` |
 | `functional_tests/test_v2_group_membership_logic.py` | 1 (10 checks) | The client's response checks and CSV parsing |
-| `functional_tests/test_v2_group_workspace_context.py` | 88 | `sections.members` for every role and status, among the context's other contracts |
+| `functional_tests/test_v2_group_workspace_context.py` | 108 | `sections.members` for every role and status, including the owner's and admins' access in every status, among the context's other contracts |
 
 ## Known limitations
 
-- **Inactive groups:** the Members section isn't available in an `inactive`
-  group, or one with an unrecognized status, although the membership routes
-  and the classic manage page still allow management there. Use **Manage group
-  (classic)** for those groups.
+- **Inactive groups:** since version 0.261.448 an inactive or unrecognized-status
+  group's owner and admins keep Members, with adding and importing turned off
+  and explained. Other members of such a group are unchanged: Members is
+  unavailable to them, with the status as the reason.
 - **Adding** is by directory search only; the CSV import covers user IDs.
 - **CSV import** adds one row at a time, as the classic page does.
 - **Membership changes** don't appear in the group activity feed, as before.

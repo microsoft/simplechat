@@ -5,8 +5,9 @@
 // name classic pages: `/chats?conversationId=`, `/group_workspaces`, `/profile?tab=violations`.
 // Every spelling the classic resolver accepts (static/js/notifications.js,
 // resolveNotificationNavigationTarget) is accepted here too and translated to its V2 route
-// where one exists. A page V2 has not rebuilt yet, such as workflow activity, is opened
-// in the classic interface rather than dropped, so no notice becomes a dead end.
+// where one exists. A page V2 has not rebuilt yet is opened in the classic interface rather
+// than dropped, so no notice becomes a dead end. Workflow activity is rebuilt: its links open
+// the V2 page with the query they carry (lib/workflowActivity.ts).
 //
 // Two rules are stricter than classic's, deliberately. A link must stay on this site: the
 // classic resolver will follow an absolute link to another origin, but a notification can
@@ -22,7 +23,9 @@ import type { AppNotification } from './notifications';
 import type { WorkflowScope } from './workflowEditor';
 import { readConversationParam, readPendingActionFocus } from './conversationUrl';
 import { groupWorkspaceDocumentPath, groupWorkspacePath } from './groupWorkspaceNavigation';
+import { NOTIFICATIONS_PATH, notificationsPathFor } from './notificationsPage';
 import { publicWorkspacePath } from './publicWorkspaceNavigation';
+import { validatedWorkflowActivitySearch, WORKFLOW_ACTIVITY_PATH } from './workflowActivity';
 import { workflowRunHref } from './workflowRunLink';
 import { requireWorkspaceId } from './workspaceContext';
 
@@ -82,8 +85,7 @@ function route(path: string): ResolvedNotificationLink {
  * and group workspaces alike.
  *
  * Null when the workspace, the workflow or the run is unknown, or an id is one a link must not
- * carry. The caller then keeps the classic link, or offers none, rather than guessing where
- * the run lives.
+ * carry. The caller then offers no link, rather than guessing where the run lives.
  */
 export function v2WorkflowRunPath(
     scope: WorkflowScope | null,
@@ -117,9 +119,10 @@ const WORKFLOW_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
 /**
  * Whether the notice is about a Microsoft 365 action, wherever the action id was written.
  *
- * A notice that names a workflow run keeps its classic workflow-activity page: that page draws
- * the saved action beside the run, and V2's run page does not. A notice about an action in a
- * conversation does not need this; it opens the conversation (see `chatTarget`).
+ * Such a notice gets no run of its own from its metadata alone: the link the server writes for
+ * it opens the V2 workflow-activity page, which draws the saved action beside the run, and one
+ * written without a link is not guessed at. A notice about an action in a conversation does not
+ * need this; it opens the conversation (see `chatTarget`).
  */
 function isMicrosoft365Notice(notification: AppNotification): boolean {
     return 'm365_pending_action_id' in notification.metadata
@@ -144,44 +147,6 @@ function scopeOf(type: unknown, groupId: unknown): WorkflowScope | null {
  */
 function noticeWorkflowScope(notification: AppNotification): WorkflowScope | null {
     return scopeOf(notification.metadata.workflow_scope, notification.metadata.workflow_group_id);
-}
-
-function linkWorkflowScope(url: URL): WorkflowScope | null {
-    return scopeOf(url.searchParams.get('scope'), url.searchParams.get('groupId'));
-}
-
-function sameScope(left: WorkflowScope, right: WorkflowScope): boolean {
-    if (left.type === 'group' || right.type === 'group') {
-        return left.type === 'group' && right.type === 'group' && left.groupId === right.groupId;
-    }
-    return true;
-}
-
-/** Whether the notice's own id, when it wrote one, agrees with the id its link names. */
-function agreesWithNotice(written: unknown, linked: string): boolean {
-    return written === undefined || written === null || written === '' || written === linked;
-}
-
-/**
- * The V2 run a classic workflow-activity link names, or null to keep the classic page.
- *
- * Opened in V2 only when the link and the notice agree on everything: the workspace the
- * workflow lives in, the workflow and the run. A Microsoft 365 notice stays classic.
- */
-function workflowActivityRunPath(url: URL, notification: AppNotification): string | null {
-    if (isMicrosoft365Notice(notification)) {
-        return null;
-    }
-    const linked = linkWorkflowScope(url);
-    const written = noticeWorkflowScope(notification);
-    const workflowId = safeId(url.searchParams.get('workflowId'));
-    const runId = safeId(url.searchParams.get('runId'));
-    if (!linked || !written || !sameScope(linked, written) || !workflowId || !runId
-        || !agreesWithNotice(notification.metadata.workflow_id, workflowId)
-        || !agreesWithNotice(notification.metadata.run_id, runId)) {
-        return null;
-    }
-    return v2WorkflowRunPath(linked, workflowId, runId);
 }
 
 /** The run a workflow notice without a link of its own is about, or null for no link. */
@@ -386,12 +351,20 @@ export function resolveNotificationLink(
     }
 
     if (path === '/workflow-activity') {
-        const runPath = workflowActivityRunPath(url, notification);
-        return runPath ? route(runPath) : classic(linkHref(url), notification, origin);
+        // The V2 page reads the classic page's own query, so a valid link keeps it whole; one with
+        // an id or scope the page could not read is reported, never opened as something else.
+        const search = validatedWorkflowActivitySearch(url.search);
+        return search === null ? { target: null, error: INVALID_LINK } : route(`${WORKFLOW_ACTIVITY_PATH}${search}`);
     }
 
     if (path === '/approvals') {
         return route(`/approvals${url.search}${url.hash}`);
+    }
+
+    // The full list of notifications. Only the view it can show survives the link, not the rest
+    // of its query or its fragment.
+    if (path === NOTIFICATIONS_PATH) {
+        return route(notificationsPathFor(url.searchParams));
     }
 
     // My Workspace has no per-document link, so a document notice opens the document list.

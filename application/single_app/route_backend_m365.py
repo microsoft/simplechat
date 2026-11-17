@@ -9,7 +9,7 @@ from urllib.parse import urlencode, urlsplit
 import requests
 from azure.core.exceptions import AzureError
 from azure.cosmos.exceptions import CosmosResourceNotFoundError
-from flask import Blueprint, jsonify, make_response, redirect, render_template, request, session
+from flask import Blueprint, jsonify, make_response, redirect, request, session
 
 from functions_appinsights import log_event
 from functions_authentication import login_required, user_required, user_required_blueprint
@@ -33,6 +33,7 @@ from functions_m365_connections import (
     workflow_connection_readiness,
 )
 from functions_m365_context import _identifier
+from functions_ui_pages import render_page
 from swagger_wrapper import swagger_route, get_auth_security
 
 
@@ -44,6 +45,7 @@ CLASSIC_WORKFLOW_CONNECTION_URL = "/profile?tab=settings#m365-connection-status"
 CLASSIC_WORKFLOW_CONNECTED_URL = "/profile?tab=settings&m365_connection=connected#m365-connection-status"
 CLASSIC_CHATS_URL = "/chats"
 CONNECTION_RESULT_TEMPLATE = "m365_connection_result.html"
+MODERN_CONNECTION_RESULT_TEMPLATE = "modern/m365_connection_result.html"
 _CALLBACK_RESPONSE_FIELDS = {"state", "code", "error", "error_description", "error_uri", "session_state", "client_info"}
 
 
@@ -320,8 +322,9 @@ def _connection_result_page(*, kind, outcome, completion, continue_url, code=Non
         "type": message_type, "kind": kind, "outcome": outcome, "completion": completion,
         "code": code, "message": message, "continue_url": continue_url,
     }
-    response = make_response(render_template(
-        CONNECTION_RESULT_TEMPLATE, result=result, title=title, message=message,
+    response = make_response(render_page(
+        CONNECTION_RESULT_TEMPLATE, MODERN_CONNECTION_RESULT_TEMPLATE,
+        result=result, title=title, message=message,
         continue_url=continue_url,
         continue_label="Return to settings" if continue_url != CLASSIC_CHATS_URL else "Return to chat",
     ), status)

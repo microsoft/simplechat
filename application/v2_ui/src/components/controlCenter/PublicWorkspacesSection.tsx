@@ -9,6 +9,7 @@ import { GlassButton } from '../ui/primitives';
 import { DataTable, ExportButton, FilterBar, ReasonConfirmDialog, StatusBadge, useCrossPageSelection, useUrlQueryParams, type DataColumn } from './ControlCenterPrimitives';
 import { GROUP_INPUT, GroupDetailDrawer, type GroupRow } from './GroupDetailDrawer';
 import { entityDate } from './EntityDetailSections';
+import { useReloadOnDataRefresh } from './refreshContext';
 
 interface WorkspaceResponse {
     workspaces: GroupRow[];
@@ -26,6 +27,8 @@ export function PublicWorkspacesSection() {
     const [actionError, setActionError] = useState('');
     const [loading, setLoading] = useState(true);
     const [revision, setRevision] = useState(0);
+    // A refresh from the strip above reloads the way this section's own Refresh workspaces does.
+    useReloadOnDataRefresh(() => setRevision((value) => value + 1));
     const [busy, setBusy] = useState(false);
     const [bulkStatus, setBulkStatus] = useState('locked');
     const [confirm, setConfirm] = useState(false);

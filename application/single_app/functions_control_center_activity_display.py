@@ -83,6 +83,7 @@ ACTIVITY_TYPES = {
     "agent_update": ("Agent updated", "agents"),
     "agent_deletion": ("Agent deleted", "agents"),
     "agent_run": ("Agent used", "agents"),
+    "action_run": ("Action used", "agents"),
     "agent_template_submission": ("Agent template submitted", "agents"),
     "agent_template_approval": ("Agent template approved", "agents"),
     "agent_template_rejection": ("Agent template rejected", "agents"),
@@ -494,7 +495,19 @@ def describe_activity(record):
     activity_type = _text(record.get("activity_type"))
     facts = _Facts()
     summary, detail = "", ""
-    if activity_type == "user_login":
+    if isinstance(record.get("runtime_usage"), dict):
+        usage = record["runtime_usage"]
+        summary = _text(usage.get("name")) or "Unknown entity"
+        detail = " · ".join(_text(usage.get(key)) for key in ("operation", "outcome") if _text(usage.get(key)))
+        for label, key in (
+            ("Entity ID", "entity_id"), ("Configuration scope", "scope_type"),
+            ("Configuration scope ID", "scope_id"), ("Type", "entity_type"),
+            ("Configured host", "endpoint_host"), ("Authentication", "auth_type"),
+            ("Operation", "operation"), ("Outcome", "outcome"), ("Duration (ms)", "duration_ms"),
+            ("Attempt ID", "attempt_id"), ("Trigger", "trigger_type"),
+        ):
+            facts.add(label, usage.get(key))
+    elif activity_type == "user_login":
         method = _text(record.get("login_method")) or _text(_value(record, "details", "login_method"))
         summary, detail = "Signed in", f"Method: {method}" if method else ""
         facts.add("Login method", method)

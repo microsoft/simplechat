@@ -1056,7 +1056,50 @@ def create_workflow_priority_notification(
     )
 
 
-def get_user_notifications(user_id, page=1, per_page=20, include_read=True, include_dismissed=False, user_roles=None):
+# The Notifications page filters and searches the whole list rather than the page on screen, so
+# both are applied before the list is cut into pages.
+NOTIFICATION_READ_STATUS_FILTERS = ('all', 'unread', 'read')
+NOTIFICATION_SEARCH_MAX_LENGTH = 100
+
+
+def parse_notification_read_status(value):
+    """Return 'all', 'unread' or 'read' for a requested read filter; None or blank means 'all'.
+
+    Anything else raises ValueError, so a caller can refuse the request rather than show a list
+    that does not match the filter it was asked for.
+    """
+    status = str(value or '').strip().lower() or 'all'
+    if status not in NOTIFICATION_READ_STATUS_FILTERS:
+        raise ValueError('The read filter must be all, unread or read.')
+    return status
+
+
+def normalize_notification_search(value):
+    """Return the text a notification search looks for: trimmed, capped and case-folded.
+
+    The text is only ever compared with notifications already read, never put in a query.
+    """
+    return str(value or '').strip()[:NOTIFICATION_SEARCH_MAX_LENGTH].strip().casefold()
+
+
+def _notification_matches_search(notification, search_text):
+    """Whether the title or the message the reader sees contains the (already folded) text."""
+    return any(
+        search_text in str(notification.get(field) or '').casefold()
+        for field in ('title', 'message')
+    )
+
+
+def get_user_notifications(
+    user_id,
+    page=1,
+    per_page=20,
+    include_read=True,
+    include_dismissed=False,
+    user_roles=None,
+    read_status='all',
+    search='',
+):
     """
     Fetch notifications visible to a user from personal, group, and public workspace scopes.
     Supports assignment-based notifications that target users by roles and/or ownership.
@@ -1068,7 +1111,15 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
         include_read (bool): Include notifications already read by user
         include_dismissed (bool): Include notifications dismissed by user
         user_roles (list, optional): User's roles for assignment-based notifications
-        
+        read_status (str): 'all', 'unread' or 'read'. Anything else raises ValueError.
+        search (str): Text a notification's title or message must contain, ignoring case.
+            Only the first NOTIFICATION_SEARCH_MAX_LENGTH characters are used. It is matched
+            against the title and message this user is shown, so a team alert reduced for a
+            group member can't be found by what it hides. Blank matches everything.
+
+    read_status and search narrow the list before it is paged, so 'total' and 'has_more'
+    describe the filtered list rather than the page.
+
     Returns:
         dict: {
             'notifications': [...],
@@ -1078,6 +1129,9 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
             'has_more': bool
         }
     """
+    # Checked outside the read below, whose handler would turn a bad filter into an empty list.
+    read_status = parse_notification_read_status(read_status)
+    search_text = normalize_notification_search(search)
     try:
         all_notifications = []
         
@@ -1163,7 +1217,7 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
             if user_matches:
                 all_notifications.append(notif)
         
-        # Filter based on read/dismissed status
+        # Filter based on read/dismissed status and on the search text
         filtered_notifications = []
         for notif in all_notifications:
             notif = sanitize_workflow_alert_record(notif)
@@ -1175,6 +1229,10 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
                 continue
             if not include_read and user_id in read_by:
                 continue
+            if read_status == 'unread' and user_id in read_by:
+                continue
+            if read_status == 'read' and user_id not in read_by:
+                continue
 
             if notif.get('notification_type') == WORKFLOW_ALERT_NOTIFICATION_TYPE:
                 notif = _decorate_workflow_alert(notif, user_id)
@@ -1184,6 +1242,10 @@ def get_user_notifications(user_id, page=1, per_page=20, include_read=True, incl
             notif['is_read'] = user_id in read_by
             notif['is_dismissed'] = user_id in dismissed_by
             notif['type_config'] = _get_notification_type_config(notif)
+
+            # Searched last, on the title and message as this user is shown them.
+            if search_text and not _notification_matches_search(notif, search_text):
+                continue
             
             filtered_notifications.append(notif)
         

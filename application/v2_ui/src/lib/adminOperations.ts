@@ -12,6 +12,7 @@
 // with it would be describing a schedule that does not exist.
 
 import { asBoolean, asString, type AdminLoggingTimerKeys } from './adminFields';
+import { withClassicEscape } from './classicLinks';
 import type { AdminNavGroup, Json } from './types';
 
 const MINUTE_MS = 60_000;
@@ -547,6 +548,50 @@ export function findNavLocation(
         }
     }
     return null;
+}
+
+/**
+ * The server-rendered Admin Settings page, opened on one tab.
+ *
+ * The classic page reads the address fragment as a tab id -- it shows that tab's pane and
+ * ignores anything it does not recognise -- so a link to a section has to name the tab that
+ * holds it. A section id in the fragment finds no pane and leaves the page showing none.
+ *
+ * The address carries the classic escape pair (`ui=classic`, see `withClassicEscape`). Once an
+ * administrator has selected the modern interface the server answers a plain classic address
+ * with a redirect straight back to V2, so a link that really means "the classic page" has to
+ * ask for it. The classic page ignores the pair. The tab id is encoded and the path is a
+ * literal, so the result is always a same-origin address.
+ */
+export function safeClassicAdminTabHref(tabId: string): string {
+    return withClassicEscape(`/admin/settings#${encodeURIComponent(tabId)}`);
+}
+
+/** Where a link to an Admin Settings section leads. */
+export type AdminSectionLink =
+    | { kind: 'section'; sectionId: string }
+    | { kind: 'classic'; tabId: string; tabLabel: string };
+
+/**
+ * Decide whether a link to a section stays in V2 or has to leave it.
+ *
+ * `nativeSectionIds` is every section V2 has something to draw, including one a condition
+ * hides at the moment: the page takes the reader to whatever switches it on, which is better
+ * than sending them to a page that draws less. Only a section V2 never draws, such as the
+ * informational Standard Citations card, falls back to the classic tab that holds it. A
+ * section the navigation does not name has nowhere to lead, so it yields no link at all
+ * rather than one that goes nowhere.
+ */
+export function resolveAdminSectionLink(
+    nav: AdminNavGroup[],
+    sectionId: string,
+    nativeSectionIds: ReadonlySet<string>,
+): AdminSectionLink | null {
+    if (nativeSectionIds.has(sectionId)) {
+        return { kind: 'section', sectionId };
+    }
+    const location = findNavLocation(nav, sectionId);
+    return location ? { kind: 'classic', tabId: location.tabId, tabLabel: location.tabLabel } : null;
 }
 
 // ---------------------------------------------------------------------------------

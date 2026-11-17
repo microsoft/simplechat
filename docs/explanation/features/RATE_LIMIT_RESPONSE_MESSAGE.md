@@ -58,7 +58,7 @@ A throttled user never receives an empty response. The built-in default is used 
 
 ### Content negotiation
 
-The global handler returns JSON when the request path starts with `/api/` or `/external/`, when `X-Requested-With` is `XMLHttpRequest`, or when the client accepts JSON but not HTML. Otherwise it renders `templates/errors/429.html`. If that render fails the handler falls back to the raw Markdown as `text/plain`, so the message still reaches the user. A `Retry-After` header is set when a retry window is known.
+The global handler returns JSON when the request path starts with `/api/` or `/external/`, when `X-Requested-With` is `XMLHttpRequest`, or when the client accepts JSON but not HTML. Otherwise it renders `templates/errors/429.html`, or `templates/modern/errors/429.html` in the modern interface (see [V2_MODERN_STANDALONE_PAGES.md](V2_MODERN_STANDALONE_PAGES.md); the modern page is inactive until the interface selector exists). If that render fails the handler falls back to the raw Markdown as `text/plain`, so the message still reaches the user. A `Retry-After` header is set when a retry window is known.
 
 ### Frontend
 

@@ -37,9 +37,17 @@ from functions_search import *
 from functions_settings import *
 from functions_mcp_server_config import is_mcp_ui_enabled
 from functions_rate_limit import build_rate_limit_error_payload
+from functions_ui_pages import V2_HOME_PATH, has_app_user_role, is_modern_ui_available, render_page
+from functions_ui_redirect import has_classic_escape, redirect_classic_page_to_modern_ui
 from functions_appinsights import *
 from functions_activity_logging import *
 from functions_session_store import install_merging_session_interface
+# The idle-timeout rules live in a module the V2 bootstrap route can import too: route
+# modules are imported by this file, so they cannot import from it.
+from functions_idle_timeout import (
+    get_idle_timeout_settings as resolve_idle_timeout_settings,
+    is_idle_timeout_enabled as resolve_idle_timeout_enabled,
+)
 
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -164,7 +172,7 @@ from plugin_validation_endpoint import plugin_validation_admin_bp, plugin_valida
 from route_openapi import register_openapi_routes
 from route_migration import bp_migration
 from route_plugin_logging import bpl as plugin_logging_bp
-from functions_custom_pages import get_custom_pages_nav
+from functions_custom_pages import get_custom_pages_nav, is_same_origin_framing_allowed
 from functions_debug import debug_print
 from functions_model_endpoint_providers import get_model_endpoint_provider_ui_options
 from functions_terms_of_use import has_terms_of_use_acceptance
@@ -446,77 +454,7 @@ def get_idle_timeout_settings(settings=None):
     if settings is None:
         settings = get_request_settings()
 
-    timeout_raw = settings.get('idle_timeout_minutes', 30)
-    warning_raw = settings.get('idle_warning_minutes', 28)
-
-    try:
-        timeout_minutes = int(timeout_raw)
-    except (TypeError, ValueError):
-        timeout_minutes = 30
-        log_event(
-            "Invalid idle timeout value detected; using default.",
-            extra={
-                "setting": "idle_timeout_minutes",
-                "raw_value": str(timeout_raw),
-                "fallback_value": 30
-            },
-            level=logging.WARNING
-        )
-
-    try:
-        warning_minutes = int(warning_raw)
-    except (TypeError, ValueError):
-        warning_minutes = 28
-        log_event(
-            "Invalid idle warning value detected; using default.",
-            extra={
-                "setting": "idle_warning_minutes",
-                "raw_value": str(warning_raw),
-                "fallback_value": 28
-            },
-            level=logging.WARNING
-        )
-
-    normalized_timeout = max(10, timeout_minutes)
-    if normalized_timeout != timeout_minutes:
-        log_event(
-            "Idle timeout value normalized to minimum allowed value.",
-            extra={
-                "setting": "idle_timeout_minutes",
-                "original_value": timeout_minutes,
-                "normalized_value": normalized_timeout
-            },
-            level=logging.WARNING
-        )
-    timeout_minutes = normalized_timeout
-
-    normalized_warning = max(0, warning_minutes)
-    if normalized_warning != warning_minutes:
-        log_event(
-            "Idle warning value normalized to minimum allowed value.",
-            extra={
-                "setting": "idle_warning_minutes",
-                "original_value": warning_minutes,
-                "normalized_value": normalized_warning
-            },
-            level=logging.WARNING
-        )
-    warning_minutes = normalized_warning
-
-    if warning_minutes > timeout_minutes:
-        previous_warning_minutes = warning_minutes
-        warning_minutes = timeout_minutes
-        log_event(
-            "Idle warning value adjusted to not exceed idle timeout.",
-            extra={
-                "idle_timeout_minutes": timeout_minutes,
-                "original_idle_warning_minutes": previous_warning_minutes,
-                "adjusted_idle_warning_minutes": warning_minutes
-            },
-            level=logging.WARNING
-        )
-
-    return timeout_minutes, warning_minutes
+    return resolve_idle_timeout_settings(settings)
 
 
 def is_idle_timeout_enabled(settings=None):
@@ -535,12 +473,7 @@ def is_idle_timeout_enabled(settings=None):
     if settings is None:
         settings = get_request_settings()
 
-    enabled_raw = settings.get('enable_idle_timeout', False)
-
-    if isinstance(enabled_raw, str):
-        return enabled_raw.strip().lower() in ('1', 'true', 'yes', 'on')
-
-    return bool(enabled_raw)
+    return resolve_idle_timeout_enabled(settings)
 
 
 settings_source_counters = {}
@@ -656,6 +589,9 @@ def get_request_settings():
 
 @app.context_processor
 def inject_settings():
+    from functions_ui_mode import get_ui_policy
+    from ui_routing import resolve_v2_target
+
     settings = get_request_settings()
     public_settings = sanitize_settings_for_user(settings)
     idle_timeout_enabled = is_idle_timeout_enabled(settings)
@@ -683,7 +619,11 @@ def inject_settings():
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
         latest_features_nav_hidden = IS_DEVELOPMENT
+    ui_policy = get_ui_policy(settings, user_settings)
+    ui_target = resolve_v2_target(request.path, request.query_string)
     return dict(
+        ui_policy=ui_policy,
+        modern_ui_switch_path=ui_target["path"] if ui_target else "/v2",
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
@@ -1034,6 +974,19 @@ def build_terms_of_use_url(path, query_string):
     )
 
 
+# Registered ahead of the Terms of Use and idle-timeout hooks on purpose. Flask runs app-level
+# hooks in registration order, so a classic URL is sent to its V2 counterpart before the terms
+# gate can answer it: a user who still has to accept the terms then meets the V2 terms page (the
+# gate sends /v2 requests there) and not the classic interstitial, and an expired session is
+# handled by the idle-timeout hook on the V2 request that follows. It sits after the CORS and
+# same-origin hooks, which only ever answer OPTIONS and state-changing requests, and it never
+# touches a method other than GET or HEAD. Inert until get_ui_mode() answers modern.
+@app.before_request
+def redirect_classic_pages_to_modern_ui():
+    """Send classic page URLs to their V2 counterparts when the modern interface is selected."""
+    return redirect_classic_page_to_modern_ui(get_request_settings)
+
+
 @app.before_request
 def enforce_terms_of_use():
     """Block authenticated app usage until the current terms of use is accepted."""
@@ -1197,6 +1150,14 @@ def add_security_headers(response):
     # Apply all configured security headers
     for header_name, header_value in SECURITY_HEADERS.items():
         response.headers[header_name] = header_value
+
+    # The chrome-less custom page that the V2 interface shows in a frame may be framed by this
+    # same origin, and by nothing else. Only X-Frame-Options is relaxed for that one response:
+    # the Content-Security-Policy above already limits frame-ancestors to 'self' (plus the Teams
+    # origins when configured) and is left exactly as configured. Deployments that enable Teams
+    # SSO send no X-Frame-Options at all, so there is nothing to relax and none is added.
+    if is_same_origin_framing_allowed() and 'X-Frame-Options' in response.headers:
+        response.headers['X-Frame-Options'] = 'SAMEORIGIN'
     
     # Add HSTS header only if HTTPS is enabled and configured
     if ENABLE_STRICT_TRANSPORT_SECURITY and request.is_secure:
@@ -1313,8 +1274,10 @@ def handle_rate_limited_request(error):
     else:
         message = get_rate_limit_message(settings)
         try:
-            response = make_response(render_template(
+            response = make_response(render_page(
                 'errors/429.html',
+                'modern/errors/429.html',
+                settings=settings,
                 rate_limit_message_html=markdown_filter(message),
             ))
         except Exception as render_error:
@@ -1342,6 +1305,8 @@ public_app_bp = Blueprint('public_app', __name__)
 @public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
+    from functions_ui_mode import allows_classic_escape
+
     if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
         return redirect(url_for('frontend_authentication.login'))
 
@@ -1354,13 +1319,26 @@ def index():
     # Convert Markdown to HTML safely
     landing_html = markdown_filter(landing_text)
     signed_in_account = get_signed_in_account_display(session.get("user"))
-
-    return render_template(
-        'index.html',
+    page_context = dict(
         app_settings=public_settings,
         landing_html=landing_html,
         signed_in_account=signed_in_account,
     )
+
+    if has_app_user_role(session.get("user")):
+        # In the modern interface a signed-in application user belongs in V2, but only when
+        # the bundle was built: /v2 answers 503 without it, so the classic page stays. The
+        # classic to V2 redirect hook asks the same question and normally answers first, so
+        # this only matters when that hook did not run; it honours ui=classic ("Open this page
+        # in classic") exactly as the hook does.
+        classic_escape = has_classic_escape(request.query_string) and allows_classic_escape(settings)
+        if not classic_escape and is_modern_ui_available(settings):
+            return redirect(V2_HOME_PATH)
+        return render_template('index.html', **page_context)
+
+    # A visitor V2 cannot serve (signed out, or signed in without a role) gets the modern
+    # landing page in the modern interface and the classic page otherwise.
+    return render_page('index.html', 'modern/landing.html', settings=settings, **page_context)
 
 @public_app_bp.route('/robots933456.txt')
 @swagger_route(security=get_auth_security())
@@ -1388,7 +1366,7 @@ def serve_js_modules(filename):
 @public_app_bp.route('/acceptable_use_policy.html')
 @swagger_route(security=get_auth_security())
 def acceptable_use_policy():
-    return render_template('acceptable_use_policy.html')
+    return render_page('acceptable_use_policy.html', 'modern/acceptable_use_policy.html')
 
 session_api_bp = Blueprint('session_api', __name__)
 session_api_bp.before_request(login_required_blueprint())

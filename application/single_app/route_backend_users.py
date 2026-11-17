@@ -536,6 +536,7 @@ def register_route_backend_users(bp):
                 # Basic validation could go here (e.g., check allowed keys, value types)
                 # Example: Allowed keys
                 allowed_keys = {
+                    'preferredUiMode',
                     'activeGroupOid', 'layoutPreference', 'splitSizesPreference', 'dockedSidebarHidden', 
                     'darkModeEnabled', 'preferredModelDeployment', 'agents', 'plugins', "selected_agent", 
                     'navLayout', 'profileImage', 'enable_agents', 'streamingEnabled', 'reasoningEffortSettings',
@@ -618,6 +619,14 @@ def register_route_backend_users(bp):
 
 
                 settings_to_update = dict(settings_to_update)
+                if "preferredUiMode" in settings_to_update:
+                    # Loaded at request time to keep the route's bootstrap dependencies unchanged.
+                    from functions_ui_mode import validate_ui_setting
+
+                    try:
+                        validate_ui_setting("preferredUiMode", settings_to_update["preferredUiMode"])
+                    except ValueError:
+                        return jsonify({"error": "Choose a valid interface option."}), 400
 
                 if "orchestrationApprovalMode" in settings_to_update:
                     approval_mode = settings_to_update["orchestrationApprovalMode"]

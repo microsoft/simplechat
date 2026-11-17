@@ -3,7 +3,9 @@
 //
 // Every read and write goes to the named-workspace routes, `/api/public-workspaces/<w>/settings...`
 // and `/api/public-workspaces/<w>/insights/...`, so a public page never touches a classic settings,
-// download, retention, stats or file-count route. The client is the group's (createSettingsClient):
+// download, retention, stats or file-count route. The one classic route it calls is the owner's
+// `DELETE /api/public_workspaces/<w>`, which has no native twin: it deletes at once and creates no
+// approval request. The client is the group's (createSettingsClient):
 // the same strict envelope validation, the same wholesale replacement after every write and the same
 // conflict mapping, with the public routes and codes. A stale section revision is a 409
 // `public_workspace_settings_changed` (reload the section and rebase the draft), a write-guard
@@ -72,6 +74,8 @@ export function createPublicSettingsAdapter(
         ...createSettingsClient<PublicSettings>(scope, management, {
             settingsBase: `${base}/settings`,
             insightsBase: `${base}/insights`,
+            // The one route that is not the native family: the owner's DELETE, which classic also uses.
+            deletePath: `/api/public_workspaces/${encodeURIComponent(requireWorkspaceId(scope.id))}`,
             writeConflictCode: 'public_workspace_write_conflict',
             logoMissingCode: 'no_public_workspace_logo',
             malformedSettings: 'The workspace settings were malformed. Refresh and try again.',

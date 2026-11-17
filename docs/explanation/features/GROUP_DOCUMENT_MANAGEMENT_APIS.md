@@ -37,6 +37,7 @@ parameters are rejected. No operation reads or changes `activeGroupOid`.
 | `PATCH /tags/T` | `new_name` and/or `color` |
 | `DELETE /tags/T` | No body |
 | `POST /bulk-tag` | `document_ids`, `action=add_tags|remove_tags|set_tags`, `tags` |
+| `POST /upgrade_legacy` | No body and no query; see [V2 Legacy Document Upgrade](V2_LEGACY_DOCUMENT_UPGRADE.md) |
 
 Document batches accept 1-1000 identifiers and deduplicate them in request
 order. Uploads enforce the configured per-file size limit before creating a

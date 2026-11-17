@@ -1,7 +1,7 @@
 # test_v2_control_center_activity_logs_routes.py
 """
 Functional tests for the Activity Logs HTTP and capability contracts.
-Version: 0.261.296
+Version: 0.261.447
 Implemented in: 0.261.284
 
 Registers the actual new handlers with real authentication/capability decorators,
@@ -14,6 +14,7 @@ import ast
 import csv
 import importlib.util
 import logging
+import sys
 from functools import wraps
 from importlib.metadata import version
 from io import StringIO
@@ -25,6 +26,9 @@ from flask import Blueprint, Flask, Response, jsonify, request, session, stream_
 
 ROOT = Path(__file__).resolve().parents[1]
 APP = ROOT / "application" / "single_app"
+sys.path.insert(0, str(APP))
+
+from functions_control_center_usage import UsageQueryLimitError, usage_csv, usage_report
 
 
 def _load(name, filename):
@@ -42,7 +46,8 @@ LOOKUP_PATHS = ("/api/v2/control-center/activity-logs/people?q=ada",
                 "/api/v2/control-center/activity-logs/workspaces?q=res")
 HANDLERS = {"api_v2_control_center_activity_logs", "api_v2_control_center_activity_summary",
             "api_v2_control_center_activity_export", "api_v2_control_center_activity_people",
-            "api_v2_control_center_activity_workspaces"}
+            "api_v2_control_center_activity_workspaces", "api_v2_control_center_usage",
+            "api_classic_control_center_usage"}
 HELPERS = {"_activity_search_people", "_activity_names", "_activity_export_columns"}
 RECORD = {"id": "r1", "timestamp": "2026-10-01T12:00:00", "user_id": "u1", "activity_type": "token_usage",
           "token_type": "chat", "usage": {"total_tokens": 120, "model": "gpt-4o"}, "workspace_type": "group",
@@ -100,7 +105,8 @@ def environment(monkeypatch):
                  "_control_center_activity_name_cache": display.ActivityNameCache(),
                  "swagger_route": lambda **kwargs: lambda function: function,
                  "get_auth_security": lambda: [], "Response": Response, "stream_with_context": stream_with_context,
-                 "log_event": lambda *args, **kwargs: logs.append((args, kwargs)), "logging": logging}
+                 "log_event": lambda *args, **kwargs: logs.append((args, kwargs)), "logging": logging,
+                 "usage_report": usage_report, "usage_csv": usage_csv, "UsageQueryLimitError": UsageQueryLimitError}
     tree = ast.parse((APP / "route_backend_control_center.py").read_text(encoding="utf-8"))
     helpers = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in HELPERS]
     assert {node.name for node in helpers} == HELPERS
@@ -131,6 +137,37 @@ def test_denied_roles_and_anonymous_never_query(environment, roles):
         response = client.get(path)
         assert response.status_code in (401, 302) if roles is None else response.status_code == 403
     assert not queries
+
+
+@pytest.mark.parametrize("prefix", ["/api/admin", "/api/v2"])
+@pytest.mark.parametrize("roles", [None, ["User"], ["ControlCenterDashboardReader"]])
+def test_usage_aliases_reject_insufficient_access_before_queries(environment, prefix, roles):
+    client, _, queries, _, _ = environment
+    if roles is not None:
+        login(client, roles)
+    response = client.get(prefix + "/control-center/activity-logs/usage")
+    assert response.status_code in ((401, 302) if roles is None else (403,))
+    assert not queries
+
+
+def test_usage_aliases_share_totals_and_safe_csv(environment):
+    client, containers, _, _, _ = environment
+    login(client, ["ControlCenterAdmin"])
+    containers["activity"].rows = [{
+        "id": "usage-1", "user_id": "u1", "activity_type": "agent_run", "workspace_type": "personal",
+        "legacy_entity_id": "agent-1", "legacy_name": "Agent", "error": "PRIVATE_ERROR",
+    }]
+    payloads = []
+    for prefix in ("/api/admin", "/api/v2"):
+        response = client.get(prefix + "/control-center/activity-logs/usage")
+        assert response.status_code == 200
+        payloads.append(response.get_json())
+        csv_response = client.get(prefix + "/control-center/activity-logs/usage?format=csv")
+        assert csv_response.status_code == 200
+        assert "PRIVATE_" not in csv_response.get_data(as_text=True)
+        assert "raw_json" not in csv_response.get_data(as_text=True)
+    assert payloads[0]["totals"] == payloads[1]["totals"]
+    assert payloads[0]["totals"]["agent"]["invocations"] == 1
 
 
 def test_control_center_admin_and_regular_admin_settings(environment):

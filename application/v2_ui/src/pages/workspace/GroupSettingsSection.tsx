@@ -1,8 +1,8 @@
 // GroupSettingsSection.tsx
 // The group workspace Settings section (M7C): a thin wrapper that gives the shared
 // WorkspaceSettingsSection the group scope -- the group's reason texts, wording and test ids. The
-// whole view lives in WorkspaceSettingsSection.tsx; the external props are unchanged, so the group
-// page renders it exactly as before.
+// whole view lives in WorkspaceSettingsSection.tsx. The owner deletes the group from its danger
+// zone, natively; `onDeleted` is how the page leaves once the group is gone.
 
 import { Users } from 'lucide-react';
 import {
@@ -34,19 +34,32 @@ const GROUP_SETTINGS_SCOPE: WorkspaceSettingsSectionScope = {
     downloadsHint: 'Members can still read documents in chat; they cannot download the original files.',
     danger: {
         title: 'Delete this group',
-        body: "Deleting a group removes its members' access and its shared workspace. This still happens on the "
-            + 'classic group page, where the prerequisites are checked.',
+        body: 'Deleting a group is permanent. It removes only the group and every member\u2019s access to it: its documents '
+            + 'have to be removed first, and its conversations, prompts, agents, actions and other saved items are left '
+            + 'behind, not deleted with it.',
         counting: 'Counting the group\u2019s documents...',
-        count: (count) => `This group holds ${count} document${count === 1 ? '' : 's'}. Remove them before deleting the group.`,
-        button: 'Delete group (classic)',
-        confirmTitle: 'Delete this group in classic?',
-        confirmDescription: "Deleting a group is permanent and is completed on the classic group page. You'll be taken "
-            + 'there to confirm the prerequisites.',
+        count: (count) => (count === 0
+            ? 'This group holds no documents.'
+            : `This group holds ${count} document${count === 1 ? '' : 's'}. Remove them before deleting the group.`),
+        button: 'Delete group',
+        confirmTitle: 'Delete this group?',
+        confirmDescription: (name) => `Delete ${name} permanently? Every member loses access to it right away, and `
+            + 'this can\u2019t be undone.',
+        confirmDetail: 'The group holds no documents. Its conversations, prompts, agents, actions and other saved items '
+            + 'are left behind, not deleted with it.',
+        confirmLabel: 'Delete group',
+        checkFailed: 'The document count couldn\u2019t be checked, so the group wasn\u2019t deleted. Try again.',
+        held: 'The group wasn\u2019t deleted because it still holds documents. Remove them first.',
+        failed: 'The group couldn\u2019t be deleted. Try again.',
+        gone: 'This group no longer exists. It may already have been deleted.',
+        deleted: (name) => `${name} was deleted.`,
+        leaving: 'The group was deleted. Returning to the group list...',
+        unsaved: 'Save or discard your profile and retention changes before deleting the group.',
     },
 };
 
 export function GroupSettingsSection({
-    adapter, management, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onSaved, onOpenClassic,
+    adapter, management, interactionDisabled, onBusyChange, onDirtyChange, onAccessChanged, onSaved, onDeleted,
 }: {
     adapter: GroupSettingsAdapter;
     /** The latest `settings_management` hint from the workspace context (see WorkspaceSettingsSection). */
@@ -59,12 +72,12 @@ export function GroupSettingsSection({
     onAccessChanged: () => void;
     /** Re-read the workspace context after a successful profile or logo save, so the header follows. */
     onSaved: () => void;
-    /** Open the classic group page for the delete flow classic still owns. */
-    onOpenClassic: () => void;
+    /** Leave the group page once the group is deleted: read the groups again and return to the list. */
+    onDeleted: () => void | Promise<void>;
 }) {
     return (
         <WorkspaceSettingsSection scope={GROUP_SETTINGS_SCOPE} adapter={adapter} management={management}
             interactionDisabled={interactionDisabled} onBusyChange={onBusyChange} onDirtyChange={onDirtyChange}
-            onAccessChanged={onAccessChanged} onSaved={onSaved} onOpenClassic={onOpenClassic} />
+            onAccessChanged={onAccessChanged} onSaved={onSaved} onDeleted={onDeleted} />
     );
 }

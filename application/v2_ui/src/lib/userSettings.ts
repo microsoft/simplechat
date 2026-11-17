@@ -30,6 +30,7 @@ export type SidebarToggleStyle = 'large' | 'compact';
  * control for. Reading a key V2 never writes is harmless, so the shape stays open.
  */
 export interface UserSettings {
+    preferredUiMode?: 'classic' | 'modern';
     /** Shared with the classic interface, so the two agree on light/dark. */
     darkModeEnabled?: boolean;
     fontSizePreference?: FontSizePreference;
@@ -170,8 +171,10 @@ export interface UserSettings {
     /**
      * The user's Microsoft Graph profile photo, as a data URI.
      *
-     * Read-only here. The server fetches it once and caches it on the settings document
-     * when the user is first seen; nothing in either interface writes it back.
+     * Read-only here. The server fetches it when the user is first seen and caches it on the
+     * settings document. "Refresh photo" on the Settings page asks the server to fetch it again
+     * (`/api/profile/image/refresh`) and puts the answer into the store with `setProfileImage`.
+     * It is never written back through the settings route.
      */
     profileImage?: string | null;
 
@@ -205,6 +208,7 @@ export interface UserSettings {
  * cannot be read at test time; a literal can.
  */
 export const WRITABLE_USER_SETTING_KEYS = [
+    'preferredUiMode',
     'darkModeEnabled',
     'fontSizePreference',
     'sidebarToggleStyle',

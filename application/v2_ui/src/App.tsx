@@ -37,10 +37,17 @@ import { ContentReviewPage } from './pages/ContentReviewPage';
 import { TermsOfUsePage } from './pages/TermsOfUsePage';
 import { AccessRestrictedPage } from './pages/AccessRestrictedPage';
 import { ApprovalsPage } from './pages/ApprovalsPage';
+import { NotificationsPage } from './pages/NotificationsPage';
 import { ControlCenterPage } from './pages/ControlCenterPage';
 import { ReviewCenterPage } from './pages/review/ReviewCenterPage';
 import { SupportLatestFeaturesPage } from './pages/SupportLatestFeaturesPage';
 import { SupportSendFeedbackPage } from './pages/SupportSendFeedbackPage';
+import { WorkflowActivityPage } from './pages/WorkflowActivityPage';
+import { CustomPageHost } from './pages/CustomPageHost';
+import { IdleSessionDialogHost } from './components/layout/IdleSessionDialog';
+import { classicChatHref } from './lib/conversationUrl';
+import { classicBackHref, withClassicEscape } from './lib/classicLinks';
+import { useClassicFragmentTranslation } from './lib/useClassicFragmentTranslation';
 
 // Dev only: the workflow alert lab. Its one dynamic import is created only when
 // import.meta.env.DEV, which a production build replaces with false, so production never
@@ -97,7 +104,7 @@ function BootError({ message, authExpired }: { message: string; authExpired: boo
                                 : message}
                         </p>
                         <a
-                            href={authExpired ? '/login' : '/chats'}
+                            href={authExpired ? '/login' : withClassicEscape(classicChatHref(null))}
                             className="mt-4 inline-block rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent transition-colors hover:bg-accent-hover"
                         >
                             {authExpired ? 'Sign in' : 'Open the classic interface'}
@@ -117,6 +124,8 @@ export function App() {
         (state) => (state.settings.fontSizePreference as string) || 'm',
     );
     const location = useLocation();
+    // A classic link's fragment survives the server's redirect to V2; swap it for the route it names.
+    useClassicFragmentTranslation();
     // Every other call is refused until the terms are accepted, so this page loads nothing
     // the shell needs and renders on its own.
     const onTermsPage = location.pathname === '/terms-of-use';
@@ -204,6 +213,19 @@ export function App() {
             document.title = title;
         }
     }, [data]);
+
+    useEffect(() => {
+        if (data?.ui?.policy !== 'classic') {
+            return;
+        }
+        const target = safeSameOriginUrl(
+            classicBackHref(location.pathname, location.search, location.hash, null),
+            window.location.origin,
+        );
+        if (target) {
+            window.location.replace(target);
+        }
+    }, [data?.ui?.policy, location.pathname, location.search, location.hash]);
 
     /**
      * Keep the tab icon in step with the stored favicon.
@@ -302,6 +324,9 @@ export function App() {
                 <Route path="/approvals" element={<ApprovalsPage />} />
                 <Route path="/approvals/:category" element={<ApprovalsPage />} />
                 <Route path="/approvals/:category/:itemId" element={<ApprovalsPage />} />
+                {/* Every notification, with filters, search and numbered pages. The view is kept
+                    in the query string (status, q, page, per_page). */}
+                <Route path="/notifications" element={<NotificationsPage />} />
                 <Route path="/agents" element={<AgentsCatalogPage />} />
                 <Route path="/groups" element={<GroupWorkspacePage />} />
                 <Route path="/groups/directory" element={<GroupDirectoryPage />} />
@@ -319,11 +344,20 @@ export function App() {
                 {/* The Support menu's destinations, offered from the rail. */}
                 <Route path="/support/latest-features" element={<SupportLatestFeaturesPage />} />
                 <Route path="/support/send-feedback" element={<SupportSendFeedbackPage />} />
+                {/* One workflow run's activity timeline. It reads the classic page's query string
+                    (conversationId, workflowId, runId, scope, groupId), so every link maps one to one. */}
+                <Route path="/workflow-activity" element={<WorkflowActivityPage />} />
+                {/* A trusted custom page, shown in a frame so the rail stays on screen. The slug
+                    is checked against the user's own navigation list inside the page. */}
+                <Route path="/custom/:slug" element={<CustomPageHost />} />
                 {/* The workflow alert lab (dev/AlertLabPage.tsx). Never in a production build. */}
                 {import.meta.env.DEV && AlertLabPage ? <Route path="/dev/alert-lab" element={<Suspense fallback={<BootScreen />}><AlertLabPage /></Suspense>} /> : null}
                 <Route path="*" element={<Navigate to="/" replace />} />
                 </Routes>
             </ErrorBoundary>
+            {/* The idle-session warning. Here rather than with the runtime hooks above because
+            it draws a dialog, and only a loaded session reaches this point. */}
+            <IdleSessionDialogHost />
         </AppShell>
     );
 }

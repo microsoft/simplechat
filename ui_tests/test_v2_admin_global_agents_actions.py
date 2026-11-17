@@ -1,16 +1,18 @@
 # test_v2_admin_global_agents_actions.py
 """
 Browser coverage for V2 Admin Settings categories and the global agents and actions.
-Version: 0.261.333
+Version: 0.261.448
 Implemented in: 0.261.271
 Global action return coverage extended in: 0.261.333
+Duplicate coverage extended in: 0.261.448
 
 Run against the real built SPA with the real Admin Settings field schema and a
 closed in-memory API (fixtures/v2_admin_global_editors.py). Check that choosing a
 settings category always opens it at its top; that the Global Agents and Global
 Actions sections list, enable, disable, delete and choose the default agent, and
 create and edit through the same editors workspaces use, on the admin-only routes;
-that a Call agent action is an ordinary global action whose targets are global
+that Duplicate opens the new-record editor on an unsaved, disabled copy that
+carries none of the original's stored credentials; that a Call agent action is an ordinary global action whose targets are global
 agents and which a global agent attaches in its editor; that the template gallery
 starts and publishes a global agent; that a failed load can be retried and a stale
 save keeps the draft; that opening an editor asks before dropping unsaved
@@ -19,6 +21,7 @@ MemoryRouter harness coverage of the removed "Global agent delegation" card
 (formerly test_agent_delegation_v2.py).
 """
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -39,6 +42,7 @@ from v2_admin_global_editors import (  # noqa: E402
     ORIGIN,
     POLICY_AGENT_ID,
     RESEARCH_AGENT_ID,
+    SECRET_MASK,
     STORED_KEY,
     TICKET_ACTION_ID,
     GlobalEditorsFixture,
@@ -48,6 +52,8 @@ from v2_admin_global_editors import (  # noqa: E402
 
 pytestmark = pytest.mark.ui
 ARTIFACTS = "v2_admin_global_agents_actions"
+# A credential typed for a duplicated action; the original's stored key is never reused.
+COPY_KEY = "fixture-only-copy-credential"
 SCROLL_SECTIONS = {
     "appearance": ("classification-banner-section", "ai-notice-section"),
     **GLOBAL_SECTIONS,
@@ -296,6 +302,108 @@ def test_a_new_global_agent_is_created_in_the_shared_editor(global_ui):
     expect(page.get_by_role("heading", name="Global Agents", level=2)).to_be_focused()
     expect(page.get_by_role("link", name="Benefits guide", exact=True)).to_be_visible()
     assert not _personal_requests(ui)
+
+
+def test_a_global_agent_is_duplicated_into_an_unsaved_disabled_copy(global_ui):
+    ui, page = global_ui, global_ui.page
+    ui.open(ready_region="Global Agents")
+    page.get_by_role("button", name="Duplicate Research assistant", exact=True).click()
+
+    # The copy opens in the new-agent editor, unsaved: nothing is stored until it is saved there.
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/agents/new")
+    expect(page.get_by_text(re.compile("^Editing a copy of Research assistant"))).to_be_visible()
+    # A seeded copy and a restored draft are the same thing to the editor, which says so.
+    expect(page.get_by_text(re.compile("^Your unsaved draft was restored from this tab"))).to_be_visible()
+    assert not ui.writes_to("POST", "/api/v2/admin/agents")
+    assert set(ui.agents) == {RESEARCH_AGENT_ID, POLICY_AGENT_ID, ARCHIVE_AGENT_ID}
+    expect(page.get_by_label("Display name", exact=True)).to_have_value("Research assistant Copy")
+    expect(page.get_by_label("Description", exact=True)).to_have_value(
+        "Research assistant for everyone in the organisation."
+    )
+
+    assert _save(ui, "Save agent", "POST", "/api/v2/admin/agents").status == 201
+    write = ui.writes_to("POST", "/api/v2/admin/agents")[-1][2]
+    assert "expected_revision" not in write
+    assert write["updates"]["name"] == "research-assistant_copy"
+    assert write["updates"]["display_name"] == "Research assistant Copy"
+    assert write["updates"]["is_enabled"] is False
+    assert write["updates"]["instructions"] == ui.agents[RESEARCH_AGENT_ID]["instructions"]
+    assert SECRET_MASK not in json.dumps(write)
+
+    created = ui.agents[CREATED_AGENT_ID]
+    assert created["is_enabled"] is False and created["is_global"] is True
+    # The original is untouched and is still the default.
+    assert ui.agents[RESEARCH_AGENT_ID]["display_name"] == "Research assistant"
+    assert ui.selected_agent_name == "research-assistant"
+
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/agents")
+    copy = page.get_by_test_id("global-agent-row").filter(has_text="Research assistant Copy")
+    expect(copy.get_by_text("Disabled", exact=True)).to_be_visible()
+    assert not _personal_requests(ui)
+
+
+def test_a_global_action_is_duplicated_without_its_stored_credential(global_ui):
+    ui, page = global_ui, global_ui.page
+    ui.open(ready_region="Global Actions")
+    page.get_by_role("button", name="Duplicate Ticket search", exact=True).click()
+
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/actions/new")
+    # The toast says the credential was left out, so the person is not surprised by a key prompt.
+    expect(page.get_by_text(re.compile("The stored credential was not copied"))).to_be_visible()
+    expect(_action_field(page, "Action name")).to_have_value("Ticket search Copy")
+    expect(page.get_by_label("API key", exact=True)).to_have_value("")
+    assert not ui.writes_to("POST", "/api/v2/admin/actions")
+
+    # Nothing is sent until the copy has a credential of its own.
+    page.get_by_role("button", name="Save action", exact=True).click()
+    expect(page.get_by_text("Credential is required.").first).to_be_visible()
+    assert not ui.writes_to("POST", "/api/v2/admin/actions")
+
+    page.get_by_label("API key", exact=True).fill(COPY_KEY)
+    assert _save(ui, "Save action", "POST", "/api/v2/admin/actions").status == 201
+    write = ui.writes_to("POST", "/api/v2/admin/actions")[-1][2]
+    assert write["updates"]["name"] == "ticket_search_copy"
+    assert write["updates"]["is_enabled"] is False
+    assert write["updates"]["endpoint"] == "https://tickets.example.test/api"
+    # Only the credential typed for the copy is sent: neither the stored key nor its placeholder.
+    assert write["updates"]["auth"] == {"type": "key", "key": COPY_KEY}
+    assert STORED_KEY not in json.dumps(write) and SECRET_MASK not in json.dumps(write)
+
+    created = ui.actions[CREATED_ACTION_ID]
+    assert created["is_enabled"] is False and created["auth"]["key"] == COPY_KEY
+    assert ui.actions[TICKET_ACTION_ID]["auth"] == {"type": "key", "key": STORED_KEY}
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/actions")
+    copy = page.get_by_test_id("global-action-row").filter(has_text="Ticket search Copy")
+    expect(copy.get_by_text("Disabled", exact=True)).to_be_visible()
+    assert not _personal_requests(ui)
+
+
+def test_duplicating_an_agent_works_on_a_phone(global_ui):
+    ui, page = global_ui, global_ui.page
+    ui.open(width=390, height=844, ready_region="Global Agents")
+    button = page.get_by_role("button", name="Duplicate Research assistant", exact=True)
+    expect(button).to_be_visible()
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    button.click()
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin/agents/new")
+    expect(page.get_by_label("Display name", exact=True)).to_have_value("Research assistant Copy")
+    assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+    assert not ui.writes_to("POST", "/api/v2/admin/agents")
+
+
+def test_a_failed_read_for_a_copy_is_shown_and_opens_no_editor(global_ui):
+    ui, page = global_ui, global_ui.page
+    ui.open(ready_region="Global Agents")
+    section = page.get_by_role("region", name="Global Agents", exact=True)
+    ui.fail_next("GET", f"/api/v2/admin/agents/{RESEARCH_AGENT_ID}", error="The agent could not be read.")
+    ui.expected_failure_statuses.append(503)
+
+    section.get_by_role("button", name="Duplicate Research assistant", exact=True).click()
+    expect(section.get_by_role("alert")).to_have_text("The agent could not be read.")
+    expect(page).to_have_url(f"{ORIGIN}/v2/admin")
+    expect(section.get_by_role("button", name="Duplicate Research assistant", exact=True)).to_be_enabled()
+    assert not ui.writes_to("POST", "/api/v2/admin/agents")
 
 
 def test_a_template_starts_and_publishes_a_global_agent(global_ui):

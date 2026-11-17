@@ -3,7 +3,9 @@
 //
 // Every read and write goes to the named-group routes, `/api/groups/<g>/settings...` and
 // `/api/groups/<g>/insights/...`, so a group page never touches a personal or classic settings
-// route. The envelopes are validated strictly and thrown on rather than rendered as empty, exactly
+// route. The one exception is the owner's `DELETE /api/groups/<g>`, which has no native twin: it
+// deletes at once, answers only the owner and creates no approval request. The envelopes are
+// validated strictly and thrown on rather than rendered as empty, exactly
 // as the group model-endpoint adapter validates its list: a drifted or truncated payload is a load
 // error, never a blank surface that reads as "nothing to configure".
 //
@@ -220,6 +222,11 @@ export interface SettingsClientProfile {
     settingsBase: string;
     /** `/api/groups/<g>/insights` or `/api/public-workspaces/<w>/insights`. */
     insightsBase: string;
+    /**
+     * The route that deletes the workspace: `DELETE /api/groups/<g>` or `DELETE
+     * /api/public_workspaces/<w>`. Both answer only the owner, with no revision and no approval step.
+     */
+    deletePath: string;
     /** The 409 code of a write-guard exhaustion, which a plain retry resolves. */
     writeConflictCode: string;
     /** The 409 code of a logo that is already gone, which a quiet reload resolves. */
@@ -358,6 +365,11 @@ export interface WorkspaceSettingsAdapter<TSettings extends WorkspaceSettings = 
     readActivity: (limit: number, signal?: AbortSignal) => Promise<GroupActivityFeed>;
     readStats: (query: string, signal?: AbortSignal) => Promise<GroupStatsPayload>;
     readFileCount: (signal?: AbortSignal) => Promise<number>;
+    /**
+     * Delete the workspace. The server deletes at once and answers only the owner; any refusal,
+     * including a 404 for a workspace that is already gone, is thrown as the ApiError it arrived as.
+     */
+    deleteWorkspace: () => Promise<void>;
 }
 
 export interface GroupSettingsAdapter extends WorkspaceSettingsAdapter<GroupSettings> {
@@ -441,6 +453,9 @@ export function createSettingsClient<TSettings extends WorkspaceSettings>(
             }
             return response.file_count;
         },
+        deleteWorkspace: async () => {
+            await api.delete<unknown>(profile.deletePath);
+        },
     };
 }
 
@@ -457,6 +472,7 @@ export function createGroupSettingsAdapter(
         ...createSettingsClient<GroupSettings>(scope, management, {
             settingsBase: `${base}/settings`,
             insightsBase: `${base}/insights`,
+            deletePath: base,
             writeConflictCode: 'group_write_conflict',
             logoMissingCode: 'no_group_logo',
             malformedSettings: MALFORMED_SETTINGS,

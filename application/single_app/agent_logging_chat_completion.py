@@ -7,6 +7,7 @@ from pydantic import Field
 from semantic_kernel.agents import ChatCompletionAgent
 from semantic_kernel.const import DEFAULT_SERVICE_NAME
 from semantic_kernel.functions import KernelArguments
+from agent_delegation_runtime import track_legacy_group_chat_agent
 from functions_m365_agent_continuation import (
     m365_agent_continuation,
     m365_agent_stream_continuation,
@@ -197,6 +198,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
         """
         return []  # Plugin invocation logger handles this now
 
+    @track_legacy_group_chat_agent
     @m365_agent_continuation
     async def invoke(self, *args, **kwargs):
         # Clear previous tool invocations
@@ -273,6 +275,7 @@ class LoggingChatCompletionAgent(ChatCompletionAgent):
                 }
             )
     
+    @track_legacy_group_chat_agent
     @m365_agent_stream_continuation
     async def invoke_stream(self, *args, **kwargs):
         async with aclosing(super().invoke_stream(*args, **kwargs)) as stream:

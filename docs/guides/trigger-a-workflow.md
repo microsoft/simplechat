@@ -39,7 +39,7 @@ A workflow only helps when it runs at the right moment and leaves evidence you c
 
 4. Use the workflow row **Actions** to start a manual run, or edit the workflow to adjust **Trigger**. In V2, select the workflow and choose **Run** beside its name; its **Runs** tab opens on the new run.
 5. For scheduled operation, choose the **Schedule** trigger (**Interval Schedule** in the classic editor) and leave the workflow enabled. It can repeat at a fixed interval or, in the V2 editor, at a local time on a calendar schedule; see [Run on a calendar schedule]({{ '/guides/create-a-workflow/' | relative_url }}#run-on-a-calendar-schedule).
-6. After a run starts, open **Open workflow activity view** from the chat header when available.
+6. After a run starts, open **Open workflow activity view** from the chat header when available. In V2, choose the **Open workflow activity** icon in the chat header, **Activity** in the workflow's header, or **Open activity** beside a run in its **Runs** tab; each opens the run's timeline in a new tab. See [View workflow activity]({{ '/guides/view-workflow-activity/' | relative_url }}).
 
 {% include media.html src="guides/trigger-a-workflow-step-6.png"
                       alt="Screenshot showing trigger a workflow step 6."

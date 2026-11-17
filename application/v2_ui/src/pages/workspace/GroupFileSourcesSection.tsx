@@ -129,6 +129,8 @@ interface DeleteState {
 export function FileSourcesWorkbenchSection({
     adapter,
     scopeNoun = 'group',
+    documentsLink,
+    pathIgnoring = true,
 }: {
     adapter: FileSourceWorkbenchAdapter;
     // Scope-specific copy so a public workspace reuses this section verbatim: 'group' keeps the
@@ -136,6 +138,12 @@ export function FileSourcesWorkbenchSection({
     // -- reads, gates, the editor dialog, sync/test/browse and delete handling -- is scope-agnostic
     // and comes from the adapter.
     scopeNoun?: string;
+    // Where the scope's documents are, when that is not derivable from the adapter's scope. An
+    // administrator managing another person's or group's sources has no page of their own to
+    // send the reader to, so `null` leaves the link out rather than pointing at the wrong one.
+    documentsLink?: string | null;
+    // Whether a browsed path can be ignored. Off where the adapter has no route for it.
+    pathIgnoring?: boolean;
 }) {
     const load = useCallback((signal: AbortSignal) => adapter.list(signal), [adapter]);
     const { items, loading, error, loadFailed, refresh, setItems, setError } =
@@ -172,7 +180,7 @@ export function FileSourcesWorkbenchSection({
     const [deleteState, setDeleteState] = useState<DeleteState | null>(null);
 
     const canCreate = adapter.allows('create');
-    const documentsHref = adapter.scope.kind === 'personal'
+    const documentsHref = documentsLink !== undefined ? documentsLink : adapter.scope.kind === 'personal'
         ? '/workspace/documents'
         : adapter.scope.kind === 'group'
             ? `/groups/${encodeURIComponent(adapter.scope.id)}/documents`
@@ -369,7 +377,7 @@ export function FileSourcesWorkbenchSection({
         return adapter.browse(saved, write, browsePath);
     };
 
-    const onIgnore = editingId
+    const onIgnore = editingId && pathIgnoring
         ? async (remotePath: string, ignored: boolean) => {
               if (sourceDeleted) throw new Error(REBASE_DELETED_NOTICE);
               const item = await adapter.ignorePath(editingId, remotePath, ignored);
@@ -475,8 +483,12 @@ export function FileSourcesWorkbenchSection({
                 {canCreate
                     ? 'Connect a source to bring documents in without uploading them one by one.'
                     : `A workspace manager can connect a source for this ${scopeNoun}.`}
-                {' '}Files appear in{' '}
-                <Link to={safeSameOriginUrl(documentsHref, '/workspace/documents')} className="text-accent hover:underline">Documents</Link>.
+                {documentsHref ? (
+                    <>
+                        {' '}Files appear in{' '}
+                        <Link to={safeSameOriginUrl(documentsHref, '/workspace/documents')} className="text-accent hover:underline">Documents</Link>.
+                    </>
+                ) : null}
             </p>
 
             <SectionSearch value={query} onChange={setQuery} placeholder="Search file sources" />

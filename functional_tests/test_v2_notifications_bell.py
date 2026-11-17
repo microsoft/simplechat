@@ -52,17 +52,24 @@ from test_support.versioning import assert_app_version_at_least  # noqa: E402
 IMPLEMENTED_IN = "0.261.195"
 
 # The files this feature added. Notification text passes through all of them on its way to
-# the screen, and none of them has any reason to load or link anything off-site.
+# the screen, and none of them has any reason to load or link anything off-site. The
+# Notifications page and the row it shares with the panel (0.261.448) are among them.
 NOTIFICATION_SOURCES = [
     "components/layout/NotificationBell.tsx",
     "components/layout/NotificationPanel.tsx",
+    "components/notifications/NotificationRow.tsx",
+    "components/notifications/NotificationsHeader.tsx",
+    "components/notifications/NotificationsPager.tsx",
     "lib/appNavigation.ts",
     "lib/desktopNotifications.ts",
     "lib/notificationLinks.ts",
     "lib/notificationNavigation.ts",
     "lib/notifications.ts",
+    "lib/notificationsPage.ts",
     "lib/replyEvents.ts",
     "lib/useNotificationRuntime.ts",
+    "lib/useNotificationsList.ts",
+    "pages/NotificationsPage.tsx",
     "stores/notificationStore.ts",
 ]
 
@@ -141,10 +148,11 @@ FOLLOWED_LINKS = [
         {"group_id": "g-1"},
         {"kind": "route", "path": "/approvals?approval_id=a-1"},
     ),
+    # A workflow-activity link opens the V2 page, with the query it carries.
     (
         "/workflow-activity?workflowId=w-1&runId=r-1",
         {},
-        {"kind": "classic", "href": "/workflow-activity?workflowId=w-1&runId=r-1", "groupId": None},
+        {"kind": "route", "path": "/workflow-activity?workflowId=w-1&runId=r-1"},
     ),
     ("/profile?tab=violations", {}, {"kind": "route", "path": "/settings?tab=violations"}),
     ("/workspace", {}, {"kind": "route", "path": "/workspace/documents"}),
@@ -380,9 +388,10 @@ def test_the_seams_later_tracks_build_on_are_in_place():
     assert re.search(r"export interface NotificationCountChange \{[^}]*\brose: boolean;", store, re.DOTALL)
 
     links = read_v2("lib/notificationLinks.ts")
-    # Phase 6b gives workflow runs a V2 page; both resolvers ask this one function for it.
+    # Phase 6b gives workflow runs a V2 page; a notice with no link asks this one function for it.
+    # A notice's own workflow-activity link opens the V2 activity page instead (test_v2_workflow_activity.py).
     assert "export function v2WorkflowRunPath(" in links
-    assert links.count("v2WorkflowRunPath(") >= 3
+    assert links.count("v2WorkflowRunPath(") >= 2
     # Links are read with the chat page's own reader, so both accept the same spellings.
     assert "import { readConversationParam, readPendingActionFocus } from './conversationUrl';" in links
     # The saved action a chat link names is read with the chat page's own reader too.

@@ -48,6 +48,15 @@ unresolved. See [Review and edit orchestration plans]({{ '/guides/review-and-edi
 
 ## Conversation list
 
+### Account-menu interface switch
+
+Implemented in version: **0.261.449** (`application/single_app/config.py`).
+
+**Switch to modern UI** or **Switch to legacy UI** saves your account's preferred
+interface and opens the corresponding page, preserving the active conversation
+where supported. It is available only when administrators allow both interfaces.
+If saving fails, the page stays open and the menu explains the error.
+
 {% include media.html src="reference/chat-controls-conversation-list.png" alt="Conversation list showing selection actions and the new-chat button." title="Conversation list" capture="Capture the conversation list with selection actions and the new-chat button visible. Redact conversation titles and user names." %}
 
 | Control | What it does | Why you would use it | Enabled by |
@@ -131,6 +140,28 @@ It does not search document contents.
 Fresh chats keep document search off. Old public-only launches become selected
 public workspace chips rather than a separate aggregate-public mode.
 See [Uploading and managing documents]({{ '/guides/upload-and-manage-documents/' | relative_url }}).
+
+### React V2 workspace scope lock
+
+Implemented in version: **0.261.448** (`application/single_app/config.py`).
+A conversation locks itself to the workspaces behind its first grounded reply, and the
+**Documents** picker then lists only those workspaces. V2 shows that lock and, where it is
+allowed, lets you unlock it or lock it again, so a conversation that locked to the wrong
+workspace does not have to be abandoned. A conversation that has not used a workspace
+document yet has no lock to show.
+
+| V2 control | Purpose | Availability |
+| --- | --- | --- |
+| Padlock beside the conversation title | Shows whether the workspace scope is locked or unlocked and opens the lock dialog. Its label states both, such as "Workspace scope is locked. Review or unlock it." | A conversation that has used workspace documents |
+| Workspace scope row in **Details** | Lists the locked workspaces beside a **Locked** or **Unlocked** chip, with **Unlock scope…**, **Lock scope…** or **View details**. | Same |
+| Locked-scope note in **Documents** | Says why only some workspaces are listed and offers **Manage** or **Details**. Selecting it closes the picker and opens the dialog. | A locked conversation |
+| Unlock scope / Lock scope dialog | Says what the lock does and which workspaces it covers, then applies the change at once. If the server refuses, the change is undone and the reason appears in the dialog. Locking warns that sources already added from other workspaces must be removed before you send. | The owner of a personal conversation, or anyone who can post in a shared one. Unlocking also needs [`enforce_workspace_scope_lock`]({{ '/admin/chat/' | relative_url }}) to be off |
+| Read-only scope dialog | Explains why nothing can be changed: the administrator enforces the lock, only the owner or people who can post may change it, or no workspace has been recorded to lock to. | Whenever the change is not allowed |
+
+Unlocking keeps the list of workspaces, so locking again returns to the same set. See
+[Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }}) for the
+steps. The control's rules are written up in
+`docs/explanation/features/V2_CONVERSATION_SCOPE_LOCK.md`.
 
 ### React V2 document-evidence status
 
@@ -344,6 +375,12 @@ arrived during streaming. After granting access, send the message again.
 | `conversation-documents-toggle` | Opens the used-documents drawer for files and sources referenced by the conversation. | Use it to audit what grounded an answer or to get back to a cited source. | Always available |
 | `header-scope-lock-btn` | Shows that the conversation search/document scope is locked and opens the scope-lock modal. | Use it to confirm why a chat is constrained before asking broader questions. | Always available |
 | `confirm-scope-lock-toggle-btn` | Confirms a scope-lock change from the scope-lock modal. | Use it when you intentionally want to lock or unlock the conversation scope after reviewing the warning. | Always available |
+
+The V2 interface draws the same workflow activity control as an icon in its conversation header. Its scope-lock control is described under [React V2 workspace scope lock](#react-v2-workspace-scope-lock). These controls exist only in V2, so they are not part of the generated inventory above, which is taken from the classic chat page.
+
+| V2 control | What it does | Why you would use it | Available when |
+| --- | --- | --- | --- |
+| Open workflow activity (activity icon) | Opens the [Workflow activity page]({{ '/guides/view-workflow-activity/' | relative_url }}) in a new tab for the workflow that made this conversation, at `/v2/workflow-activity` with the conversation, workflow and scope carried in the address. | Follow a running workflow's timeline beside the chat, or see what a finished run did, without leaving the conversation. | The conversation was made by a workflow, and `allow_user_workflows` is on for a personal workflow or `enable_group_workspaces` is on for a group workflow |
 
 ## Chat tools and composer
 
@@ -879,6 +916,17 @@ for recorded context and associated documents.
 | Documents button badge | Counts the documents answers used plus every file and document the conversation produced, each once. Media is not counted. | Use it to see at a glance that a reply produced a file, even with the drawer closed. | Always available |
 | Generated (Documents drawer) | Lists every file the conversation produced, in conversation order. That covers the files an orchestration plan rendered (CSV, Excel, Word, PDF, PowerPoint, Markdown, text, JSON, XML and YAML), exports and Analyze or comparison files a reply wrote, and documents agents created with the SimpleChat upload actions. A file that is still rendering, failed, or waits for a shared conversation owner's approval is listed with its status. **Download** appears once the file is ready, and only where the workspace's download rules allow it for an agent's document. Markdown and files that carry a preview open in place, and **Show in conversation** scrolls to the reply that produced the file. | Use it to download or reopen a file a reply made, such as a CSV export, without scrolling back through the thread to find its card. | Always available; agent documents follow [`allow_personal_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) and [`allow_group_workspace_file_downloads`]({{ '/admin/workspaces/' | relative_url }}) |
 | Media (Documents drawer) | Gathers every image, video and audio clip shown in the conversation, including signed links an action fetched from a remote service, grouped as **Images**, **Videos** and **Audio** with a count for each. Images and clips open one viewer that steps through all of them, with **Show in conversation** to scroll to the message. Recordings play in place and can be downloaded. | Use it to find a photo, clip or recording again in a long thread. | Always available |
+
+## Generated file actions (V2 interface)
+
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They sit on a generated-file card in the thread, beside **Download** and **View**, and carry over the classic card's **Add to Workspace** and **Create PowerPoint** buttons. Implemented in version **0.261.448** (`application/single_app/config.py`). The rules behind each control are written up in `docs/explanation/features/V2_GENERATED_ARTIFACT_ACTIONS.md`.
+
+| Control | What it does | Why you would use it | Enabled by |
+| --- | --- | --- | --- |
+| Add to workspace | Opens a dialog that names where the file will be saved, then saves it as a workspace document. A personal conversation saves to your personal workspace. A group or public conversation submits the file to that workspace for approval, and a conversation that does not name its workspace lets you choose from your own. It is not offered while a background export is still running or while the file waits for approval. | Use it to make a generated report searchable and reusable in a workspace instead of leaving it inside one conversation. | [`enable_user_workspace`]({{ '/admin/workspaces/' | relative_url }}), [`enable_group_workspaces`]({{ '/admin/workspaces/' | relative_url }}) or [`enable_public_workspaces`]({{ '/admin/workspaces/' | relative_url }}) for the destination; your role in the workspace and its approval rules are checked by the server |
+| Added to workspace / Pending approval | Replaces the button once the file is in your personal workspace or has been submitted to a group or public workspace. It stays while the page is open. | Use it to see at a glance which files have already gone, without a second copy being created by pressing again. | Same as Add to workspace |
+| Check again | Replaces **Add to workspace** when the server could not confirm that the publication finished, and the card says so. Choosing it sends the same request, and the server answers with the existing publication rather than creating a second copy. | Use it after a message that the publication could not be fully confirmed. | Same as Add to workspace |
+| Create PowerPoint | Builds a PowerPoint deck from a generated Markdown file and downloads it, showing a pending message while the slides are planned. The deck comes from the stored file, not from the reply's text. It is not offered on spreadsheet exports or in a shared conversation. | Use it to turn a generated outline or report into slides without copying it anywhere first. | Markdown files in your own conversations |
 
 ## Media in replies (V2 interface)
 

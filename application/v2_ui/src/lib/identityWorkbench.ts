@@ -2,7 +2,8 @@
 // Scope-aware identity reads and writes for the workspace identities section.
 //
 // Personal authoring uses the strict /api/user/identities family. No operation falls back to a
-// classic or unversioned route. Every scope uses conditional edits and deletes.
+// classic or unversioned route. Personal, group and public scopes use conditional edits and
+// deletes.
 //
 // The group and public paths never fall back to personal behaviour. An absent or unrecognised
 // identity_management hint yields an empty operation set, which leaves every write gate refusing --
@@ -16,6 +17,16 @@
 // turns into "your draft is kept, refresh and retry". A delete refused because the identity is
 // still referenced returns a 409 with error_code "identity_in_use"; that becomes an
 // IdentityInUseError carrying the references, so the section can name what still uses it.
+//
+// Global scope is the administrator's deployment-wide identities, edited on the administrator-only
+// Admin Settings page through /api/admin/workspace-identities/global/identities. Those routes are
+// the older family: the record carries no etag and no identity_actions, so the administrator-only
+// surface is the gate (the server's admin check is the authority) and an edit is last-write-wins,
+// as it is in the classic editor. The adapter still honours what a record does advertise: it
+// follows identity_actions when present, sends expected_etag when the record has an etag, and
+// reads a 409 or 412 as a conflict, so a server that starts versioning these records needs no
+// change here. A delete refused because actions still use the identity answers the same 409
+// "identity_in_use" as the strict routes.
 
 import { ApiError, api, requestWithStatus } from './apiClient';
 import { isRecord } from './workspaceAuthoring';
@@ -25,10 +36,14 @@ import type { WorkspaceIdentity } from './types';
 export type IdentityScope =
     | { kind: 'personal'; id?: string }
     | { kind: 'group'; id: string; name: string }
-    | { kind: 'public'; id: string; name: string };
+    | { kind: 'public'; id: string; name: string }
+    | { kind: 'global' };
 
 export const IDENTITY_OPERATIONS = ['create', 'edit', 'delete'] as const;
 export type IdentityOperation = typeof IDENTITY_OPERATIONS[number];
+
+/** The scope id every global identity carries, as its `global_id` and its `scope_type`. */
+export const GLOBAL_IDENTITY_SCOPE_ID = 'global';
 
 export interface IdentityWrite {
     name?: string;
@@ -80,6 +95,11 @@ export interface IdentityWorkbenchAdapter {
     /** Whether the workspace advertises identity creation, so the section shows a New control. */
     manageable: boolean;
     supported: ReadonlySet<IdentityOperation>;
+    /**
+     * The credential methods this scope's editor offers, when that is narrower than what the chosen
+     * capabilities allow. Absent means every method the capabilities allow.
+     */
+    authTypes?: readonly string[];
     allows: (operation: IdentityOperation, identity?: WorkspaceIdentity) => boolean;
     list: (signal?: AbortSignal) => Promise<WorkspaceIdentity[]>;
     create: (write: IdentityWrite) => Promise<WorkspaceIdentity>;
@@ -112,6 +132,11 @@ export function advertisedIdentityOperations(value: unknown): ReadonlySet<Identi
  * `public_workspace_id` for a public workspace) and to carry the operation in its own
  * `identity_actions`. There is deliberately no fallback that enables an action when the hint is
  * empty or absent, and no scope ever falls back to personal behaviour.
+ *
+ * The global scope is the exception that proves the rule: its surface is administrator-only and
+ * its records carry no `identity_actions`, so an identity that belongs to the global scope is
+ * editable and deletable. A record that does carry `identity_actions` is held to them like any
+ * other, and a malformed value refuses rather than allows.
  */
 export function identityOperationAllowed(
     scope: IdentityScope,
@@ -127,6 +152,13 @@ export function identityOperationAllowed(
     }
     if (!identity) {
         return false;
+    }
+    if (scope.kind === 'global') {
+        if (identity.scope_type !== 'global' || identity.global_id !== GLOBAL_IDENTITY_SCOPE_ID) {
+            return false;
+        }
+        const advertised = identity.identity_actions;
+        return advertised === undefined || (Array.isArray(advertised) && advertised.includes(operation));
     }
     const ownerId = scope.kind === 'personal' ? identity.user_id
         : scope.kind === 'public' ? identity.public_workspace_id : identity.group_id;
@@ -263,14 +295,23 @@ function identityReferences(value: unknown): IdentityReference[] {
     }));
 }
 
+/**
+ * PATCH or DELETE an identity and read what a refusal means.
+ *
+ * `conflictStatuses` are the statuses that mean "the record changed" or "the record is still in
+ * use". Every strict scope answers those with 409 alone. The global scope also accepts 412, the
+ * status HTTP gives a failed precondition, because its routes are the older family and nothing
+ * pins which of the two a versioned version of them would choose.
+ */
 async function conditionalIdentityWrite(
-    method: 'PATCH' | 'DELETE', url: string, body: Record<string, unknown>,
+    method: 'PATCH' | 'DELETE', url: string, body?: Record<string, unknown>,
+    conflictStatuses: readonly number[] = [409],
 ): Promise<unknown> {
     try {
         const response = await requestWithStatus<unknown>(url, { method, body });
         return response.data;
     } catch (cause) {
-        if (cause instanceof ApiError && cause.status === 409) {
+        if (cause instanceof ApiError && conflictStatuses.includes(cause.status)) {
             const payload = cause.payload;
             if (isRecord(payload) && payload.error_code === 'identity_in_use') {
                 const inUseMessage = typeof payload.error === 'string' ? payload.error : undefined;
@@ -402,3 +443,93 @@ export function createPublicIdentityWorkbench(
         },
     };
 }
+
+const GLOBAL_IDENTITIES_URL = '/api/admin/workspace-identities/global/identities';
+
+/**
+ * The statuses a global write reads as "the record changed or is in use": 409, which every strict
+ * scope uses, and 412, the status HTTP gives a failed precondition.
+ */
+const GLOBAL_CONFLICT_STATUSES: readonly number[] = [409, 412];
+
+/**
+ * The credential methods the administrator's global editor offers. Mirrors `data-auth-type-options`
+ * on the classic Global Identities pane (templates/admin/_panes/workspace-identities.html), which
+ * leaves out anonymous.
+ */
+export const GLOBAL_IDENTITY_AUTH_TYPES: readonly string[] = [
+    'username_password', 'api_key', 'bearer_token', 'client_secret', 'connection_string', 'managed_identity',
+];
+
+/** One identity's address. An id that is empty or could change the path is refused here, never sent. */
+function globalIdentityUrl(identityId: string): string {
+    return `${GLOBAL_IDENTITIES_URL}/${encodeURIComponent(requireWorkspaceId(identityId))}`;
+}
+
+/** Prove a returned identity is a global one, as the other scopes prove theirs. */
+function assertGlobalIdentityScope(identity: WorkspaceIdentity, id?: string): void {
+    if (!isRecord(identity) || typeof identity.id !== 'string' || !identity.id
+        || (id !== undefined && identity.id !== id)
+        || identity.scope_type !== 'global' || identity.global_id !== GLOBAL_IDENTITY_SCOPE_ID) {
+        throw new Error('The identity response is not a global identity. Refresh and try again.');
+    }
+}
+
+/** The version marker a record carries when its server versions it. The global routes send none today. */
+function optionalEtag(identity: WorkspaceIdentity): string | undefined {
+    const etag = typeof identity.etag === 'string' ? identity.etag.trim() : '';
+    return etag || undefined;
+}
+
+/**
+ * The administrator's global identities, over the admin routes that name the global scope in the
+ * path. Nothing about the signed-in account or an active workspace decides which identities these
+ * are, and no operation falls back to another scope's routes.
+ */
+export function createGlobalIdentityWorkbench(): IdentityWorkbenchAdapter {
+    const scope: IdentityScope = { kind: 'global' };
+    const supported = new Set<IdentityOperation>(IDENTITY_OPERATIONS);
+    const allows = (operation: IdentityOperation, identity?: WorkspaceIdentity) =>
+        identityOperationAllowed(scope, supported, operation, identity);
+    return {
+        scope, supported, manageable: true, authTypes: GLOBAL_IDENTITY_AUTH_TYPES, allows,
+        list: async (signal) => {
+            const identities = identitiesFromResponse(await api.get<unknown>(GLOBAL_IDENTITIES_URL, signal));
+            identities.forEach((identity) => assertGlobalIdentityScope(identity));
+            return identities;
+        },
+        create: async (write) => {
+            if (!allows('create')) {
+                throw new Error('Creating identities is not available.');
+            }
+            const response = await api.post<unknown>(GLOBAL_IDENTITIES_URL, identityWriteBody(write));
+            const created = identityFromResponse(response);
+            assertGlobalIdentityScope(created);
+            return created;
+        },
+        update: async (identity, write) => {
+            if (!allows('edit', identity)) {
+                throw new Error('Editing this identity is not available.');
+            }
+            const etag = optionalEtag(identity);
+            const updated = await conditionalIdentityWrite('PATCH', globalIdentityUrl(identity.id), {
+                ...identityWriteBody(write), ...(etag ? { expected_etag: etag } : {}),
+            }, GLOBAL_CONFLICT_STATUSES);
+            const record = identityFromResponse(updated);
+            assertGlobalIdentityScope(record, identity.id);
+            return record;
+        },
+        remove: async (identity) => {
+            if (!allows('delete', identity)) {
+                throw new Error('Deleting this identity is not available.');
+            }
+            const etag = optionalEtag(identity);
+            await conditionalIdentityWrite(
+                'DELETE', globalIdentityUrl(identity.id), etag ? { expected_etag: etag } : undefined,
+                GLOBAL_CONFLICT_STATUSES,
+            );
+        },
+    };
+}
+
+export const GLOBAL_IDENTITY_WORKBENCH = createGlobalIdentityWorkbench();

@@ -86,6 +86,8 @@ are ready. This indication is local to your open chat, not a participant read re
 - **Ask the assistant**: `@`-mention a model or agent, or turn on an assistant tool such as document search, web search, image generation, deep research, reading URLs, an agent, or a saved prompt. A message with none of those goes to the other participants only, exactly as in the classic interface.
 - **Reply to a specific message**: the reply button on any message. The reply shows what it is answering.
 - **Approve a generated file**: files waiting on your decision are listed above the conversation with **Approve** and **Deny**, rather than on the message that produced them.
+- **Lock or unlock the workspace scope**: the padlock beside the conversation title appears once the conversation has used workspace documents. Anyone who can post in the conversation can change it, unless your administrator enforces the lock, in which case it can only be read. See [Lock workspace scope in chat]({{ '/guides/lock-workspace-scope/' | relative_url }}).
+- **Add a generated file to a workspace**: a released file's card offers **Add to workspace**. **Create PowerPoint** is not offered in a shared conversation. See [Reuse a generated file]({{ '/guides/reuse-generated-files/' | relative_url }}).
 
 Retry, edit, attempt navigation, and fork are not offered in a shared conversation in either interface; those actions have no shared-conversation equivalent.
 

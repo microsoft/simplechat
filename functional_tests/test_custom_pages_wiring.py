@@ -251,7 +251,12 @@ def test_custom_pages_examples_and_request_access_page():
     assert_contains(static_js, "addEventListener", "static example JavaScript behavior")
     assert_contains(python_extension, '"slug": "example-python-dashboard"', "Python example slug metadata")
     assert_contains(python_extension, "def handle_api", "Python example backend API handler")
-    assert_contains(python_template, "{% extends \"base.html\" %}", "Python example Jinja template")
+    assert_contains(python_extension, "supports_embed = True", "Python example opt-in to the V2 embed")
+    assert_contains(
+        python_template,
+        "{% extends \"custom_page_embed_base.html\" if embed else \"base.html\" %}",
+        "Python example Jinja template that follows V2 embed mode",
+    )
     assert_contains(request_access_html, "accessrequest@example.com", "request access mail recipient")
     assert_contains(request_access_html, "SimpleChat%20Access%20Request", "request access mail subject")
 

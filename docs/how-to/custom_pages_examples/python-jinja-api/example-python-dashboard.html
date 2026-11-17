@@ -1,5 +1,5 @@
 <!-- example-python-dashboard.html -->
-{% extends "base.html" %}
+{% extends "custom_page_embed_base.html" if embed else "base.html" %}
 
 {% block head %}
     <link rel="stylesheet" href="{{ stylesheet_url }}" />

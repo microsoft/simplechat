@@ -8,7 +8,7 @@ account's currently selected workspace. These routes are not aliases for the
 legacy public document routes.
 """
 
-from functools import wraps
+from functools import partial, wraps
 
 from flask import current_app, g, jsonify, request
 
@@ -18,6 +18,7 @@ from content_screening.access import (
 )
 from functions_authentication import *
 from functions_settings import *
+from functions_legacy_document_upgrade import upgrade_legacy_scope_documents
 from functions_public_document_access import require_public_document_management_context
 from functions_public_document_management import (
     PublicDocumentOperationError,
@@ -37,6 +38,7 @@ from functions_public_document_management import (
     validate_public_download_response,
 )
 from swagger_wrapper import swagger_route, get_auth_security
+from utils_cache import invalidate_public_workspace_search_cache
 
 
 def _public_document_management_boundary(function):
@@ -85,6 +87,7 @@ def register_route_backend_public_document_management(bp):
     - PATCH  /api/public-workspaces/<workspace_id>/documents/tags/<tag_name>
     - DELETE /api/public-workspaces/<workspace_id>/documents/tags/<tag_name>
     - POST   /api/public-workspaces/<workspace_id>/documents/bulk-tag
+    - POST   /api/public-workspaces/<workspace_id>/documents/upgrade_legacy
     """
     register_document_api_guards(bp, source_validator=_validate_public_document_response_sources)
 
@@ -241,4 +244,28 @@ def register_route_backend_public_document_management(bp):
     def api_scoped_public_documents_tag(workspace_id):
         _public_management_query()
         payload, status = tag_public_documents(get_current_user_id(), workspace_id, request.get_json(silent=True))
+        return jsonify(payload), status
+
+    @bp.route('/api/public-workspaces/<workspace_id>/documents/upgrade_legacy', methods=['POST'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @user_required
+    @enabled_required("enable_public_workspaces")
+    @_public_document_management_boundary
+    def api_scoped_public_documents_upgrade_legacy(workspace_id):
+        """Backfill the workspace's documents that predate progress tracking.
+
+        Authorized as a metadata edit, so only a manager of an active workspace may run it,
+        and the workspace is revalidated before each document is written.
+        """
+        _public_management_query()
+        if request.get_data():
+            raise PublicDocumentOperationError("A legacy document upgrade does not accept a request body.", 400)
+        user_id = get_current_user_id()
+        payload, status = upgrade_legacy_scope_documents(
+            user_id, public_workspace_id=workspace_id,
+            authorize=partial(require_public_document_management_context, user_id, workspace_id, "edit_metadata"),
+        )
+        if payload["upgraded_count"]:
+            invalidate_public_workspace_search_cache(workspace_id)
         return jsonify(payload), status

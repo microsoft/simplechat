@@ -8,8 +8,10 @@
 //
 // It follows the server's rule for when a save moves the next run, so an unsaved change to
 // the time or timezone is shown as what the save would schedule rather than as the run
-// that is still stored.
+// that is still stored. Running a refresh now is the Control Center's own action, and the
+// link opens that page in a new tab so an unsaved schedule here is not lost.
 
+import { Link } from 'react-router-dom';
 import { ArrowUpRight, CalendarClock, CalendarOff, Clock, History } from 'lucide-react';
 import {
     CONTROL_CENTER_SCHEDULE_KEYS,
@@ -139,8 +141,8 @@ export function RefreshScheduleStatus({
                             'Not refreshed yet.'
                         )}
                     </span>
-                    <a
-                        href="/admin/control-center"
+                    <Link
+                        to="/control-center"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-1 font-medium text-accent hover:underline"
@@ -148,7 +150,7 @@ export function RefreshScheduleStatus({
                         Open Control Center
                         <ArrowUpRight size={13} aria-hidden="true" />
                         <span className="sr-only">(opens in a new tab)</span>
-                    </a>
+                    </Link>
                 </div>
             </div>
         </ReadoutRow>

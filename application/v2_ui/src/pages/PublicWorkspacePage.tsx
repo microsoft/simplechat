@@ -10,17 +10,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useBlocker, useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArrowUpRight, Globe, LayoutGrid, Loader2, Lock } from 'lucide-react';
+import { Globe, LayoutGrid, Loader2, Lock } from 'lucide-react';
 import { PageHeader } from '../components/layout/PageHeader';
-import { EmptyState, GlassButton, GlassPanel, Skeleton } from '../components/ui/primitives';
+import { EmptyState, GlassButton, Skeleton } from '../components/ui/primitives';
 import { PublicWorkspacePicker } from '../components/workspace/PublicWorkspacePicker';
 import { WorkspaceLeavePrompt } from '../components/workspace/WorkspaceEditorFrame';
 import { SharedWorkspaceOverview } from '../components/workspace/SharedWorkspaceOverview';
 import { WorkspaceShell } from '../components/workspace/WorkspaceShell';
-import { Pill, SectionIntro } from '../components/workspace/primitives';
+import { Pill } from '../components/workspace/primitives';
 import {
     PUBLIC_GROUP_BLURBS, PUBLIC_SECTION_BLURBS, PUBLIC_STATUS_LABELS, publicWorkspacePath,
-    classicPublicSectionLabel, isPublicManageSection, readPublicDocumentTarget,
+    isPublicManageSection, isPublicWorkspaceSection, readPublicDocumentTarget,
 } from '../lib/publicWorkspaceNavigation';
 import { PUBLIC_WORKSPACE_SECTION_IDS } from '../lib/workspaceContext';
 import { usePublicWorkspaceLabels } from '../lib/publicWorkspaceLabels';
@@ -31,6 +31,7 @@ import { usePublicWorkspaceStore, PublicWorkspaceRequestSuperseded } from '../st
 import { WORKSPACE_SECTIONS_BY_ID } from './workspace/sections';
 import { PUBLIC_MANAGE_SECTIONS } from './workspace/publicManageSections';
 import { PublicDocumentsSection } from './workspace/DocumentsSection';
+import { PublicTagsSection } from './workspace/TagsSection';
 import { PublicPromptsSection } from './workspace/PromptsSection';
 import { PublicIdentitiesSection } from './workspace/GroupIdentitiesSection';
 import { PublicFileSourcesSection } from './workspace/GroupFileSourcesSection';
@@ -39,8 +40,6 @@ import { PublicSettingsSection } from './workspace/PublicSettingsSection';
 import { PublicActivitySection } from './workspace/PublicActivitySection';
 import { PublicStatisticsSection } from './workspace/PublicStatisticsSection';
 import { createPublicSettingsAdapter } from '../lib/publicSettings';
-
-const CLASSIC_WORKSPACE_HREF = '/public_workspaces';
 
 export function PublicWorkspacePage() {
     const { workspaceId, section, resourceId } = useParams<{ workspaceId?: string; section?: string; resourceId?: string }>();
@@ -56,6 +55,7 @@ export function PublicWorkspacePage() {
     const activeWorkspaceId = bootstrap?.scope?.active_public_workspace_id;
     const [notice, setNotice] = useState('');
     const [retry, setRetry] = useState(0);
+    const [pickerVersion, setPickerVersion] = useState(0);
     const [logoFailed, setLogoFailed] = useState(false);
     const [dirty, setDirty] = useState(false);
     const [resourceBusy, setResourceBusy] = useState(false);
@@ -82,10 +82,11 @@ export function PublicWorkspacePage() {
         }
     }, [workspaceId, enabled, activeWorkspaceId, section, location.search, navigate, hasDocumentLink]);
 
-    // The Manage sections (M10A Members) have no item route, so a stray trailing segment opens the
-    // section itself rather than leaving the reader on a URL that renders nothing it understands.
+    // No public section has an item route, so a stray trailing segment opens the section itself
+    // rather than leaving the reader on a URL that renders nothing it understands.
     useEffect(() => {
-        if (!workspaceId || !section || !resourceId || !isPublicManageSection(section)) return;
+        if (!workspaceId || !section || !resourceId
+            || !(isPublicWorkspaceSection(section) || isPublicManageSection(section))) return;
         navigate(publicWorkspacePath(workspaceId, section), { replace: true });
     }, [workspaceId, section, resourceId, navigate]);
 
@@ -152,13 +153,9 @@ export function PublicWorkspacePage() {
     const basePath = workspaceId ? publicWorkspacePath(workspaceId) : '/public';
     const sections = useMemo(() => PUBLIC_WORKSPACE_SECTION_IDS.map((id) => {
         const { label, icon, group } = WORKSPACE_SECTIONS_BY_ID[id];
-        // Documents (M3), prompts (M9C) and connections -- identities and file sources (M10B) --
-        // render natively. Any remaining section still hands off to the classic surface.
-        const isNative = id === 'documents' || id === 'prompts' || id === 'identities' || id === 'sync';
-        return {
-            id, label, icon, group, blurb: PUBLIC_SECTION_BLURBS[id],
-            availabilityLabel: isNative ? undefined : 'Classic',
-        };
+        // Every public section renders natively -- documents, tags, prompts, and the connections
+        // (identities and file sources) -- so none hands off to the classic surface.
+        return { id, label, icon, group, blurb: PUBLIC_SECTION_BLURBS[id] };
     }), []);
     const resolved = useMemo(() => resolveWorkspaceSections([...sections, ...PUBLIC_MANAGE_SECTIONS], context), [sections, context]);
     const selected = resolved.find((entry) => entry.section.id === section);
@@ -216,32 +213,19 @@ export function PublicWorkspacePage() {
         navigate(`${location.pathname}${params.size ? `?${params}` : ''}`, { replace: true });
     }, [location.pathname, location.search, navigate]);
 
-    // xss-check: ignore reviewed: callers pass only the fixed local CLASSIC_WORKSPACE_HREF.
-    const openClassic = useCallback((href: string) => { window.location.assign(href); }, []);
-
-    // The Settings danger zone hands the delete to the classic manage page. As the group page does, the
-    // handoff first confirms this workspace as the active public workspace, so the classic surface and
-    // chat scoping follow, and only then leaves; a page with an unsaved or in-flight change asks first.
-    const [classicTarget, setClassicTarget] = useState<string | null>(null);
-    const [classicPrompt, setClassicPrompt] = useState<string | null>(null);
-    const openClassicManage = useCallback((href: string) => {
-        if (dirtyRef.current || busyRef.current) setClassicPrompt(href);
-        else setClassicTarget(href);
-    }, []);
-    useEffect(() => {
-        if (!classicTarget || !workspaceId) return;
-        let mounted = true;
-        void PUBLIC_WORKSPACES.setActive(workspaceId).then(() => {
-            // xss-check: ignore reviewed: classicTarget is a local manage-page path built with an encoded workspace id.
-            if (mounted) window.location.assign(classicTarget);
-        }).catch((cause: unknown) => {
-            if (!mounted) return;
-            setNotice(cause instanceof Error && cause.message
-                ? cause.message : `Could not open the classic ${labels.lower_singular}.`);
-            setClassicTarget(null);
-        });
-        return () => { mounted = false; };
-    }, [classicTarget, workspaceId, labels.lower_singular]);
+    // A deleted workspace is no longer the caller's: read the account's workspaces again so the picker
+    // and the saved active workspace drop it, then return to the list. The Settings section has
+    // already finished the DELETE, so the draft and busy flags are cleared first and the leave guard
+    // never blocks the exit that delete caused. The picker reads its own list once, so it is remounted
+    // to read it again, or the deleted workspace would stay selectable in it.
+    const deletedWorkspace = useCallback(async () => {
+        reportDocumentDirty(false);
+        reportDocumentBusy(false);
+        await useBootstrapStore.getState().refresh();
+        setPickerVersion((version) => version + 1);
+        navigate('/public', { replace: true });
+        usePublicWorkspaceStore.getState().clear();
+    }, [navigate, reportDocumentBusy, reportDocumentDirty]);
 
     const header = (
         <>
@@ -249,7 +233,7 @@ export function PublicWorkspacePage() {
                 actions={[{ id: 'directory', label: 'Public directory', icon: <LayoutGrid size={14} />,
                     variant: 'subtle', onClick: () => navigate('/public/directory') }]} />
             <div className="shrink-0 space-y-2 border-b border-edge px-2 py-2 md:space-y-3 md:px-4 md:py-3">
-                <PublicWorkspacePicker key={viewerId} value={state.pendingWorkspaceId ?? workspaceId}
+                <PublicWorkspacePicker key={`${viewerId}:${pickerVersion}`} value={state.pendingWorkspaceId ?? workspaceId}
                     selectedName={context?.workspace.name || bootstrap?.scope?.public_workspaces?.find((workspace) => workspace.id === workspaceId)?.name}
                     disabled={state.loading}
                     onSelect={(id) => selectWorkspace(id)} />
@@ -318,6 +302,7 @@ export function PublicWorkspacePage() {
                         : !selected.enabled ? <EmptyState icon={<Lock size={28} />} title={`${selected.section.label} is not available`} description={selected.reason ?? undefined} />
                             : section === 'members' && !resourceId ? (
                                 <PublicMembersSection workspaceId={context.scope.id} workspaceName={context.workspace.name}
+                                    workspaceStatus={context.status}
                                     viewerId={context.viewer_id} interactionDisabled={false}
                                     onBusyChange={reportDocumentBusy} onAccessChanged={revalidate} />
                             )
@@ -326,7 +311,7 @@ export function PublicWorkspacePage() {
                                     interactionDisabled={state.refreshing}
                                     onBusyChange={reportDocumentBusy} onDirtyChange={reportDocumentDirty}
                                     onAccessChanged={revalidate} onSaved={refreshContextNow}
-                                    onOpenClassic={() => openClassicManage(`/public_workspaces/${encodeURIComponent(context.scope.id)}`)} />
+                                    onDeleted={deletedWorkspace} />
                             )
                             : section === 'activity' && !resourceId && publicSettingsAdapter ? (
                                 <PublicActivitySection adapter={publicSettingsAdapter} />
@@ -336,11 +321,16 @@ export function PublicWorkspacePage() {
                             )
                             : section === 'documents' && !resourceId ? (
                                 context.document_permissions.can_view ? <PublicDocumentsSection context={context}
-                                    interactionDisabled={false} onOpenClassic={() => openClassic(CLASSIC_WORKSPACE_HREF)}
+                                    interactionDisabled={false}
                                     onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy}
                                     linkedDocumentId={linkedDocument.id} linkedDocumentError={linkedDocument.error}
                                     onClearLinkedDocument={clearDocumentLink} />
                                     : <EmptyState icon={<Lock size={28} />} title="Documents are not available" description={`You do not have access to this ${labels.lower_singular}'s documents.`} />
+                            ) : section === 'tags' && !resourceId ? (
+                                context.document_permissions.can_view ? <PublicTagsSection context={context}
+                                    interactionDisabled={state.refreshing}
+                                    onDirtyChange={reportDocumentDirty} onBusyChange={reportDocumentBusy} />
+                                    : <EmptyState icon={<Lock size={28} />} title="Tags are not available" description={`You do not have access to this ${labels.lower_singular}'s documents.`} />
                             ) : section === 'prompts' && !resourceId ? (
                                 <div className="min-h-0 flex-1"><PublicPromptsSection context={context} /></div>
                             ) : section === 'identities' && !resourceId ? (
@@ -348,21 +338,21 @@ export function PublicWorkspacePage() {
                             ) : section === 'sync' && !resourceId ? (
                                 <PublicFileSourcesSection context={context} />
                             ) : (
-                                <GlassPanel elevation="flat" className="space-y-4 p-5">
-                                    <SectionIntro title={selected.section.label} description={selected.section.blurb} />
-                                    <p className="text-sm text-text-2">This section is available in the classic {labels.lower_singular}. Choose {classicPublicSectionLabel(selected.section.id, selected.section.label)} there; {context.workspace.name} will be selected for you.</p>
-                                    <GlassButton variant="primary" onClick={() => openClassic(CLASSIC_WORKSPACE_HREF)}>Open classic {labels.lower_singular}<ArrowUpRight size={15} /></GlassButton>
-                                </GlassPanel>
+                                // Only a stray resource segment gets here, for the instant before the redirect
+                                // above drops it and the section itself opens.
+                                <div className="flex items-center justify-center gap-2 py-12 text-sm text-text-3" role="status" aria-live="polite">
+                                    <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                                    Opening the requested view...
+                                </div>
                             )}
                 </div>
             ) : !error ? <EmptyState title="Workspace details unavailable" description={`Select another ${labels.lower_singular} or refresh workspace details.`} /> : null}
-            {blocker.state === 'blocked' || classicPrompt ? <WorkspaceLeavePrompt
+            {blocker.state === 'blocked' ? <WorkspaceLeavePrompt
                 saving={resourceBusy}
-                onStay={() => { if (blocker.state === 'blocked') blocker.reset(); setClassicPrompt(null); }}
+                onStay={() => blocker.reset()}
                 onDiscard={() => {
                     setDirty(false);
-                    if (classicPrompt) { setClassicTarget(classicPrompt); setClassicPrompt(null); }
-                    else if (blocker.state === 'blocked') blocker.proceed();
+                    blocker.proceed();
                 }} /> : null}
         </WorkspaceShell>
     );

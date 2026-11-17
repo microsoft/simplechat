@@ -16,6 +16,7 @@ import type { EnhancedCitationMetadata } from './enhancedCitations';
 import { readPublicWorkspaceSelection, type PublicWorkspaceSelection } from './publicChatScope';
 import type { ExportVisualAsset } from './exportVisuals';
 import type { GeneratedArtifact, GeneratedRunStatus } from './generatedArtifacts';
+import type { PromotionRequestBody } from './generatedArtifactActions';
 import type { MaskAction, MaskedRange, MaskSelection } from './masking';
 import type {
     ActiveScopePayload,
@@ -251,6 +252,28 @@ export const fetchConversationMetadata = (conversationId: string, signal?: Abort
     api.get<ConversationMetadata>(
         `/api/conversations/${encodeURIComponent(conversationId)}/metadata`,
         signal,
+    );
+
+/** Response of PATCH /api/conversations/<id>/scope_lock. */
+export interface ScopeLockResponse {
+    success?: boolean;
+    scope_locked?: boolean;
+    /** Kept across an unlock, so locking again returns to the same workspaces. */
+    locked_contexts?: unknown[];
+}
+
+/**
+ * Lock or unlock the workspaces a conversation's documents come from.
+ *
+ * The same route serves personal and shared conversations: it looks the id up in the personal
+ * container first and falls back to the shared one, so no endpoint choice is made here. The body
+ * must hold a real boolean; the route answers 400 for anything else. Unlocking answers 403 while
+ * the administrator enforces the lock, and locking is always allowed.
+ */
+export const setConversationScopeLock = (conversationId: string, locked: boolean) =>
+    api.patch<ScopeLockResponse>(
+        `/api/conversations/${encodeURIComponent(conversationId)}/scope_lock`,
+        { scope_locked: locked === true },
     );
 
 /** Which family of endpoints a conversation belongs to. */
@@ -911,6 +934,13 @@ interface MessageExportRequest {
     message_id: string;
     conversation_id: string;
     /**
+     * Build a PowerPoint from this generated Markdown file instead of from the message's text.
+     *
+     * The route loads `message_id` first and then the file, which must be a generated Markdown
+     * artifact in the same conversation. Only the PowerPoint export reads it; the others ignore it.
+     */
+    artifact_message_id?: string;
+    /**
      * Pictures of the diagrams already drawn on screen.
      *
      * The server renders any diagram this does not cover, so sending them is an optimisation
@@ -1345,6 +1375,38 @@ export interface GeneratedOutputRunResponse {
     message?: string;
     run?: GeneratedRunStatus;
 }
+
+/**
+ * What POST /api/chat_artifacts/promote answers, for the personal (200) and approval (202) cases.
+ *
+ * An uncertain or failed publication answers 409 with this same body, which `apiClient` raises as
+ * an `ApiError` whose `payload` carries it; see `promotionConflict`.
+ */
+export interface ArtifactPromotionResponse {
+    message?: string;
+    workspace_scope?: 'personal' | 'group' | 'public';
+    group_id?: string;
+    public_workspace_id?: string;
+    approval_required?: boolean;
+    document?: { id?: string; file_name?: string; status?: string };
+    publication?: {
+        id?: string;
+        state?: string;
+        document_id?: string;
+        unresolved_stages?: string[];
+    };
+}
+
+/**
+ * Add a generated chat artifact to a workspace.
+ *
+ * No `request_id` is sent, deliberately: the route then uses its own `manual` id, which makes a
+ * repeated request for the same file, destination and person return the publication that already
+ * exists instead of creating a second copy. A random id per click would turn every retry into a
+ * duplicate.
+ */
+export const promoteGeneratedArtifact = (body: PromotionRequestBody) =>
+    api.post<ArtifactPromotionResponse>('/api/chat_artifacts/promote', body);
 
 export function fetchGeneratedOutputRun(runId: string, signal?: AbortSignal) {
     return api.get<GeneratedOutputRunResponse>(

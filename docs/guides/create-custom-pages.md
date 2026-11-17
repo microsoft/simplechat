@@ -39,5 +39,6 @@ Use the linked source as the maintained guide for:
 - Simple HTML custom pages
 - Static HTML/CSS/JS custom pages
 - Python-backed Jinja custom pages with backend API operations
+- Showing custom pages inside the V2 interface, including how a Python-backed page opts in with `supports_embed`
 
 Do not duplicate the full guide in this docs page. This page exists only to route developers to the same source the app renders.

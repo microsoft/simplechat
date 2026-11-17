@@ -414,7 +414,10 @@ class LoggedPluginLoader:
                 self._wrap_plugin_functions(schema_instance, schema_plugin_name)
             
             # Register with kernel
-            register_action_plugin(self.kernel, schema_instance, schema_manifest, runtime_role="sql_schema")
+            register_action_plugin(
+                self.kernel, schema_instance, schema_manifest,
+                runtime_role="sql_schema", usage_manifest=query_manifest,
+            )
             
             log_event(
                 f"[LOGGED_PLUGIN_LOADER] Auto-created companion SQL Schema plugin: {schema_plugin_name}",

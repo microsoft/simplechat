@@ -302,6 +302,28 @@ Debug-gated `log_event(debug_only=True)` records, like `debug_print`, forward
 one tagged Application Insights debug trace only when debug logging and the
 exporter are active. Historical console-only records are not backfilled.
 
+## Interface selection diagnostics
+
+`[UI_MODE]` records why a request that the modern interface would have taken was
+served as a classic page. It is written only when the modern interface is selected
+(`functions_ui_mode.get_ui_mode`), which no deployment can do until the interface
+selector exists, so a deployment that has not selected it never sees the tag. All
+three records are warnings and none changes the page the visitor receives:
+
+- `[UI_MODE] The modern interface is selected but the V2 bundle (static/v2/index.html)
+  is not built, so classic pages are being served instead.` The V2 bundle is missing,
+  so `/v2` would answer 503 and every classic page is served as it is. It is written
+  once per process and then at most once an hour, never once per request. Build the
+  bundle with `npm install` and `npm run build` in `application/v2_ui`; container images
+  do this automatically.
+- `[UI_MODE] Could not check custom page '<slug>' for the modern interface: ...` The
+  custom page lookup failed, so that page is served classic.
+- `[UI_MODE] The classic page redirect failed; serving the page as requested: ...` The
+  redirect decision raised an error, so the request is served classic. The record
+  carries the exception traceback.
+
+See `docs/explanation/features/V2_INTERFACE_SELECTION_PREREQUISITES.md`.
+
 ## Current tag inventory
 
 - `[SUPPORT_EXPORT]`
@@ -453,6 +475,7 @@ exporter are active. Historical console-only records are not backfilled.
 - `[HISTORY_CONTEXT]`
 - `[HISTORY_FALLBACK]`
 - `[IDENTITIES]`
+- `[IDLE_TIMEOUT]`
 - `[IMAGE_CONTEXT]`
 - `[IMAGE_GENERATION]`
 - `[INBOUND_MCP]`
@@ -585,6 +608,7 @@ exporter are active. Historical console-only records are not backfilled.
 - `[TOKENS]`
 - `[TOKEN_FILTERS]`
 - `[TTS]`
+- `[UI_MODE]`
 - `[UPDATE_TAG]`
 - `[URL_ACCESS_POLICY_TEST]`
 - `[USERS]`

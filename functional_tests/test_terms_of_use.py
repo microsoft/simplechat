@@ -2,9 +2,10 @@
 # test_terms_of_use.py
 """
 Functional test for Terms of Use recurrence and persistence helpers.
-Version: 0.250.057
+Version: 0.261.448
 Implemented in: 0.250.055
 Redirect hardening updated in: 0.250.057
+Return path control-character hardening in: 0.261.448
 
 This test ensures Terms of Use hashes, redirect validation,
 pre-auth session acceptance, and user-settings persistence behave consistently.
@@ -111,6 +112,29 @@ def test_hash_and_redirect_normalization():
     assert terms.normalize_terms_of_use_return_path("https://evil.example") == "/"
 
 
+def test_return_path_with_a_control_character_never_becomes_an_off_site_redirect():
+    """A TAB inside the path is dropped by Werkzeug and by browsers, so "/<TAB>/host" would be sent as "//host"."""
+    from flask import Flask, redirect
+
+    hostile = ["/\t/evil.example", "/\n/evil.example", "/\r/evil.example", "/chats\x00", "/chats\x7f?x=1"]
+    for value in hostile:
+        assert terms.normalize_terms_of_use_return_path(value) == "/", repr(value)
+        assert terms.normalize_terms_of_use_return_path(value, fallback="/v2") == "/v2", repr(value)
+
+    # What the browser is really sent: the old check kept "/<TAB>/evil.example", which this redirect
+    # turns into the protocol-relative "//evil.example". Whatever the normalizer answers must stay local.
+    app = Flask("terms_return_path_probe")
+    app.add_url_rule("/go", view_func=lambda: redirect(terms.normalize_terms_of_use_return_path("/\t/evil.example")))
+    response = app.test_client().get("/go")
+    location = response.headers["Location"]
+    assert response.status_code == 302
+    assert location == "/" and not location.startswith("//")
+
+    # A percent-encoded TAB is plain text in the path, stays encoded in the redirect and is still allowed.
+    assert terms.normalize_terms_of_use_return_path("/chats?x=%09y") == "/chats?x=%09y"
+    assert terms.normalize_terms_of_use_return_path("  /workspace  ") == "/workspace"
+
+
 def test_pre_auth_session_acceptance_unblocks_login_for_daily_mode():
     """Validate anonymous pre-auth acceptance prevents a daily-mode login loop."""
     settings = _enabled_settings(frequency="daily")
@@ -193,6 +217,7 @@ if __name__ == "__main__":
     os.environ.setdefault("DISABLE_FLASK_INSTRUMENTATION", "1")
     tests = [
         test_hash_and_redirect_normalization,
+        test_return_path_with_a_control_character_never_becomes_an_off_site_redirect,
         test_pre_auth_session_acceptance_unblocks_login_for_daily_mode,
         test_once_acceptance_persists_to_user_settings_and_activity_log,
         test_daily_user_settings_acceptance_requires_today,

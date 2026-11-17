@@ -170,6 +170,7 @@ EXPECTED_PUBLIC_PATHS = {
 SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_file_sync.py", "api_file_sync_personal_source_options"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_file_sync.py", "api_file_sync_personal_source_read"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_file_sync.py", "api_admin_file_sync_source_options"): ("login_required", "admin_required", "enabled_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_summary"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_insights"): ("login_required", "control_center_required"),
     ("route_backend_control_center.py", "api_v2_control_center_dashboard_chat_readiness"): ("login_required", "control_center_required"),
@@ -199,6 +200,7 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_group_documents.py", "api_scoped_group_tag_update"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_scoped_group_tag_delete"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_scoped_group_documents_tag"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_group_documents.py", "api_scoped_group_documents_upgrade_legacy"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_documents"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_document_facets"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_group_documents.py", "api_get_group_document_tags"): ("login_required", "user_required", "enabled_required"),
@@ -344,6 +346,7 @@ SENSITIVE_ROUTE_POLICIES = {
     ("route_backend_public_document_management.py", "api_scoped_public_tag_update"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_management.py", "api_scoped_public_tag_delete"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_management.py", "api_scoped_public_documents_tag"): ("login_required", "user_required", "enabled_required"),
+    ("route_backend_public_document_management.py", "api_scoped_public_documents_upgrade_legacy"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_publication"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_approve_artifact"): ("login_required", "user_required", "enabled_required"),
     ("route_backend_public_document_collaboration.py", "api_scoped_public_document_reject_artifact"): ("login_required", "user_required", "enabled_required"),

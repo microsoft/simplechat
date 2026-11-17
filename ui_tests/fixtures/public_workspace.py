@@ -1,7 +1,7 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.310
+Version: 0.261.448
 Implemented in: 0.261.132
 Every context carries the server's document_management hint, as build_public_workspace_context
 sends it: 0.261.167
@@ -12,8 +12,11 @@ Its identities and sync sections and their management hints, gated on File Sync:
 The context carries the native membership hint and its Members manage section: 0.261.179
 Every context carries the server's settings_management hint (M10C): 0.261.185
 Its Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.185
+Its Tags section opens, as the group's does: 0.261.448
+Its Manage sections stay open in every status to the people the classic manage page keeps them for
+(the owner and admins; statistics also for a document manager): 0.261.448
 
-The public surface mirrors the group shell. Its documents and prompts sections are open, and a
+The public surface mirrors the group shell. Its documents, tags and prompts sections are open, and a
 manager role can be granted document management, the generated-artifact review and prompt
 management. From M10B, a File-Sync deployment also opens read-only identities and file sources that
 a manager of an active workspace manages. It never advertises native delegation, and every document,
@@ -71,9 +74,8 @@ SECTION_GROUPS = {
 }
 # Members joins the content sections in the shared "manage" group (M10A).
 PUBLIC_MANAGE_SECTION_GROUP = "manage"
-# The texts build_public_workspace_context sends: a section public workspaces don't offer, and why a
-# workspace's status closes every section (check_public_workspace_status_allows_operation's "view").
-PUBLIC_SECTION_UNAVAILABLE_REASON = "This section is not available for public workspaces yet."
+# The texts build_public_workspace_context sends: why a workspace's status closes every section
+# (check_public_workspace_status_allows_operation's "view").
 PUBLIC_INACTIVE_REASON = "This public workspace is inactive. Access is restricted to administrators."
 PUBLIC_STATUS_UNKNOWN_REASON = "This workspace's status is not recognized. Contact an administrator."
 # The connections reasons build_public_workspace_context sends for the identities and sync sections
@@ -249,12 +251,12 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             "can_manage": bool(enabled and status == "active" and manager),
             "reason": None if enabled else (status_reason if not readable else unavailable_reason),
         }
-    # Documents and prompts open; a manager of an active workspace manages either. Identities and sync
-    # are gated solely on File Sync for the workspace and are manager-only; tags stay unavailable.
+    # Documents, tags and prompts open; a manager of an active workspace manages any of them. Identities
+    # and sync are gated solely on File Sync for the workspace and are manager-only.
     sections = {
-        "documents": {"group": "knowledge", **gate(True, PUBLIC_SECTION_UNAVAILABLE_REASON)},
-        "tags": {"group": "knowledge", **gate(False, PUBLIC_SECTION_UNAVAILABLE_REASON)},
-        "prompts": {"group": "knowledge", **gate(True, PUBLIC_SECTION_UNAVAILABLE_REASON)},
+        "documents": {"group": "knowledge", **gate(True, None)},
+        "tags": {"group": "knowledge", **gate(True, None)},
+        "prompts": {"group": "knowledge", **gate(True, None)},
         "identities": {"group": "connections", **gate(
             manager and file_sync,
             PUBLIC_IDENTITIES_UNAVAILABLE_REASON if manager else PUBLIC_CONNECTIONS_MANAGER_REASON,
@@ -264,27 +266,31 @@ def public_context(identifier, name, *, status="active", role="User", viewer=OWN
             PUBLIC_FILE_SOURCES_UNAVAILABLE_REASON if manager else PUBLIC_CONNECTIONS_MANAGER_REASON,
         )},
     }
-    # Members (M10A) opens in any viewable status; its can_manage is navigation only, gated on an
-    # active workspace and a manager role like the server's section(True, manager).
+    # Members (M10A) opens in any viewable status, and in every status for the owner and admins, as the
+    # classic manage page keeps it for them; its can_manage is navigation only, gated on an active
+    # workspace and a manager role like the server's section(True, manager).
+    members_manager = role in ("Owner", "Admin")
+    members_open = readable or members_manager
     sections["members"] = {
-        "group": PUBLIC_MANAGE_SECTION_GROUP, "enabled": readable,
-        "can_manage": bool(readable and status == "active" and role in ("Owner", "Admin")),
-        "reason": None if readable else status_reason,
+        "group": PUBLIC_MANAGE_SECTION_GROUP, "enabled": members_open,
+        "can_manage": bool(members_open and status == "active" and members_manager),
+        "reason": None if members_open else status_reason,
     }
     # Settings, Activity and Statistics (M10C) join Members, as the server builds them: Settings and
-    # Activity open to the owner or an admin, Statistics to any stored role, in any viewable status.
-    # Only Settings carries can_manage (navigation only); the controls come from settings_management.
+    # Activity open to the owner or an admin, Statistics to any stored role, in every status, because the
+    # routes behind them check none. Anyone the decision doesn't admit meets the status's reason while the
+    # workspace can't be viewed, and the role's reason otherwise. Only Settings carries can_manage
+    # (navigation only); the controls come from settings_management.
     settings_manager = role in ("Owner", "Admin")
     for section_id, opens, can_manage, reason in (
         ("settings", settings_manager, settings_manager, PUBLIC_SETTINGS_MANAGER_REASON),
         ("activity", settings_manager, False, PUBLIC_SETTINGS_MANAGER_REASON),
         ("statistics", role in PUBLIC_MANAGER_ROLES, False, PUBLIC_SETTINGS_MEMBER_REASON),
     ):
-        enabled = readable and opens
         sections[section_id] = {
-            "group": PUBLIC_MANAGE_SECTION_GROUP, "enabled": enabled,
-            "can_manage": bool(enabled and status == "active" and can_manage),
-            "reason": None if enabled else status_reason or reason,
+            "group": PUBLIC_MANAGE_SECTION_GROUP, "enabled": opens,
+            "can_manage": bool(opens and status == "active" and can_manage),
+            "reason": None if opens else status_reason or reason,
         }
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,

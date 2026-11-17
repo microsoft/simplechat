@@ -14,6 +14,7 @@ import { ConfirmAction, Pill } from '../workspace/primitives';
 import { WorkflowFlowView } from './WorkflowFlowView';
 import { WorkflowRunHistory } from './WorkflowRunHistory';
 import { WorkflowStatusChip } from './WorkflowStatusChip';
+import { WorkflowActivityLink } from '../workflowActivity/WorkflowActivityLinks';
 import { workflowScopeKey, type WorkflowDefinition, type WorkflowScope } from '../../lib/workflowEditor';
 import { workflowDetailMeta, workflowIsRunning, workflowOverviewFacts } from '../../lib/workflowWorkbench';
 
@@ -127,6 +128,7 @@ export function WorkflowWorkbenchDetail({
                                 Run
                             </GlassButton>
                         ) : null}
+                        <WorkflowActivityLink scope={scope} workflow={workflow} />
                         <GlassButton type="button" variant="subtle" size="sm" disabled={activeRun || statusUnavailable || !workflowId}
                             aria-label={!permissions.canEdit ? `View ${workflow.name || 'workflow'}`
                                 : activeRun ? `${workflow.name || 'Workflow'} is running; cancel or wait before editing`

@@ -1,0 +1,80 @@
+{# templates/modern/landing.html -#}
+{#-
+    Modern variant of templates/index.html for the visitors V2 cannot serve: a visitor who is not
+    signed in, and a user who is signed in without an application role. A signed-in application
+    user is sent to V2 by the index route when the V2 bundle exists. The third branch below only
+    covers a caller that renders this page for such a user anyway.
+
+    Context: app_settings, landing_html (sanitised Markdown, a Markup value written out as is;
+    a plain string would be escaped) and signed_in_account. Text an administrator wrote is
+    escaped everywhere else, and the access denied message keeps its line breaks through nl2br.
+-#}
+{%- extends "modern/standalone_base.html" -%}
+{%- from "modern/_branding.html" import brand_logo with context -%}
+{% block title %}Home - {{ ms_app_title }}{% endblock %}
+{# The logo and the application title are part of the panel on the landing page. #}
+{% block brand %}{% endblock %}
+{% block content %}
+{% set landing_user = session.get("user") %}
+{% set landing_roles = landing_user.get("roles") if landing_user else None %}
+{% set landing_logo_height = ms_settings.landing_page_logo_scale_percent | default(100) | int %}
+{% set landing_title_hidden = ms_settings.hide_app_title %}
+{% set landing_account = signed_in_account or {} %}
+{% if ms_settings.landing_page_alignment == "center" %}
+    {% set landing_alignment = "ms-align-center" %}
+{% elif ms_settings.landing_page_alignment == "right" %}
+    {% set landing_alignment = "ms-align-end" %}
+{% else %}
+    {% set landing_alignment = "ms-align-start" %}
+{% endif %}
+{# Only a path on this site or an http, https or mailto link may become the button target. #}
+{% set request_access_url = (ms_settings.access_request_page_url or "") | trim %}
+{% set request_access_visible = ms_settings.access_request_button_enabled
+    and request_access_url
+    and ((request_access_url.startswith("/") and not request_access_url.startswith("//") and not request_access_url.startswith("/\\"))
+         or request_access_url.startswith(("https://", "http://", "mailto:"))) %}
+
+<div class="ms-panel">
+    <!-- Brand -->
+    <div class="ms-landing-brand">
+        {{ brand_logo(height=landing_logo_height, alt=ms_app_title if landing_title_hidden else "") }}
+        <h1 id="landing-title" class="ms-landing-title{% if landing_title_hidden %} ms-visually-hidden{% endif %}">{{ ms_app_title }}</h1>
+    </div>
+
+    {% if landing_roles and ("Admin" in landing_roles or "User" in landing_roles) %}
+        <!-- Signed in with an application role -->
+        <div class="ms-prose ms-landing-copy {{ landing_alignment }}">{{ landing_html }}</div>
+        <div class="ms-actions ms-actions-center">
+            <a class="ms-button ms-button-primary" href="{{ url_for('frontend_chats.chats') }}">Start Chatting</a>
+        </div>
+
+    {% elif landing_user %}
+        <!-- Signed in without an application role -->
+        <p class="ms-lead ms-align-center">{{ ms_settings.access_denied_message | nl2br }}</p>
+        <dl class="ms-account">
+            <dt>Signed in as</dt>
+            <dd>
+                <span class="ms-account-name">{{ landing_account.name or "Microsoft account" }}</span>
+                {% if landing_account.account %}
+                    <span class="ms-account-email">{{ landing_account.account }}</span>
+                {% endif %}
+            </dd>
+        </dl>
+        <div class="ms-actions ms-actions-center">
+            {% if request_access_visible %}
+                <a class="ms-button ms-button-primary" href="{{ request_access_url }}">{{ ms_settings.access_request_button_text or "Request Access" }}</a>
+            {% endif %}
+            <a class="ms-button ms-button-secondary" href="{{ url_for('frontend_authentication.login', select_account=1) }}">Sign in with another account</a>
+        </div>
+
+    {% else %}
+        <!-- Signed out -->
+        <div class="ms-prose ms-landing-copy {{ landing_alignment }}">{{ landing_html }}</div>
+        <p class="ms-lead ms-align-center">Please sign in to continue.</p>
+        <div class="ms-actions ms-actions-center">
+            <a class="ms-button ms-button-primary" href="{{ url_for('frontend_authentication.login') }}">Sign in</a>
+        </div>
+    {% endif %}
+</div>
+
+{% endblock %}

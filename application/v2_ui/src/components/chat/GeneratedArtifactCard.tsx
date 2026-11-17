@@ -25,6 +25,7 @@ import { toast } from '../../stores/toastStore';
 import { GlassButton, GlassPanel } from '../ui/primitives';
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { TabularRunStatus } from './TabularRunStatus';
+import { GeneratedArtifactActions } from './GeneratedArtifactActions';
 import {
     approvalBlocksDownload,
     artifactFileName,
@@ -262,10 +263,13 @@ export function ArtifactPreviewDialog({
 export function GeneratedArtifactCard({
     artifact: initialArtifact,
     conversationId,
+    messageId,
     embedded = false,
 }: {
     artifact: GeneratedArtifact;
     conversationId?: string;
+    /** The reply this file arrived on, which "Create PowerPoint" is built beside. */
+    messageId?: string;
     /**
      * Rendered inside a card that already names the file and reports its state, so only what
      * that card cannot offer is drawn: the approval banner and the download and view controls.
@@ -294,6 +298,7 @@ export function GeneratedArtifactCard({
                         }
                         artifact={member}
                         conversationId={conversationId}
+                        messageId={messageId}
                     />
                 ))}
             </>
@@ -472,6 +477,16 @@ export function GeneratedArtifactCard({
                     View MD
                 </GlassButton>
             )}
+
+            {/* Classic's other two card buttons. The embedded variant belongs to an orchestration
+                file card, which has no equivalent in classic and reports its own state. */}
+            {!embedded && (
+                <GeneratedArtifactActions
+                    artifact={artifact}
+                    conversationId={conversationId}
+                    messageId={messageId}
+                />
+            )}
         </div>
     ) : null;
 
@@ -590,9 +605,11 @@ export function GeneratedArtifactCard({
 export function GeneratedArtifacts({
     metadata,
     conversationId,
+    messageId,
 }: {
     metadata: unknown;
     conversationId?: string;
+    messageId?: string;
 }) {
     const artifacts = useMemo(() => readGeneratedArtifacts(metadata), [metadata]);
 
@@ -612,6 +629,7 @@ export function GeneratedArtifacts({
                     }
                     artifact={artifact}
                     conversationId={conversationId}
+                    messageId={messageId}
                 />
             ))}
         </>
