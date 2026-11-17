@@ -351,6 +351,13 @@
     }
 }
 
+.ms-terms-message {
+    max-height: 52vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
 .ms-panel-heading {
     display: flex;
     align-items: flex-start;

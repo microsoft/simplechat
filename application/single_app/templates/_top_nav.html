@@ -195,6 +195,7 @@
                             </div>
                         </a>
                         <div class="dropdown-menu dropdown-menu-end top-nav-user-menu" aria-labelledby="userDropdown">
+                            {% include "_ui_switch.html" %}
                             <a class="dropdown-item" href="{{ url_for('frontend_profile.profile') }}">
                                 <i class="bi bi-person-circle me-2"></i>
                                 {{ session['user'].get('name') }}

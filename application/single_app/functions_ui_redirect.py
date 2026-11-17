@@ -8,9 +8,9 @@ about sixty call sites being rewritten. The translation itself is data: ``ui_rou
 says which V2 route replaces each classic page and how its query string crosses over, and
 ``ui_routing.resolve_v2_target`` applies it.
 
-Nothing here changes what anyone sees today. ``functions_ui_mode.get_ui_mode`` answers classic
-for everyone until the interface selector exists, and every rule below starts from the modern
-interface being selected.
+``functions_ui_mode.get_ui_mode`` resolves administrator policy and the saved account
+preference. The forward rules below apply when modern is selected. The Flask wrapper
+also maps direct V2 navigation back to legacy under legacy-only policy or a missing bundle.
 
 ``decide_ui_redirect`` is the decision and is pure: it takes what the request and the session
 say and answers with a same-site ``Location`` or ``None``. ``redirect_classic_page_to_modern_ui``
@@ -24,13 +24,13 @@ A request is redirected only when all of these hold:
   other than ``document``), an ``XMLHttpRequest`` or one that does not accept HTML is not a person
   opening a page. A frame is left alone so a classic page linked from inside a V2 custom page frame
   never loads V2 inside V2;
-* the query does not carry ``ui=classic``, the escape hatch the V2 "Back to classic UI" link uses;
+* the query does not carry an allowed ``ui=classic`` escape; modern-only ignores that escape;
 * the modern interface is selected and the V2 bundle exists. Without the bundle ``/v2`` answers 503,
   so the request stays classic (``functions_ui_pages.is_v2_bundle_ready`` writes one throttled
   ``[UI_MODE]`` warning);
 * the visitor is signed in with an application role. ``/v2`` answers 403 without the role, and the
   registry's ``home`` and ``terms-of-use`` rows are partial because their signed-out and pre-sign-in
-  states stay classic;
+  states stay server-rendered, with policy-selected modern or legacy templates;
 * the registry has a V2 page for the URL (``native``, ``alias`` or ``partial``). Sign-in, sign-out,
   OAuth callbacks, form handlers, developer tools and anything unknown stay where they are;
 * for a custom page, V2 can host it: it is in the user's navigation, embeddable, not asking for its
@@ -46,7 +46,7 @@ The hook runs ahead of the Terms of Use and idle-timeout hooks on purpose; see `
 import logging
 from dataclasses import dataclass
 from typing import Optional
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from flask import redirect, request, session
 
@@ -55,9 +55,7 @@ import functions_ui_pages
 import ui_routing
 
 
-# "Open this page in classic" in V2 appends this to the classic URL. It is harmless when the modern
-# interface is not selected, because nothing reads it then. Who may use it is a decision for the
-# interface selector plan (docs/explanation/features/V2_INTERFACE_SELECTION_PREREQUISITES.md).
+# One-page legacy links append this pair; modern-only policy ignores it.
 ESCAPE_QUERY_KEY = "ui"
 ESCAPE_QUERY_VALUE = "classic"
 
@@ -202,6 +200,7 @@ def evaluate_ui_redirect(
     bundle_available,
     custom_page_embeddable=None,
     route_map=None,
+    classic_escape_allowed=True,
 ):
     """Decide whether a request is redirected to V2 and say why.
 
@@ -229,7 +228,7 @@ def evaluate_ui_redirect(
         return _skip(REASON_XHR)
     if not _accepts_html(accept):
         return _skip(REASON_NOT_HTML)
-    if has_classic_escape(query_string):
+    if has_classic_escape(query_string) and classic_escape_allowed:
         return _skip(REASON_ESCAPE_HATCH)
 
     target = ui_routing.resolve_v2_target(path, query_string, method=method, route_map=route_map)
@@ -309,10 +308,35 @@ def redirect_classic_page_to_modern_ui(settings_provider=None):
     ``settings_provider`` returns the request's settings, so a page request reads them once and
     only when it is a candidate. Any failure here leaves the request to be served as it was.
     """
+    loaded_settings = []
+
     def settings():
-        return settings_provider() if settings_provider is not None else None
+        if not loaded_settings:
+            loaded_settings.append(settings_provider() if settings_provider is not None else None)
+        return loaded_settings[0]
 
     try:
+        # Keep assets, API calls and embedded content out of policy/storage reads.
+        if request.method not in ("GET", "HEAD") or request.path.startswith(NEVER_REDIRECT_PREFIXES):
+            return None
+        destination = request.headers.get("Sec-Fetch-Dest", "").lower()
+        if destination not in ("", "document") or request.headers.get("Sec-Fetch-Mode", "").lower() not in ("", "navigate"):
+            return None
+        if request.headers.get("X-Requested-With", "").lower() == "xmlhttprequest" or not _accepts_html(request.headers.get("Accept", "")):
+            return None
+        if _is_v2_path(request.path):
+            if not functions_ui_pages.has_app_user_role(session.get("user")):
+                return None
+            policy = functions_ui_mode.get_ui_policy(settings(), {})
+            if policy["policy"] != functions_ui_mode.UI_MODE_CLASSIC and functions_ui_pages.is_v2_bundle_ready():
+                return None
+            target = ui_routing.resolve_classic_target(request.path, request.query_string)
+            parts = urlsplit(target["path"] if target else "/chats")
+            query = parse_qsl(parts.query, keep_blank_values=True)
+            query.append(("ui", "classic"))
+            response = redirect(urlunsplit(("", "", parts.path, urlencode(query), parts.fragment)), code=REDIRECT_STATUS_CODE)
+            response.headers["Cache-Control"] = "no-store"
+            return response
         decision = evaluate_ui_redirect(
             method=request.method,
             path=request.path,
@@ -326,6 +350,10 @@ def redirect_classic_page_to_modern_ui(settings_provider=None):
             ui_mode=lambda: functions_ui_mode.get_ui_mode(settings()),
             bundle_available=functions_ui_pages.is_v2_bundle_ready,
             custom_page_embeddable=lambda slug: custom_page_opens_in_modern_ui(slug, settings()),
+            classic_escape_allowed=(
+                functions_ui_mode.allows_classic_escape(settings())
+                if has_classic_escape(request.query_string) else True
+            ),
         )
     except Exception as error:
         _log_redirect_failure(f"[UI_MODE] The classic page redirect failed; serving the page as requested: {error}")

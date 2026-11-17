@@ -44,6 +44,9 @@ import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { useNotificationStore } from '../../stores/notificationStore';
 import { classicBackHref } from '../../lib/classicLinks';
+import { api } from '../../lib/apiClient';
+import { safeSameOriginUrl } from '../../lib/adminOperations';
+import { useUserSettingsStore } from '../../stores/userSettingsStore';
 import { formatNotificationCount } from '../../lib/notifications';
 import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { reviewAccessInput, reviewSections } from '../../lib/reviewAccess';
@@ -178,7 +181,33 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
     // The bell's own count, so the menu entry and the bell never disagree.
     const unreadNotifications = useNotificationStore((state) => state.count) ?? 0;
     const [open, setOpen] = useState(false);
+    const [switchingUi, setSwitchingUi] = useState(false);
+    const [switchError, setSwitchError] = useState<string | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+    const switchToLegacy = async () => {
+        setSwitchingUi(true);
+        setSwitchError(null);
+        try {
+            await useUserSettingsStore.getState().flush();
+            if (useUserSettingsStore.getState().saveError) {
+                setSwitchError('Your pending preferences could not be saved. Please retry them before switching interfaces.');
+                setSwitchingUi(false);
+                return;
+            }
+            await api.post('/api/user/settings', { settings: { preferredUiMode: 'classic' } });
+            const target = safeSameOriginUrl(
+                classicBackHref(location.pathname, location.search, location.hash, activeConversationId),
+                window.location.origin,
+            );
+            if (!target) {
+                throw new Error('Invalid interface destination');
+            }
+            window.location.assign(target);
+        } catch {
+            setSwitchError('Your interface preference could not be saved. Please try again.');
+            setSwitchingUi(false);
+        }
+    };
 
     // Without this the menu could only be dismissed by choosing something from it or by
     // clicking the avatar again, which is not how any other menu in the app behaves.
@@ -294,12 +323,17 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                         find your place again. Every address carries ui=classic, which tells a
                         server that has selected this interface to serve the classic page instead
                         of sending you straight back. */}
-                    <a
-                        href={classicBackHref(location.pathname, location.search, location.hash, activeConversationId)}
-                        className={itemClass}
-                    >
-                        <ChevronLeft size={15} /> Back to classic UI
-                    </a>
+                    {bootstrap?.ui?.can_switch && (
+                        <button
+                            type="button"
+                            onClick={() => { void switchToLegacy(); }}
+                            disabled={switchingUi}
+                            className={clsx(itemClass, 'w-full text-left disabled:opacity-50')}
+                        >
+                            <ChevronLeft size={15} /> {switchingUi ? 'Switching interface...' : 'Switch to legacy UI'}
+                        </button>
+                    )}
+                    {switchError && <p role="alert" className="px-3 py-2 text-sm text-danger">{switchError}</p>}
                     <a
                         href="/logout"
                         onClick={() => clearConversationModes(user?.id ?? '')}

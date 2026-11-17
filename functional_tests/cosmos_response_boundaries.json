@@ -23704,11 +23704,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "Fresh SDK mappings are consumed via get/item access; nested settings remain plain JSON, ETags are preserved for conditional replace, and the returned SDK mapping refreshes the request cache with the committed ETag. Real-owner recovery tests cover persisted null, request/UI caches and matching ETags, SDK representation, missing ETags, authorization, conflicts and concurrent selections. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "Fresh SDK mappings are consumed via get/item access; nested settings remain plain JSON, ETags are preserved for conditional replace, and the returned SDK mapping refreshes the request cache with the committed ETag. Real-owner recovery tests cover persisted null, request/UI caches and matching ETags, SDK representation, missing ETags, authorization, conflicts and concurrent selections. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
@@ -23725,11 +23726,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "_get_app_settings_store: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
@@ -23751,11 +23753,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "add_search_to_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
@@ -23777,11 +23780,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "clear_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
@@ -23798,11 +23802,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "get_user_search_history: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
@@ -23829,11 +23834,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "get_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
@@ -23850,18 +23856,19 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "read_user_settings_snapshot: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.449: owner implementation and response consumer are unchanged; module adds UI preference/default keys and guards the unrelated settings writer empty-agent selection. Representative real-owner SDK recovery and interface-preference workflows were rerun, not exhaustive branch coverage for every module owner.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
     },
     "application/single_app/functions_settings.py::update_user_settings": {
       "boundary": {
-        "sha256": "5ae0242813730da6df2ed1328d4ea632f081d8a082a7ebe828b57cf62a284123",
+        "sha256": "67ef7651027faf9624bfd3bf983a02dd6fceac190e94206c20011075f2e4e921",
         "points": [
           {
             "method": "read_item",
@@ -23886,11 +23893,12 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "6e40dc8727c330851f96c687442ffe858f8dc1ca1667b0e67ded2416cc16e13d"
+        "module_sha256": "b1280daebde6586880bccc3387bc2bb891508dffd9dec6eafed5a412d32cc412"
       },
       "classification": "sdk-compatible",
-      "contract": "update_user_settings: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Storage function is unchanged; module-level recovery wiring is covered by representative real-owner SDK runtime evidence, not exhaustive coverage of this function. Review 0.261.380: Module-only four completeness defaults; this storage owner AST and response consumer are unchanged. Review renewed for 0.261.389: The connection-list normalizer projects only nested JSON endpoint records, preserving the SDK settings document, revision/ETag, OCC and cache-publication contracts. The selected API boolean and canonical URL are validated before the normal save path. Review 0.261.425: unchanged storage AST/consumer; module adds injected signed-catalog ownership or scheduler snapshot scopes. Existing real-owner SDK evidence was rerun; the catalog service has separate SDK-runtime evidence.",
+      "contract": "SDK point documents use Mapping reads and nested JSON updates; the empty agent list now follows the existing no-agent branch instead of indexing an empty list. Writes preserve document metadata and existing OCC behavior, refresh request settings and invalidate shared UI settings. Real routes exercise no-agent preference saves, account isolation, cache invalidation and failed persistence.",
       "tests": [
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows",
         "functional_tests/test_stale_active_group_recovery.py::test_stale_group_repair_preserves_settings_and_authorization"
       ],
       "evidence_scope": "owner-runtime"
@@ -32769,14 +32777,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f739bc686071e378fb31b3d51beb0c1950f410eecdd47c1bc5c940e6cb610b3"
+        "module_sha256": "49896fa66899b47a910a390e15367605f16b925f47a03cc1780e54b86bd0a0fa"
       },
       "classification": "sdk-compatible",
-      "contract": "_has_collaboration_profile_relationship: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Plain query rows identify conversations; the installed SDK point response is read through Mapping.get for membership status. No strict top-level dictionary contract consumes the response. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_users.py::_has_shared_document_profile_relationship": {
       "boundary": {
@@ -32790,14 +32798,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f739bc686071e378fb31b3d51beb0c1950f410eecdd47c1bc5c940e6cb610b3"
+        "module_sha256": "49896fa66899b47a910a390e15367605f16b925f47a03cc1780e54b86bd0a0fa"
       },
       "classification": "sdk-compatible",
-      "contract": "_has_shared_document_profile_relationship: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The SELECT VALUE query returns a plain list of document IDs, consumed only for existence after parameterized relationship filtering; it is not a point-document response. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_users.py::_read_authorized_user_profile_document": {
       "boundary": {
@@ -32811,14 +32819,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f739bc686071e378fb31b3d51beb0c1950f410eecdd47c1bc5c940e6cb610b3"
+        "module_sha256": "49896fa66899b47a910a390e15367605f16b925f47a03cc1780e54b86bd0a0fa"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_authorized_user_profile_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The authorized current-account SDK mapping is returned intact with metadata; downstream consumers project fields through Mapping reads. Runtime coverage exercises the real authorization and reader. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_users.py::register_route_backend_users.api_collaboration_suggestions": {
       "boundary": {
@@ -32832,14 +32840,14 @@
           }
         ],
         "batches": [],
-        "module_sha256": "4f739bc686071e378fb31b3d51beb0c1950f410eecdd47c1bc5c940e6cb610b3"
+        "module_sha256": "49896fa66899b47a910a390e15367605f16b925f47a03cc1780e54b86bd0a0fa"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_users.api_collaboration_suggestions: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "Plain query rows are projected into a new suggestion dictionary; the account settings SDK document is read through Mapping.get. The real route executes with installed-SDK account storage and plain query results. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_users.py::register_route_backend_users.api_get_user_info": {
       "boundary": {
@@ -32853,14 +32861,14 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "4f739bc686071e378fb31b3d51beb0c1950f410eecdd47c1bc5c940e6cb610b3"
+        "module_sha256": "49896fa66899b47a910a390e15367605f16b925f47a03cc1780e54b86bd0a0fa"
       },
       "classification": "sdk-compatible",
-      "contract": "register_route_backend_users.api_get_user_info: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners.",
-      "evidence_scope": "sdk-api-and-source-review",
+      "contract": "The real route authorizes the target, reads an installed-SDK point response and projects only identity fields through Mapping.get into JSON; it never requires an exact top-level dict. Review 0.261.449: storage owner is unchanged; module adds enum validation to the account settings route. Runtime evidence replaces the prior source-only baseline.",
       "tests": [
-        "functional_tests/test_m365_cosmos_sdk_contract.py::test_real_sdk_point_documents_are_wrapped_but_nested_json_and_query_rows_are_plain"
-      ]
+        "functional_tests/test_ui_interface_selection.py::test_real_account_preference_and_policy_workflows"
+      ],
+      "evidence_scope": "owner-runtime"
     },
     "application/single_app/route_backend_workflows.py::_load_group_workflow_conversation": {
       "boundary": {
@@ -34175,11 +34183,6 @@
     "application/single_app/route_backend_safety.py::register_route_backend_safety.apply_safety_review_update": "9efe616fc5510efd74b2137838e858abc3b44015910ee7c53437869379222b12",
     "application/single_app/route_backend_safety.py::register_route_backend_safety.get_safety_log": "d117bb01038c1c7d9e69420fc7485a6dcd6b038a5faf93cf2719f99d598ee015",
     "application/single_app/route_backend_safety.py::register_route_backend_safety.update_my_safety_log": "0fc709b80021032cb28340527d48d0b2fccecc68696a767ba9beec2637ca0882",
-    "application/single_app/route_backend_users.py::_has_collaboration_profile_relationship": "f5232db56d8a0fd0fe07850ebb7b8eca9513adf2726c3b209eb8d60b587536bc",
-    "application/single_app/route_backend_users.py::_has_shared_document_profile_relationship": "15549f8856420bd960a302173716b3bcb72f504c7b8b3439f08eda74788543e2",
-    "application/single_app/route_backend_users.py::_read_authorized_user_profile_document": "e688d444fe9c984a5ba523afdcf389eb3dcf607bd1aa75d299224d20cbf9d6d7",
-    "application/single_app/route_backend_users.py::register_route_backend_users.api_collaboration_suggestions": "aa7205083648342089c7b7d6ab2d17e54e0947471f882ebe5115c933c09d296a",
-    "application/single_app/route_backend_users.py::register_route_backend_users.api_get_user_info": "d8d706d12b688508e1b6d3ef6c2015ab8a3c4f99f3fa404bebdc6c3805f78cfa",
     "application/single_app/route_external_public_documents.py::register_route_external_public_documents.external_get_public_documents": "7a2cab5fcb36b8d80f2733e2a3fa2df33e04fbeeea7095bec72bf185778aef02",
     "application/single_app/route_frontend_control_center.py::get_control_center_statistics": "6fd3ab6692fe40b5e63490edcdae51eae7ebeb8067996c361cde4cac14c296e6",
     "application/single_app/route_frontend_conversations.py::_authorize_frontend_personal_conversation_access": "a8650a20c098eb598306d3827dce49f4b4c1501404cbd3b200d4887b1fbde552",

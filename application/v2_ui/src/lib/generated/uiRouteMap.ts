@@ -480,8 +480,8 @@ export const UI_ROUTE_MAP: readonly UiRouteEntry[] = [
             next: { to: 'next', local_path: true },
         },
         templates: ['terms_of_use.html'],
-        plan_ref: 'Phase 8 (the pre-sign-in terms interstitial stays server-rendered by design)',
-        notes: 'V2\'s page serves signed-in users (/v2/terms-of-use with /api/v2/terms-of-use). Before sign-in, /login sends visitors who have not accepted to this classic interstitial, and V2 cannot serve it because every /v2 page needs a session. That interstitial is what stays handed off, in the modern interface too (it has no modern variant). The redirect therefore applies to signed-in app users only. next is the return path; the server validates it (normalize_terms_of_use_return_path) and the registry carries it only when it is a same-site path.',
+        plan_ref: 'Phase 8 (UI_INTERFACE_SELECTION.md; the pre-sign-in terms interstitial stays server-rendered by design)',
+        notes: 'V2\'s page serves signed-in users (/v2/terms-of-use with /api/v2/terms-of-use). Before sign-in, /login sends visitors who have not accepted to the server-rendered interstitial. That state stays handed off to the backend because every /v2 page needs a session, but now has a policy-selected modern/terms_of_use.html presentation as well as the legacy template. The redirect applies to signed-in app users only. next is the return path; the server validates it (normalize_terms_of_use_return_path) and the registry carries it only when it is a same-site path.',
     },
     {
         key: 'terms-of-use-accept',
@@ -489,7 +489,7 @@ export const UI_ROUTE_MAP: readonly UiRouteEntry[] = [
         methods: ['POST'],
         status: 'standalone',
         v2: null,
-        notes: 'Form target of the classic interstitial. It also records acceptance made before sign-in, so it stays server-side in both interfaces; V2 posts to /api/v2/terms-of-use/accept.',
+        notes: 'Shared form target of the legacy and modern standalone interstitials. It records acceptance made before sign-in, so it stays server-side in both interfaces; V2 posts to /api/v2/terms-of-use/accept.',
     },
     {
         key: 'terms-of-use-decline',
@@ -497,7 +497,7 @@ export const UI_ROUTE_MAP: readonly UiRouteEntry[] = [
         methods: ['POST'],
         status: 'standalone',
         v2: null,
-        notes: 'Form target of the classic interstitial. It ends the session and redirects to the configured decline URL, with or without a session, so it stays server-side; V2 posts to /api/v2/terms-of-use/decline.',
+        notes: 'Shared form target of the legacy and modern standalone interstitials. It ends the session and redirects to the configured decline URL, with or without a session, so it stays server-side; V2 posts to /api/v2/terms-of-use/decline.',
     },
     {
         key: 'access-restricted',

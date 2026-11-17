@@ -1,12 +1,12 @@
 # V2 Classic Page Parity
 
-**Implemented in version: 0.261.448**, recorded in `application/single_app/config.py`.
+**Implemented in version: 0.261.448**, updated in **0.261.449**, recorded in `application/single_app/config.py`.
 
 ## Overview
 
 SimpleChat serves two interfaces from one backend: the classic server-rendered pages and the
-React V2 interface under `/v2`. An administrator will eventually choose which of the two people
-use. That choice only works if the product knows, for every classic page, where its V2
+React V2 interface under `/v2`. An administrator chooses which interfaces people
+can use and their default in Appearance. That choice only works if the product knows, for every classic page, where its V2
 counterpart is and what V2 still lacks.
 
 The page parity registry is that knowledge as data. `application/single_app/ui_route_map.json`
@@ -17,21 +17,25 @@ fragment translate, and a status saying how complete the V2 page is. A pure-Pyth
 - **Where does this classic URL lead in V2?** This drives the classic to V2 redirect
   (`functions_ui_redirect.py`), so notification links, emails and bookmarks keep working when the
   V2 interface is the default.
-- **Where is the classic version of this V2 URL?** This drives "Back to classic UI" in V2, which
+- **Where is the classic version of this V2 URL?** This drives "Switch to legacy UI" in V2, which
   opens the classic version of the page on screen (`lib/classicLinks.ts`).
 
 A generator copies the registry into the V2 bundle, and a guard test fails when a classic page
 is added, renamed or removed without a row, or when a row names a V2 page that does not exist.
 
-The registry change added the map, the resolvers and the guard. The switch prerequisites
-(`V2_INTERFACE_SELECTION_PREREQUISITES.md`) wire them into the redirect and the V2 links. None of
-that changes what any user sees today: `functions_ui_mode.get_ui_mode()` still answers classic for
-everyone, and the redirect only acts in the modern interface.
+The registry supplies the map, resolvers and guard. The switch prerequisites
+(`V2_INTERFACE_SELECTION_PREREQUISITES.md`) wire them into navigation. As of
+0.261.449, [Interface selection](UI_INTERFACE_SELECTION.md) applies administrator
+policy and persistent account preferences. There are no registered missing core
+signed-in pages. Pre-sign-in Terms of Use now has a modern standalone presentation.
+Route parity does not guarantee every control has identical behavior: deliberate
+differences remain documented in each row, including legacy AI-connection fields
+and deployment-provided custom-page embed requirements.
 
 ## Dependencies
 
-- `application/single_app/functions_ui_mode.py`: the seam that decides classic or modern. It
-  always answers classic today; the interface selector will replace its body.
+- `application/single_app/functions_ui_mode.py`: resolves administrator policy,
+  account preference and the deployment default.
 - `application/single_app/route_frontend_v2.py`: serves the V2 shell at `/v2` and `/v2/<path>`.
 - `scripts/build_docs_inventory.py`: its `extract_app_pages` finds the page templates the guard
   checks.
@@ -256,14 +260,15 @@ The generator validates the registry first, so a malformed row stops it with the
 ### How the redirect uses it
 
 `functions_ui_redirect.py` calls `resolve_v2_target` from a `before_request` hook in `app.py`, and
-V2 calls the TypeScript twin from the account menu. Both run only in the modern interface, which
-`functions_ui_mode.get_ui_mode()` never answers yet. The registry cannot decide everything, so the
+V2 calls the TypeScript twin after saving a switch to legacy from the account menu.
+The forward redirect runs when administrator policy and the account preference
+select modern. The registry cannot decide everything, so the
 hook checks what a URL does not say: that the visitor is signed in with an app role (the `home`
 and `terms-of-use` rows are partial because their signed-out and pre-sign-in states stay
-classic), that a custom page open to any signed-in user is not redirected (it is served
+server-rendered with modern or legacy templates), that a custom page open to any signed-in user is not redirected (it is served
 chrome-less on its own, because `/v2` needs the User role), and that the V2 bundle exists. The
 rules, their placement among the other hooks, the `ui=classic` escape pair, the V2 fragment
-translation, the server-built return URLs and what the interface selector still has to decide are
+translation and the server-built return URLs are
 in `V2_INTERFACE_SELECTION_PREREQUISITES.md`. No `page_url()` helper was needed: every
 server-built return URL is a classic address the redirect already covers.
 
@@ -309,7 +314,7 @@ changing a row.
 | `/support/latest-features` | GET | native | `/support/latest-features` | - | `support-latest-features` |
 | `/support/send-feedback` | GET | native | `/support/send-feedback` | - | `support-send-feedback` |
 | `/notifications` | GET | native | `/notifications` | - | `notifications` |
-| `/terms-of-use` | GET | partial | `/terms-of-use` | Phase 8 (the pre-sign-in terms interstitial stays server-rendered by design) | `terms-of-use` |
+| `/terms-of-use` | GET | partial | `/terms-of-use` | Phase 8 (UI_INTERFACE_SELECTION.md; the pre-sign-in terms interstitial stays server-rendered by design) | `terms-of-use` |
 | `/terms-of-use/accept` | POST | standalone | - | - | `terms-of-use-accept` |
 | `/terms-of-use/decline` | POST | standalone | - | - | `terms-of-use-decline` |
 | `/access-restricted` | GET | native | `/access-restricted` | - | `access-restricted` |

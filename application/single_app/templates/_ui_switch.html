@@ -1,0 +1,7 @@
+<!-- _ui_switch.html -->
+{% if ui_policy is defined and ui_policy.can_switch %}
+<button type="button" class="dropdown-item ui-switch" data-modern-path="{{ modern_ui_switch_path }}">
+    <i class="bi bi-arrow-left-right me-2" aria-hidden="true"></i>Switch to modern UI
+</button>
+<p class="ui-switch-error alert alert-danger mx-2 mt-2 d-none" role="alert"></p>
+{% endif %}

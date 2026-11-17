@@ -152,6 +152,7 @@ WEB_SEARCH_USER_NOTICE_DEFAULT_TEXT = (
     "message may be sent."
 )
 USER_UI_SETTINGS_KEYS = (
+    "preferredUiMode",
     "profileImage",
     "navLayout",
     "darkModeEnabled",
@@ -1811,6 +1812,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'ai_notice_frequency': 'non_dismissible',
         'enable_dark_mode_default': False,
         'enable_left_nav_default': True,
+        'ui_mode_policy': 'both',
+        'ui_default_mode': 'modern',
         'release_notifications_registered': False,
         'release_notifications_name': '',
         'release_notifications_email': '',
@@ -4183,7 +4186,7 @@ def update_user_settings(user_id, settings_to_update, allow_cross_user=False):
         if 'plugins' not in doc['settings'] or doc['settings']['plugins'] is None:
             doc['settings']['plugins'] = []
         if 'selected_agent' not in doc['settings'] or doc['settings']['selected_agent'] is None:
-            first_user_agent = doc['settings']['agents'][0]
+            first_user_agent = doc['settings']['agents'][0] if doc['settings']['agents'] else None
             if first_user_agent:
                 doc['settings']['selected_agent'] = {
                     'id': first_user_agent.get('id'),

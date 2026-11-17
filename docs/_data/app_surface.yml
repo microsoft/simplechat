@@ -9,7 +9,7 @@ counts:
   chat_controls: 47
   sub_elements: 3
   app_pages: 33
-  feature_surfaces: 25
+  feature_surfaces: 26
 capabilities:
 - key: enable_action_ai_assistant
   default: true
@@ -1348,6 +1348,8 @@ feature_surfaces:
   slug: supported-file-types-modal
 - template: _top_nav.html
   slug: top-nav
+- template: _ui_switch.html
+  slug: ui-switch
 - template: _video_indexer_info.html
   slug: video-indexer-info
 - template: _web_search_foundry_info.html

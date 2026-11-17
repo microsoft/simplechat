@@ -2,19 +2,18 @@
 # test_ui_redirect_edge.py
 """
 Functional test for the classic to V2 edge redirect.
-Version: 0.261.448
+Version: 0.261.449
 Implemented in: 0.261.448
 
 When the modern interface is selected, a GET of a classic page is answered with a 302 to its V2
-counterpart, so notification links, emails and bookmarks keep working. ``functions_ui_mode``
-answers classic for everyone until the interface selector exists, so none of this may change what
-anyone sees today; the tests replace the selector to prove the rules.
+counterpart, so notification links, emails and bookmarks keep working. The tests
+explicitly select each interface to verify routing independently of deployment defaults.
 
 This test ensures that:
 - every native, alias and partial registry row redirects, in the modern interface, to a path V2
   declares, and does nothing in the classic one; every other row never redirects;
 - a redirect target is itself skipped, so a loop is impossible, and ``ui=classic`` (the "Open this
-  page in classic" escape hatch) is never redirected;
+  page in classic" escape hatch) works when administrator policy permits it;
 - only a signed-in person with an application role, who is opening a page, with the V2 bundle built,
   is redirected: not a form post, an API call, a static file, a fetch, a frame, a signed-out visitor,
   a user without the role, or a custom page V2 cannot host;
@@ -605,7 +604,9 @@ def test_the_hook_reads_settings_only_for_a_request_that_could_be_redirected(wir
     client = wiring.client()
     for path in ("/api/ping", "/static/x.js", "/v2/chat", "/login", "/chats?ui=classic"):
         client.get(path, headers={"Accept": "text/html"})
-    assert wiring.settings_reads == 0 and wiring.mode_calls == []
+    assert wiring.settings_reads == 2 and wiring.mode_calls == [], (
+        "Direct V2 navigation and the legacy escape must read policy; assets/APIs/login must not."
+    )
     client.get("/chats", headers={"Accept": "text/html"})
     assert wiring.settings_reads >= 1 and wiring.mode_calls and wiring.mode_calls[0] is wiring.settings, (
         "The mode seam receives the request's settings so the selector can read them"
@@ -848,8 +849,9 @@ with offline_app_imports() as environment:
 
         user = client_for(["User"])
 
-        # ---- Classic mode (the default today): nothing is redirected -------------------------------
-        check(functions_ui_mode.get_ui_mode() == "classic", "the selector must answer classic until it exists")
+        # ---- Explicit legacy default: nothing is redirected ---------------------------------------
+        settings["ui_default_mode"] = "classic"
+        check(functions_ui_mode.get_ui_mode(settings, {}) == "classic", "explicit legacy default")
         for path in ("/chats?conversationId=x", "/profile?tab=feedback", "/group_workspaces", "/notifications", "/custom/handbook", "/"):
             response = user.get(path, headers=html)
             check(response.status_code == 200 and response.get_data(as_text=True) == "classic page", path + " changed in classic mode: " + str(response.status_code))
@@ -964,7 +966,8 @@ def test_app_source_wires_one_thin_hook_ahead_of_the_terms_gate():
         "The hook in app.py stays a one-line call; the rules live in functions_ui_redirect.py"
     )
     # The landing page asks the same shared predicate as the hook, and honours the escape hatch too.
-    assert "if not has_classic_escape(request.query_string) and is_modern_ui_available(settings):" in source
+    assert "classic_escape = has_classic_escape(request.query_string) and allows_classic_escape(settings)" in source
+    assert "if not classic_escape and is_modern_ui_available(settings):" in source
     assert "is_v2_bundle_available" not in source
 
 

@@ -46,7 +46,7 @@ import { WorkflowActivityPage } from './pages/WorkflowActivityPage';
 import { CustomPageHost } from './pages/CustomPageHost';
 import { IdleSessionDialogHost } from './components/layout/IdleSessionDialog';
 import { classicChatHref } from './lib/conversationUrl';
-import { withClassicEscape } from './lib/classicLinks';
+import { classicBackHref, withClassicEscape } from './lib/classicLinks';
 import { useClassicFragmentTranslation } from './lib/useClassicFragmentTranslation';
 
 // Dev only: the workflow alert lab. Its one dynamic import is created only when
@@ -213,6 +213,19 @@ export function App() {
             document.title = title;
         }
     }, [data]);
+
+    useEffect(() => {
+        if (data?.ui?.policy !== 'classic') {
+            return;
+        }
+        const target = safeSameOriginUrl(
+            classicBackHref(location.pathname, location.search, location.hash, null),
+            window.location.origin,
+        );
+        if (target) {
+            window.location.replace(target);
+        }
+    }, [data?.ui?.policy, location.pathname, location.search, location.hash]);
 
     /**
      * Keep the tab icon in step with the stored favicon.

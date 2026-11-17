@@ -48,6 +48,15 @@ unresolved. See [Review and edit orchestration plans]({{ '/guides/review-and-edi
 
 ## Conversation list
 
+### Account-menu interface switch
+
+Implemented in version: **0.261.449** (`application/single_app/config.py`).
+
+**Switch to modern UI** or **Switch to legacy UI** saves your account's preferred
+interface and opens the corresponding page, preserving the active conversation
+where supported. It is available only when administrators allow both interfaces.
+If saving fails, the page stays open and the menu explains the error.
+
 {% include media.html src="reference/chat-controls-conversation-list.png" alt="Conversation list showing selection actions and the new-chat button." title="Conversation list" capture="Capture the conversation list with selection actions and the new-chat button visible. Redact conversation titles and user names." %}
 
 | Control | What it does | Why you would use it | Enabled by |

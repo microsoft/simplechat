@@ -30,6 +30,7 @@ export type SidebarToggleStyle = 'large' | 'compact';
  * control for. Reading a key V2 never writes is harmless, so the shape stays open.
  */
 export interface UserSettings {
+    preferredUiMode?: 'classic' | 'modern';
     /** Shared with the classic interface, so the two agree on light/dark. */
     darkModeEnabled?: boolean;
     fontSizePreference?: FontSizePreference;
@@ -207,6 +208,7 @@ export interface UserSettings {
  * cannot be read at test time; a literal can.
  */
 export const WRITABLE_USER_SETTING_KEYS = [
+    'preferredUiMode',
     'darkModeEnabled',
     'fontSizePreference',
     'sidebarToggleStyle',
