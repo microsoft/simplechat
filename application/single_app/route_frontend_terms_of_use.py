@@ -2,7 +2,7 @@
 
 import logging
 
-from flask import redirect, render_template, request, session, url_for
+from flask import redirect, request, session, url_for
 
 from functions_appinsights import log_event
 from functions_terms_of_use import (
@@ -16,6 +16,7 @@ from functions_terms_of_use import (
 )
 from functions_authentication import get_current_user_id
 from functions_settings import get_settings, sanitize_settings_for_user
+from functions_ui_pages import render_page
 from swagger_wrapper import get_auth_security, swagger_route
 
 
@@ -56,8 +57,10 @@ def register_route_frontend_terms_of_use(bp):
             return redirect(url_for('public_app.index'))
 
         public_settings = sanitize_settings_for_user(settings)
-        return render_template(
+        return render_page(
             'terms_of_use.html',
+            'modern/terms_of_use.html',
+            settings=settings,
             app_settings=public_settings,
             terms=terms_config,
             is_authenticated=bool(user_id),

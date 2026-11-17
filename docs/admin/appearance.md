@@ -43,12 +43,20 @@ The Home Page Text section belongs to the Branding tab. Use it with the adjacent
 
 ### Appearance {#appearance-section}
 
+Implemented in version: **0.261.449** (`application/single_app/config.py`).
+Use the interface controls to stage a modern rollout, keep a legacy deployment,
+or let people choose. The restriction applies to administrators as well as users.
+The default only applies when both interfaces are allowed and an account has not
+made its own choice. See [Interface selection]({{ '/explanation/features/UI_INTERFACE_SELECTION/' | relative_url }}).
+
 The Appearance section belongs to the Branding tab. Use it with the adjacent settings in this group so related rollout, access, and operational choices stay aligned.
 
 #### Settings
 
 | Setting | What it does | Default | Notes |
 | --- | --- | --- | --- |
+| Available interfaces | Restricts everyone, including admins, to modern, legacy, or both. When both are allowed, the account menu can switch interfaces. | Legacy and modern | `ui_mode_policy`; implemented in 0.261.449 |
+| Default interface | Chooses the initial interface for accounts without an explicit preference when both interfaces are allowed. Saved user choices take precedence. | Modern | `ui_default_mode`; a missing modern bundle temporarily falls back to legacy with a server warning |
 | Application Title | Provides displayed text that users see in the affected interface. | Simple Chat | `app_title` |
 | Show Logo | Defines behavior for the related admin workflow; verify the affected feature after saving. | Off | `show_logo` |
 | Hide Application Title | Provides displayed text that users see in the affected interface. | Off | `hide_app_title` |

@@ -1,7 +1,7 @@
 # test_stale_active_group_recovery.py
 """Real-owner regressions for stale active-group chat recovery.
 
-Version: 0.261.371
+Version: 0.261.449
 Implemented in: 0.261.371
 
 Fresh normal/optimized processes import the application with network blocked.
@@ -311,6 +311,7 @@ with patch.dict(os.environ, {"TENANT_ID": "fixture-tenant"}), offline_app_import
 
     settings = {
         **preferences.get_settings(), "enable_group_workspaces": True,
+        "ui_mode_policy": "both", "ui_default_mode": "classic",
         "enable_user_workspace": True, "enable_semantic_kernel": True,
         "per_user_semantic_kernel": True, "allow_user_agents": True,
         "allow_group_agents": True, "merge_global_semantic_kernel_with_workspace": True,

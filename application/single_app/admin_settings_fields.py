@@ -701,6 +701,29 @@ ADMIN_SETTINGS_FIELDS = {
     ],
     "appearance-section": [
         {
+            "key": "ui_mode_policy",
+            "type": "select",
+            "label": "Available interfaces",
+            "help": "Applies to everyone, including admins. When both are available, users can switch from their account menu.",
+            "default": "both",
+            "options": [
+                {"value": "both", "label": "Legacy and modern"},
+                {"value": "modern", "label": "Modern only"},
+                {"value": "classic", "label": "Legacy only"},
+            ],
+        },
+        {
+            "key": "ui_default_mode",
+            "type": "select",
+            "label": "Default interface",
+            "help": "Used when both interfaces are available and the user has not chosen one. A missing modern bundle temporarily falls back to legacy.",
+            "default": "modern",
+            "options": [
+                {"value": "modern", "label": "Modern"},
+                {"value": "classic", "label": "Legacy"},
+            ],
+        },
+        {
             "key": "enable_dark_mode_default",
             "type": "switch",
             "label": "Enable Dark Mode by Default",
@@ -10649,6 +10672,14 @@ def normalize_admin_settings_updates(updates, current_settings=None):
     }
 
     for key, value in updates.items():
+        if key in ("ui_mode_policy", "ui_default_mode"):
+            from functions_ui_mode import validate_ui_setting
+
+            try:
+                normalized[key] = validate_ui_setting(key, value)
+            except ValueError:
+                errors[key] = "Choose a valid interface option."
+            continue
         if key in acknowledgement_keys:
             continue
 

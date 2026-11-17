@@ -1169,6 +1169,17 @@ def register_route_frontend_admin_settings(bp):
 
         if request.method == 'POST':
             form_data = request.form # Use a variable for easier access
+            # Share the bootstrap-free enum contract with the V2 settings API.
+            from functions_ui_mode import validate_ui_setting
+
+            try:
+                ui_settings = {
+                    key: validate_ui_setting(key, form_data.get(key, settings.get(key, default)))
+                    for key, default in (("ui_mode_policy", "both"), ("ui_default_mode", "modern"))
+                }
+            except ValueError:
+                flash("Choose a valid interface option.", "danger")
+                return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='branding'))
             user_id = get_current_user_id()
             settings_etag = form_data.get('admin_settings_etag', '')
             if not settings_etag or settings_etag != settings.get('_etag'):
@@ -2490,6 +2501,7 @@ def register_route_frontend_admin_settings(bp):
                 flash(error.message, 'danger')
                 return redirect(url_for('frontend_admin_settings.admin_settings', _anchor='actions'))
             new_settings = {
+                **ui_settings,
                 **m365_settings,
                 **chat_content_form_updates(form_data, settings),
                 # Logging

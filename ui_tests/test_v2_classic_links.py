@@ -1,13 +1,14 @@
 # test_v2_classic_links.py
 """
 Browser regressions for the V2 side of the classic to V2 redirect: a classic fragment that survives the
-server's redirect, and "Back to classic UI" from every page that has a classic counterpart.
-Version: 0.261.448
+server's redirect, and "Switch to legacy UI" from every page that has a classic counterpart.
+Version: 0.261.449
 Implemented in: 0.261.448
 
 A server never sees the part of a URL after ``#``, but a browser keeps it across a redirect, so
 ``/workspace#documents-tab`` arrives in V2 as ``/v2/workspace#documents-tab``. V2 replaces it, once and
-in place, with the route the page registry says it names. "Back to classic UI" in the account menu opens
+in place, with the route the page registry says it names. "Switch to legacy UI" in the account menu saves
+the account preference and opens
 the classic version of the page on screen, carrying the open conversation from the chat page, and every
 address carries ``ui=classic`` so a server that has selected the modern interface serves the classic page
 instead of sending the visitor straight back.
@@ -113,6 +114,8 @@ class Harness:
         self.requests = []
         self.errors = []
         self.unexpected = []
+        self.fail_save = False
+        self.saved_settings = {}
 
     # Routing ----------------------------------------------------------------------------------
 
@@ -126,7 +129,13 @@ class Harness:
             return
         path = parsed.path
         self.requests.append((method, f"{path}?{parsed.query}" if parsed.query else path))
-        if method != "GET":
+        if method == "POST" and path == "/api/user/settings":
+            if self.fail_save:
+                route.fulfill(status=500, json={"error": "Unable to save settings"})
+            else:
+                self.saved_settings.update(request.post_data_json["settings"])
+                route.fulfill(json={"message": "Settings updated"})
+        elif method != "GET":
             self.unexpected.append(f"{method} {path}")
             route.fulfill(status=405, body="")
         elif path == "/v2" or path.startswith("/v2/"):
@@ -177,6 +186,12 @@ class Harness:
 
     def record_console(self, message):
         if message.type == "error":
+            if (
+                self.fail_save
+                and urlsplit(message.location.get("url", "")).path == "/api/user/settings"
+                and message.text == "Failed to load resource: the server responded with a status of 500 (Internal Server Error)"
+            ):
+                return
             self.errors.append(message.text)
 
     # Reading the page -------------------------------------------------------------------------
@@ -188,7 +203,7 @@ class Harness:
 
     @property
     def classic_link(self):
-        return self.page.get_by_role("link", name="Back to classic UI")
+        return self.page.get_by_role("button", name="Switch to legacy UI")
 
     def open_account_menu(self, *, phone=False):
         if phone:
@@ -267,6 +282,7 @@ SEED = r"""
             features: {},
             branding: {app_title: 'Contoso Chat'},
             settings: {},
+            ui: {policy: 'both', default: 'modern', effective: 'modern', can_switch: true},
             scope: {groups: [], public_workspaces: []},
             catalogs: {models: [], agents: [], prompts: []},
         },
@@ -362,11 +378,9 @@ def test_back_to_classic_opens_the_classic_version_of_the_page_on_screen(
     harness.open_account_menu()
 
     link = harness.classic_link
-    expect(link).to_have_attribute("href", classic_address)
-    assert link.get_attribute("target") is None, "It leaves the interface in the same tab, as it always did."
-
     link.click()
     expect(harness.page).to_have_url(f"{ORIGIN}{classic_address}")
+    assert harness.saved_settings == {"preferredUiMode": "classic"}
     requested = [
         target for _method, target in harness.requests
         if not target.startswith(("/v2", "/harness", "/static", "/favicon", "/api/"))
@@ -389,28 +403,30 @@ def test_back_to_classic_works_from_the_navigation_drawer_on_a_phone(
 
     link = harness.classic_link
     expect(link).to_be_visible()
-    expect(link).to_have_attribute("href", classic_address)
     box = link.bounding_box()
     assert box is not None and box["width"] > 0 and box["x"] + box["width"] <= 390 + 1, "The link fits the phone."
+    link.click()
+    expect(harness.page).to_have_url(f"{ORIGIN}{classic_address}")
 
 
 def test_the_link_follows_the_page_as_you_move_around_the_application(harness):
     harness.open("/v2/chat", conversation="conv-1")
     menu = harness.page.locator("#sidebar-account-menu")
     harness.open_account_menu()
-    expect(harness.classic_link).to_have_attribute("href", "/chats?conversationId=conv-1&ui=classic")
+    expect(harness.classic_link).to_be_visible()
 
     menu.get_by_role("link", name="User Settings").click()
     expect(harness.address).to_have_text("/settings")
     expect(menu).to_have_count(0)
 
     harness.open_account_menu()
-    expect(harness.classic_link).to_have_attribute("href", "/profile?ui=classic")
+    expect(harness.classic_link).to_be_visible()
 
     harness.page.locator("[data-account-menu-notifications]").click()
     expect(harness.address).to_have_text("/notifications")
     harness.open_account_menu()
-    expect(harness.classic_link).to_have_attribute("href", "/notifications?ui=classic")
+    harness.classic_link.click()
+    expect(harness.page).to_have_url(f"{ORIGIN}/notifications?ui=classic")
 
 
 def test_the_link_is_reachable_and_named_for_a_keyboard_user(harness):
@@ -425,9 +441,49 @@ def test_the_link_is_reachable_and_named_for_a_keyboard_user(harness):
     for _ in range(8):
         harness.page.keyboard.press("Shift+Tab")
         reached.append(harness.page.evaluate("() => document.activeElement.textContent.trim()"))
-        if reached[-1] == "Back to classic UI":
+        if reached[-1] == "Switch to legacy UI":
             break
-    assert reached[-1] == "Back to classic UI", reached
-    assert harness.page.evaluate("() => document.activeElement.getAttribute('href')") == "/profile?tab=feedback&ui=classic"
+    assert reached[-1] == "Switch to legacy UI", reached
     harness.page.keyboard.press("Escape")
     expect(harness.page.locator("#sidebar-account-menu")).to_have_count(0)
+
+
+def test_failed_preference_save_stays_in_modern_and_reports_error(harness):
+    harness.open("/v2/settings")
+    harness.fail_save = True
+    harness.open_account_menu()
+    harness.classic_link.click()
+    expect(harness.page.get_by_role("alert")).to_have_text(
+        "Your interface preference could not be saved. Please try again."
+    )
+    expect(harness.page).to_have_url(f"{ORIGIN}/v2/settings")
+    expect(harness.classic_link).to_be_enabled()
+    assert harness.saved_settings == {}
+
+
+def test_failed_pending_settings_save_does_not_discard_error_by_switching(harness):
+    harness.open("/v2/settings")
+    harness.open_account_menu()
+    harness.fail_save = True
+    harness.page.evaluate("""() => {
+        window.ClassicLinksHarness.stores.userSettings.useUserSettingsStore
+            .getState().update({showTutorialButtons: false});
+    }""")
+    harness.classic_link.click()
+    expect(harness.page.get_by_role("alert")).to_have_text(
+        "Your pending preferences could not be saved. Please retry them before switching interfaces."
+    )
+    expect(harness.page).to_have_url(f"{ORIGIN}/v2/settings")
+    expect(harness.classic_link).to_be_enabled()
+    assert harness.saved_settings == {}
+
+
+def test_modern_only_policy_hides_the_switch(harness):
+    harness.open("/v2/settings")
+    harness.page.evaluate("""() => {
+        const store = window.ClassicLinksHarness.stores.bootstrap.useBootstrapStore;
+        store.setState({data: {...store.getState().data,
+            ui: {policy: 'modern', default: 'modern', effective: 'modern', can_switch: false}}});
+    }""")
+    harness.open_account_menu()
+    expect(harness.classic_link).to_have_count(0)

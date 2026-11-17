@@ -1,26 +1,28 @@
 # V2 Interface Selection Prerequisites
 
-**Implemented in version: 0.261.448**, recorded in `application/single_app/config.py`.
+**Implemented in version: 0.261.448**, updated in **0.261.449**, recorded in `application/single_app/config.py`.
 
 ## Overview
 
 SimpleChat serves two interfaces from one backend: the classic server-rendered pages and the
-React V2 interface under `/v2`. An administrator will eventually choose which of the two people
-use. Choosing is only safe when three things are already true: every link the product has ever
+React V2 interface under `/v2`. An administrator chooses permitted interfaces and
+the default in Appearance. Choosing is only safe when three things are already true: every link the product has ever
 written (a notification, an approval email, a bookmark, a Microsoft 365 sign-in return) still
 arrives at a page, a person can always get back to the classic page they were on, and a
 deployment that has no V2 build keeps working instead of sending everyone into an error.
 
-This change builds those prerequisites and nothing else. **It changes nothing for anyone today**:
-`functions_ui_mode.get_ui_mode()` still answers classic for every request, and every rule below
-starts from the modern interface being selected. The interface selector (a later plan) replaces the
-body of that one function.
+Version 0.261.448 built the prerequisites below. Version 0.261.449 adds the
+[interface selector](UI_INTERFACE_SELECTION.md): both interfaces are allowed by
+default, modern is the default, and the account menu remembers an explicit
+choice. Forced administrator policies override that choice without deleting it.
+The legacy escape described below works only when administrator policy permits
+legacy. Direct V2 URLs also return to legacy when legacy-only is enforced.
 
 | Prerequisite | What it does | Where |
 | --- | --- | --- |
 | Classic to V2 redirect | A `GET` of a classic page is answered with a `302` to its V2 counterpart, with the query string and mapped parameters carried across. | `functions_ui_redirect.py`, one hook in `app.py` |
 | V2 fragment translation | A browser keeps `#fragment` across a redirect, so V2 turns `/v2/workspace#documents-tab` into `/v2/workspace/documents`. | `lib/classicLinks.ts`, `lib/useClassicFragmentTranslation.ts` |
-| Back to classic UI | The account menu opens the classic version of the page on screen, not only the classic chat page, and carries `ui=classic`. | `lib/classicLinks.ts`, `components/layout/Sidebar.tsx` |
+| Switch to legacy UI | When both interfaces are allowed, the account menu saves the preference and opens the legacy version of the current page, carrying `ui=classic`. | `lib/classicLinks.ts`, `components/layout/Sidebar.tsx` |
 | Return URLs | Every address the server builds to send a person back into the application was checked; the redirect covers all of them, so no URL helper was added. | [Return URLs](#return-urls) |
 | Bundle fallback | One shared test, "the modern interface is selected and the V2 bundle exists", used by the redirect and the landing page. A missing bundle means classic and one throttled `[UI_MODE]` warning, never a 503 loop. | `functions_ui_pages.py` |
 | Registry finalisation | The page registry has no `gap` rows left and a guard that keeps it so. | `ui_route_map.json`, `test_ui_route_parity_registry.py` |
@@ -34,23 +36,25 @@ body of that one function.
 - `application/single_app/route_frontend_v2.py`: `is_v2_bundle_available`, and the V2 shell routes.
 - `application/single_app/functions_custom_pages.py`: which custom pages V2 can host
   (`V2_CUSTOM_PAGES.md`).
-- No new package, no new route, no new setting and no browser asset.
+- The original prerequisites introduced no packages or settings. The
+  0.261.449 selector adds the settings and local browser asset documented in
+  [Interface selection](UI_INTERFACE_SELECTION.md).
 
 ## Technical specifications
 
 ### The modes and the seam
 
 `functions_ui_mode.get_ui_mode(settings=None, user_settings=None)` returns `classic` or `modern`.
-Today the body is `return UI_MODE_CLASSIC`. Everything in this change asks it, and nothing decides
-for itself:
+It resolves forced administrator policy first, then the account preference, then
+the administrator default. All interface consumers ask it:
 
 - the redirect hook asks it for a classic page `GET`;
 - `index()` asks `is_modern_ui_available()`, which asks it and then checks the bundle;
 - `render_page` asks it which template to render.
 
-`settings` and `user_settings` are already threaded through every caller, so the selector can read
-an administrator default and a per-user choice without touching a caller. The tests replace the
-mode with `modern` to prove the rules.
+Explicit inputs avoid additional reads. Request callers load settings and a
+read-only account snapshot lazily, with preference reads cached for the request.
+Routing bypasses lightweight chrome caches so another worker cannot undo a saved switch.
 
 ### The redirect
 
@@ -122,14 +126,14 @@ candidate, and settings are read lazily, only for a classic page `GET` the regis
 
 ### The escape pair `ui=classic`
 
-"Back to classic UI" in V2 appends `ui=classic` to the classic address. In the modern interface the
+"Switch to legacy UI" in V2 saves the account preference and appends `ui=classic` to the classic address. When legacy is permitted, the
 redirect and the landing page both skip a request whose query's first `ui` value is `classic` (case
 insensitive, whitespace trimmed, the key matched exactly). Its semantics:
 
 - **Per request only.** It sets no cookie and no session flag, and it is not copied into any V2 address
   or redirect. The classic page it opens shows classic navigation whose links do not carry it, so the
   first click on one of them in the modern interface is redirected to V2. It is a way to look at one
-  classic page, not a way to stay in classic.
+  classic page. The account-menu switch separately persists the choice.
 - **Harmless in the classic interface**, where nothing reads it.
 - **Available to anyone who types it.** It needs no role and no setting, so it also lets a visitor opt out
   of the modern interface for a single page. Whether that is acceptable, and who may use it, is a decision
@@ -156,7 +160,7 @@ names:
 
 When the query string and the fragment both name a section, the query string wins, as in the server resolver.
 
-**Back to classic UI.** The account menu's link is `classicBackHref(pathname, search, hash, activeConversationId)`:
+**Switch to legacy UI.** After a successful account-preference save, the menu uses `classicBackHref(pathname, search, hash, activeConversationId)`:
 
 - On the chat page it is the classic chat page carrying the open conversation, as it always was.
 - On any other page with a classic counterpart it is that counterpart: a settings tab opens `/profile?tab=...`
@@ -165,7 +169,7 @@ When the query string and the fragment both name a section, the query string win
   page `/v2/groups/<id>` itself opens `/group_workspaces`, because V2 merges the classic group workspace and
   manage pages and the registry says the workspace page answers for it.
 - A page with none (the group directory) falls back to the classic chat page, as before.
-- Every address carries `ui=classic`. `target` and the accessible name are unchanged. `withClassicEscape` only
+- Every address carries `ui=classic`. `withClassicEscape` only
   extends a same-site absolute path (anything else becomes the classic chat page), which is why it and
   `classicBackHref` are on the XSS checker's reviewed same-origin URL builder list.
 

@@ -55,6 +55,22 @@ Profile preferences are for personal comfort and control: font size, navigation 
 
 ## In the new interface
 
+### Choose modern or legacy
+
+Implemented in version: **0.261.449** (`application/single_app/config.py`).
+
+If your administrator allows both interfaces, the account menu contains **Switch
+to modern UI** in legacy and **Switch to legacy UI** in modern. The switch saves
+your account preference before navigating, so it follows you across browsers and
+sign-ins. Where possible, it keeps the page or conversation you were viewing.
+A save error leaves you on the current page so you can retry.
+
+Admins can require one interface. The switch then disappears, but your preference
+is retained for when both become available again. See
+[Interface selection]({{ '/explanation/features/UI_INTERFACE_SELECTION/' | relative_url }}).
+
+### Personal preferences
+
 In the new interface, open **User Settings** from the account menu. The left rail lists
 **Preferences**, **Stats**, **Groups**, **Public**, **Feedback**, and
 **Violations**. To give the settings more room, collapse the rail to icons with the button

@@ -589,6 +589,9 @@ def get_request_settings():
 
 @app.context_processor
 def inject_settings():
+    from functions_ui_mode import get_ui_policy
+    from ui_routing import resolve_v2_target
+
     settings = get_request_settings()
     public_settings = sanitize_settings_for_user(settings)
     idle_timeout_enabled = is_idle_timeout_enabled(settings)
@@ -616,7 +619,11 @@ def inject_settings():
         log_event(f"Error injecting user settings: {e}", level=logging.ERROR)
         user_settings = {}
         latest_features_nav_hidden = IS_DEVELOPMENT
+    ui_policy = get_ui_policy(settings, user_settings)
+    ui_target = resolve_v2_target(request.path, request.query_string)
     return dict(
+        ui_policy=ui_policy,
+        modern_ui_switch_path=ui_target["path"] if ui_target else "/v2",
         app_settings=public_settings,
         user_settings=user_settings,
         custom_pages_nav=custom_pages_nav,
@@ -1298,6 +1305,8 @@ public_app_bp = Blueprint('public_app', __name__)
 @public_app_bp.route('/')
 @swagger_route(security=get_auth_security())
 def index():
+    from functions_ui_mode import allows_classic_escape
+
     if ENABLE_AUTO_LOGIN_ON_INDEX and "user" not in session:
         return redirect(url_for('frontend_authentication.login'))
 
@@ -1322,7 +1331,8 @@ def index():
         # classic to V2 redirect hook asks the same question and normally answers first, so
         # this only matters when that hook did not run; it honours ui=classic ("Open this page
         # in classic") exactly as the hook does.
-        if not has_classic_escape(request.query_string) and is_modern_ui_available(settings):
+        classic_escape = has_classic_escape(request.query_string) and allows_classic_escape(settings)
+        if not classic_escape and is_modern_ui_available(settings):
             return redirect(V2_HOME_PATH)
         return render_template('index.html', **page_context)
 

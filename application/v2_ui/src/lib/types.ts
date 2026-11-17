@@ -1204,6 +1204,12 @@ export interface IdleTimeoutBootstrap {
 }
 
 export interface BootstrapPayload {
+    ui?: {
+        policy: 'both' | 'classic' | 'modern';
+        default: 'classic' | 'modern';
+        effective: 'classic' | 'modern';
+        can_switch: boolean;
+    };
     version: string;
     user: {
         id: string;

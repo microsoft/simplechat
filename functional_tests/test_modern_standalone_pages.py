@@ -2,17 +2,16 @@
 # test_modern_standalone_pages.py
 """
 Functional test for the modern standalone pages.
-Version: 0.261.448
+Version: 0.261.449
 Implemented in: 0.261.448
 
 The Acceptable Use Policy, the rate-limit (429) page, the landing page for signed-out and
 no-role visitors, and the Microsoft 365 sign-in result stay server-rendered, so each has a
 modern variant under templates/modern that looks like V2 without the classic chrome.
-functions_ui_pages.render_page picks between the two by asking functions_ui_mode.get_ui_mode,
-which answers classic for everyone until the interface selector exists.
+functions_ui_pages.render_page picks between the two using the configured interface policy.
 
 This test ensures that:
-- by default every page renders its classic template with exactly the context it always had;
+- explicit legacy mode renders the classic template with its existing context;
 - when get_ui_mode answers modern each state renders the expected content, a signed-in
   application user is sent to /v2 only when the V2 bundle exists, and the 429 JSON path, the
   Retry-After header and the plain-text fallback are unchanged;
@@ -299,7 +298,8 @@ def test_default_interface_renders_every_classic_page_with_its_original_context(
     assert isinstance(context["rate_limit_message_html"], Markup)
 
 
-def test_default_interface_serves_the_real_m365_result_page_in_the_classic_shell():
+def test_explicit_legacy_interface_serves_the_real_m365_result_page_in_the_classic_shell(monkeypatch):
+    monkeypatch.setattr(functions_ui_mode, "get_ui_mode", lambda settings=None, user_settings=None: "classic")
     response, soup = render_m365_result(
         kind="workflow", outcome="connected", completion="auto", continue_url="/profile?tab=settings",
     )
@@ -309,9 +309,9 @@ def test_default_interface_serves_the_real_m365_result_page_in_the_classic_shell
     assert not soup.find("link", href=lambda href: href and "modern-standalone" in href)
 
 
-def test_without_a_selector_every_page_choice_is_classic():
-    assert functions_ui_mode.get_ui_mode() == "classic"
-    assert functions_ui_pages.choose_page_template("a.html", "modern/b.html") == "a.html"
+def test_unconfigured_interface_uses_modern_standalone_pages():
+    assert functions_ui_mode.get_ui_mode() == "modern"
+    assert functions_ui_pages.choose_page_template("a.html", "modern/b.html") == "modern/b.html"
 
 
 def test_chooser_picks_the_template_for_the_mode_and_forwards_only_the_mode_inputs(pages):

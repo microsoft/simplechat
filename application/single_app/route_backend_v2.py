@@ -91,6 +91,7 @@ from functions_conversation_contents import is_conversation_contents_drawer_enab
 from functions_custom_pages import get_custom_pages_nav
 from functions_governance import GOVERNANCE_AUDITED_SETTING_KEYS
 from functions_idle_timeout import build_idle_timeout_bootstrap
+from functions_ui_mode import get_ui_policy
 from document_source_selection import DocumentSourceSelectionError
 from functions_document_source_discovery import discover_document_sources
 from functions_group import (
@@ -1300,6 +1301,7 @@ def register_route_backend_v2(bp):
             timer.mark("session")
 
             payload = {
+                "ui": get_ui_policy(settings, user_settings_dict),
                 "version": VERSION,
                 "user": {
                     "id": user_id,
