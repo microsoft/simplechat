@@ -10,10 +10,11 @@ Call agent class before the application's Semantic Kernel loader is initialized.
 """
 
 import asyncio
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 import contextvars
 from copy import deepcopy
 from dataclasses import replace
+import functools
 import inspect
 import json
 import time
@@ -35,11 +36,111 @@ from functions_agent_delegation import (
 )
 from functions_appinsights import log_event
 from functions_orchestration_invocation_capture import require_invocation_capture
+from runtime_usage import exception_outcome
+from action_usage import action_usage_identity, current_action_usage_identity
 
 
 MAX_DELEGATION_DEPTH = 3
 DELEGATION_TIMEOUT_SECONDS = 120
 CANCELLATION_POLL_SECONDS = 0.1
+_legacy_group_chat_identity = contextvars.ContextVar("legacy_group_chat_usage_identity", default=None)
+
+
+@contextmanager
+def legacy_group_chat_usage(user_id, conversation_id, *, usage_workspace=None, agent=None):
+    """The Classic global orchestrator runs SDK actors outside AgentExecution."""
+    identity = _identity_with_usage_workspace(capture_execution_identity(user_id, conversation_id), usage_workspace)
+    token = _legacy_group_chat_identity.set(identity)
+    outcome_state = {}
+    try:
+        with action_usage_identity(
+            user_id, conversation_id=conversation_id or "", workspace_type=identity.workspace_type,
+            group_id=identity.group_id, public_workspace_id=identity.public_workspace_id,
+        ), (
+            agent_usage_attempt(agent, {
+                "id": agent.id, "name": agent.name, "scope_type": "global", "scope_id": "global",
+            }, identity, outcome_state=outcome_state) if agent is not None else nullcontext()
+        ):
+            yield outcome_state
+    finally:
+        _legacy_group_chat_identity.reset(token)
+
+
+def track_legacy_group_chat_agent(method):
+    """Track only legacy global SDK members, never duplicate the scoped facade."""
+    def attempt(agent):
+        identity = _legacy_group_chat_identity.get()
+        if identity is None or current_agent_execution() is not None:
+            return nullcontext()
+        return agent_usage_attempt(agent, {
+            "id": agent.id, "name": agent.name, "scope_type": "global", "scope_id": "global",
+        }, identity)
+
+    if inspect.isasyncgenfunction(method):
+        @functools.wraps(method)
+        async def stream(agent, *args, **kwargs):
+            with attempt(agent):
+                result = method(agent, *args, **kwargs)
+                try:
+                    async for item in result:
+                        yield item
+                finally:
+                    await result.aclose()
+        return stream
+
+    @functools.wraps(method)
+    async def invoke(agent, *args, **kwargs):
+        with attempt(agent):
+            return await method(agent, *args, **kwargs)
+    return invoke
+
+
+@contextmanager
+def agent_usage_attempt(agent, reference, identity, *, outcome_state=None):
+    """Track execution, not response persistence; each retry receives a fresh ID."""
+    started = time.perf_counter()
+    attempt_id = str(uuid.uuid4())
+    outcome = "succeeded"
+    try:
+        yield
+    except BaseException as error:
+        outcome = exception_outcome(error)
+        raise
+    finally:
+        if outcome == "succeeded" and outcome_state:
+            outcome = outcome_state.get("outcome", outcome)
+        # Logging owns initialized storage; importing it at discovery time causes bootstrap cycles.
+        from functions_activity_logging import log_agent_run
+
+        metadata = reference if isinstance(reference, dict) else {}
+        scope = metadata.get("scope_type") or (
+            "global" if metadata.get("is_global") else "group" if metadata.get("is_group") else "personal"
+        )
+        scope_id = metadata.get("scope_id") or metadata.get("group_id") or (
+            "global" if scope == "global" else metadata.get("user_id") or identity.user_id
+        )
+        get_field = agent.get if isinstance(agent, dict) else lambda key, default=None: getattr(agent, key, default)
+        workflow_context = current_action_usage_identity()
+        log_agent_run(
+            user_id=identity.user_id,
+            agent_id=metadata.get("id") or get_field("id"),
+            agent_name=get_field("name") or metadata.get("name") or "",
+            agent_display_name=get_field("display_name") or metadata.get("display_name"),
+            scope=scope, scope_id=scope_id,
+            group_id=scope_id if scope == "group" else None,
+            conversation_id=identity.conversation_id,
+            model=get_field("deployment_name"),
+            agent_catalog_key=metadata.get("catalog_key"),
+            agent_type=get_field("agent_type") or metadata.get("agent_type") or "local",
+            attempt_id=attempt_id, outcome=outcome,
+            duration_ms=(time.perf_counter() - started) * 1000,
+            workflow_id=workflow_context.get("workflow_id", ""),
+            run_id=workflow_context.get("run_id", ""),
+            trigger_type=workflow_context.get("trigger_type", ""),
+            workspace_type=workflow_context.get("workspace_type") or identity.workspace_type,
+            workspace_group_id=workflow_context.get("group_id") or identity.group_id,
+            workspace_public_workspace_id=workflow_context.get("public_workspace_id") or identity.public_workspace_id,
+        )
 
 
 def _agent_key(agent, user_id):
@@ -326,14 +427,20 @@ async def execute_target(target, task, context, frame, *, scope=None):
     _check_cancelled(frame)
     _prepare_captured_agent(target, frame.invocation_settings, frame.identity, frame.invocation_capture)
     bridge = frame.identity.bridge(target) if frame.identity.bridge else nullcontext()
-    kernel = None
     with bridge, (scope(target) if scope is not None else nullcontext()):
         _check_cancelled(frame)
         _preflight_captured_agent(target, frame)
         settings = deepcopy(frame.invocation_settings) if frame.invocation_settings is not None else get_settings()
-        messages, citations = await _target_messages(target, task, context, frame, settings)
         _check_cancelled(frame)
         agent_type = target.get("agent_type") or "local"
+        return await _execute_prepared_target(target, task, context, frame, settings, agent_type)
+
+
+async def _execute_prepared_target(target, task, context, frame, settings, agent_type):
+    kernel = None
+    with agent_usage_attempt(target, target, frame.identity):
+        messages, citations = await _target_messages(target, task, context, frame, settings)
+        _check_cancelled(frame)
         try:
             if agent_type == "local":
                 kernel, agent = _build_local_agent(target, settings)
@@ -657,25 +764,87 @@ class AgentExecution:
                         await close_agent_resources(kernel)
 
     async def invoke(self, messages, **kwargs):
-        stream = self._run(messages, **kwargs)
-        try:
-            async for result in stream:
-                return result
-        finally:
-            await stream.aclose()
+        with agent_usage_attempt(self.agent, self.reference, self.identity):
+            stream = self._run(messages, **kwargs)
+            try:
+                async for result in stream:
+                    return result
+            finally:
+                await stream.aclose()
 
-    def invoke_stream(self, messages, **kwargs):
-        return self._run(messages, streaming=True, **kwargs)
+    async def invoke_stream(self, messages, **kwargs):
+        with agent_usage_attempt(self.agent, self.reference, self.identity):
+            stream = self._run(messages, streaming=True, **kwargs)
+            try:
+                async for result in stream:
+                    yield result
+            finally:
+                await stream.aclose()
+
+
+class _TrackedExternalAgent:
+    """Keep synchronous Foundry calls and asynchronous streams on their native APIs."""
+
+    def __init__(self, agent, reference, identity):
+        self.agent = agent
+        self.reference = reference
+        self.identity = identity
+
+    def __getattr__(self, name):
+        return getattr(self.agent, name)
+
+    def invoke(self, *args, **kwargs):
+        with agent_usage_attempt(self.agent, self.reference, self.identity):
+            return self.agent.invoke(*args, **kwargs)
+
+    async def invoke_stream(self, *args, **kwargs):
+        with agent_usage_attempt(self.agent, self.reference, self.identity):
+            stream = self.agent.invoke_stream(*args, **kwargs)
+            try:
+                async for result in stream:
+                    yield result
+            finally:
+                await stream.aclose()
+
+
+def _identity_with_usage_workspace(identity, workspace):
+    if not isinstance(workspace, dict):
+        return identity
+    scope = workspace.get("scope")
+    if scope not in {"personal", "group", "public"}:
+        return identity
+    return replace(
+        identity, workspace_type=scope,
+        group_id=(workspace.get("id") or "") if scope == "group" else "",
+        public_workspace_id=(workspace.get("id") or "") if scope == "public" else "",
+    )
+
+
+def conversation_usage_workspace(conversation):
+    """Project workspace metadata from an already-authorized conversation, not retrieval preferences."""
+    if not isinstance(conversation, dict):
+        return None
+    for context in conversation.get("context") or []:
+        if isinstance(context, dict) and context.get("type") == "primary":
+            if context.get("scope") in {"personal", "group", "public"}:
+                return {"scope": context["scope"], "id": context.get("id") or ""}
+    if conversation.get("group_id"):
+        return {"scope": "group", "id": conversation["group_id"]}
+    if conversation.get("public_workspace_id"):
+        return {"scope": "public", "id": conversation["public_workspace_id"]}
+    return {"scope": "personal"} if conversation.get("user_id") else None
 
 
 def prepare_agent_execution(agent, reference, *, user_id, settings, conversation_id=None,
-                            cancel_requested=None, budget=None, identity=None, prevent_replay=False):
+                            cancel_requested=None, budget=None, identity=None, prevent_replay=False,
+                            usage_workspace=None):
     from functions_workflow_loop_runners import assert_workflow_loop_agent_type
 
     assert_workflow_loop_agent_type(getattr(agent, "agent_type", "local"))
-    if str(getattr(agent, "agent_type", "local") or "local").lower() != "local":
-        return agent
     identity = identity or capture_execution_identity(user_id, conversation_id)
+    identity = _identity_with_usage_workspace(identity, usage_workspace)
+    if str(getattr(agent, "agent_type", "local") or "local").lower() != "local":
+        return _TrackedExternalAgent(agent, reference, identity)
     return AgentExecution(agent, reference, identity=identity, settings=settings,
                           cancel_requested=cancel_requested, budget=budget, prevent_replay=prevent_replay)
 
