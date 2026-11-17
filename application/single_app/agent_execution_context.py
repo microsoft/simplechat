@@ -8,6 +8,7 @@ from dataclasses import dataclass, field, replace
 from threading import Lock
 from typing import Callable, Optional
 import uuid
+from action_usage import action_usage_identity, current_action_usage_identity
 
 from functions_orchestration_execution_policy import (
     current_orchestration_file_policy,
@@ -108,6 +109,9 @@ class ExecutionIdentity:
     publish_authentication_requirement: Optional[Callable] = field(default=None, repr=False, compare=False)
     public_source_policy: str = LEGACY_VISIBLE
     supports_user_input: bool = False
+    workspace_type: str = ""
+    group_id: str = ""
+    public_workspace_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -190,7 +194,15 @@ def agent_execution(frame):
         public_source_policy_context(frame.identity.user_id, frame.identity.public_source_policy)
         if isinstance(frame, AgentExecutionFrame) else nullcontext()
     )
-    with policy, source_policy:
+    usage_scope = (
+        action_usage_identity(
+            frame.identity.user_id, conversation_id=frame.identity.conversation_id or "",
+            workspace_type=frame.identity.workspace_type, group_id=frame.identity.group_id,
+            public_workspace_id=frame.identity.public_workspace_id,
+        )
+        if isinstance(frame, AgentExecutionFrame) and not current_action_usage_identity() else nullcontext()
+    )
+    with policy, source_policy, usage_scope:
         effective_policy = current_orchestration_file_policy()
         if isinstance(frame, AgentExecutionFrame) and captured_policy is not effective_policy:
             frame = replace(frame, orchestration_allow_generated_files=effective_policy)

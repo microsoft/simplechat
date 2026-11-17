@@ -1,7 +1,7 @@
 # test_agent_delegation_workflow_actor.py
 """
 Exercise workflow actor capture and all three real agent execution entry points.
-Version: 0.261.093
+Version: 0.261.447
 Implemented in: 0.261.093
 
 Group workflow ownership must not impersonate its creator when another member
@@ -50,6 +50,8 @@ def workflow_environment():
                 "_get_workflow_runner_app": lambda: app,
                 "create_workflow_run_id": lambda: "created-run",
                 "_get_workflow_group_id": lambda workflow: workflow.get("group_id"),
+                "_get_workflow_scope": lambda workflow: "group" if workflow.get("group_id") else "personal",
+                "action_usage_identity": importlib.import_module("action_usage").action_usage_identity,
                 "_raise_if_workflow_run_cancelled": Mock(),
                 "raise_if_mixed_source_cancelled": Mock(),
                 "_get_document_action_config": lambda workflow: workflow.get("document_action", {}),

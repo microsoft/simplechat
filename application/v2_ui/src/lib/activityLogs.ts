@@ -124,7 +124,18 @@ export interface ActivityFilters {
     token_type: string;
     model: string;
     status: string;
+    usage_kind?: string;
+    usage_entity_id?: string;
+    usage_scope_type?: string;
+    usage_scope_id?: string;
+    usage_host?: string;
+    usage_auth?: string;
+    usage_operation?: string;
+    usage_outcome?: string;
 }
+
+export const USAGE_FILTER_KEYS = ['usage_kind', 'usage_entity_id', 'usage_scope_type', 'usage_scope_id',
+    'usage_host', 'usage_auth', 'usage_operation', 'usage_outcome'] as const;
 
 export const TEXT_FILTER_KEYS = ['user_id', 'workspace_id', 'search', 'token_type', 'model', 'status'] as const;
 
@@ -213,6 +224,7 @@ export function readFilters(params: URLSearchParams, now: Date = new Date()): Ac
         .map((value) => value.trim())
         .filter((value) => value && value !== 'all'))];
     for (const key of TEXT_FILTER_KEYS) filters[key] = (params.get(key) ?? '').trim();
+    for (const key of USAGE_FILTER_KEYS) filters[key] = (params.get(key) ?? '').trim();
     const rawType = params.get('workspace_type') ?? '';
     const type = rawType === 'public_workspace' ? 'public' : rawType;
     filters.workspace_type = (['personal', 'group', 'public'].includes(type) ? type : '') as WorkspaceType;
@@ -235,6 +247,9 @@ function appendShared(params: URLSearchParams, filters: ActivityFilters) {
     if (filters.workspace_type) params.set('workspace_type', filters.workspace_type);
     if (filters.workspace_type && filters.workspace_id) params.set('workspace_id', filters.workspace_id);
     for (const key of ['search', 'token_type', 'model', 'status'] as const) {
+        if (filters[key]) params.set(key, filters[key]);
+    }
+    for (const key of USAGE_FILTER_KEYS) {
         if (filters[key]) params.set(key, filters[key]);
     }
 }

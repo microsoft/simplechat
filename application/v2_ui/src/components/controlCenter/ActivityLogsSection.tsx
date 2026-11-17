@@ -27,6 +27,7 @@ import { ActivityFilterBar, type FilterChangeOptions } from './activityLogs/Acti
 import { ActivityTable, fallbackPresentation } from './activityLogs/ActivityTable';
 import { ActivityTrendStrip } from './activityLogs/ActivityTrendStrip';
 import { ActivityViewsMenu } from './activityLogs/ActivityViewsMenu';
+import { RuntimeUsagePanel } from './RuntimeUsagePanel';
 
 const PAGE_SIZE = 50;
 
@@ -293,6 +294,8 @@ export function ActivityLogsSection() {
                 onToggleType={toggleType}
                 typeLabel={(type) => typeLabels.get(type) ?? humanize(type)}
             />
+
+            <RuntimeUsagePanel filters={filters} onChange={changeFilters} refresh={refresh} />
 
             <ActivityTable
                 records={records}

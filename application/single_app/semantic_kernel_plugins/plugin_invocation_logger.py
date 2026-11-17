@@ -29,6 +29,7 @@ from functions_authentication import get_current_user_id
 from functions_debug import debug_print
 from functions_m365_citations import captured_m365_records
 from functions_native_audit import sanitize_native_audit_transport
+from action_usage import report_action_usage_failure
 
 
 REDACTED_INVOCATION_VALUE = "***REDACTED***"
@@ -115,6 +116,7 @@ def report_plugin_invocation_failure(error_message: str) -> None:
     """
     if not isinstance(error_message, str) or not error_message.strip():
         raise ValueError("A plugin failure requires an error message.")
+    report_action_usage_failure()
     outcome = _plugin_invocation_outcome.get()
     if outcome is not None and outcome.error_message is None:
         outcome.error_message = error_message

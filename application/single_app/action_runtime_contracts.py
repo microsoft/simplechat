@@ -9,6 +9,7 @@ import re
 from semantic_kernel.functions import KernelPlugin
 
 from functions_action_manifest import get_action_origin
+from action_usage import bind_prepared_action
 
 
 class ActionLoadRequired(Exception):
@@ -76,7 +77,7 @@ def runtime_plugin_name(kernel, manifest, *, runtime_role=None):
     return runtime_plugin_names(kernel, [manifest], runtime_role=runtime_role)[id(manifest)]
 
 
-def register_action_plugin(kernel, plugin, manifest, *, runtime_role=None):
+def register_action_plugin(kernel, plugin, manifest, *, runtime_role=None, usage_manifest=None):
     """Register without mutating the manifest used for secrets and authorization."""
     key = action_binding_key(manifest, runtime_role=runtime_role)
     name = runtime_plugin_name(kernel, manifest, runtime_role=runtime_role)
@@ -110,5 +111,6 @@ def register_action_plugin(kernel, plugin, manifest, *, runtime_role=None):
         len(function.metadata.fully_qualified_name) > 64 for function in prepared.functions.values()
     ):
         raise ValueError("Action has no functions or an unsupported qualified tool name.")
+    bind_prepared_action(prepared, manifest if usage_manifest is None else usage_manifest)
     kernel.add_plugin(prepared)
     return name
