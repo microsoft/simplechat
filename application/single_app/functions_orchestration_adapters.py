@@ -462,6 +462,7 @@ def _failed_result(summary, error, replan_hint=None):
         summary=failure['message'],
         error=failure['message'],
         failure=failure,
+        replan_hint=replan_hint,
     )
 
 

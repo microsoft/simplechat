@@ -120,6 +120,18 @@ Each row reads as a sentence: the time, the person, the activity, what happened 
 
 The record drawer shows what happened, **Who** (with **Show only this person's activity** and **Open in Users**), **Where** (with **Show only this workspace** and the group or workspace), the recorded details, and the record's IDs and approval link. The raw JSON is collapsed at the bottom with **Copy JSON**. Use **Previous** and **Next** to step through the page without closing the drawer.
 
+### Agent, action and workflow usage
+
+Implemented in **0.261.447**. Expand **Agent, action & workflow usage** inside Activity Logs to review recorded invocation attempts, distinct executing users, outcomes, and measured durations. It includes actual retries and delegated calls rather than configuration changes or selections.
+
+Usage inherits the date, person and workspace filters. Its exact entity, configuration-scope, host, authentication-category, operation and outcome filters also work in saved investigation URLs. General log search and token/model filters do not change usage totals. **View events** narrows the log to a ranked entity/operation; **Export usage CSV** exports metadata-only rankings.
+
+Only the configured action host and operation are recorded, not full URLs, tool inputs/outputs, prompts, or credentials. Unknown historical metadata is not interpreted as success, zero duration, or unauthenticated access. Historical action executions are not backfilled, and older agent records do not cover every failure or retry.
+
+Usage totals are calculated separately from the activity trend strip's 5,000-record sample. The inclusive UTC window defaults to 30 days and cannot exceed 366 days. Queries above 250,000 records or 20,000 distinct entity/operation combinations fail explicitly instead of showing partial totals; narrow the filters and retry. Complete results may be cached for 90 seconds; **Reload usage** recalculates them.
+
+Distinct users are counted independently for each entity and kind; adding row counts can count the same person twice. Average duration excludes missing measurements, and nested agent/tool durations overlap. These are recorded operational attempts, not token/cost allocations or an exactly-once billing ledger. Process termination, unavailable storage, and activity-log retention can leave gaps.
+
 ### Save and reuse views
 
 **Views** opens quick views for recent sign-ins, recent token usage and document processing failures, and your saved views. **Save the current filters as** stores the current filters under a name; saving with an existing name replaces that view. Saved views live on your account, so they are there in any browser, and you can rename or delete them from the same menu. Views you saved in a browser before 0.261.296 move to your account the first time you open Activity Logs in that browser. If your settings cannot be loaded, the menu shows only the quick views until you reload the page, so a save cannot overwrite views it could not read.

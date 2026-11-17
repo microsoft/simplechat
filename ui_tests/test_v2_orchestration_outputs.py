@@ -1033,18 +1033,20 @@ def test_file_retry_rechecks_server_eligibility_before_posting(outputs_ui):
     assert not write_calls(api)
 
 
-def test_exhaustion_does_not_override_server_retry_policy_or_enable_whole_run_replay(outputs_ui):
+def test_exhaustion_requires_explicit_plan_retry_confirmation(outputs_ui):
     page, api = outputs_ui
     api.output["can_retry"] = False
+    api.record["recovery"]["requires_confirmation"] = True
     api.publish()
     files = mount_outputs(page, api)
     expect(file_card(files).get_by_role("status")).to_have_text("Failed")
     expect(file_card(files)).to_contain_text("This file could not be created.")
     expect(file_card(files)).not_to_contain_text("Automatic attempts")
     expect(retry_button(files)).to_have_count(0)
-    page.evaluate("""(spec) => window.OrchHarness.controller.retryOrchestrationRun(
+    result = page.evaluate("""(spec) => window.OrchHarness.controller.retryOrchestrationRun(
         spec.conversation, spec.runId)""", {"conversation": CONVERSATION, "runId": api.plan["run_id"]})
-    expect(page.get_by_role("alert")).to_contain_text("individual file retry controls")
+    assert result["confirmationRequired"] is True
+    assert result["version"] == api.record["recovery"]["expected_version"]
     assert not write_calls(api)
 
 
@@ -1132,6 +1134,7 @@ def test_artifact_aliases_still_deduplicate_without_file_recovery(outputs_ui):
 def test_catalog_is_fetched_only_on_request_with_owned_run_context(outputs_ui):
     page, api = outputs_ui
     mount_outputs(page, api)
+    recovery_tests.open_recovery_details(page)
     page.get_by_role("button", name="Review saved attempt").first.click()
     drawer = page.get_by_role("complementary", name="Review drawer")
     load = drawer.get_by_role("button", name="Load server file format reference", exact=True)
@@ -1153,6 +1156,7 @@ def test_catalog_rendering_unavailable_keeps_saved_file_intent_without_guessed_f
     page, api = outputs_ui
     api.catalog_status = 403
     mount_outputs(page, api)
+    recovery_tests.open_recovery_details(page)
     page.get_by_role("button", name="Review saved attempt").first.click()
     drawer = page.get_by_role("complementary", name="Review drawer")
     planned_file = drawer.get_by_role("region", name="Planned file for Prepare summary.csv")
@@ -1172,6 +1176,7 @@ def test_empty_catalog_reports_absence_instead_of_guessing_formats(outputs_ui):
     page, api = outputs_ui
     api.catalog_formats = []
     mount_outputs(page, api)
+    recovery_tests.open_recovery_details(page)
     page.get_by_role("button", name="Review saved attempt").first.click()
     drawer = page.get_by_role("complementary", name="Review drawer")
     drawer.get_by_role("button", name="Load server file format reference", exact=True).click()

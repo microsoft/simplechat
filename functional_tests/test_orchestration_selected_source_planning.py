@@ -1,12 +1,13 @@
 # test_orchestration_selected_source_planning.py
 """Selected attachments remain usable during planning and clarification.
 
-Version: 0.261.444
+Version: 0.261.446
 Implemented in: 0.261.355
 Shared two-correction allowance updated in: 0.261.422
 Referenced failed-turn source continuation added in: 0.261.437
 Order-independent source-set identity and conflict diagnostics added in: 0.261.443
 Selected-tabular purpose validation added in: 0.261.444
+Contradictory retrieval-flag exact-set continuation added in: 0.261.446
 
 Uses real source projection, parsers, resolution and HTTP planning with external
 storage/model I/O replaced. Previews must never become complete export records.
@@ -201,6 +202,48 @@ def test_full_planner_repairs_source_question_instead_of_publishing_it(source_ru
     assert harness.blobs.file_uploads == 0
 
 
+def test_main_planner_guards_missing_source_question_with_exact_ledger_boundary(source_runtime):
+    harness = source_runtime.harness
+    identifiers = ["document-0", "document-1"]
+    ledger = source_runtime.context.build_run_ledger([{
+        "id": "previous", "status": "failed",
+        "user_message_id": "previous-user",
+        "seeds": {"document_ids": identifiers},
+    }])
+    context = source_runtime.context.build_planner_context(
+        "Continue the selected-source work.",
+        seeds={}, ledger=ledger, candidates=[],
+        request_resolution={
+            "relationship": "follow_up",
+            "message_ids": ["previous-user"],
+            "requires_retrieval": False,
+            "source_requirement": "historical_originals",
+        },
+        selected_sources=[],
+    )
+    question = {
+        "kind": "elicitation", "message": "Which originals should I read?",
+        "clarification_context": {
+            "reason": "source_selection", "document_ids": identifiers,
+        },
+        "requested_schema": {
+            "type": "object",
+            "properties": {"documents": {"type": "array", "items": {"type": "string"}}},
+            "required": ["documents"],
+        },
+    }
+    harness.replies = [json.dumps(question)] * 3
+    with pytest.raises(harness.planner.PlannerError) as failure:
+        harness.planner.plan_request(
+            "Continue the selected-source work.", context,
+            "conversation-1", "owner", settings=harness.settings, seeds={},
+            authorized_document_ids=identifiers,
+            request_context=harness.services().capability_request_bindings(),
+        )
+    assert failure.value.reason == "referenced_source_set_requires_restore"
+    assert len(harness.model_calls) == 1
+
+
 def test_preview_limits_are_explicit_and_never_invent_schema(source_context):
     selected = source_context.build_selected_source_context(
         [source()], read_bytes=lambda *args, **kwargs: b",".join([b"x"] * 60) + b"\n",
@@ -330,6 +373,116 @@ def test_referenced_failed_turn_restores_all_nine_sources_through_current_author
     assert saved["seeds"]["document_ids"] == identifiers
     assert saved["seeds"]["continued_source_run_id"] == previous["run_id"]
     assert set(saved["seeds"]["planning_source_revisions"]) == set(identifiers)
+    assert saved["request_resolution"]["requires_retrieval"] is True
+
+
+def test_resolver_missing_source_question_restores_exact_references_before_publication(
+    source_runtime,
+):
+    runtime, harness = source_runtime, source_runtime.harness
+    identifiers = [f"document-{index}" for index in range(5)]
+    previous = failed_source_selection(runtime, identifiers)
+    message = "Use those originals for the requested determination."
+    plan = {
+        "kind": "plan",
+        "steps": [
+            {"step_id": "read", "capability_id": "document_search", "arguments": {
+                "query": message, "document_ids": identifiers,
+            }},
+            compose_step("answer", inputs={
+                "evidence": {
+                    "binding": input_binding("read", "prepared"), "allow_partial": False,
+                },
+            }),
+        ],
+        "final_response": input_binding("answer"),
+    }
+    harness.replies = [
+        json.dumps({
+            "relationship": "clarification", "resolved_message": message,
+            "message_ids": [previous["user_message_id"]],
+            "requires_retrieval": False,
+            "source_requirement": "historical_originals",
+            "clarification": "Which originals should I use?",
+            "clarification_context": {
+                "reason": "source_selection", "document_ids": identifiers,
+            },
+        }),
+        json.dumps(plan),
+    ]
+    response = runtime.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": "conversation-1",
+        "turn_id": "structured-missing-source",
+        "message": message, "approval_mode": "manual",
+    }, buffered=True)
+    events = frames(response)
+    assert response.status_code == 200 and not any(event.get("error") for event in events)
+    assert not any(event.get("type") == "orchestration_elicitation" for event in events)
+    saved = next(
+        harness.runs.read_item(event["plan"]["run_id"], "conversation-1")
+        for event in events if event.get("type") == "orchestration_plan"
+    )
+    assert saved["seeds"]["document_ids"] == identifiers
+    assert saved["request_resolution"]["source_requirement"] == "historical_originals"
+
+
+def test_main_planner_missing_source_question_reauthorizes_before_publication(
+    source_runtime,
+):
+    runtime, harness = source_runtime, source_runtime.harness
+    identifiers = [f"document-{index}" for index in range(5)]
+    previous = failed_source_selection(runtime, identifiers)
+    message = "Use those originals for the requested determination."
+    question = {
+        "kind": "elicitation", "message": "Which source contents should I use?",
+        "clarification_context": {
+            "reason": "source_content", "document_ids": identifiers,
+        },
+        "requested_schema": {
+            "type": "object",
+            "properties": {"documents": {"type": "array", "items": {"type": "string"}}},
+            "required": ["documents"],
+        },
+    }
+    plan = {
+        "kind": "plan",
+        "steps": [
+            {"step_id": "read", "capability_id": "document_search", "arguments": {
+                "query": message, "document_ids": identifiers,
+            }},
+            compose_step("answer", inputs={
+                "evidence": {
+                    "binding": input_binding("read", "prepared"), "allow_partial": False,
+                },
+            }),
+        ],
+        "final_response": input_binding("answer"),
+    }
+    harness.replies = [
+        json.dumps({
+            "relationship": "follow_up", "resolved_message": message,
+            "message_ids": [previous["user_message_id"]],
+            "requires_retrieval": False,
+            "source_requirement": "conversation_only",
+            "clarification": "",
+        }),
+        json.dumps(question),
+        json.dumps(plan),
+    ]
+    response = runtime.client.post("/api/v2/orchestration/plan", json={
+        "conversation_id": "conversation-1",
+        "turn_id": "planner-structured-missing-source",
+        "message": message, "approval_mode": "manual",
+    }, buffered=True)
+    events = frames(response)
+    assert response.status_code == 200 and not any(event.get("error") for event in events)
+    assert not any(event.get("type") == "orchestration_elicitation" for event in events)
+    saved = next(
+        harness.runs.read_item(event["plan"]["run_id"], "conversation-1")
+        for event in events if event.get("type") == "orchestration_plan"
+    )
+    assert saved["seeds"]["document_ids"] == identifiers
+    assert saved["request_resolution"]["source_requirement"] == "historical_originals"
     assert saved["request_resolution"]["requires_retrieval"] is True
 
 
@@ -571,6 +724,34 @@ def test_conversation_only_transformation_does_not_inherit_failed_turn_files(sou
     )
     assert restored.get("document_ids", []) == []
     assert source_runtime.source_state.reads == []
+
+
+@pytest.mark.parametrize("resolved_message,source_requirement,restores", [
+    ("Use the originals to perform the requested work.", "historical_originals", True),
+    (
+        "Shorten the prior contract summary about payment and settlement terms.",
+        "conversation_only", False,
+    ),
+    ("Translate the prior answer into French.", "conversation_only", False),
+])
+def test_source_required_follow_up_overrides_only_a_false_contradictory_retrieval_hint(
+    source_runtime, resolved_message, source_requirement, restores,
+):
+    context = source_runtime.context
+    identifiers = [f"document-{index}" for index in range(5)]
+    ledger = context.build_run_ledger([{
+        "id": "previous", "status": "failed", "user_message_id": "previous-user",
+        "seeds": {"document_ids": identifiers},
+    }])
+    restored = context.continue_requested_sources(
+        {}, {
+            "relationship": "follow_up", "message_ids": ["previous-user"],
+            "resolved_message": resolved_message, "requires_retrieval": False,
+            "source_requirement": source_requirement,
+        },
+        ledger, user_id="owner", conversation_id="conversation-1",
+    )
+    assert restored.get("document_ids") == (identifiers if restores else None)
 
 
 @pytest.mark.parametrize("input_format", ["csv", "xlsx"])

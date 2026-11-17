@@ -2,10 +2,11 @@
 """
 Offline source loading and synthetic inputs for research-planner evaluation.
 
-Version: 0.261.309
+Version: 0.261.445
 Implemented in: 0.261.099
 Single orchestration contract updated in: 0.261.139
 Workflow run wait rules seeded in: 0.261.309
+Harness-boundary AST dependencies aligned in: 0.261.445
 
 Only production definitions are executed, never their application imports. In particular,
 config.py, the source-review browser stack, and Azure clients must not be imported here.
@@ -23,11 +24,13 @@ import sys
 import types
 import uuid
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, fields
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, ClassVar, Dict, Iterable, List, Optional
 from unittest.mock import patch
+from jsonschema import Draft202012Validator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -43,34 +46,16 @@ OFFLINE_CAPABILITY_IDS = {
 
 
 class _OfflineDraftValidator:
-    """Small schema validator for the synthetic planner cases."""
+    """Offline JSON Schema validation for the synthetic planner cases."""
 
     def __init__(self, schema):
-        self.schema = schema if isinstance(schema, dict) else {}
+        self._validator = Draft202012Validator(schema if isinstance(schema, dict) else {})
 
     def is_valid(self, value):
-        if self.schema.get("type") == "object" and not isinstance(value, dict):
-            return False
-        required = self.schema.get("required") or []
-        if any(name not in value for name in required):
-            return False
-        properties = self.schema.get("properties") or {}
-        for name, rules in properties.items():
-            if name not in value or not isinstance(rules, dict):
-                continue
-            current = value[name]
-            expected = rules.get("type")
-            if expected == "string" and not isinstance(current, str):
-                return False
-            if expected == "array" and not isinstance(current, list):
-                return False
-            if expected == "object" and not isinstance(current, dict):
-                return False
-            if rules.get("minLength") and isinstance(current, str) and len(current) < rules["minLength"]:
-                return False
-            if "enum" in rules and current not in rules["enum"]:
-                return False
-        return True
+        return self._validator.is_valid(value)
+
+    def iter_errors(self, value):
+        return self._validator.iter_errors(value)
 
 
 def _deliverable_availability(settings, *, capabilities, unavailable=None, export_catalog=None):
@@ -140,19 +125,32 @@ def _definitions(filename, seed=None, names=None):
             RESULT_CONTRACTS_FILE, names={"IMAGE_ASSET_KIND", "RESULT_KINDS"},
         )
         merge = _definitions("functions_tabular_merge.py", names={"TABULAR_COLUMN_MAPPING_PROFILE"})
+        web_iq = _definitions("functions_web_iq.py")
         seed = {
             "IMAGE_ASSET_KIND": contracts["IMAGE_ASSET_KIND"], "RESULT_KINDS": contracts["RESULT_KINDS"],
             "TABULAR_COLUMN_MAPPING_PROFILE": merge["TABULAR_COLUMN_MAPPING_PROFILE"],
-            "deepcopy": copy.deepcopy, **(seed or {}),
+            "deepcopy": copy.deepcopy, **web_iq, **(seed or {}),
         }
     elif filename == "functions_orchestration_schema.py":
         contracts = _definitions(RESULT_CONTRACTS_FILE)
+        storage = _definitions(
+            "blob_container_readiness.py",
+            names={"STORAGE_FAILURE_CODE", "STORAGE_FAILURE_MESSAGE"},
+        )
+        web_iq = _definitions("functions_web_iq.py")
+        analysis = _definitions(
+            "functions_document_analysis_results.py",
+            seed=_definitions(
+                "functions_tabular_transformations.py",
+                names={"normalize_tabular_transformation_spec"},
+            ),
+        )
         # Every plan validation asks the real, import-light wait rules whether a workflow run waits.
         run_wait = _definitions(
             "functions_orchestration_workflow_run_wait.py", seed={"datetime": datetime, "timedelta": timedelta},
         )
         seed = {
-            **contracts,
+            **contracts, **storage, **web_iq, **analysis,
             "compute_workflow_run_waits": run_wait["compute_workflow_run_waits"],
             "stored_workflow_run_waits": run_wait["stored_workflow_run_waits"],
             "Draft202012Validator": _OfflineDraftValidator,
@@ -174,9 +172,18 @@ def _definitions(filename, seed=None, names=None):
             "assign_step_models": lambda *_args, **_kwargs: None,
             "authorized_routing_candidates": lambda *_args, **_kwargs: [],
             "ModelCatalogError": RuntimeError,
+            **_definitions("functions_orchestration_source_context.py"),
+            **_definitions(
+                "functions_document_analysis_results.py",
+                seed=_definitions(
+                    "functions_tabular_transformations.py",
+                    names={"normalize_tabular_transformation_spec"},
+                ),
+            ),
             "workflow_log_context": _definitions(
                 "functions_appinsights.py", names={"workflow_log_context"},
             )["workflow_log_context"],
+            "is_debug_enabled": lambda: False,
             **(seed or {}),
         }
     path = APP_ROOT / filename
@@ -259,6 +266,20 @@ def planner_runtime():
     context = _definitions("functions_orchestration_context.py", seed={
         **registry, "build_action_planner_projection": catalog["build_action_planner_projection"],
         "deepcopy": copy.deepcopy, "datetime": datetime, "timezone": timezone,
+        **_definitions(
+            "public_source_policy.py",
+            seed={
+                "ContextVar": ContextVar, "contextmanager": contextmanager,
+                "has_request_context": lambda: False,
+            },
+        ),
+        **_definitions(
+            "public_chat_scope_state.py",
+            seed={
+                "ContextVar": ContextVar, "contextmanager": contextmanager,
+                "has_request_context": lambda: False,
+            },
+        ),
     }, names={
         "SELECTED_PROMPT_LENGTH", "_text", "_string_list", "_history_text",
         "_extract_urls", "_selected_prompt", "build_conversation_signals", "resolve_seeds",

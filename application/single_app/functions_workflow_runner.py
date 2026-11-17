@@ -20,6 +20,8 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from agent_execution_context import AgentExecutionCancelled, DelegationBudget, capture_execution_identity
 from agent_delegation_runtime import delegation_citations, delegation_usage, prepare_agent_execution
+from action_usage import action_usage_identity
+from runtime_usage import exception_outcome
 
 from azure.cosmos.exceptions import CosmosResourceExistsError, CosmosResourceNotFoundError
 from azure.core.exceptions import AzureError
@@ -13138,7 +13140,8 @@ def _finalize_cancelled_workflow_run(
         )
     _save_workflow_run_record(workflow, run_record)
     log_workflow_run(
-        user_id=user_id,
+        user_id=run_record.get('triggered_by') or user_id,
+        scope_id=group_id or user_id,
         workflow_id=workflow_id,
         workflow_name=workflow.get('name', ''),
         status='cancelled',
@@ -13148,6 +13151,8 @@ def _finalize_cancelled_workflow_run(
         runner_type=workflow.get('runner_type'),
         workspace_type=workspace_type,
         group_id=group_id or None,
+        started_at=started_at,
+        completed_at=completed_at,
     )
     alert_notification = _create_workflow_priority_alert(
         execution_workflow if isinstance(execution_workflow, dict) else workflow,
@@ -13186,7 +13191,20 @@ def run_personal_workflow(workflow, trigger_source='manual', user_roles=None, ac
     identity = capture_execution_identity(execution_actor_id)
     policy = workflow.get("public_source_policy", current_public_source_policy(execution_actor_id))
     identity = replace(identity, public_source_policy=policy)
-    with public_source_policy_context(execution_actor_id, policy), workflow_alert_signal_scope(workflow, resolved_run_id), _workflow_delegation_scope(identity):
+    with (
+        public_source_policy_context(execution_actor_id, policy),
+        workflow_alert_signal_scope(workflow, resolved_run_id),
+        _workflow_delegation_scope(identity),
+        action_usage_identity(
+            execution_actor_id,
+            conversation_id=workflow.get('conversation_id') or '',
+            workspace_type=_get_workflow_scope(workflow),
+            group_id=_get_workflow_group_id(workflow) or '',
+            workflow_id=workflow.get('id') or '',
+            run_id=resolved_run_id,
+            trigger_type=trigger_source,
+        ),
+    ):
         try:
             return _run_personal_workflow_impl(
                 workflow,
@@ -13214,6 +13232,15 @@ def _fail_m365_workflow_run(workflow, run_id, trigger_source, actor_user_id, err
         }
     run.update(status='failed', success=False, error=message, completed_at=now)
     _save_workflow_run_record(workflow, run)
+    log_workflow_run(
+        user_id=run.get('triggered_by') or workflow['user_id'],
+        scope_id=_get_workflow_group_id(workflow) or workflow['user_id'],
+        workflow_id=workflow['id'], workflow_name=workflow.get('name', ''),
+        status='failed', trigger_source=trigger_source, run_id=run_id,
+        conversation_id=run.get('conversation_id'), runner_type=workflow.get('runner_type'),
+        workspace_type=_get_workflow_scope(workflow), group_id=_get_workflow_group_id(workflow) or None,
+        started_at=run.get('started_at'), completed_at=now,
+    )
     log_event(
         '[MS_GRAPH_PLUGIN] Workflow authorization failed.',
         extra={'workflow_id': workflow['id'], 'run_id': run_id, 'error_code': error.code},
@@ -13403,7 +13430,8 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
                 })
                 _save_workflow_run_record(workflow, run_record)
                 log_workflow_run(
-                    user_id=user_id,
+                    user_id=run_record.get('triggered_by') or user_id,
+                    scope_id=group_id or user_id,
                     workflow_id=workflow_id,
                     workflow_name=workflow.get('name', ''),
                     status='skipped',
@@ -13413,6 +13441,8 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
                     runner_type=workflow.get('runner_type'),
                     workspace_type=workspace_type,
                     group_id=group_id or None,
+                    started_at=started_at,
+                    completed_at=completed_at,
                 )
                 return {
                     'success': True,
@@ -13605,7 +13635,8 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
         _save_workflow_run_record(workflow, run_record)
         _raise_if_workflow_run_cancelled(execution_workflow, run_id)
         log_workflow_run(
-            user_id=user_id,
+            user_id=run_record.get('triggered_by') or user_id,
+            scope_id=group_id or user_id,
             workflow_id=workflow_id,
             workflow_name=workflow.get('name', ''),
             status=outcome['status'],
@@ -13615,6 +13646,8 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
             runner_type=workflow.get('runner_type'),
             workspace_type=workspace_type,
             group_id=group_id or None,
+            started_at=started_at,
+            completed_at=completed_at,
         )
         alert_notification = _execute_cancelable_workflow_step(
             execution_workflow,
@@ -13709,17 +13742,20 @@ def _run_authorized_workflow_impl(workflow, trigger_source='manual', user_roles=
                 file_sync_result=file_sync_result,
             )
         log_workflow_run(
-            user_id=user_id,
+            user_id=run_record.get('triggered_by') or user_id,
+            scope_id=group_id or user_id,
             workflow_id=workflow_id,
             workflow_name=workflow.get('name', ''),
             status='failed',
+            outcome=exception_outcome(exc),
             trigger_source=trigger_source,
             run_id=run_id,
             conversation_id=run_record.get('conversation_id'),
             runner_type=workflow.get('runner_type'),
-            error=str(exc),
             workspace_type=workspace_type,
             group_id=group_id or None,
+            started_at=started_at,
+            completed_at=completed_at,
         )
         log_event(
             f'[WORKFLOW_RUNNER] Workflow execution failed: {exc}',

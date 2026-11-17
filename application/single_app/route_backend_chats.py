@@ -16,7 +16,8 @@ from content_screening.contracts import DocumentHeldError, ScreeningConflictErro
 from functions_document_status import is_document_processing_complete, is_document_processing_failure
 from agent_execution_context import AgentExecutionCancelled, DelegationBudget
 from action_credential_contracts import ActionCredentialsRequired
-from agent_delegation_runtime import AgentExecution, delegation_citations, delegation_usage, prepare_agent_execution
+from agent_delegation_runtime import AgentExecution, conversation_usage_workspace, delegation_citations, delegation_usage, legacy_group_chat_usage, prepare_agent_execution
+from runtime_usage import exception_outcome
 from semantic_kernel import Kernel
 from agent_interaction_contracts import UserInputRequired, find_agent_interaction
 from semantic_kernel.agents import ChatCompletionAgent
@@ -507,7 +508,7 @@ from functions_appinsights import log_chat_execution_outcome, log_event
 from functions_debug import debug_print
 from functions_governance import ensure_governance_access
 from functions_notifications import create_chat_response_notification
-from functions_activity_logging import log_agent_run, log_chat_activity, log_conversation_creation, log_token_usage
+from functions_activity_logging import log_chat_activity, log_conversation_creation, log_token_usage
 from flask import current_app
 from swagger_wrapper import swagger_route, get_auth_security
 from azure.identity import ClientSecretCredential, DefaultAzureCredential, get_bearer_token_provider
@@ -21386,6 +21387,7 @@ def register_route_backend_chats(bp):
                 return ("Sorry, I encountered an error.", gpt_model, None, None)
 
             async def run_sk_call(callable_obj, *args, **kwargs):
+                usage_outcome = kwargs.pop("_usage_outcome", None)
                 assert_current_request_sources_available(user_id)
                 log_event(
                     f"Running Semantic Kernel callable: {callable_obj.__name__}",
@@ -21420,6 +21422,8 @@ def register_route_backend_chats(bp):
                             )
                             return await result.get()
                         except Exception as e:
+                            if usage_outcome is not None:
+                                usage_outcome["outcome"] = exception_outcome(e)
                             log_event(
                                 f"Error awaiting orchestration result.get()",
                                 extra={"error": str(e)},
@@ -21631,11 +21635,16 @@ def register_route_backend_chats(bp):
                     def invoke_orchestrator():
                         orchestrator = all_agents["orchestrator"]
                         runtime = InProcessRuntime()
-                        return asyncio.run(run_sk_call(
-                            orchestrator.invoke,
-                            task=build_agent_message_history(orchestrator),
-                            runtime=runtime,
-                        ))
+                        with legacy_group_chat_usage(
+                            user_id, conversation_id, usage_workspace=conversation_usage_workspace(conversation_item),
+                            agent=orchestrator,
+                        ) as usage_outcome:
+                            return asyncio.run(run_sk_call(
+                                orchestrator.invoke,
+                                task=build_agent_message_history(orchestrator),
+                                runtime=runtime,
+                                _usage_outcome=usage_outcome,
+                            ))
                     def orchestrator_success(result):
                         msg = str(result)
                         notice = None
@@ -21660,6 +21669,7 @@ def register_route_backend_chats(bp):
                         selected_agent, request_agent_info,
                         user_id=user_id, settings=settings, conversation_id=conversation_id,
                         budget=delegation_budget, prevent_replay=True,
+                        usage_workspace=conversation_usage_workspace(conversation_item),
                     )
                     agent_deployment_name = getattr(selected_agent, 'deployment_name', None) or gpt_model
                     thought_tracker.add_thought('agent_tool_call', f"Sending to agent '{getattr(selected_agent, 'display_name', getattr(selected_agent, 'name', 'unknown'))}'")
@@ -22272,18 +22282,9 @@ def register_route_backend_chats(bp):
                     agent_display_name = selected_agent.display_name
                 if hasattr(selected_agent, 'name'):
                     agent_name = selected_agent.name
-            agent_scope_for_usage = 'personal'
-            agent_group_id_for_usage = None
-            agent_catalog_key_for_usage = None
             if selected_agent:
                 selection_metadata = user_metadata.get('agent_selection') if isinstance(user_metadata, dict) else None
                 if isinstance(selection_metadata, dict):
-                    if selection_metadata.get('is_global'):
-                        agent_scope_for_usage = 'global'
-                    elif selection_metadata.get('is_group'):
-                        agent_scope_for_usage = 'group'
-                        agent_group_id_for_usage = selection_metadata.get('group_id')
-                    agent_catalog_key_for_usage = selection_metadata.get('catalog_key')
                     agent_icon = selection_metadata.get('agent_icon')
                     agent_tags = selection_metadata.get('agent_tags') or []
 
@@ -22465,20 +22466,6 @@ def register_route_backend_chats(bp):
             assistant_doc = _attach_m365_citations(assistant_doc, agent_citations_list, user_id, conversation_id)
             assistant_doc = _persist_screened_assistant(attach_m365_message_provenance(assistant_doc), user_id, settings=settings)
             ai_message = assistant_doc["content"]
-
-            if selected_agent and agent_name:
-                log_agent_run(
-                    user_id=get_current_user_id(),
-                    agent_id=getattr(selected_agent, 'id', None),
-                    agent_name=agent_name,
-                    agent_display_name=agent_display_name,
-                    scope=agent_scope_for_usage,
-                    group_id=agent_group_id_for_usage,
-                    conversation_id=conversation_id,
-                    message_id=assistant_message_id,
-                    model=actual_model_used,
-                    agent_catalog_key=agent_catalog_key_for_usage,
-                )
 
             # Log chat token usage to activity_logs for easy reporting
             if token_usage_data and token_usage_data.get('total_tokens'):
@@ -26109,6 +26096,7 @@ def register_route_backend_chats(bp):
                             user_id=user_id, settings=settings, conversation_id=conversation_id,
                             cancel_requested=stream_cancel_requested, budget=delegation_budget,
                             prevent_replay=True,
+                            usage_workspace=conversation_usage_workspace(conversation_item),
                         )
                         # Stream from agent using invoke_stream
                         yield emit_thought('agent_tool_call', f"Sending to agent '{agent_display_name_used or agent_name_used}'")
@@ -26893,30 +26881,6 @@ def register_route_backend_chats(bp):
                         'finalization',
                         request_correlation_id=mixed_source_request_correlation_id,
                     )
-                    if use_agent_streaming and agent_name_used:
-                        agent_scope_for_usage = 'personal'
-                        agent_group_id_for_usage = None
-                        agent_catalog_key_for_usage = None
-                        if isinstance(selected_agent_metadata, dict):
-                            if selected_agent_metadata.get('is_global'):
-                                agent_scope_for_usage = 'global'
-                            elif selected_agent_metadata.get('is_group'):
-                                agent_scope_for_usage = 'group'
-                                agent_group_id_for_usage = selected_agent_metadata.get('group_id')
-                            agent_catalog_key_for_usage = selected_agent_metadata.get('catalog_key')
-                        log_agent_run(
-                            user_id=user_id,
-                            agent_id=getattr(selected_agent, 'id', None) if selected_agent else None,
-                            agent_name=agent_name_used,
-                            agent_display_name=agent_display_name_used,
-                            scope=agent_scope_for_usage,
-                            group_id=agent_group_id_for_usage,
-                            conversation_id=conversation_id,
-                            message_id=assistant_message_id,
-                            model=final_model_used if use_agent_streaming else gpt_model,
-                            agent_catalog_key=agent_catalog_key_for_usage,
-                        )
-
                     # Log chat token usage to activity_logs for easy reporting
                     if token_usage_data and token_usage_data.get('total_tokens'):
                         try:

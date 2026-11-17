@@ -35,6 +35,12 @@ Use Application Insights and App Service logs to establish whether the issue is 
                       title="Monitor requests and exceptions"
                       capture="Capture Application Insights requests and exceptions with operation identifiers visible and user content redacted." %}
 
+### Review runtime adoption without conversation content
+
+Implemented in **0.261.447**. In Classic or V2 **Control Center → Activity Logs**, expand **Agent, action & workflow usage**. Compare recorded agent, action-operation, and workflow attempts by outcome, distinct executing users, and available duration measurements. Filter action use by configured host and authentication category to identify heavily used integrations without viewing tool inputs/outputs or credentials.
+
+Choose **View events** to inspect matching activity, or **Export usage CSV** for metadata-only rankings. Missing historical fields are labeled unknown, and old action use is not backfilled. These are operational counts, not attributed token or billing totals. See [Usage reporting]({{ '/guides/v2-control-center/#agent-action-and-workflow-usage' | relative_url }}) for coverage and calculation limits.
+
 ## Step 2: Scale the bottleneck you can prove
 
 Use [Application Scaling]({{ '/application_scaling/' | relative_url }}) and [Scale settings]({{ '/admin/scale/' | relative_url }}) together. Scale App Service up for memory or CPU pressure and out for concurrent traffic. Watch Cosmos RU consumption and HTTP 429 responses before increasing throughput. Use Azure AI Search replicas, partitions, or higher tiers when query latency, indexing throughput, or service limits justify it. Treat AI service quota and rate limits as separate from web-tier capacity.

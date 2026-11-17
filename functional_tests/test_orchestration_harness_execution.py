@@ -1,8 +1,10 @@
 # test_orchestration_harness_execution.py
 """Real-boundary headless V2 preparation, execution and publication regressions.
 
-Version: 0.261.402
+Version: 0.261.446
 Implemented in: 0.261.127
+Incomplete completion rejection added in: 0.261.445
+Prepared stop-only completion enforcement added in: 0.261.446
 Invocation, catalog, and citation regressions implemented in: 0.261.129
 Direct initial-binding scope coverage implemented in: 0.261.130
 Single orchestration contract updated in: 0.261.139
@@ -79,6 +81,7 @@ from functions_orchestration_models import (
 from functions_orchestration_result_contracts import ProducerIdentity, ResultContractError
 from functions_orchestration_results import ResultUnavailableError
 from functions_orchestration_schema import PlanValidationError
+from functions_task_completeness import CompletenessError
 from test_orchestration_export_catalog_admission import _catalog as admitted_export_catalog
 from test_support import offline_bootstrap
 from test_support.orchestration_harness_execution import (
@@ -605,6 +608,121 @@ def test_strict_source_scope_guards_the_actual_answer_model_boundary(
     assert usage.get("total_tokens", 0) == (0 if boundary == "before_call" else 10)
     assert messages == [] and all(client.closed for client in harness.clients)
     assert execution.lease.stopped.is_set() and enabled is False
+
+
+@pytest.mark.parametrize("finish_reason", ["length", "tool_calls", "function_call", "other"])
+@pytest.mark.parametrize("stage,error_type,rule", [
+    ("compose", HarnessExecutionError, "incomplete_completion"),
+    ("completeness_check", CompletenessError, None),
+])
+def test_known_incomplete_generation_is_rejected_after_usage(
+    harness, monkeypatch, finish_reason, stage, error_type, rule,
+):
+    harness.create(replies=["unused"])
+    execution = harness.prepare()
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=11, completion_tokens=7, total_tokens=18),
+        choices=[SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(content='{"status":"complete"}', refusal=None),
+        )],
+    )
+    monkeypatch.setattr(execution.answer_model, "create_completion", Mock(return_value=response))
+    usage = {}
+    invoke = build_harness_invoke_prompt(
+        execution.answer_model, token_usage=usage, revalidate=execution._revalidate_context,
+    )
+    try:
+        with pytest.raises(error_type) as failure:
+            invoke("Return complete content.", stage=stage)
+    finally:
+        execution.close()
+    assert usage == {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+    if rule is not None:
+        assert failure.value.code == "model_failed"
+        assert failure.value.validation_rule == rule
+        assert failure.value.stage == stage
+
+
+@pytest.mark.parametrize("finish_reason", [None, "stop", "missing"])
+def test_compatible_complete_generation_markers_are_accepted(harness, monkeypatch, finish_reason):
+    harness.create(replies=["unused"])
+    execution = harness.prepare()
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=3, completion_tokens=2, total_tokens=5),
+        choices=[SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(content="Complete answer.", refusal=None),
+        )],
+    )
+    if finish_reason == "missing":
+        del response.choices[0].finish_reason
+    monkeypatch.setattr(execution.answer_model, "create_completion", Mock(return_value=response))
+    invoke = build_harness_invoke_prompt(
+        execution.answer_model, token_usage={}, revalidate=execution._revalidate_context,
+    )
+    try:
+        assert invoke("Return complete content.") == "Complete answer."
+    finally:
+        execution.close()
+
+
+@pytest.mark.parametrize("finish_reason", [None, "length", "tool_calls", "missing"])
+def test_required_complete_generation_accepts_only_provider_stop(
+    harness, monkeypatch, finish_reason,
+):
+    harness.create(replies=["unused"])
+    execution = harness.prepare()
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=5, completion_tokens=4, total_tokens=9),
+        choices=[SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(content='{"valid":"json"}', refusal=None),
+        )],
+    )
+    if finish_reason == "missing":
+        del response.choices[0].finish_reason
+    monkeypatch.setattr(execution.answer_model, "create_completion", Mock(return_value=response))
+    usage = {}
+    invoke = build_harness_invoke_prompt(
+        execution.answer_model, token_usage=usage, revalidate=execution._revalidate_context,
+    )
+    try:
+        with pytest.raises(HarnessExecutionError) as failure:
+            invoke(
+                "Return a complete program.", stage="tabular_program_lowering",
+                metadata={"require_complete_generation": True},
+            )
+    finally:
+        execution.close()
+    assert failure.value.validation_rule == "generation_incomplete"
+    assert failure.value.stage == "tabular_program_lowering"
+    assert usage == {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9}
+    assert invoke.enforces_complete_generation is True
+
+
+def test_required_complete_generation_accepts_provider_stop(harness, monkeypatch):
+    harness.create(replies=["unused"])
+    execution = harness.prepare()
+    response = SimpleNamespace(
+        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1, total_tokens=3),
+        choices=[SimpleNamespace(
+            finish_reason="stop",
+            message=SimpleNamespace(content='{"valid":"json"}', refusal=None),
+        )],
+    )
+    monkeypatch.setattr(execution.answer_model, "create_completion", Mock(return_value=response))
+    invoke = build_harness_invoke_prompt(
+        execution.answer_model, token_usage={}, revalidate=execution._revalidate_context,
+    )
+    try:
+        result = invoke(
+            "Return a complete program.", stage="tabular_program_lowering",
+            metadata={"require_complete_generation": True},
+        )
+    finally:
+        execution.close()
+    assert result == '{"valid":"json"}'
 
 
 @pytest.mark.parametrize("boundary", ["before_call", "after_call"])

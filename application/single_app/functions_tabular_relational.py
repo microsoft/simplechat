@@ -10,8 +10,10 @@ from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date
+from decimal import Decimal, DecimalException, InvalidOperation, ROUND_HALF_UP, localcontext
 import hashlib
 import json
+import math
 import re
 
 from jsonschema import Draft202012Validator
@@ -28,6 +30,7 @@ from functions_tabular_transformations import (
 
 
 RELATIONAL_VERSION = "tabular-relate-v1"
+RELATIONAL_VERSION_V2 = "tabular-relate-v2"
 MAX_RELATIONAL_STEPS = 32
 MAX_RELATIONAL_SOURCES = 100
 # What the planner is told about columns and expressions. Both mirror the runtime below and are
@@ -40,7 +43,9 @@ RELATIONAL_COLUMN_RULES = (
     "transform field. project replaces all columns with stepid.field. aggregate outputs only "
     "stepid.name for each by/measures name. A step may use only the columns its input has, and output "
     "may use only the result step's columns, so a column dropped by project or aggregate cannot be "
-    "used later. Shared-ancestor branches may rejoin only after their output column namespaces are "
+    "used later. allocate preserves both inputs and adds stepid.allocated_amount and "
+    "stepid.allocation_status; cumulative_sum preserves its input and adds stepid.cumulative_value "
+    "and stepid.cumulative_status. Shared-ancestor branches may rejoin only after their output column namespaces are "
     "provably disjoint, usually through project or aggregate. Aggregated sum/min/max values are "
     "decimal strings."
 )
@@ -139,12 +144,33 @@ def relational_spec_schema():
             }, ["name", "operation"]),
         },
     }, ["id", "op", "input", "by", "measures"])
+    allocate = _object({
+        "id": _NAME, "op": {"const": "allocate"}, "left": _NAME, "right": _NAME,
+        "on": {
+            "type": "array", "minItems": 1, "maxItems": 8,
+            "items": _object({"left": _COLUMN, "right": _COLUMN}, ["left", "right"]),
+        },
+        "event_key": _COLUMN, "detail_key": _COLUMN, "amount": _COLUMN, "weight": _COLUMN,
+        "detail_order": {"type": "array", "minItems": 1, "maxItems": 8, "uniqueItems": True, "items": _COLUMN},
+        "weight_mode": {"const": "absolute"}, "scale": {"type": "integer", "minimum": 0, "maximum": 12},
+        "rounding": {"const": "half_up"},
+    }, [
+        "id", "op", "left", "right", "on", "event_key", "detail_key", "amount", "weight",
+        "detail_order", "weight_mode", "scale", "rounding",
+    ])
+    cumulative = _object({
+        "id": _NAME, "op": {"const": "cumulative_sum"}, "input": _NAME,
+        "partition_by": {"type": "array", "maxItems": 8, "uniqueItems": True, "items": _COLUMN},
+        "order_by": _COLUMN, "value": _COLUMN,
+        "include_when": {"description": RELATIONAL_EXPRESSION_POINTER},
+        "frame": {"const": "unbounded_preceding_through_date_peers"},
+    }, ["id", "op", "input", "partition_by", "order_by", "value", "include_when", "frame"])
     schema = _object({
-        "version": {"const": RELATIONAL_VERSION},
+        "version": {"enum": [RELATIONAL_VERSION, RELATIONAL_VERSION_V2]},
         "datasets": {"type": "array", "minItems": 1, "maxItems": MAX_RELATIONAL_SOURCES, "items": selector},
         "steps": {
             "type": "array", "minItems": 1, "maxItems": MAX_RELATIONAL_STEPS,
-            "items": {"oneOf": [join, filtering, deriving, projecting, aggregate]},
+            "items": {"oneOf": [join, filtering, deriving, projecting, aggregate, allocate, cumulative]},
         },
         "result": _NAME, "output": _TRANSFORM,
     }, ["version", "datasets", "steps", "result", "output"])
@@ -266,7 +292,10 @@ def normalize_relational_spec(value, document_ids=None):
             where = {"step_index": position, "step_op": step["op"]}
             name = step["id"]
             _require(name not in origins, check="duplicate_step_id", **where)
-            inputs = [step["left"], step["right"]] if step["op"] == "join" else [step["input"]]
+            inputs = (
+                [step["left"], step["right"]]
+                if step["op"] in ("join", "allocate") else [step["input"]]
+            )
             _require(all(item in origins for item in inputs), check="unknown_input", **where)
             if step["op"] == "join":
                 overlap = origins[inputs[0]] & origins[inputs[1]]
@@ -279,6 +308,19 @@ def normalize_relational_spec(value, document_ids=None):
                 next_namespaces = namespaces[inputs[0]] if step["how"] == "anti" else (
                     namespaces[inputs[0]] | namespaces[inputs[1]]
                 )
+            elif step["op"] in ("allocate", "cumulative_sum"):
+                if step["op"] == "allocate":
+                    _require(
+                        step["detail_key"] in step["detail_order"],
+                        check="allocation_detail_order", **where,
+                    )
+                next_namespaces = (
+                    namespaces[inputs[0]] | namespaces[inputs[1]] | {name}
+                    if step["op"] == "allocate"
+                    else namespaces[inputs[0]] | {name}
+                )
+                if step["op"] == "cumulative_sum":
+                    _precise_spec(_predicate_spec(step["include_when"]), check="include_when", **where)
             elif step["op"] in ("derive", "project"):
                 _precise_spec(step["transform"], check="transform", **where)
                 next_namespaces = ({name} if step["op"] == "project"
@@ -299,6 +341,11 @@ def normalize_relational_spec(value, document_ids=None):
         _require(
             spec["result"] in origins and origins[spec["result"]] == set(aliases), "relational_source_unused",
             check="result_sources",
+        )
+        new_operations = any(step["op"] in ("allocate", "cumulative_sum") for step in spec["steps"])
+        _require(
+            new_operations == (spec["version"] == RELATIONAL_VERSION_V2),
+            check="version_operations",
         )
         _precise_spec(spec["output"], check="output")
         return spec
@@ -411,6 +458,58 @@ def _date(value, *, optional=False, detail=None):
         return date.fromisoformat(value)
     except ValueError as exc:
         raise TabularRelationalError("relational_date_invalid", detail=detail) from exc
+
+
+def _decimal(value, *, role, position, scale=None):
+    if type(value) is bool:
+        raise TabularRelationalError(
+            "relational_numeric_invalid",
+            detail={"check": role, "value_index": position},
+        )
+    if value in (None, ""):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        raise TabularRelationalError(
+            "relational_numeric_invalid", detail={"check": role, "value_index": position},
+        )
+    try:
+        text = str(value).strip()
+        if not text or len(text) > 256:
+            return None
+        number = Decimal(text)
+        if not number.is_finite() or abs(number) > Decimal("1e18"):
+            raise InvalidOperation
+        if scale is not None:
+            quantum = Decimal(1).scaleb(-scale)
+            with localcontext() as precise:
+                precise.prec = 64
+                quantized = number.quantize(quantum, rounding=ROUND_HALF_UP)
+            if number != quantized:
+                raise TabularRelationalError(
+                    "relational_numeric_scale_invalid",
+                    detail={"check": role, "value_index": position},
+                )
+        return number
+    except (DecimalException, ValueError):
+        raise TabularRelationalError(
+            "relational_numeric_invalid", detail={"check": role, "value_index": position},
+        ) from None
+
+
+def _typed_key(value, role, position):
+    if value in (None, ""):
+        raise TabularRelationalError(
+            "relational_key_invalid", detail={"check": role, "value_index": position},
+        )
+    if type(value) not in (str, int, float):
+        raise TabularRelationalError(
+            "relational_key_invalid", detail={"check": role, "value_index": position},
+        )
+    if isinstance(value, float) and not math.isfinite(value):
+        raise TabularRelationalError(
+            "relational_key_invalid", detail={"check": role, "value_index": position},
+        )
+    return (type(value).__name__, value)
 
 
 def _join(step, left, right, budget):
@@ -564,6 +663,248 @@ def _aggregate(step, table, budget):
     return budget.table(columns, result)
 
 
+def _allocation_value(amount, weight, denominator, scale):
+    quantum = Decimal(1).scaleb(-scale)
+    with localcontext() as precise:
+        precise.prec = 64
+        return (amount * weight / denominator).quantize(quantum, rounding=ROUND_HALF_UP)
+
+
+def _precise_add(left, right):
+    with localcontext() as precise:
+        precise.prec = 64
+        return left + right
+
+
+def _precise_subtract(left, right):
+    with localcontext() as precise:
+        precise.prec = 64
+        return left - right
+
+
+def _allocate(step, left, right, budget):
+    left_keys = [item["left"] for item in step["on"]]
+    right_keys = [item["right"] for item in step["on"]]
+    requested_left = [*left_keys, step["event_key"], step["amount"]]
+    requested_right = [*right_keys, step["detail_key"], step["weight"], *step["detail_order"]]
+    _require_columns(left.columns, requested_left, "allocate_left", budget, step)
+    _require_columns(right.columns, requested_right, "allocate_right", budget, step)
+    _require(not (set(left.columns) & set(right.columns)), "relational_columns_ambiguous")
+    _require(
+        len(left.columns) + len(right.columns) + 2 <= budget.limits.max_columns,
+        "relational_column_limit",
+    )
+    identities = set()
+    for position, row in enumerate(left.rows):
+        budget.check()
+        identity = _typed_key(row.values[step["event_key"]], "event_key", position)
+        _require(identity not in identities, "relational_identity_ambiguous",
+                 check="allocate_event_key", role="allocation_event", value_index=position)
+        identities.add(identity)
+    details = defaultdict(list)
+    detail_identities = set()
+    for position, row in enumerate(right.rows):
+        budget.check()
+        identity = _typed_key(row.values[step["detail_key"]], "detail_key", position)
+        _require(identity not in detail_identities, "relational_identity_ambiguous",
+                 check="allocate_detail_key", role="allocation_detail", value_index=position)
+        detail_identities.add(identity)
+        key = _key(row, right_keys, "exact")
+        if key is not None:
+            details[key].append((position, row))
+    output_columns = left.columns + right.columns + (
+        f'{step["id"]}.allocated_amount', f'{step["id"]}.allocation_status',
+    )
+    result = []
+    scale = step["scale"]
+    for left_position, event in enumerate(left.rows):
+        budget.check()
+        matches = details.get(_key(event, left_keys, "exact"), ())
+        lineage = event.lineage
+        if not matches:
+            values = {
+                **event.values,
+                **dict.fromkeys(right.columns),
+                f'{step["id"]}.allocated_amount': None,
+                f'{step["id"]}.allocation_status': "unknown_no_detail",
+            }
+            budget.append(result, RelationalRow(values, lineage))
+            continue
+        denominator = Decimal(0)
+        weights = {}
+        unknown = False
+        for position, detail in matches:
+            budget.check()
+            weight = _decimal(detail.values[step["weight"]], role="allocation_weight", position=position)
+            if weight is None:
+                unknown = True
+                continue
+            weights[position] = abs(weight)
+            denominator = _precise_add(denominator, abs(weight))
+        amount = _decimal(
+            event.values[step["amount"]], role="allocation_amount",
+            position=left_position, scale=scale,
+        )
+        if amount is None or unknown or denominator <= 0:
+            lineage = tuple(sorted(set(event.lineage + tuple(
+                source for _position, detail in matches for source in detail.lineage
+            ))))
+            values = {
+                **event.values,
+                **dict.fromkeys(right.columns),
+                f'{step["id"]}.allocated_amount': None,
+                f'{step["id"]}.allocation_status': (
+                    "unknown_missing_amount" if amount is None
+                    else "unknown_weight" if unknown else "unknown_nonpositive_denominator"
+                ),
+            }
+            budget.append(result, RelationalRow(values, lineage))
+            continue
+
+        ordered = sorted(
+            matches,
+            key=lambda item: tuple(
+                (type(item[1].values[column]).__name__, str(item[1].values[column] or ""))
+                for column in step["detail_order"]
+            ),
+        )
+        allocated = Decimal(0)
+        all_lineage = tuple(sorted(set(event.lineage + tuple(
+            source for _position, detail in ordered for source in detail.lineage
+        ))))
+        for order_index, (position, detail) in enumerate(ordered):
+            budget.check()
+            if order_index == len(ordered) - 1:
+                share = _precise_subtract(amount, allocated)
+            else:
+                share = _allocation_value(amount, weights[position], denominator, scale)
+                allocated = _precise_add(allocated, share)
+            quantum = Decimal(1).scaleb(-scale)
+            with localcontext() as precise:
+                precise.prec = 64
+                share = share.quantize(quantum, rounding=ROUND_HALF_UP)
+            values = {
+                **event.values, **detail.values,
+                f'{step["id"]}.allocated_amount': format(share, "f"),
+                f'{step["id"]}.allocation_status': "complete",
+            }
+            budget.append(result, RelationalRow(values, all_lineage))
+    return budget.table(output_columns, result)
+
+
+def _cumulative_sum(step, table, budget):
+    requested = [*step["partition_by"], step["order_by"], step["value"]]
+    _require_columns(table.columns, requested, "cumulative_input", budget, step)
+    predicate = _precise_spec(_predicate_spec(step["include_when"]), table.columns)
+    output_columns = table.columns + (
+        f'{step["id"]}.cumulative_value', f'{step["id"]}.cumulative_status',
+    )
+    result_by_position = {}
+    groups = defaultdict(list)
+    for position, row in enumerate(table.rows):
+        budget.check()
+        keep = evaluate_tabular_transformation_row(predicate, row.values)["keep"]
+        if type(keep) is not bool:
+            raise TabularRelationalError(
+                "relational_boolean_invalid",
+                detail={"check": "cumulative_include", "value_index": position},
+            )
+        if not keep:
+            calculated = RelationalRow({
+                **row.values,
+                f'{step["id"]}.cumulative_value': None,
+                f'{step["id"]}.cumulative_status': "excluded",
+            }, row.lineage)
+            budget.check()
+            budget.account(calculated.values)
+            budget.account(calculated.lineage)
+            result_by_position[position] = calculated
+            continue
+        partition = []
+        for column in step["partition_by"]:
+            value = row.values[column]
+            if value in (None, ""):
+                partition = None
+                break
+            partition.append(_typed_key(value, "cumulative_partition", position))
+        if partition is None:
+            calculated = RelationalRow({
+                **row.values,
+                f'{step["id"]}.cumulative_value': None,
+                f'{step["id"]}.cumulative_status': "unknown_partition",
+            }, row.lineage)
+            budget.check()
+            budget.account(calculated.values)
+            budget.account(calculated.lineage)
+            result_by_position[position] = calculated
+            continue
+        if row.values[step["order_by"]] in (None, ""):
+            calculated = RelationalRow({
+                **row.values,
+                f'{step["id"]}.cumulative_value': None,
+                f'{step["id"]}.cumulative_status': "unknown_order",
+            }, row.lineage)
+            budget.check()
+            budget.account(calculated.values)
+            budget.account(calculated.lineage)
+            result_by_position[position] = calculated
+            continue
+        date_value = _date(
+            row.values[step["order_by"]],
+            detail={"check": "cumulative_order", "value_index": position},
+        )
+        groups[tuple(partition)].append((date_value, position, row))
+    for group in groups.values():
+        group.sort(key=lambda item: (item[0], item[1]))
+        running = Decimal(0)
+        unknown = False
+        prefix_lineage = []
+        for _date_value, positions in _date_peer_groups(group):
+            contribution = Decimal(0)
+            peers = []
+            for position, row in positions:
+                budget.check()
+                amount = _decimal(row.values[step["value"]], role="cumulative_value", position=position)
+                if amount is None:
+                    unknown = True
+                else:
+                    contribution = _precise_add(contribution, amount)
+                peers.append((position, row))
+            running = _precise_add(running, contribution)
+            prefix_lineage.extend(
+                source for _position, row in positions for source in row.lineage
+            )
+            for position, row in peers:
+                calculated = RelationalRow({
+                    **row.values,
+                    f'{step["id"]}.cumulative_value': None if unknown else format(running, "f"),
+                    f'{step["id"]}.cumulative_status': "unknown_amount" if unknown else "complete",
+                }, tuple(sorted(set(prefix_lineage + list(row.lineage)))))
+                budget.check()
+                budget.account(calculated.values)
+                budget.account(calculated.lineage)
+                result_by_position[position] = calculated
+    result = []
+    for position, row in enumerate(table.rows):
+        budget.check()
+        calculated = result_by_position[position]
+        budget.append(result, RelationalRow(calculated.values, tuple(dict.fromkeys(calculated.lineage))))
+    return budget.table(output_columns, result)
+
+
+def _date_peer_groups(group):
+    current_date = None
+    positions = []
+    for date_value, position, row in group:
+        if current_date is not None and date_value != current_date:
+            yield current_date, positions
+            positions = []
+        current_date = date_value
+        positions.append((position, row))
+    if current_date is not None:
+        yield current_date, positions
+
+
 def _lineage(ranges):
     grouped = defaultdict(list)
     for alias, document_id, sheet, row in ranges:
@@ -629,6 +970,27 @@ def check_relational_columns(spec, headers):
                 )
                 tables[step["id"]] = left if step["how"] == "anti" else left + right
             continue
+        if operation == "allocate":
+            left, right = tables.get(step["left"]), tables.get(step["right"])
+            if left is not None:
+                require(left, [
+                    *[item["left"] for item in step["on"]], step["event_key"], step["amount"],
+                ], "allocate_left", where)
+            if right is not None:
+                require(right, [
+                    *[item["right"] for item in step["on"]], step["detail_key"],
+                    step["weight"], *step["detail_order"],
+                ], "allocate_right", where)
+            if left is not None and right is not None:
+                _require(
+                    not set(left) & set(right),
+                    "relational_columns_ambiguous",
+                    check="allocate_columns_ambiguous", **where,
+                )
+                tables[step["id"]] = left + right + (
+                    f'{step["id"]}.allocated_amount', f'{step["id"]}.allocation_status',
+                )
+            continue
         table = tables.get(step["input"])
         if table is None:
             continue
@@ -639,6 +1001,17 @@ def check_relational_columns(spec, headers):
                 "aggregate_measure", where,
             )
             tables[step["id"]] = tuple(f'{step["id"]}.{item["name"]}' for item in step["by"] + step["measures"])
+            continue
+        if operation == "cumulative_sum":
+            require(table, [
+                *step["partition_by"], step["order_by"], step["value"],
+            ], "cumulative_input", where)
+            require_references(
+                table, _predicate_spec(step["include_when"]), "cumulative_include", where,
+            )
+            tables[step["id"]] = table + (
+                f'{step["id"]}.cumulative_value', f'{step["id"]}.cumulative_status',
+            )
             continue
         expression = step["transform"] if operation in ("derive", "project") else _predicate_spec(step["predicate"])
         require_references(
@@ -703,6 +1076,12 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
         with _locating("step_evaluation", step["op"], position):
             if step["op"] == "join":
                 result, details = _join(step, tables[step["left"]], tables[step["right"]], budget)
+            elif step["op"] == "allocate":
+                result = _allocate(step, tables[step["left"]], tables[step["right"]], budget)
+                details = {}
+            elif step["op"] == "cumulative_sum":
+                result = _cumulative_sum(step, tables[step["input"]], budget)
+                details = {}
             else:
                 table = tables[step["input"]]
                 details = {}
@@ -751,7 +1130,7 @@ def calculate_relational_sources(spec, datasets, *, limits, cancel_requested=Non
              "nullable": field.get("nullable", False)}
             for field in projection["fields"]
         ],
-        "coverage": {"version": RELATIONAL_VERSION, "sources": sources, "steps": diagnostics,
+        "coverage": {"version": spec["version"], "sources": sources, "steps": diagnostics,
                      "operation_spec": deepcopy(spec),
                      "operation_sha256": hashlib.sha256(
                          json.dumps(spec, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

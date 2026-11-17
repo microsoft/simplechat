@@ -803,6 +803,8 @@ def public_execution_fields(record):
         fields['deliverable_states'] = deliverable_states
     if record.get('outcome') in ('completed', 'partial', 'failed', 'cancelled', 'waiting'):
         fields['outcome'] = record['outcome']
+    if record.get('answer_qualified') is True:
+        fields['answer_qualified'] = True
     if record.get('latest_attempt_run_id'):
         fields['latest_attempt_run_id'] = record['latest_attempt_run_id']
     if record.get('finalization_status') in ('pending', 'saved', 'failed', 'interrupted'):

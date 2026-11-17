@@ -5,6 +5,7 @@ import asyncio
 import base64
 import logging
 import time
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 from mcp.types import CallToolResult
@@ -55,6 +56,7 @@ from functions_mcp_destinations import (
 from functions_mcp_preconfigurations import authorize_mcp_action
 from semantic_kernel_plugins.mcp_plugin import McpPlugin
 from semantic_kernel_plugins.mcp_guarded_transport import GuardedMcpWebsocketPlugin
+from action_usage import action_dispatch_attempt, report_action_usage_failure
 
 
 class McpPluginFactory:
@@ -348,6 +350,7 @@ class McpPluginFactory:
             manifest,
             "tool_call",
             lambda: cls._call_tool_once(manifest, tool_name, normalized_arguments, origin=origin),
+            usage_operation=configured_tool.get("original_name") if configured_tool else None,
         )
 
     @classmethod
@@ -437,6 +440,7 @@ class McpPluginFactory:
                 additional_fields.get("tool_result_policy"),
             )
             if not result["success"]:
+                report_action_usage_failure()
                 cls._log_connector_event(
                     "[MCP_OUTBOUND] Tool reported failure",
                     config,
@@ -454,7 +458,8 @@ class McpPluginFactory:
             await connector.close()
 
     @classmethod
-    async def _run_with_retries(cls, config: Dict[str, Any], operation: str, operation_factory):
+    async def _run_with_retries(cls, config: Dict[str, Any], operation: str, operation_factory,
+                                *, usage_operation=None):
         """Run an MCP operation with bounded retries and classified failures."""
         manifest = cls._normalize_manifest(config)
         additional_fields = manifest["additionalFields"]
@@ -464,7 +469,8 @@ class McpPluginFactory:
         attempt = 0
         while True:
             try:
-                return await operation_factory()
+                with action_dispatch_attempt(usage_operation) if operation == "tool_call" else nullcontext():
+                    return await operation_factory()
             except McpRuntimeError:
                 raise
             except (McpConfigurationError, PermissionError):

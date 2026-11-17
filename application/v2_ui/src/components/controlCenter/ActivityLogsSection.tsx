@@ -28,6 +28,7 @@ import { ActivityTable, fallbackPresentation } from './activityLogs/ActivityTabl
 import { ActivityTrendStrip } from './activityLogs/ActivityTrendStrip';
 import { ActivityViewsMenu } from './activityLogs/ActivityViewsMenu';
 import { useReloadOnDataRefresh } from './refreshContext';
+import { RuntimeUsagePanel } from './RuntimeUsagePanel';
 
 const PAGE_SIZE = 50;
 
@@ -296,6 +297,8 @@ export function ActivityLogsSection() {
                 onToggleType={toggleType}
                 typeLabel={(type) => typeLabels.get(type) ?? humanize(type)}
             />
+
+            <RuntimeUsagePanel filters={filters} onChange={changeFilters} refresh={refresh} />
 
             <ActivityTable
                 records={records}

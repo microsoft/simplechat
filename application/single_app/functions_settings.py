@@ -61,6 +61,10 @@ from functions_group_assignment_ids import (
 from functions_icon_utils import normalize_icon_payload
 from functions_latest_features_nav import LATEST_FEATURES_HIDDEN_VERSION_SETTING
 from functions_model_capabilities import ModelTokenBudgetError, normalize_model_budget_overrides
+from functions_orchestration_timing import (
+    DEFAULT_STEP_TIMEOUT_SECONDS,
+    DEFAULT_TOTAL_TIMEOUT_SECONDS,
+)
 from functions_model_endpoint_identity_header import (
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_NAME,
     DEFAULT_MODEL_ENDPOINT_IDENTITY_HEADER_VALUE_TYPE,
@@ -1666,8 +1670,8 @@ def get_settings(use_cosmos=False, include_source=False):
         'chat_orchestration_enabled_capabilities': [],
         'chat_orchestration_max_steps': 8,
         'chat_orchestration_max_replans': 2,
-        'chat_orchestration_step_timeout_seconds': 180,
-        'chat_orchestration_total_timeout_seconds': 900,
+        'chat_orchestration_step_timeout_seconds': DEFAULT_STEP_TIMEOUT_SECONDS,
+        'chat_orchestration_total_timeout_seconds': DEFAULT_TOTAL_TIMEOUT_SECONDS,
         'chat_orchestration_ledger_max_bytes': 16384,
         'chat_orchestration_ledger_max_runs': 10,
         # Lets a chat plan propose a personal workflow that the user approves on a card before

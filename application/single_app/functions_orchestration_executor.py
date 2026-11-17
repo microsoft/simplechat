@@ -76,7 +76,7 @@ from functions_orchestration_result_contracts import (
 )
 from functions_orchestration_result_runtime import (
     decode_step_result, raise_source_service_failure, read_complete_input, read_result_document_citations,
-    require_result_service, resolve_step_inputs,
+    qualified_calculation_answer_ready, require_result_service, resolve_step_inputs,
     retain_gather_result, validate_task_diagnostics, validate_task_outputs,
 )
 from functions_orchestration_results import ResultUnavailableError
@@ -114,7 +114,7 @@ from functions_orchestration_checkpoints import (
 )
 from functions_orchestration_timing import (
     OrchestrationExecutionControl, OrchestrationExecutionStopped,
-    initial_execution_deadline, positive_setting_int as _setting_int,
+    initial_execution_deadline, step_timeout_seconds,
 )
 from functions_orchestration_workflow_run_wait import SAVED_WORKFLOW_RUN_WAIT_KIND, plan_runs_headless
 
@@ -225,7 +225,6 @@ def _log_render_attempt(context, step, facts):
 # defaults in functions_settings so a missing settings dict behaves like the default config
 # rather than like an unbounded run.
 _DEFAULT_MAX_STEPS = 8
-_DEFAULT_STEP_TIMEOUT_SECONDS = 120
 _DEFAULT_MAX_REPLANS = 2
 # Stops that bound time rather than express intent; a step that already finished keeps its result.
 _BUDGET_STOP_REASONS = frozenset({'step_timeout', 'run_timeout'})
@@ -236,6 +235,18 @@ _EFFECT_CAPABILITIES = external_effect_capability_ids()
 
 def _now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _replan_hint_limit(settings):
+    """Read the bounded summary-hint cap without treating zero as absent."""
+    raw = (settings or {}).get('chat_orchestration_max_replans')
+    if isinstance(raw, bool):
+        return _DEFAULT_MAX_REPLANS
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return _DEFAULT_MAX_REPLANS
+    return value if 0 <= value <= 5 else _DEFAULT_MAX_REPLANS
 
 
 def _text(value, limit=None):
@@ -1452,7 +1463,7 @@ def _execute_dependency_plan(
     )
     # The server-computed run-step waits, and what a waited run step re-checks when it starts.
     context.workflow_run_waits = deepcopy(plan.get('workflow_run_waits') or {})
-    context.plan_steps = deepcopy(steps) if context.workflow_run_waits else []
+    context.plan_steps = deepcopy(steps)
     context.workflow_run_headless = bool(context.workflow_run_waits) and plan_runs_headless(
         steps, settings, _dependency_request_context(context), export_catalog=context.export_catalog,
     )
@@ -1464,7 +1475,7 @@ def _execute_dependency_plan(
         for step in steps
     ):
         planned_ids = list(dict.fromkeys([*planned_ids, *context.selected_document_ids]))
-    step_timeout = _setting_int(settings, 'chat_orchestration_step_timeout_seconds', _DEFAULT_STEP_TIMEOUT_SECONDS)
+    step_timeout = step_timeout_seconds(settings)
     if context.execution_deadline_at is None:
         context.execution_deadline_at = initial_execution_deadline(datetime.now(timezone.utc), settings)
     context.execution_manifest = _dependency_source_manifest(context, planned_ids, settings, cancel_probe)
@@ -1493,6 +1504,7 @@ def _execute_dependency_plan(
         'execution_deadline_at': context.execution_deadline_at,
     })
     records, statuses, hints = [], {}, []
+    hint_limit = _replan_hint_limit(settings)
     context._completed_result_step_ids = set()
     context._failed_result_step_ids = set()
     context.artifacts = []
@@ -1759,14 +1771,13 @@ def _execute_dependency_plan(
             result = build_step_result(
                 status=status, summary=failure['message'], failure=failure, error=failure['message'],
                 task_result=result.get('task_result') if status == STEP_STATUS_FAILED else None,
+                replan_hint=result.get('replan_hint'),
             )
             result.update(delivery)
             if completeness:
                 result['task_completeness'] = completeness
             context.failures.append(failure)
-        if result.get('replan_hint') and len(hints) < _setting_int(
-            settings, 'chat_orchestration_max_replans', _DEFAULT_MAX_REPLANS,
-        ):
+        if result.get('replan_hint') and len(hints) < hint_limit:
             hints.append({'step_id': step_id, 'capability_id': step['capability_id'], 'hint': result['replan_hint']})
         statuses[step_id] = status
         if status in (STEP_STATUS_COMPLETED, STEP_STATUS_PARTIAL):
@@ -1874,9 +1885,19 @@ def _execute_dependency_plan(
     outcome = 'cancelled' if cancelled else 'waiting' if waiting else (
         'completed' if complete else 'partial' if partial else 'failed'
     )
+    answer_qualified = (
+        outcome == 'partial'
+        and response_reference is not None
+        and not cancelled
+        and all(
+            output.get('state') == 'completed' and output.get('available') is True
+            for output in file_outputs
+        )
+        and qualified_calculation_answer_ready(plan, response_reference, records)
+    )
     if waiting:
         facts = build_failure('result_not_ready')['message']
-    elif cancelled or not complete:
+    elif (cancelled or not complete) and not answer_qualified:
         if not context.failures:
             context.failures.append(build_failure('result_partial' if partial else 'result_invalid'))
         facts = failure_explanation(context.failures, partial=partial, cancelled=cancelled)
@@ -1920,6 +1941,7 @@ def _execute_dependency_plan(
         'execution_deadline_at': context.execution_deadline_at,
         'final_response': response_reference.to_dict() if response_reference else None,
         'delivery_facts': {'files': file_outputs},
+        'answer_qualified': answer_qualified,
     }
     _persist(persist, 'run', run_result)
     _emit(emit, {
