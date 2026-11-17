@@ -297,15 +297,26 @@ def test_crossing_back_to_classic_carries_the_conversation():
 
     helpers = _read(V2_SRC / "lib" / "conversationUrl.ts")
     assert "export function classicChatHref(" in helpers, (
-        "The classic link must be built in one place"
+        "The classic chat link must be built in one place"
     )
     assert "encodeURIComponent(conversationId)" in helpers, (
         "The id must be encoded into the query string"
     )
 
+    # "Back to classic UI" is context-aware now (lib/classicLinks.ts): the chat page, and any page
+    # without a classic counterpart, still go to the chat page with the open conversation.
+    links = _read(V2_SRC / "lib" / "classicLinks.ts")
+    assert "export function classicBackHref(" in links, (
+        "The context-aware classic link must be built in one place"
+    )
+    assert links.count("classicChatHref(activeConversationId)") == 1, (
+        "The chat page and pages with no classic counterpart must carry the open conversation across"
+    )
+    assert "clean !== '/chat'" in links, "The chat page keeps going to the chat page, conversation included"
+
     sidebar = _read(V2_SRC / "components" / "layout" / "Sidebar.tsx")
-    assert "href={classicChatHref(activeConversationId)}" in sidebar, (
-        "Back to classic UI must carry the open conversation"
+    assert "classicBackHref(location.pathname, location.search, location.hash, activeConversationId)" in sidebar, (
+        "Back to classic UI must carry the open conversation, and the page on screen"
     )
     assert 'href="/chats"' not in sidebar, (
         "The bare link would drop the conversation the reader was in"

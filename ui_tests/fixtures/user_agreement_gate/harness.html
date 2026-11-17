@@ -1,0 +1,19 @@
+<!-- harness.html -->
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>User agreement gate component tests</title>
+    </head>
+    <body>
+        <!--
+          Static harness for ui_tests/test_v2_user_agreement_gate.py. It hosts a mount point and the
+          bundled real composer editor, whole chat composer and documents explorer (harness.bundle.js,
+          built from harness_entry.tsx). The test seeds the bootstrap store and mounts one of them through
+          window.AgreementHarness.
+        -->
+        <div id="root" class="flex h-screen min-w-0 flex-col"></div>
+        <script src="/harness.bundle.js"></script>
+    </body>
+</html>

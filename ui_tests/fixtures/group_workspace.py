@@ -16,6 +16,8 @@ Browsed files carry the engine's canonical remote path, and ignore items are key
 keys them: 0.261.172
 The group screening hint, granted by the screening routes' own roles: 0.261.174
 The group workflow hint, and workflow routes answered by their own role rules: 0.261.178
+The Manage sections stay open to an Owner or Admin in every status, and the Settings danger zone's
+DELETE of the group is served natively: 0.261.445
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group
@@ -1094,12 +1096,15 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
     }
     downloads_enabled = settings_flags["downloads_admin"] and not disable_file_downloads
 
-    def section(group, enabled, can_manage, reason):
-        available = viewable and enabled
+    def section(group, enabled, can_manage, reason, *, open_in_any_status=False):
+        # `open_in_any_status` is the builder's `viewable=` override: the Manage sections an Owner or
+        # Admin keeps in every status, where every other section waits for a status that can be viewed.
+        visible = viewable or open_in_any_status
+        available = visible and enabled
         return {
             "group": group, "enabled": available,
             "can_manage": available and active and can_manage,
-            "reason": None if available else status_reason or reason,
+            "reason": None if available else (status_reason if not visible else reason),
         }
 
     rules = {
@@ -1116,21 +1121,28 @@ def group_context(identifier, name, *, role="Owner", status="active", viewer=OWN
     }
     sections = {key: section(SECTION_GROUPS[key], *rule) for key, rule in rules.items()}
     # M7B: Members is a group-only section in the "manage" group, open to every member of a
-    # viewable group and managed by the Owner and Admins in an active one, as the context builds it.
-    sections["members"] = section("manage", True, automation, None)
+    # viewable group and, whatever the status, to the Owner and Admins, who manage it in an active
+    # one, as the context builds it.
+    sections["members"] = section("manage", True, automation, None, open_in_any_status=automation)
     # M7C: Settings, Activity and Statistics join Members in the "manage" group, built exactly as the
     # server's build_group_workspace_context builds them beside members. Settings opens to a manager
-    # (Owner or Admin), and each insight view opens when its native settings decision is unrefused; the
-    # shared section() rule closes them in a status that isn't viewable. The controls each offers still
-    # come from settings_management, never from these navigation entries.
+    # (Owner or Admin), and each insight view opens when its native settings decision is unrefused;
+    # the shared section() rule closes them in a status that isn't viewable for everyone but a
+    # manager, who keeps all three in every status. The controls each offers still come from
+    # settings_management, never from these navigation entries.
     manage_manager = role in GROUP_SETTINGS_MANAGER_ROLES
     manage_decisions = settings_decisions(role, status, **settings_flags)
-    sections["settings"] = section("manage", manage_manager, manage_manager, GROUP_SETTINGS_MANAGER_REASON)
+    sections["settings"] = section(
+        "manage", manage_manager, manage_manager, GROUP_SETTINGS_MANAGER_REASON,
+        open_in_any_status=manage_manager,
+    )
     sections["activity"] = section(
         "manage", manage_decisions["view_activity"] is None, False, GROUP_SETTINGS_MANAGER_REASON,
+        open_in_any_status=manage_manager,
     )
     sections["statistics"] = section(
         "manage", manage_decisions["view_stats"] is None, False, GROUP_SETTINGS_MANAGER_REASON,
+        open_in_any_status=manage_manager,
     )
     return {
         "schema_version": 1, "enabled": True, "viewer_id": viewer,
@@ -1324,6 +1336,8 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         self.group_file_count = {}
         self.activity_unavailable = set()
         self.stats_unavailable = set()
+        # The groups the owner's DELETE removed, in order, so a test can prove a delete was sent once.
+        self.deleted_groups = []
         for group_id in self.groups:
             self.group_agents[group_id] = [{
                 "id": "caller", "name": "caller", "display_name": "Local caller",
@@ -1615,6 +1629,8 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
             else:
                 self.active_group = group_id
                 self._json(route, {"message": f"Active group set to {group_id}"})
+        elif method == "DELETE" and re.fullmatch(r"/api/groups/[^/]+", path):
+            self._delete_group(route, path.rsplit("/", 1)[-1])
         elif path == "/api/plugins/agent-targets" and entry.query.get("scope") == ["group"]:
             group_id = entry.query["group_id"][0]
             self._json(route, {
@@ -1834,6 +1850,34 @@ class GroupWorkspaceFixture(WorkspaceAuthoringFixture):
         else:
             self.unexpected_requests.append(f"{method} {entry.path}")
             self._json(route, {"error": "Unexpected group fixture request."}, 500)
+
+    # --- The owner's delete of a group ------------------------------------------------------------
+
+    def _delete_group(self, route, group_id):
+        """`route_backend_groups.api_delete_group`: the CreateGroups role gate when the deployment
+        requires it, then a 404 for a group that does not exist and a 403 for anyone but the owner, and
+        then the group is deleted at once. The route checks no status and no documents -- the classic
+        page does, before it calls -- and creates no approval request.
+
+        functional_tests/test_v2_workspace_delete_fixture_parity.py holds these answers to the real route.
+        """
+        flags = self._settings_flags(group_id)
+        if flags["create_role_required"] and not flags["has_create_role"]:
+            self._json(route, {
+                "error": "Forbidden", "message": "Insufficient permissions (CreateGroups role required)",
+            }, 403)
+            return
+        context = self.groups.get(group_id)
+        if context is None:
+            self._json(route, {"error": "Group not found"}, 404)
+        elif context["role"] != "Owner" or group_id in self.denied_groups:
+            self._json(route, {"error": "Only the owner can delete the group"}, 403)
+        else:
+            self.deleted_groups.append(group_id)
+            del self.groups[group_id]
+            if self.active_group == group_id:
+                self.active_group = None
+            self._json(route, {"message": "Group deleted successfully"})
 
     # --- M7C native group settings and insights serving ------------------------------------------
 

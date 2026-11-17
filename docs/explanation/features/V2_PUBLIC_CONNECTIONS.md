@@ -27,7 +27,11 @@ scope-specific routes and permissions. See
 - In a `locked` or `upload_disabled` workspace, managers can open both
   sections read-only.
 - In an `inactive` workspace, or one whose status isn't recognized, the
-  sections are unavailable, as the rest of the workspace is.
+  sections are unavailable, as Documents, Tags and Prompts are. Unlike the
+  Manage sections (Members, Settings, Activity and Statistics), which the
+  Owner and Admins keep there from version **0.261.445**, these two stay closed
+  because their routes refuse that status; see
+  [V2 Public Settings](V2_PUBLIC_SETTINGS.md).
 - When File Sync isn't enabled for the workspace, a manager sees "Identities
   require File Sync." or "File sources require File Sync.". A reader sees that
   their role doesn't permit managing the workspace's connections.

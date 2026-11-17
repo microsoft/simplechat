@@ -1,10 +1,11 @@
 # test_group_context_fixture_parity.py
 """
 Parity between the group workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.178
+Version: 0.261.445
 Implemented in: 0.261.157
 The screening_management hint: 0.261.174
 The workflow_management hint: 0.261.178
+The Manage sections stay open to an Owner or Admin in every status: 0.261.445
 
 Every group browser suite builds its selected-group context from
 `ui_tests/fixtures/group_workspace.py::group_context`, directly or through a per-section fixture that
@@ -227,9 +228,15 @@ def test_the_reason_constants_are_the_servers_texts(modelled):
     assert real_context(modelled, "Owner", "inactive")["sections"]["documents"]["reason"] == (
         fixture_module.GROUP_INACTIVE_REASON
     )
-    assert real_context(modelled, "Owner", "archived")["sections"]["members"]["reason"] == (
+    assert real_context(modelled, "Owner", "archived")["sections"]["documents"]["reason"] == (
         fixture_module.GROUP_STATUS_UNKNOWN_REASON
     )
+    # A caller who isn't a manager is told the status's reason on every Manage section; an Owner or
+    # Admin keeps them open (0.261.445).
+    assert real_context(modelled, "User", "inactive")["sections"]["members"]["reason"] == (
+        fixture_module.GROUP_INACTIVE_REASON
+    )
+    assert real_context(modelled, "Owner", "inactive")["sections"]["members"]["reason"] is None
     reader = real_context(modelled, "User", "active")
     assert reader["sections"]["identities"]["reason"] == fixture_module.GROUP_CONNECTIONS_ROLE_REASON
     assert reader["sections"]["sync"]["reason"] == fixture_module.GROUP_CONNECTIONS_ROLE_REASON

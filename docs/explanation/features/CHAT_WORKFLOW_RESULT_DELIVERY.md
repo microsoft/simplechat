@@ -311,8 +311,9 @@ Notice titles and messages are fixed:
 Undeliverable and expired notices link to
 `/workflow-activity?workflowId=...&runId=...&scope=personal` and carry metadata
 `{workflow_id, run_id, workflow_scope: 'personal', delivery_status}`. Since
-6b-2 (0.261.251), the V2 bell labels the type **Workflow results** and opens the
-run on V2's Workflows page; see [Run links](#run-links).
+6b-2 (0.261.251), the V2 bell labels the type **Workflow results**; it opened the
+run on V2's Workflows page until 0.261.445, and now opens the run's V2
+[Workflow Activity page](V2_WORKFLOW_ACTIVITY.md). See [Run links](#run-links).
 
 ### Message shape and placement
 
@@ -969,12 +970,13 @@ card, the footer and the recurring card.
 
 | Notice | Where it opens |
 | --- | --- |
-| 6b-1 undeliverable or expired (`workflow_chat_delivery`, classic `/workflow-activity?...&scope=personal` link) | The run in V2 |
+| 6b-1 undeliverable or expired (`workflow_chat_delivery`, classic `/workflow-activity?...&scope=personal` link) | The run's V2 [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md), with the link's own query. From 0.261.251 to 0.261.444 this opened the run in the Workflows run history |
 | 6b-1 delivered (`chat_response_complete`, chat link) | The chat (unchanged) |
-| Microsoft 365 (`m365_pending_action_id`) | Classic (unchanged) |
-| `/workflow-activity` with an unknown or missing scope, or a link and metadata that disagree | Classic |
-| `/workflow-activity` with `scope=group&groupId=...` (not Microsoft 365) | The group run in V2 |
-| No `link_url`, a `workflow_priority_alert` or `workflow_chat_delivery` notice with a valid scope and ids in its metadata | The run in V2 (previously no link) |
+| Microsoft 365 (`m365_pending_action_id`) with a `/workflow-activity` link | The same V2 Workflow Activity page, which draws the saved action beside the run. This was the classic page until 0.261.445 |
+| `/workflow-activity` with a missing scope | The personal page, as the classic page reads it |
+| `/workflow-activity` with an unknown scope, or an id a link must not carry | Refused, with a message on the row |
+| `/workflow-activity` with `scope=group&groupId=...` | The group's V2 Workflow Activity page |
+| No `link_url`, a `workflow_priority_alert` or `workflow_chat_delivery` notice with a valid scope and ids in its metadata | The run in the Workflows run history (previously no link) |
 | No `link_url` and no scope | No link (unchanged) |
 
 A workflow alert card with a run id and a scope now offers **Open run** in place

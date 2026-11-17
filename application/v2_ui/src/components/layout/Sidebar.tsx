@@ -4,10 +4,10 @@
 // which collapses to an icon strip.
 //
 // The user menu carries everything about *your* account rather than about your work: your
-// own settings, administration for those who have it, the way back to the classic interface
-// and signing out. Admin Settings sits here rather than in the primary list above, which is
-// the list of places you work; the classic interface draws the same line, keeping App
-// Settings under an Admin heading in its account dropdown.
+// notifications, your own settings, administration for those who have it, the way back to the
+// classic interface and signing out. Admin Settings sits here rather than in the primary list
+// above, which is the list of places you work; the classic interface draws the same line,
+// keeping App Settings under an Admin heading in its account dropdown.
 //
 // The menu deliberately offers one destination for personal settings. It used to offer
 // two — Settings here and Profile in the classic interface — which was a choice nobody had
@@ -19,6 +19,7 @@ import { useEffect, useRef, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { clsx } from 'clsx';
 import {
+    Bell,
     CheckCircle2,
     ChevronDown,
     ChevronLeft,
@@ -41,7 +42,9 @@ import { useUiStore } from '../../stores/uiStore';
 import { clearConversationModes } from '../../lib/conversationMode';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
-import { classicChatHref } from '../../lib/conversationUrl';
+import { useNotificationStore } from '../../stores/notificationStore';
+import { classicBackHref } from '../../lib/classicLinks';
+import { formatNotificationCount } from '../../lib/notifications';
 import { DEFAULT_PUBLIC_WORKSPACE_LABELS, usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { reviewAccessInput, reviewSections } from '../../lib/reviewAccess';
 import { ConversationRail } from '../chat/ConversationRail';
@@ -170,6 +173,10 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
     // the same rules as the server's feedback and safety review decorators.
     const canReview = reviewSections(reviewAccessInput(bootstrap)).length > 0;
     const activeConversationId = useChatStore((state) => state.activeConversationId);
+    // Where the "Back to classic UI" link goes depends on the page the menu was opened on.
+    const location = useLocation();
+    // The bell's own count, so the menu entry and the bell never disagree.
+    const unreadNotifications = useNotificationStore((state) => state.count) ?? 0;
     const [open, setOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
 
@@ -234,10 +241,34 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                         </div>
                     )}
 
+                    {/* Classic's account menu leads with Notifications too. The badge is the bell's
+                        own count, which the server stops at ten, so ten reads as "9+". */}
+                    <NavLink
+                        to="/notifications"
+                        data-account-menu-notifications=""
+                        aria-label={
+                            unreadNotifications > 0
+                                ? `Notifications, ${formatNotificationCount(unreadNotifications)} unread`
+                                : undefined
+                        }
+                        onClick={() => setOpen(false)}
+                        className={clsx(itemClass, collapsed && 'mt-1')}
+                    >
+                        <Bell size={15} /> Notifications
+                        {unreadNotifications > 0 && (
+                            <span
+                                aria-hidden="true"
+                                data-account-menu-notification-badge=""
+                                className="ml-auto flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[10px] leading-none font-semibold text-on-accent"
+                            >
+                                {formatNotificationCount(unreadNotifications)}
+                            </span>
+                        )}
+                    </NavLink>
                     <NavLink
                         to="/settings"
                         onClick={() => setOpen(false)}
-                        className={clsx(itemClass, collapsed && 'mt-1')}
+                        className={itemClass}
                     >
                         <SlidersHorizontal size={15} /> User Settings
                     </NavLink>
@@ -256,10 +287,17 @@ function UserMenu({ collapsed }: { collapsed: boolean }) {
                             <ShieldCheck size={15} /> Control Center
                         </NavLink>
                     )}
-                    {/* Carries the open conversation across, since both interfaces read the
-                        same parameter. Crossing over otherwise lands on the conversation
-                        list, leaving you to find your place again. */}
-                    <a href={classicChatHref(activeConversationId)} className={itemClass}>
+                    {/* Opens the classic version of the page on screen: a settings tab, a group's
+                        manage page, a workspace section. The chat page carries the open
+                        conversation across, since both interfaces read the same parameter;
+                        crossing over otherwise lands on the conversation list, leaving you to
+                        find your place again. Every address carries ui=classic, which tells a
+                        server that has selected this interface to serve the classic page instead
+                        of sending you straight back. */}
+                    <a
+                        href={classicBackHref(location.pathname, location.search, location.hash, activeConversationId)}
+                        className={itemClass}
+                    >
                         <ChevronLeft size={15} /> Back to classic UI
                     </a>
                     <a

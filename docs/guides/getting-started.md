@@ -180,6 +180,23 @@ If a different account is detected, copy any unsaved text before choosing
 Microsoft 365 reconnect prompts apply to actual Microsoft 365 work, not to an
 unrelated conversation's background lookup.
 
+### Staying signed in during a long session
+
+Fixed/Implemented in version: **0.261.445** (`application/single_app/config.py`).
+If your administrator has turned on **Sign out inactive users**, SimpleChat signs
+you out after a period without activity, and warns you first. After you have been
+idle for the warning time, a **Session expiring soon** dialog counts down the time
+left. Choose **Stay signed in** to keep going, or **Logout now** to end the session.
+If you do neither, you are signed out when the countdown ends, so copy anything you
+want to keep before then.
+
+Using SimpleChat keeps the session alive: clicking, typing, scrolling and moving
+the mouse all count, and in React V2 activity in one tab counts for your other V2
+tabs. Waiting for a long reply without touching anything does not count. If
+**Stay signed in** cannot reach the server, the dialog stays open and says so, so
+you can try again before the countdown ends. If the server says your session is
+already over, you see the **Sign in again** notice described above instead.
+
 **Document not uploading?**
 - Check file size limits in Admin Settings
 - Ensure file types are supported

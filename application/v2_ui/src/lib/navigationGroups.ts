@@ -12,6 +12,7 @@
 // means the same control behaves differently for two deployments that differ by one link.
 
 import type { CustomPageNavItem, ExternalLinkNavItem, NavGroup } from './types';
+import { opensInsideV2 } from './customPageEmbed';
 
 /**
  * Whether a group has anything to show.
@@ -30,6 +31,12 @@ export interface NavExtraLink {
     href: string;
     /** Opens away from the SPA. Always true for external links. */
     newTab: boolean;
+    /**
+     * The slug of a custom page V2 shows in its own shell. Set only for a same-tab page the
+     * server marked embeddable, which the rail then links to with a router link instead of an
+     * anchor to the classic page. Every other entry leaves V2 and keeps its anchor.
+     */
+    customPageSlug?: string;
 }
 
 export function normalizeNavigationUrl(value: unknown): string | undefined {
@@ -41,14 +48,20 @@ export function normalizeNavigationUrl(value: unknown): string | undefined {
     return undefined;
 }
 
+/**
+ * `embedAvailable` is false when the interface is served from a different origin than the API,
+ * where a page cannot be framed and so keeps its classic anchor (see `opensInsideV2`).
+ */
 export function toCustomPageLinks(
     group: NavGroup<CustomPageNavItem> | undefined | null,
+    embedAvailable = true,
 ): NavExtraLink[] {
     return (group?.items ?? []).map((page) => ({
         key: `custom-page:${page.slug}`,
         label: page.label || page.slug,
         href: page.url,
         newTab: Boolean(page.open_in_new_tab),
+        ...(opensInsideV2(page, embedAvailable) ? { customPageSlug: page.slug } : {}),
     }));
 }
 

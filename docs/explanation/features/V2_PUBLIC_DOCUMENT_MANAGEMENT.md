@@ -111,6 +111,22 @@ From version **0.261.168**, a manager who can't upload, because uploads are
 disabled or the workspace is locked, is told the same reason when dropping
 files.
 
+From version **0.261.445**, a public workspace's Owner, Admin and DocumentManager
+can update documents stored before progress tracking from the Documents
+explorer, with `POST /api/public-workspaces/<workspace_id>/documents/upgrade_legacy`.
+The route names its workspace in the path, authorizes as a metadata edit, and
+never reads the saved active public workspace. The classic public route cannot
+do this work: it acts on the saved active workspace and writes through the
+personal branch of `upgrade_legacy_documents`, which never finds a public
+document. The Documents header no longer has a **Classic tools** button. See
+[V2 Legacy Document Upgrade](V2_LEGACY_DOCUMENT_UPGRADE.md).
+
+From version **0.261.445**, the public workspace's **Tags** section is native as
+well, so the tag vocabulary is administered in V2 (create, recolour, rename,
+merge and delete) through the `manage_tags` operation of this same management
+block, against the same immutable `/api/public-workspaces/<workspace_id>/documents/tags`
+routes the explorer's tag filter reads. See [V2 Public Tags](V2_PUBLIC_TAGS.md).
+
 ## File structure
 
 | File | Role |

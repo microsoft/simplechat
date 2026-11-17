@@ -37,7 +37,11 @@ enforces the throughput policy rules on the V2 save, and adds two generic schema
 
 The index diagnostics follow `enable_dai_debug`, as on the classic page. The classic page has no
 control for that flag; V2 offers it under Operations > Logging & Health > Debug Logging as
-**Document Access Index diagnostics**, declared by the V2 Operations work.
+**Document Access Index diagnostics**, declared by the V2 Operations work. The V2 DAI Metrics
+card draws what the flag reveals: the **Run one backfill batch** and **Reset checkpoint**
+controls and the shadow validation figures. Since **0.261.445** the switch's link to DAI Metrics
+moves within Admin Settings; it used to be marked `classic_only` and opened the classic page,
+which draws no more than V2 does.
 
 ## Technical specifications
 

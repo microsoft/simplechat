@@ -265,6 +265,13 @@ class PublicDocumentsFixture(PublicWorkspaceFixture):
             if row.get("is_current_version") is not False and self.viewer_may_see(workspace_id, row)
         ]
 
+    def has_legacy_documents(self, workspace_id):
+        """The list route's `needs_legacy_update_check`: a current document the viewer may see that was
+        stored before progress tracking has no `percentage_complete`
+        (functions_public_document_reads.query_public_document_list). A test makes a document legacy by
+        removing that key from its row, and an upgrade by scripting the row back with it."""
+        return any("percentage_complete" not in row for row in self.visible(workspace_id))
+
     @staticmethod
     def tags(row):
         raw = row.get("tags", [])
@@ -360,6 +367,7 @@ class PublicDocumentsFixture(PublicWorkspaceFixture):
                 self._json(route, {
                     "documents": [served(row) for row in rows[(page - 1) * size:page * size]], "total_count": len(rows),
                     "page": page, "page_size": size, "file_downloads_enabled": downloads,
+                    "needs_legacy_update_check": self.has_legacy_documents(workspace_id),
                 })
             elif suffix == "/facets":
                 assert entry.query == {}, entry

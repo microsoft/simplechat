@@ -10,15 +10,21 @@
 // `sidebarMenuState` setting the classic interface already owns, so putting a group away
 // survives a reload and applies in both interfaces.
 //
-// Destinations are server-rendered pages and third-party sites, not client-side routes, so
-// these are plain anchors rather than react-router links. A NavLink would try to resolve
-// them inside the SPA and land on the home page.
+// Most destinations are server-rendered pages and third-party sites, not client-side routes,
+// so they are plain anchors: a NavLink would try to resolve them inside the SPA and land on
+// the home page. The exception is a custom page V2 can show in its own shell. Those are router
+// links to `/custom/<slug>`, so the rail stays on screen, the entry is highlighted while the
+// page is open, and following one is not a document load. A page that asks for its own tab, or
+// that the server says cannot be embedded, keeps its anchor to the classic page.
 
 import { useState } from 'react';
+import { NavLink } from 'react-router-dom';
 import { clsx } from 'clsx';
 import { ChevronDown, ExternalLink, FileText } from 'lucide-react';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useUserSettingsStore } from '../../stores/userSettingsStore';
+import { API_BASE } from '../../lib/apiClient';
+import { safeCustomPageHref } from '../../lib/customPageEmbed';
 import {
     isGroupVisible,
     normalizeNavigationUrl,
@@ -32,17 +38,38 @@ import {
     type SidebarMenuKey,
 } from '../../lib/sidebarMenuState';
 
+function entryClass(collapsed: boolean, active: boolean) {
+    return clsx(
+        'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
+        collapsed && 'justify-center px-0',
+        active
+            ? 'bg-accent-soft font-medium text-accent'
+            : 'text-text-2 hover:bg-surface-2 hover:text-text-1',
+    );
+}
+
 function NavAnchor({ link, collapsed }: { link: NavExtraLink; collapsed: boolean }) {
+    if (link.customPageSlug) {
+        return (
+            <NavLink
+                to={safeCustomPageHref(link.customPageSlug)}
+                title={link.label}
+                aria-label={collapsed ? link.label : undefined}
+                className={({ isActive }) => entryClass(collapsed, isActive)}
+            >
+                <FileText size={15} className="shrink-0" />
+                {!collapsed && <span className="truncate">{link.label}</span>}
+            </NavLink>
+        );
+    }
+
     return (
         <a
             href={normalizeNavigationUrl(link.href)}
             title={link.label}
+            aria-label={collapsed ? link.label : undefined}
             {...(link.newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
-            className={clsx(
-                'flex items-center gap-2.5 rounded-xl px-3 py-2 text-sm transition-colors',
-                'text-text-2 hover:bg-surface-2 hover:text-text-1',
-                collapsed && 'justify-center px-0',
-            )}
+            className={entryClass(collapsed, false)}
         >
             {link.newTab ? (
                 <ExternalLink size={15} className="shrink-0" />
@@ -164,6 +191,9 @@ export function NavExtras({ collapsed }: { collapsed: boolean }) {
 
     const showCustomPages = isGroupVisible(customPages);
     const showExternalLinks = isGroupVisible(externalLinks);
+    // A custom page can only be framed when the interface and the server share an origin, which
+    // is the deployment this rail is built for. A separately hosted interface keeps the anchors.
+    const embedAvailable = API_BASE === '';
 
     if (!showCustomPages && !showExternalLinks) {
         return null;
@@ -174,7 +204,7 @@ export function NavExtras({ collapsed }: { collapsed: boolean }) {
             {showCustomPages && customPages ? (
                 <NavExtraGroup
                     menuName={customPages.menu_name}
-                    links={toCustomPageLinks(customPages)}
+                    links={toCustomPageLinks(customPages, embedAvailable)}
                     stateKey="customPages"
                     collapsed={collapsed}
                 />

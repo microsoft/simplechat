@@ -50,6 +50,7 @@ in `theme.css`). No new packages, settings, API routes, or browser asset sources
 | `application/v2_ui/src/components/ui/SectionCard.tsx` | Admin's section card for surfaces outside Admin: header band, icon, title, facts, status chip. |
 | `application/v2_ui/src/components/workflows/WorkflowField.tsx` | Field rows, read-only values, paired switches, and the primary and dependent emphasis, built on `.admin-field`. |
 | `application/v2_ui/src/lib/workflowRunLink.ts` | `workflowListHref`, `workflowEditorHref` and the existing run links. |
+| `application/v2_ui/src/components/workflowActivity/WorkflowActivityLinks.tsx` | **Activity**, in the selected workflow's header, and **Open activity** on each run in the Runs tab. Both open the [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md) in a new tab (0.261.445). |
 
 `WorkflowFlowDialog.tsx` is removed: the Flow tab shows the saved definition with the same
 read-only `WorkflowFlowView`.
@@ -132,7 +133,11 @@ Open **My workspace > Workflows** in V2, or a group's **Workflows**. Search, or 
 (**Running**, **Needs attention**, **Completed**, **Disabled**) or trigger, then select a
 workflow. **Overview** summarises its settings, **Runs** lists its recent runs and their results,
 and **Flow** shows a structured workflow's saved definition. **Edit** opens the editor page;
-**Create workflow** opens it for a new workflow. See
+**Create workflow** opens it for a new workflow. A workflow that has run also offers
+**Activity** in its header, and each run in **Runs** offers **Open activity**: both open the
+run's timeline, tool calls and any saved Microsoft 365 email or invitation on the
+[Workflow Activity page](V2_WORKFLOW_ACTIVITY.md) in a new tab, as the classic interface does,
+so the workbench stays where it is. See
 [Create a workflow](../../guides/create-a-workflow.md#create-or-edit-in-v2) and
 [Trigger a workflow](../../guides/trigger-a-workflow.md).
 

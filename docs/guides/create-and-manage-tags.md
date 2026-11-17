@@ -48,6 +48,17 @@ Use tags when folders and file names are not enough: a document can belong to a 
 
 8. Choose **Add Tags (append to existing)**, **Remove Tags (remove specific tags)**, or **Replace All Tags (overwrite existing)**, then select **Apply to Selected Documents**.
 
+## Manage tags in the V2 interface
+
+In the V2 interface the tag vocabulary lives in its own **Tags** section beside **Documents** in the workspace navigation, for your own workspace, for a group and, from version **0.261.445**, for a public workspace.
+
+1. Open the workspace and choose **Tags**.
+2. Type a name in **New tag**, choose a colour and select **Create**. Names are trimmed and stored in lowercase.
+3. Select a tag's name to rename it; renaming onto a tag that already exists merges the two. Pick a colour on a tag and select **Save colour** to recolour it. The trash button deletes a tag and keeps its documents.
+4. Apply tags to documents from **Documents**; the Tags page links there.
+
+In a group or public workspace a change rewrites only each document's current version, so earlier versions keep their tags. Who can change the vocabulary follows the workspace's permissions. In a public workspace that is an Owner, Admin or DocumentManager while the workspace is active; everyone else, and managers of a locked or upload-disabled workspace, can browse the tags and see how many documents carry each one, with a note saying why they can't change them.
+
 ## Verify it worked
 
 The tag appears in **Existing Tags** with a count after assignment. **Folders**, **Folders + Cards**, and **Filter by Tags** can use it.

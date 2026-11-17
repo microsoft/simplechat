@@ -9,6 +9,10 @@
 // Tags are deliberately flat. A document carries as many as it needs and none of them nest,
 // which is what lets one document belong to several groupings at once -- the thing a folder
 // tree cannot express.
+//
+// One editor serves three scopes -- the personal workspace, a group and a public workspace -- by
+// taking the scope's reader and operations; who may change the vocabulary is always the
+// operations' own `manage_tags`, never a role check here.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
@@ -19,15 +23,21 @@ import {
     buildContextHandoffParams,
     type ContextHandoffState,
 } from '../../lib/chatContextHandoff';
-import { groupScope, PERSONAL_SCOPE } from '../../lib/chatContext';
+import { groupScope, PERSONAL_SCOPE, publicScope } from '../../lib/chatContext';
 import { clearContextTagCache } from '../../lib/contextMentions';
-import { createGroupDocumentReader, documentExplorerScopeKey, PERSONAL_DOCUMENT_READER, type DocumentReadAdapter } from '../../lib/documentReadAdapter';
 import {
-    createGroupDocumentOperations, PERSONAL_DOCUMENT_OPERATIONS, SEARCH_SYNC_PENDING_NOTICE, type DocumentOperationAdapter,
+    createGroupDocumentReader, createPublicDocumentReader, documentExplorerScopeKey, PERSONAL_DOCUMENT_READER,
+    type DocumentReadAdapter, type DocumentReadScope,
+} from '../../lib/documentReadAdapter';
+import {
+    createGroupDocumentOperations, createPublicDocumentOperations, PERSONAL_DOCUMENT_OPERATIONS,
+    SEARCH_SYNC_PENDING_NOTICE, type DocumentOperationAdapter,
     type TagMutationOutcome, type TagOperationError,
 } from '../../lib/documentOperations';
-import type { GroupWorkspaceContext } from '../../lib/workspaceContext';
+import type { GroupWorkspaceContext, PublicWorkspaceContext } from '../../lib/workspaceContext';
 import { groupWorkspacePath } from '../../lib/groupWorkspaceNavigation';
+import { publicWorkspacePath } from '../../lib/publicWorkspaceNavigation';
+import { usePublicWorkspaceLabels } from '../../lib/publicWorkspaceLabels';
 import { useBootstrapStore } from '../../stores/bootstrapStore';
 import { useChatStore } from '../../stores/chatStore';
 import { GlassButton, EmptyState, Skeleton } from '../../components/ui/primitives';
@@ -251,12 +261,34 @@ export function GroupTagsSection({
         canChat={context.document_permissions.can_chat} reader={reader} operations={operations} />;
 }
 
+/**
+ * The public workspace's Tags: the same vocabulary editor, run against the immutable
+ * `/api/public-workspaces/<id>/documents/tags` routes. Who may change it is the context's own
+ * `manage_tags` operation, which the server grants only to a manager of an active workspace.
+ */
+export function PublicTagsSection({
+    context, ...props
+}: Omit<TagsSectionProps, 'documentsEnabled' | 'reader' | 'operations'> & { context: PublicWorkspaceContext }) {
+    const reader = useMemo(() => createPublicDocumentReader(
+        context.scope.id, context.workspace.name, context.document_queries,
+    ), [context.scope.id, context.workspace.name, context.document_queries]);
+    const operations = useMemo(() => createPublicDocumentOperations(
+        { kind: 'public', id: context.scope.id, name: context.workspace.name }, context.document_management,
+    ), [context.scope.id, context.workspace.name, context.document_management]);
+    return <TagsSection {...props} documentsEnabled={context.document_permissions.can_view}
+        canChat={context.document_permissions.can_chat} reader={reader} operations={operations} />;
+}
+
 export function TagsSection({
     reader = PERSONAL_DOCUMENT_READER, operations, ...props
 }: TagsSectionProps) {
     const viewerId = useBootstrapStore((state) => state.data?.user.id);
-    const resolved = useMemo(() => operations ?? (reader.scope.kind === 'group'
-        ? createGroupDocumentOperations(reader.scope, undefined) : PERSONAL_DOCUMENT_OPERATIONS), [reader, operations]);
+    const resolved = useMemo(() => {
+        if (operations) return operations;
+        if (reader.scope.kind === 'group') return createGroupDocumentOperations(reader.scope, undefined);
+        if (reader.scope.kind === 'public') return createPublicDocumentOperations(reader.scope, undefined);
+        return PERSONAL_DOCUMENT_OPERATIONS;
+    }, [reader, operations]);
     if (!viewerId) return null;
     const scopeKey = documentExplorerScopeKey(viewerId, reader.scope);
     if (documentExplorerScopeKey(viewerId, resolved.scope) !== scopeKey) return (
@@ -265,11 +297,55 @@ export function TagsSection({
     return <ScopedTagsSection key={scopeKey} reader={reader} operations={resolved} {...props} />;
 }
 
+/**
+ * What each scope says about a tag change. The group's and the personal wording is what shipped; the
+ * public workspace's names its own label, which an administrator can rename, and says what the server
+ * does: `change_public_document_tag` rewrites only each document's current version.
+ */
+interface TagScopeCopy {
+    intro: string;
+    confirmed: (title: string) => string;
+    deleteTarget: string;
+    deleteNote: string;
+    /** A colour is a vocabulary write on a shared scope, so the picker waits for an explicit save. */
+    confirmColour: boolean;
+}
+
+function tagScopeCopy(scope: DocumentReadScope, publicNoun: string): TagScopeCopy {
+    if (scope.kind === 'group') {
+        return {
+            intro: 'Group vocabulary changes affect only current documents owned by this group. Tags on incoming shares and older revisions remain unchanged.',
+            confirmed: (title) => `${title} confirmed for this group's owned documents.`,
+            deleteTarget: scope.name,
+            deleteNote: 'Only current owned documents are changed. Incoming shares and historical revisions are not rewritten.',
+            confirmColour: true,
+        };
+    }
+    if (scope.kind === 'public') {
+        return {
+            intro: `Vocabulary changes affect only the current version of this ${publicNoun}'s documents. Earlier versions keep their tags.`,
+            confirmed: (title) => `${title} confirmed for this ${publicNoun}'s current documents.`,
+            deleteTarget: scope.name,
+            deleteNote: 'Only current documents are changed. Earlier versions are not rewritten.',
+            confirmColour: true,
+        };
+    }
+    return {
+        intro: 'The vocabulary your documents are filed under. Tags are flat, so a document can carry as many as it needs and appear under each of them.',
+        confirmed: (title) => `${title} confirmed.`,
+        deleteTarget: 'My workspace',
+        deleteNote: 'The tag will be removed from documents that carry it.',
+        confirmColour: false,
+    };
+}
+
 function ScopedTagsSection({
     documentsEnabled, reader, operations, canChat = true, interactionDisabled = false,
     onDirtyChange, onBusyChange,
 }: TagsSectionProps & { reader: DocumentReadAdapter; operations: DocumentOperationAdapter }) {
     const navigate = useNavigate();
+    const labels = usePublicWorkspaceLabels();
+    const copy = tagScopeCopy(reader.scope, labels.lower_singular);
     const [tags, setTags] = useState<WorkspaceTag[]>([]);
     const [loading, setLoading] = useState(true);
     const [busy, setBusy] = useState(false);
@@ -286,7 +362,6 @@ function ScopedTagsSection({
     const mutationBusy = useRef(false);
     const latest = useRef({ operations, interactionDisabled, loading, error });
     latest.current = { operations, interactionDisabled, loading, error };
-    const isGroup = reader.scope.kind === 'group';
     const canManage = operations.supported.has('manage_tags');
     const paused = interactionDisabled || loading || Boolean(error);
     const dirty = Boolean(newName.trim() || dirtyTags.size || deleting);
@@ -368,7 +443,7 @@ function ScopedTagsSection({
             const partial = outcome.errors.length > 0 || outcome.vocabularyRetained;
             setFeedback({
                 title: partial ? `${title} is incomplete. ${outcome.documentsUpdated} document updates were confirmed; retained vocabulary and failed items need attention.`
-                    : isGroup ? `${title} confirmed for this group's owned documents.` : `${title} confirmed.`,
+                    : copy.confirmed(title),
                 errors: outcome.errors, partial,
             });
             const refreshed = await reload();
@@ -398,11 +473,13 @@ function ScopedTagsSection({
             toast.error('Chat is not currently available for this tag selection.');
             return;
         }
-        const scope = reader.scope.kind === 'group' ? groupScope(reader.scope) : PERSONAL_SCOPE;
+        const scope = reader.scope.kind === 'group' ? groupScope(reader.scope)
+            : reader.scope.kind === 'public' ? publicScope(reader.scope) : PERSONAL_SCOPE;
         const query = buildContextHandoffParams({
             tags: [tag.name],
             docScope: reader.scope.kind,
             groupId: reader.scope.kind === 'group' ? reader.scope.id : undefined,
+            workspaceId: reader.scope.kind === 'public' ? reader.scope.id : undefined,
         });
         const state: ContextHandoffState = {
             contextTags: [{ name: tag.name, scope }],
@@ -447,18 +524,17 @@ function ScopedTagsSection({
 
     return (
         <div className="space-y-4">
-            <SectionIntro
-                title="Tags"
-                description={isGroup
-                    ? 'Group vocabulary changes affect only current documents owned by this group. Tags on incoming shares and older revisions remain unchanged.'
-                    : 'The vocabulary your documents are filed under. Tags are flat, so a document can carry as many as it needs and appear under each of them.'}
-            />
+            <SectionIntro title="Tags" description={copy.intro} />
             {!canManage ? <p className="text-sm text-text-3">Tag management is not available with this workspace's current permissions. You can still browse its vocabulary.</p> : null}
 
             {documentsEnabled ? (
                 <p className="text-xs text-text-3">
                     Apply tags from{' '}
-                    <Link to={reader.scope.kind === 'group' ? groupWorkspacePath(reader.scope.id, 'documents') : '/workspace/documents'} className="text-accent underline underline-offset-2">
+                    <Link
+                        to={reader.scope.kind === 'group' ? groupWorkspacePath(reader.scope.id, 'documents')
+                            : reader.scope.kind === 'public' ? publicWorkspacePath(reader.scope.id, 'documents')
+                                : '/workspace/documents'}
+                        className="text-accent underline underline-offset-2">
                         Documents
                     </Link>
                     , where you can also drag files onto a tag to file them.
@@ -556,7 +632,7 @@ function ScopedTagsSection({
                                 canManage={canManage}
                                 canChat={canChat}
                                 interactionDisabled={paused}
-                                confirmColour={isGroup}
+                                confirmColour={copy.confirmColour}
                                 onDirtyChange={reportRowDirty}
                                 existingNames={names}
                                 onRename={(name) => onRename(tag, name)}
@@ -578,15 +654,13 @@ function ScopedTagsSection({
             )}
             {deleting ? <ConfirmDialog title="Delete tag" confirmLabel="Delete tag" busy={busy}
                 confirmDisabled={!canManage || paused}
-                description={`Remove "${deleting.name}" from ${reader.scope.kind === 'group' ? reader.scope.name : 'My workspace'}? Documents themselves are kept.`}
+                description={`Remove "${deleting.name}" from ${copy.deleteTarget}? Documents themselves are kept.`}
                 onClose={() => {
                     if (mutationBusy.current) { toast.info('Wait for the tag operation to finish. It has not been cancelled.'); return; }
                     setDeleting(null);
                 }}
                 onConfirm={() => void onDelete(deleting)}>
-                <p className="text-xs text-text-2">{isGroup
-                    ? 'Only current owned documents are changed. Incoming shares and historical revisions are not rewritten.'
-                    : 'The tag will be removed from documents that carry it.'}</p>
+                <p className="text-xs text-text-2">{copy.deleteNote}</p>
                 {mutationError ? <SectionError message={mutationError} /> : null}
                 {feedback ? <OperationFeedback title={feedback.title} errors={feedback.errors} /> : null}
             </ConfirmDialog> : null}

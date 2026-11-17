@@ -20,6 +20,7 @@ import {
 } from './ControlCenterPrimitives';
 import { EmptyState, GlassButton, GlassPanel } from '../ui/primitives';
 import { toast } from '../../stores/toastStore';
+import { useReloadOnDataRefresh } from './refreshContext';
 
 interface Restriction {
     status: 'allow' | 'deny';
@@ -136,6 +137,12 @@ export function UsersSection() {
     const [error, setError] = useState<string | null>(null);
     const [freshness, setFreshness] = useState<UsersResponse['metrics_freshness'] | null>(null);
     const [reload, setReload] = useState(0);
+    // The open drawer shows figures from the same snapshots, so it reads again with the list.
+    const [detailReload, setDetailReload] = useState(0);
+    useReloadOnDataRefresh(() => {
+        setReload((value) => value + 1);
+        setDetailReload((value) => value + 1);
+    });
     const [selectedTab, setSelectedTab] = useState<DetailTab>('overview');
     const [detail, setDetail] = useState<UserDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
@@ -236,7 +243,7 @@ export function UsersSection() {
                 if (!controller.signal.aborted) setDetailLoading(false);
             });
         return () => controller.abort();
-    }, [selectedUserId]);
+    }, [selectedUserId, detailReload]);
 
     const updateParam = useCallback((key: string, value: string) => {
         setParam('page', null);

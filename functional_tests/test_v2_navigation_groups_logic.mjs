@@ -1,8 +1,9 @@
 // test_v2_navigation_groups_logic.mjs
 //
 // Runtime test for the V2 rail's administrator-configured navigation groups.
-// Version: 0.261.419
+// Version: 0.261.445
 // Implemented in: 0.261.047
+// Updated in: 0.261.445 (same-tab custom pages that V2 embeds are router links)
 //
 // Custom Pages and External Links are configured in Admin Settings and had no
 // representation in the V2 rail at all, so a deployment that had set them up saw none of
@@ -13,17 +14,18 @@
 // The companion test, test_v2_bootstrap_branding_and_navigation.py, proves the server
 // sends the groups. This file executes the client's decisions about them, and
 // test_v2_sidebar_menu_state_logic.mjs covers whether a group is drawn open or closed.
+// test_v2_custom_page_host_logic.mjs covers the page a router link opens.
 //
 // Run directly with `node functional_tests/test_v2_navigation_groups_logic.mjs`. Requires
 // Node 22.6 or newer, which strips the TypeScript types so the real module is imported.
 
+import './test_support/tsResolve.mjs';
 import assert from 'node:assert/strict';
-import {
-    isGroupVisible,
-    normalizeNavigationUrl,
-    toCustomPageLinks,
-    toExternalLinks,
-} from '../application/v2_ui/src/lib/navigationGroups.ts';
+
+// Imported dynamically, after the resolver above has registered: a static import is resolved
+// before the resolver runs, and navigationGroups.ts imports its sibling modules extensionless.
+const { isGroupVisible, normalizeNavigationUrl, toCustomPageLinks, toExternalLinks } =
+    await import('../application/v2_ui/src/lib/navigationGroups.ts');
 
 const checks = [];
 function check(name, fn) {
@@ -93,6 +95,51 @@ check('custom pages keep their own new-tab choice', () => {
 check('a custom page with no label falls back to its slug', () => {
     const [link] = toCustomPageLinks(group([page('handbook', { label: '' })]));
     assert.equal(link.label, 'handbook');
+});
+
+check('a same-tab embeddable page is opened inside V2', () => {
+    const [link] = toCustomPageLinks(group([page('handbook', { embeddable: true })]));
+    assert.equal(link.customPageSlug, 'handbook');
+    // The classic address stays on the entry, for anything that still needs it.
+    assert.equal(link.href, '/custom/handbook');
+    assert.equal(link.newTab, false);
+});
+
+check('a page the server did not mark embeddable keeps its classic link', () => {
+    // An entry with no flag is what an older server sends, and a Python page that has not
+    // opted in sends false. Neither may be framed, because the page would draw the classic
+    // navigation inside the frame.
+    const links = toCustomPageLinks(
+        group([page('legacy'), page('python', { embeddable: false })]),
+    );
+    assert.deepEqual(
+        links.map((link) => link.customPageSlug),
+        [undefined, undefined],
+    );
+});
+
+check('a page that asks for its own tab keeps its classic link even when embeddable', () => {
+    const [link] = toCustomPageLinks(
+        group([page('policy', { embeddable: true, open_in_new_tab: true })]),
+    );
+    assert.equal(link.customPageSlug, undefined);
+    assert.equal(link.newTab, true);
+});
+
+check('no page is opened inside V2 when the interface is hosted on another origin', () => {
+    const links = toCustomPageLinks(group([page('handbook', { embeddable: true })]), false);
+    assert.equal(links[0].customPageSlug, undefined);
+});
+
+check('a slug V2 cannot put in an address is never made a router link', () => {
+    const links = toCustomPageLinks(
+        group([
+            page('Handbook', { embeddable: true }),
+            page('a/b', { embeddable: true }),
+            page('x'.repeat(65), { embeddable: true }),
+        ]),
+    );
+    assert.ok(links.every((link) => link.customPageSlug === undefined));
 });
 
 check('external links always open in a new tab', () => {

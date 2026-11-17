@@ -83,6 +83,15 @@ reloads them. Locked cards and Settings, Activity, and Statistics stay uncounted
   Owners, Admins and DocumentManagers could. From version **0.261.167**, an empty workspace tells them who
   can add documents, or why no one can right now, rather than sending them to
   the classic page.
+- **Update older documents** (version **0.261.445**). When some documents were
+  uploaded before progress tracking, the workspace's Owner, Admins and
+  DocumentManagers see an **Update older public workspace documents** notice at
+  the top of Documents while the workspace is active. **Update now** updates
+  them and reports the result, naming any document it couldn't update;
+  **Maybe later** hides the notice until you open Documents again. The update
+  clears the title, authors, keywords and abstract of the documents it updates,
+  so extract or edit their metadata afterwards. Documents no longer has a
+  **Classic tools** button.
 - **Review publish requests** (version **0.261.134**). When someone asks to
   publish a generated file into the workspace, the request waits in the
   explorer. A reviewer approves, rejects, or withdraws it without leaving the
@@ -132,11 +141,45 @@ sources. A new ordinary chat starts with document search off. See the
 From version **0.261.185**, the Owner and Admins manage the workspace's
 **Settings** (name, description, color and logo for the Owner; file downloads
 and retention for both), read its **Activity**, and chart and export its
-**Statistics**, which DocumentManagers can also see, under **Manage**. Deleting
-the workspace still happens on the classic page, and removes only the workspace
-record: its documents and prompts stay behind. See
+**Statistics**, which DocumentManagers can also see, under **Manage**. From
+version **0.261.445** the Owner also deletes the workspace in V2, from the
+bottom of Settings. It shows how many current documents the workspace holds and
+won't delete one that still holds any; for an empty one it asks you to confirm,
+says that everyone loses access right away and that its prompts, identities and
+file sources are left behind rather than deleted with it, then deletes the
+workspace and returns you to the list. Save or discard unsaved settings edits
+first; if the delete is refused, the dialog says why and you can try again. See
 [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}) and
 [Data Lifecycle settings]({{ '/admin/data-lifecycle/' | relative_url }}).
+
+From version **0.261.445**, an Owner or Admin can keep managing a public
+workspace in V2 after an administrator has made it inactive, or when it has a
+status SimpleChat doesn't recognize, so there's no need to go to the classic
+page for it. **Members**, **Settings**, **Activity** and **Statistics** stay
+available to them, and DocumentManagers keep **Statistics**. In **Members** you
+can remove people, decide requests to manage documents and, as the Owner, hand
+over ownership. In **Settings** you can still change file downloads and
+retention, and the Owner can delete an empty workspace. Documents, Tags,
+Prompts and the connection sections stay closed, with the status as the reason,
+because the workspace can't be viewed, and nobody can chat with an inactive one.
+A locked workspace works the same way for these sections, while its documents
+stay readable.
+
+In a locked, inactive or unrecognized-status workspace, adding members,
+importing members from a CSV file and changing roles are switched off, and a
+note says so, and the Owner's name, description, colour and logo are read-only.
+To change them, ask an administrator to make the workspace active again in
+Control Center. The classic page doesn't have these limits for the profile and
+for adding members.
+
+From version **0.261.445**, a public workspace's **Tags** are in V2 as well, under
+**Documents** in the workspace navigation. Everyone who can read the workspace
+can browse its tags and see how many documents carry each one. Owners, Admins
+and DocumentManagers of an active workspace can also create, recolour, rename,
+merge and delete tags; in a locked or upload-disabled workspace the page says
+that tag management isn't available and offers browsing only. A change rewrites
+only each document's current version, so earlier versions keep their tags. See
+[Create and manage tags]({{ '/guides/create-and-manage-tags/' | relative_url }}).
 
 Sharing a public document with other workspaces is not available.
 
@@ -193,6 +236,7 @@ The selected public workspace shows owner, description, role, documents, and pro
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
 | You cannot upload or manage prompts | Your role does not allow management | Ask the public workspace owner to update your role. |
+| You cannot add members, import a CSV file, change roles or edit the name and logo | The workspace is locked, inactive or has a status SimpleChat doesn't recognize | Ask an administrator to make the workspace active again in Control Center. Removing members and deciding requests still work. |
 | Public workspace navigation is missing | Public workspaces are disabled | Ask an admin to enable `enable_public_workspaces`. |
 
 ## Related

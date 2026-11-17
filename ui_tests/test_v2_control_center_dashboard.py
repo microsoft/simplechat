@@ -272,6 +272,9 @@ class DashboardFixture:
                                     "sample_limit": 5000, "truncated": False})
             else:
                 route.fulfill(json={"items": [], "next_cursor": None, "snapshot": "fixture"})
+        elif path == "/api/admin/control-center/refresh-status" and request.method == "GET":
+            # The refresh strip every section shows a full Control Center administrator.
+            route.fulfill(json={"last_refresh": None, "auto_refresh_enabled": False})
         elif self.page.url.startswith(f"{ORIGIN}/v2/chat") and path.startswith("/api/"):
             # The chat page loads its own lists; empty answers keep it on a blank new chat.
             self.chat_requests.append(f"{request.method} {path}")

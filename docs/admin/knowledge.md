@@ -466,10 +466,19 @@ schedule.
   runs are skipped, so an empty list with the restriction on leaves no workspace of
   that type able to manage or schedule a sync.
 
-None of these rules apply to administrators managing sources on a workspace's behalf.
-The classic admin page has a tool for that on its File Sync card: search for a user,
-group, or public workspace and manage its sources directly. V2 does not offer that tool
-yet.
+None of these rules apply to administrators managing sources on a workspace's behalf, though
+the workspace type's own switch, File Sync and Redis Cache must still be on. The File Sync card
+has a tool for that, **Manage sources for someone else**, below the card's panels: search for a
+user, group, or public workspace, or paste its ID, and open **Manage sources** to list, add,
+test, sync, and delete its sources. It reads the saved settings, so turn the workspace type on and
+save before using it.
+
+Changing, syncing, or deleting a source that already exists, and reading its run history, follow
+the workspace's own role checks, so they succeed only for a group or public workspace you also
+manage, and not for another user's personal sources; the server's refusal is shown. Adding a
+source works for any target. The engineering note
+`docs/explanation/features/V2_ADMIN_FILE_SYNC_TARGETS.md` in the repository lists the routes
+behind it.
 
 #### Run limits
 

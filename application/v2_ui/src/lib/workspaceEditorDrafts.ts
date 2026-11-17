@@ -197,6 +197,30 @@ export function seedNewWorkspaceActionDraft(
     return path;
 }
 
+/**
+ * Starts the new-agent or new-action editor on a copy of an existing record, as Duplicate does.
+ *
+ * ``baseline`` is the editor's empty draft, so the copy counts as unsaved. The keys are the ones
+ * the editors build for a plain new record -- `personal:new` for agents and `["personal","new",null]`
+ * for actions -- and a functional test pins both against the editor pages. Someone's own unsaved
+ * new draft is never replaced: the copy is refused and `false` says so, so the caller can ask them
+ * to finish or discard it first.
+ */
+export function seedDuplicateEditorDraft<T extends Configuration>(
+    kind: EditorKind,
+    draft: T,
+    baseline: T,
+    workspaceScope: EditorWorkspaceScope = PERSONAL_EDITOR_SCOPE,
+): boolean {
+    const key = kind === 'agents' ? 'personal:new' : JSON.stringify(['personal', 'new', null]);
+    const cacheKey = JSON.stringify([ownerKey(), ...editorScopeSegments(workspaceScope), kind, key]);
+    const existing = drafts.get(cacheKey);
+    if (existing && !sameEditorValue(existing.draft, existing.baseline)) return false;
+    drafts.set(cacheKey, { draft: structuredClone(draft), baseline, original: null });
+    syncDraftUnloadProtection();
+    return true;
+}
+
 /** Forgets a drafted-action handoff, as when the person starts an unrelated new action. */
 export function clearWorkspaceActionHandoff(
     returnPath: string,

@@ -4,15 +4,19 @@
 // Actions are edited in the same V2 action editor workspaces use, at /admin/actions/<id>,
 // which carries the connector catalogue, MCP preconfigurations and presets, connection
 // tests and Key Vault handling. This list adds what the classic admin table offered around
-// it: creating one, enabling or disabling one, and deleting one. Each change saves on its
-// own rather than through the settings save bar, because these are records, not settings.
+// it: creating one (from scratch or as a copy of another), enabling or disabling one, and
+// deleting one. Each change except a copy saves on its own rather than through the settings
+// save bar, because these are records, not settings. A copy opens in the editor as an unsaved
+// draft with its stored credentials left out, so the editor's own checks say what it still needs.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { AlertCircle, Loader2, Pencil, Plug, Plus, Power, RefreshCw, Trash2 } from 'lucide-react';
+import { AlertCircle, Copy, Loader2, Pencil, Plug, Plus, Power, RefreshCw, Trash2 } from 'lucide-react';
 import { api } from '../../lib/apiClient';
+import { describeDuplicate, duplicateActionDraft } from '../../lib/adminDuplicate';
 import { fetchGlobalActions, GLOBAL_ACTION_WORKBENCH } from '../../lib/actionWorkbench';
-import { actionTypeLabel } from '../../lib/workspaceActionLogic';
+import { actionTypeLabel, createActionDraft } from '../../lib/workspaceActionLogic';
+import { seedDuplicateEditorDraft } from '../../lib/workspaceEditorDrafts';
 import { GLOBAL_ACTIONS_BASE_PATH, type ActionConfiguration } from '../../lib/workspaceAuthoring';
 import { toast } from '../../stores/toastStore';
 import { GlassButton } from '../ui/primitives';
@@ -88,6 +92,32 @@ export function GlobalActionsManager({ help }: { help?: string }) {
         return `${actionLabel(action)} deleted.`;
     });
 
+    /**
+     * Open the editor on a copy of an action.
+     *
+     * Built from a fresh read of the action, because only the editor read says which fields hold
+     * stored credentials, and those are left out. A connector that needs its key then fails the
+     * editor's own checks until a new one is entered, rather than being refused by the server
+     * with a message that cannot say why.
+     */
+    const duplicate = async (action: ActionConfiguration) => {
+        setBusy(`duplicate:${action.id}`);
+        setError(null);
+        try {
+            const resource = await GLOBAL_ACTION_WORKBENCH.fetchEditor(action.id, 'global');
+            const copy = duplicateActionDraft(resource, (actions ?? []).map((item) => item.name));
+            if (!seedDuplicateEditorDraft('actions', copy.draft, createActionDraft(), GLOBAL_ACTION_WORKBENCH.draftScope)) {
+                throw new Error('You have an unsaved new action. Finish or discard it from New action, then duplicate again.');
+            }
+            toast.info(describeDuplicate(actionLabel(action), copy.omittedSecrets));
+            navigate(`${GLOBAL_ACTIONS_BASE_PATH}/new`);
+        } catch (cause) {
+            setError(failure(cause, 'The action could not be duplicated.'));
+        } finally {
+            setBusy(null);
+        }
+    };
+
     return (
         <div className="min-w-0 space-y-3 py-3" data-testid="global-actions-manager">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -160,6 +190,9 @@ export function GlobalActionsManager({ help }: { help?: string }) {
                                     <RowAction icon={<Power size={15} />} label={`${enabled ? 'Disable' : 'Enable'} ${label}`}
                                         busy={busy === `enabled:${action.id}`} disabled={busy !== null}
                                         onClick={() => void toggleEnabled(action)} />
+                                    <RowAction icon={<Copy size={15} />} label={`Duplicate ${label}`}
+                                        busy={busy === `duplicate:${action.id}`} disabled={busy !== null}
+                                        onClick={() => void duplicate(action)} />
                                     <RowAction icon={<Pencil size={15} />} label={`Edit ${label}`} onClick={() => navigate(editorPath)} />
                                     <ConfirmAction icon={<Trash2 size={15} />} label={`Delete ${label}`} confirmLabel="Delete action"
                                         busy={busy === `delete:${action.id}`} disabled={busy !== null}

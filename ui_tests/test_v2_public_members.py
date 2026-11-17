@@ -1,8 +1,10 @@
 # test_v2_public_members.py
 """
 Production-SPA coverage for the native V2 public workspace Members section (M10A).
-Version: 0.261.180
+Version: 0.261.445
 Implemented in: 0.261.179
+An owner or admin keeps Members in a locked, inactive or unrecognized-status workspace, with adding,
+importing and role changes withheld and explained: 0.261.445
 
 Exercises the real Members section -- the shared, scope-driven section (`MembersSection.tsx`) given
 the public scope by `PublicMembersSection.tsx` -- in its public "Manage" group, against closed
@@ -29,13 +31,15 @@ bare-string document manager tolerated, a malformed envelope as a hard error, an
 both breakpoints with a member at the server's text maxima.
 """
 
+import os
 import re
+from pathlib import Path
 
 import pytest
 from playwright.sync_api import expect
 
 from ui_tests.fixtures.workspace_authoring import ORIGIN, OWNER_ID  # noqa: F401
-from ui_tests.fixtures.public_workspace import PUBLIC_INACTIVE_REASON
+from ui_tests.fixtures.public_workspace import PUBLIC_INACTIVE_REASON, PUBLIC_STATUS_UNKNOWN_REASON
 from ui_tests.fixtures.public_members import (  # noqa: F401
     PublicMembersFixture, public_members_ui,
     ALREADY_MEMBER_MESSAGE, DMITRI, LEE, LONG_NAME, MAYA, MEMBERSHIP_PERMISSION_MESSAGE, NIA, NORA,
@@ -56,9 +60,27 @@ LAYOUTS = [
 
 WORKSPACE = "pub-a"
 WORKSPACE_NAME = "Research library"
+SCREENSHOTS = Path(os.environ.get(
+    "SIMPLECHAT_UI_SCREENSHOTS", str(Path(__file__).parent / "artifacts" / "public-members"),
+))
 MEMBERS_PATH = "/api/public-workspaces/pub-a/membership/members"
 REQUESTS_PATH = "/api/public-workspaces/pub-a/membership/requests"
 OWNER_PATH = "/api/public-workspaces/pub-a/membership/owner"
+
+# What the Members section says in place of Add member, Import CSV and the role selects when the server
+# withholds them, by the status the page shows. The apostrophes are the typographic ones the page renders.
+STILL_WORKS = "Removing members, reviewing requests to join and, for the owner, transferring ownership still work."
+ADD_BLOCKED_NOTICES = {
+    "locked": f"This workspace is locked, so members can\u2019t be added or imported and roles can\u2019t be changed. {STILL_WORKS}",
+    "inactive": f"This workspace is inactive, so members can\u2019t be added or imported and roles can\u2019t be changed. {STILL_WORKS}",
+    "unknown": f"This workspace\u2019s status isn\u2019t recognized, so members can\u2019t be added or imported and roles can\u2019t be changed. {STILL_WORKS}",
+}
+# The raw status a test stores, the status the page shows (a value this version doesn't recognize is
+# "unknown"), and the reason the section gives when it is closed.
+BARRING_STATUSES = [
+    pytest.param("inactive", "inactive", PUBLIC_INACTIVE_REASON, id="inactive"),
+    pytest.param("frozen", "unknown", PUBLIC_STATUS_UNKNOWN_REASON, id="unrecognized"),
+]
 
 
 # --------------------------------------------------------------------------
@@ -96,6 +118,11 @@ def alert(ui, text):
 
 def status_text(ui, text):
     return ui.page.get_by_text(text, exact=True)
+
+
+def blocked_notice(ui):
+    """The note that explains Add member, Import CSV and the role selects being withheld."""
+    return ui.page.get_by_test_id("members-add-blocked")
 
 
 def wait_until(ui, predicate, timeout_ms=5000):
@@ -256,24 +283,134 @@ def test_a_document_manager_sees_the_list_read_only_and_no_emails(public_members
     assert not calls(ui, "GET", REQUESTS_PATH), "Only the owner and admins read the pending requests."
 
 
-def test_a_locked_workspace_hides_adding_but_keeps_the_rest(public_members_ui):
+def test_a_locked_workspace_hides_adding_and_role_changes_but_keeps_the_rest(public_members_ui):
+    """The server's membership policy needs an active or upload-disabled workspace to add a member or
+    change a role, so a locked one offers neither and says why, and keeps the controls it still allows:
+    removing a member, deciding a request and, for the owner, handing over ownership."""
     ui, page = public_members_ui, public_members_ui.page
     ui.set_viewer_role(WORKSPACE, "Owner", status="locked")
     open_members(ui)
-    expect(row(ui, "Maya Manager").get_by_label("Role for Maya Manager")).to_be_visible()
-    expect(row(ui, "Maya Manager").get_by_role("button", name="Remove Maya Manager", exact=True)).to_be_visible()
+    expect(blocked_notice(ui)).to_have_text(ADD_BLOCKED_NOTICES["locked"])
+    maya = row(ui, "Maya Manager")
+    expect(maya.get_by_label("Role for Maya Manager")).to_have_count(0)
+    expect(maya.get_by_text("Document manager", exact=True)).to_be_visible()
+    expect(maya.get_by_role("button", name="Remove Maya Manager", exact=True)).to_be_visible()
+    expect(row(ui, "Olivia Admin").get_by_role("button", name="Make Olivia Admin the owner", exact=True)).to_be_visible()
     expect(request_row(ui, "Priya Pending")).to_be_visible()
     expect(page.get_by_role("button", name="Add member", exact=True)).to_have_count(0)
     expect(page.get_by_role("button", name="Import CSV", exact=True)).to_have_count(0)
+    # A role can't be changed in bulk either, though a member can still be selected and removed.
+    maya.get_by_role("checkbox", name="Select Maya Manager", exact=True).check()
+    selected = page.get_by_role("region", name="Selected members", exact=True)
+    expect(selected.get_by_role("button", name="Remove selected", exact=True)).to_be_visible()
+    expect(selected.get_by_label("New role for the selected members")).to_have_count(0)
+    expect(selected.get_by_role("button", name="Change role", exact=True)).to_have_count(0)
 
 
-def test_an_inactive_workspace_offers_no_members_section(public_members_ui):
+def test_an_upload_disabled_workspace_still_takes_members_and_role_changes(public_members_ui):
+    ui, page = public_members_ui, public_members_ui.page
+    ui.set_viewer_role(WORKSPACE, "Owner", status="upload_disabled")
+    open_members(ui)
+    expect(blocked_notice(ui)).to_have_count(0)
+    expect(page.get_by_role("button", name="Add member", exact=True)).to_be_visible()
+    expect(page.get_by_role("button", name="Import CSV", exact=True)).to_be_visible()
+    expect(row(ui, "Maya Manager").get_by_label("Role for Maya Manager")).to_be_visible()
+
+
+@pytest.mark.parametrize("role", ["Owner", "Admin"])
+@pytest.mark.parametrize("raw,shown,reason", BARRING_STATUSES)
+def test_the_owner_and_admins_keep_members_where_the_status_bars_viewing(public_members_ui, role, raw, shown, reason):
+    """The classic manage page keeps the member list for an owner and an admin of an inactive workspace,
+    and the membership routes check no status except to add a member or change a role. So the section
+    opens -- the list, the requests, removal and, for the owner, a transfer -- with Add member, Import
+    CSV and the role selects withheld, exactly where the server refuses them, and a note saying why."""
+    ui, page = public_members_ui, public_members_ui.page
+    ui.set_viewer_role(WORKSPACE, role, status=raw)
+    open_members(ui)
+    expect(page.get_by_text("Members is not available", exact=True)).to_have_count(0)
+    expect(blocked_notice(ui)).to_have_text(ADD_BLOCKED_NOTICES[shown])
+    expect(page.get_by_role("button", name="Add member", exact=True)).to_have_count(0)
+    expect(page.get_by_role("button", name="Import CSV", exact=True)).to_have_count(0)
+    maya = row(ui, "Maya Manager")
+    expect(maya.get_by_label("Role for Maya Manager")).to_have_count(0)
+    expect(maya.get_by_text("Document manager", exact=True)).to_be_visible()
+    expect(maya.get_by_role("button", name="Remove Maya Manager", exact=True)).to_be_visible()
+    expect(request_row(ui, "Priya Pending").get_by_role("button", name="Approve Priya Pending", exact=True)).to_be_visible()
+    olivia_owner = row(ui, "Olivia Admin").get_by_role("button", name="Make Olivia Admin the owner", exact=True)
+    expect(olivia_owner).to_have_count(1 if role == "Owner" else 0)
+    # Only the owner and admins see members' emails, here as everywhere.
+    expect(row(ui, "Olivia Admin").get_by_text(OLIVIA["email"], exact=True)).to_be_visible()
+    assert not calls(ui, "POST", MEMBERS_PATH) and not calls(ui, "PATCH", f"{MEMBERS_PATH}/{MAYA['userId']}")
+    assert_no_foreign_membership_traffic(ui)
+
+
+@pytest.mark.parametrize("raw,shown,reason", BARRING_STATUSES)
+def test_removing_and_deciding_requests_work_where_the_status_bars_viewing(public_members_ui, raw, shown, reason):
+    """What the section leaves open there works: it is the same route the server answers in every status."""
+    ui = public_members_ui
+    ui.set_viewer_role(WORKSPACE, "Owner", status=raw)
+    open_members(ui)
+    row(ui, "Lee Librarian").get_by_role("button", name="Remove Lee Librarian", exact=True).click()
+    dialog(ui, "Remove Lee Librarian?").get_by_role("button", name="Remove member", exact=True).click()
+    expect(status_text(ui, "Lee Librarian was removed from the public workspace.")).to_be_visible()
+    expect(row(ui, "Lee Librarian")).to_have_count(0)
+    request_row(ui, "Priya Pending").get_by_role("button", name="Approve Priya Pending", exact=True).click()
+    expect(status_text(ui, "Priya Pending was added to the public workspace.")).to_be_visible()
+    expect(row(ui, "Priya Pending")).to_be_visible()
+    request_row(ui, "Sam Seeker").get_by_role("button", name="Reject Sam Seeker", exact=True).click()
+    expect(status_text(ui, "Sam Seeker's request to join was rejected.")).to_be_visible()
+    assert len(calls(ui, "DELETE", f"{MEMBERS_PATH}/{LEE['userId']}")) == 1
+    # The notice stays, and the people who joined are still not given a role to change.
+    expect(blocked_notice(ui)).to_have_text(ADD_BLOCKED_NOTICES[shown])
+    expect(row(ui, "Priya Pending").get_by_label("Role for Priya Pending")).to_have_count(0)
+
+
+def test_handing_over_an_inactive_workspace_closes_the_section_for_its_old_owner(public_members_ui):
+    """After a transfer the old owner is a Document manager, who isn't kept the Members section where
+    the status bars viewing: the page re-reads its context and says why, rather than leaving a list
+    open that the new role may not see."""
     ui, page = public_members_ui, public_members_ui.page
     ui.set_viewer_role(WORKSPACE, "Owner", status="inactive")
-    ui.open(f"/public/{WORKSPACE}/members")
+    open_members(ui)
+    row(ui, "Olivia Admin").get_by_role("button", name="Make Olivia Admin the owner", exact=True).click()
+    dialog(ui, "Make Olivia Admin the owner?").get_by_role("button", name="Transfer ownership", exact=True).click()
     expect(page.get_by_text("Members is not available", exact=True)).to_be_visible()
     expect(page.get_by_text(PUBLIC_INACTIVE_REASON, exact=True)).to_be_visible()
+    [transfer] = calls(ui, "PUT", OWNER_PATH)
+    assert transfer.body == {"userId": OLIVIA["userId"]}
+
+
+@pytest.mark.parametrize("role", ["DocumentManager", "User"])
+@pytest.mark.parametrize("raw,shown,reason", BARRING_STATUSES)
+def test_anyone_else_finds_members_closed_with_the_status_reason(public_members_ui, role, raw, shown, reason):
+    """Only the owner and admins keep Members where the status bars viewing, as in classic's manage
+    page for managing: a document manager or a reader is told why it isn't available, and the page reads
+    no membership route."""
+    ui, page = public_members_ui, public_members_ui.page
+    ui.set_viewer_role(WORKSPACE, role, status=raw)
+    ui.open(f"/public/{WORKSPACE}/members")
+    expect(page.get_by_text("Members is not available", exact=True)).to_be_visible()
+    expect(page.get_by_text(reason, exact=True)).to_be_visible()
+    expect(blocked_notice(ui)).to_have_count(0)
     assert not ui.membership_requests(), "An unavailable section must not read the membership routes."
+
+
+@pytest.mark.parametrize("theme,width,height", LAYOUTS)
+def test_the_blocked_notice_fits_every_layout(public_members_ui, theme, width, height):
+    """Both themes at both breakpoints, with the notice in place of the add controls and a member at the
+    server's 256-character maxima."""
+    ui = public_members_ui
+    ui.set_viewer_role(WORKSPACE, "Owner", status="inactive")
+    open_members(ui, theme=theme, width=width, height=height)
+    expect(blocked_notice(ui)).to_be_visible()
+    expect(row(ui, LONG_NAME[:40])).to_be_visible()
+    ui.assert_no_overflow()
+    assert_controls_fit(ui)
+    blocked_notice(ui).scroll_into_view_if_needed()
+    assert_controls_fit(ui)
+    SCREENSHOTS.mkdir(parents=True, exist_ok=True)
+    label = f'{"mobile" if width < 768 else "desktop"}-{theme}'
+    ui.page.screenshot(path=str(SCREENSHOTS / f"members-inactive-{label}.png"), full_page=True)
 
 
 def test_search_role_filter_and_page_live_in_the_url(public_members_ui):

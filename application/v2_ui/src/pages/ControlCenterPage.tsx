@@ -5,6 +5,7 @@
 // FIRST VIEWPORT: A labeled section rail sits beside a broad page header and one focused work area.
 // FORM: Operate; extend the established Admin Settings pane without changing its visual system.
 
+import { useState, type ComponentType } from 'react';
 import { NavLink, useNavigate, useParams } from 'react-router-dom';
 import { Activity, BarChart3, FolderOpen, PanelLeftClose, PanelLeftOpen, Users } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -12,6 +13,8 @@ import { PageHeader } from '../components/layout/PageHeader';
 import { GlassPanel } from '../components/ui/primitives';
 import { DashboardSection } from '../components/controlCenter/DashboardSection';
 import { ActivityLogsSection } from '../components/controlCenter/ActivityLogsSection';
+import { RefreshDataStrip } from '../components/controlCenter/RefreshDataStrip';
+import { ControlCenterDataVersion } from '../components/controlCenter/refreshContext';
 import type { ControlCenterCapabilities } from '../lib/types';
 import { useBootstrapStore } from '../stores/bootstrapStore';
 import { useUserSettingsStore } from '../stores/userSettingsStore';
@@ -34,19 +37,15 @@ const SECTIONS: {
     { id: 'activity-logs', label: 'Activity Logs', Icon: Activity, capability: 'can_view_activity_logs' },
 ];
 
-function SectionPlaceholder({ label }: { label: string }) {
-    return (
-        <GlassPanel className="m-5 max-w-3xl p-6 md:m-8">
-            <h2 className="text-lg font-semibold text-text-1">{label}</h2>
-            <p className="mt-2 text-sm leading-relaxed text-text-2">
-                This V2 management section is being built. Until it is available here, use the classic Control Center.
-            </p>
-            <a href="/admin/control-center" className="mt-4 inline-flex rounded-xl bg-accent px-4 py-2 text-sm font-medium text-on-accent hover:bg-accent-hover">
-                Open classic Control Center
-            </a>
-        </GlassPanel>
-    );
-}
+// A record rather than a chain of comparisons, so a section added to the list above cannot be
+// left without a view: the build fails instead of a placeholder shipping.
+const SECTION_VIEWS: Record<SectionId, ComponentType> = {
+    dashboard: DashboardSection,
+    users: UsersSection,
+    groups: GroupsSection,
+    'public-workspaces': PublicWorkspacesSection,
+    'activity-logs': ActivityLogsSection,
+};
 
 export function ControlCenterPage() {
     const { section: requestedSection } = useParams<{ section?: string }>();
@@ -54,14 +53,21 @@ export function ControlCenterPage() {
     const navigate = useNavigate();
     const railCollapsed = useUserSettingsStore((state) => state.settings.v2ControlCenterRailCollapsed === true);
     const updateUserSettings = useUserSettingsStore((state) => state.update);
+    // Counts finished refreshes, so the section on screen reloads without losing its filters.
+    const [dataVersion, setDataVersion] = useState(0);
     const sections: SectionId[] = ['dashboard', 'users', 'groups', 'public-workspaces', 'activity-logs'];
     const section = (sections.includes(requestedSection as SectionId) ? requestedSection : 'dashboard') as SectionId;
     const current = SECTIONS.find((item) => item.id === section) ?? SECTIONS[0];
     const allowed = Boolean(capabilities?.[current.capability]);
+    const SectionView = SECTION_VIEWS[section];
+    // The refresh routes answer only for the capability that manages users, which is the admin
+    // level `control_center_required('admin')` checks; a dashboard-only reader gets no button.
+    const canRefresh = Boolean(capabilities?.can_manage_users);
 
     return (
         <div className="flex h-full min-h-0 flex-col">
             <PageHeader title="Control Center" description="Manage and monitor SimpleChat." />
+            {canRefresh ? <RefreshDataStrip onRefreshed={() => setDataVersion((version) => version + 1)} /> : null}
             <div className="flex min-h-0 flex-1">
                 <aside aria-label="Control Center sections"
                     className={clsx('hidden shrink-0 overflow-y-auto border-r border-edge transition-[width] motion-reduce:transition-none lg:block',
@@ -100,12 +106,11 @@ export function ControlCenterPage() {
                             <h2 className="font-semibold text-text-1">Access unavailable</h2>
                             <p className="mt-2 text-sm text-text-2">Your Control Center permissions do not include this section.</p>
                         </GlassPanel>
-                    ) : section === 'dashboard' ? <DashboardSection />
-                        : section === 'users' ? <UsersSection />
-                        : section === 'groups' ? <GroupsSection />
-                        : section === 'activity-logs' ? <ActivityLogsSection />
-                        : section === 'public-workspaces' ? <PublicWorkspacesSection />
-                            : <SectionPlaceholder label={current.label} />}
+                    ) : (
+                        <ControlCenterDataVersion.Provider value={dataVersion}>
+                            <SectionView />
+                        </ControlCenterDataVersion.Provider>
+                    )}
                 </main>
             </div>
         </div>

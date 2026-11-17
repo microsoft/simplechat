@@ -1,0 +1,732 @@
+/* modern-standalone.css - the V2 look for server-rendered pages that stay outside the React app.
+ *
+ * A few pages cannot live inside the V2 single-page app because the people who see them are
+ * not signed-in application users: the signed-out landing page, the page for a user who is
+ * signed in without a role, the rate-limit page, the Acceptable Use Policy and the
+ * Microsoft 365 sign-in result. templates/modern/standalone_base.html loads this file so
+ * those pages match V2 without the classic navigation, Bootstrap or any script bundle.
+ *
+ * The design tokens below repeat the ones in application/v2_ui/src/styles/theme.css, with
+ * the same names and values, so the two stay recognisable as one system. Only the tokens these
+ * pages use are carried over. V2's --text-3 is left out on purpose: it measures 3.4:1 in dark
+ * mode over the strongest part of the background mesh, under the 4.5:1 WCAG AA minimum for
+ * text. Where V2's accent would put text or a control under AA, the --ms-* tokens at the end
+ * of each block use the next shade instead; the standalone pages are public and their
+ * contrast is a requirement, not a preference.
+ *
+ * Theme: the inline script in standalone_base.html adds a `light` or `dark` class to <html>
+ * from the V2 `simplechat.v2.theme` value or the operating system preference. Without
+ * JavaScript the prefers-color-scheme block below applies the same dark tokens. The two dark
+ * token blocks must stay identical; functional_tests/test_modern_standalone_pages.py checks.
+ * Nothing here loads a font, image or script from outside the application.
+ */
+
+/* ---------- Design tokens: light ---------- */
+:root {
+    color-scheme: light;
+
+    --backdrop-base: #eef2fb;
+    --backdrop-tint-a: rgb(99 132 255 / 0.28);
+    --backdrop-tint-b: rgb(160 120 255 / 0.22);
+    --backdrop-tint-c: rgb(86 196 255 / 0.20);
+
+    --surface-2: rgb(255 255 255 / 0.74);
+    --surface-3: rgb(255 255 255 / 0.86);
+    --surface-solid: #ffffff;
+    --surface-sunken: rgb(15 23 42 / 0.04);
+
+    --edge: rgb(255 255 255 / 0.70);
+    --edge-strong: rgb(15 23 42 / 0.10);
+    --highlight: rgb(255 255 255 / 0.85);
+
+    --text-1: #0f172a;
+    --text-2: #475569;
+
+    --accent: #3b6ef0;
+
+    --danger-soft: rgb(220 38 38 / 0.12);
+    --warn-soft: rgb(217 119 6 / 0.12);
+    --ok-soft: rgb(5 150 105 / 0.12);
+    --info: #0e7490;
+    --info-soft: rgb(14 116 144 / 0.12);
+
+    --shadow-lift: 0 16px 48px rgb(15 23 42 / 0.16), 0 4px 12px rgb(15 23 42 / 0.08);
+    --blur-glass: 16px;
+
+    /* AA-safe shades for text and controls on the panel surface. */
+    --ms-link: #2f5ed8;
+    --ms-link-hover: #2549b8;
+    --ms-button-fill: #2f5ed8;
+    --ms-button-fill-hover: #2549b8;
+    --ms-button-text: #ffffff;
+    --ms-control-border: rgb(71 85 105 / 0.55);
+    --ms-icon-ok: #047857;
+    --ms-icon-danger: #b91c1c;
+    --ms-icon-warn: #b45309;
+
+    --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+/* ---------- Design tokens: dark (explicit choice) ---------- */
+:root.dark {
+    color-scheme: dark;
+
+    --backdrop-base: #070b18;
+    --backdrop-tint-a: rgb(76 110 245 / 0.26);
+    --backdrop-tint-b: rgb(139 92 246 / 0.20);
+    --backdrop-tint-c: rgb(34 158 217 / 0.18);
+
+    --surface-2: rgb(255 255 255 / 0.085);
+    --surface-3: rgb(255 255 255 / 0.12);
+    --surface-solid: #101728;
+    --surface-sunken: rgb(0 0 0 / 0.25);
+
+    --edge: rgb(255 255 255 / 0.12);
+    --edge-strong: rgb(255 255 255 / 0.20);
+    --highlight: rgb(255 255 255 / 0.16);
+
+    --text-1: #f1f5f9;
+    --text-2: #b3c0d4;
+
+    --accent: #7ea0ff;
+
+    --danger-soft: rgb(248 113 113 / 0.16);
+    --warn-soft: rgb(251 191 36 / 0.16);
+    --ok-soft: rgb(52 211 153 / 0.16);
+    --info: #22d3ee;
+    --info-soft: rgb(34 211 238 / 0.16);
+
+    --shadow-lift: 0 16px 48px rgb(0 0 0 / 0.55), 0 4px 12px rgb(0 0 0 / 0.35);
+
+    --ms-link: #97b3ff;
+    --ms-link-hover: #b4c6ff;
+    --ms-button-fill: #7ea0ff;
+    --ms-button-fill-hover: #97b3ff;
+    --ms-button-text: #0b1020;
+    --ms-control-border: rgb(179 192 212 / 0.55);
+    --ms-icon-ok: #34d399;
+    --ms-icon-danger: #f87171;
+    --ms-icon-warn: #fbbf24;
+}
+
+/* ---------- Design tokens: dark (operating system preference, no script) ---------- */
+@media (prefers-color-scheme: dark) {
+    :root:not(.light):not(.dark) {
+        color-scheme: dark;
+
+        --backdrop-base: #070b18;
+        --backdrop-tint-a: rgb(76 110 245 / 0.26);
+        --backdrop-tint-b: rgb(139 92 246 / 0.20);
+        --backdrop-tint-c: rgb(34 158 217 / 0.18);
+
+        --surface-2: rgb(255 255 255 / 0.085);
+        --surface-3: rgb(255 255 255 / 0.12);
+        --surface-solid: #101728;
+        --surface-sunken: rgb(0 0 0 / 0.25);
+
+        --edge: rgb(255 255 255 / 0.12);
+        --edge-strong: rgb(255 255 255 / 0.20);
+        --highlight: rgb(255 255 255 / 0.16);
+
+        --text-1: #f1f5f9;
+        --text-2: #b3c0d4;
+
+        --accent: #7ea0ff;
+
+        --danger-soft: rgb(248 113 113 / 0.16);
+        --warn-soft: rgb(251 191 36 / 0.16);
+        --ok-soft: rgb(52 211 153 / 0.16);
+        --info: #22d3ee;
+        --info-soft: rgb(34 211 238 / 0.16);
+
+        --shadow-lift: 0 16px 48px rgb(0 0 0 / 0.55), 0 4px 12px rgb(0 0 0 / 0.35);
+
+        --ms-link: #97b3ff;
+        --ms-link-hover: #b4c6ff;
+        --ms-button-fill: #7ea0ff;
+        --ms-button-fill-hover: #97b3ff;
+        --ms-button-text: #0b1020;
+        --ms-control-border: rgb(179 192 212 / 0.55);
+        --ms-icon-ok: #34d399;
+        --ms-icon-danger: #f87171;
+        --ms-icon-warn: #fbbf24;
+    }
+}
+
+/* ---------- Page ---------- */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+.ms-body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    min-height: 100dvh;
+    margin: 0;
+    padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+    background-color: var(--backdrop-base);
+    color: var(--text-1);
+    font-family: var(--font-sans);
+    font-size: 1rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+}
+
+/* The ambient mesh the glass surfaces float above. Fixed and inert, so it never affects
+   layout, hit testing or scrolling. */
+.ms-body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background:
+        radial-gradient(60rem 60rem at 12% -10%, var(--backdrop-tint-a), transparent 60%),
+        radial-gradient(50rem 50rem at 100% 0%, var(--backdrop-tint-b), transparent 55%),
+        radial-gradient(45rem 45rem at 50% 110%, var(--backdrop-tint-c), transparent 60%);
+}
+
+.ms-page {
+    --ms-column-width: 40rem;
+
+    display: flex;
+    flex: 1 0 auto;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 1.25rem;
+    width: 100%;
+    padding: 1.5rem 1rem;
+}
+
+/* A short page sits in the middle of a tall screen, as the V2 standalone pages do; on a
+   phone it starts at the top so the content is where a thumb and the eye expect it. */
+@media (min-width: 40em) {
+    .ms-page {
+        justify-content: center;
+    }
+}
+
+.ms-page-narrow {
+    --ms-column-width: 32rem;
+}
+
+.ms-page-wide {
+    --ms-column-width: 48rem;
+}
+
+.ms-header,
+.ms-main {
+    width: 100%;
+    max-width: var(--ms-column-width);
+    min-width: 0;
+}
+
+.ms-main:focus {
+    outline: none;
+}
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 0.375rem;
+}
+
+/* ---------- Skip link ---------- */
+.ms-skip-link {
+    position: absolute;
+    inset-inline-start: 0.75rem;
+    top: -5rem;
+    z-index: 10;
+    padding: 0.625rem 1rem;
+    border: 2px solid var(--accent);
+    border-radius: 0.75rem;
+    background-color: var(--surface-solid);
+    color: var(--text-1);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.ms-skip-link:focus {
+    top: 0.75rem;
+}
+
+/* ---------- Classification banner ---------- */
+.ms-classification-banner {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2rem;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+    letter-spacing: 0.025em;
+    text-align: center;
+    overflow-wrap: anywhere;
+}
+
+/* ---------- Brand ---------- */
+.ms-brand {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.ms-brand-title {
+    margin: 0;
+    color: var(--text-2);
+    font-size: 0.875rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+/* The light and dark logos are both in the page; the theme decides which one shows. */
+.ms-logo {
+    display: block;
+    width: auto;
+    max-width: 100%;
+    object-fit: contain;
+}
+
+.ms-brand .ms-logo {
+    height: 2rem;
+    max-width: 10rem;
+}
+
+.ms-logo-dark {
+    display: none;
+}
+
+:root.dark .ms-logo-light {
+    display: none;
+}
+
+:root.dark .ms-logo-dark {
+    display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root:not(.light):not(.dark) .ms-logo-light {
+        display: none;
+    }
+
+    :root:not(.light):not(.dark) .ms-logo-dark {
+        display: block;
+    }
+}
+
+/* ---------- Glass panel ---------- */
+.ms-panel {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    padding: 1.5rem 1.25rem;
+    border: 1px solid var(--edge);
+    border-radius: 1rem;
+    background-color: var(--surface-3);
+    box-shadow: var(--shadow-lift);
+    -webkit-backdrop-filter: blur(calc(var(--blur-glass) * 1.25)) saturate(180%);
+    backdrop-filter: blur(calc(var(--blur-glass) * 1.25)) saturate(180%);
+}
+
+/* The specular top edge that makes the surface read as a pane of glass. Decorative. */
+.ms-panel::before {
+    content: '';
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 1px;
+    background: linear-gradient(to right, transparent, var(--highlight), transparent);
+    pointer-events: none;
+}
+
+@media (min-width: 40em) {
+    .ms-panel {
+        padding: 2rem;
+    }
+}
+
+.ms-panel-heading {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.875rem;
+    margin-bottom: 1rem;
+}
+
+.ms-panel-heading .ms-title {
+    margin-bottom: 0;
+}
+
+.ms-icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.75rem;
+}
+
+.ms-icon svg {
+    width: 1.25rem;
+    height: 1.25rem;
+}
+
+.ms-icon-ok {
+    background-color: var(--ok-soft);
+    color: var(--ms-icon-ok);
+}
+
+.ms-icon-danger {
+    background-color: var(--danger-soft);
+    color: var(--ms-icon-danger);
+}
+
+.ms-icon-warn {
+    background-color: var(--warn-soft);
+    color: var(--ms-icon-warn);
+}
+
+/* ---------- Type ---------- */
+.ms-title {
+    margin: 0 0 1rem;
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 2rem;
+    overflow-wrap: anywhere;
+}
+
+.ms-lead {
+    margin: 0 0 1.25rem;
+    font-size: 1.125rem;
+    line-height: 1.6;
+    overflow-wrap: anywhere;
+}
+
+.ms-muted {
+    margin: 0 0 1.25rem;
+    color: var(--text-2);
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+.ms-align-start {
+    text-align: start;
+}
+
+.ms-align-center {
+    text-align: center;
+}
+
+.ms-align-end {
+    text-align: end;
+}
+
+/* Prose is for text an administrator or the policy wrote: Markdown output, the rate-limit
+   message and the policy itself. It has to survive long words, tables and code blocks at
+   390 px without scrolling the page sideways. */
+.ms-prose {
+    font-size: 1rem;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+}
+
+.ms-prose > :first-child {
+    margin-top: 0;
+}
+
+.ms-prose > :last-child {
+    margin-bottom: 0;
+}
+
+.ms-prose h1,
+.ms-prose h2,
+.ms-prose h3,
+.ms-prose h4,
+.ms-prose h5,
+.ms-prose h6 {
+    margin: 1.5rem 0 0.5rem;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.ms-prose h1 {
+    font-size: 1.5rem;
+}
+
+.ms-prose h2 {
+    font-size: 1.25rem;
+}
+
+.ms-prose h3 {
+    font-size: 1.125rem;
+}
+
+.ms-prose h4,
+.ms-prose h5,
+.ms-prose h6 {
+    font-size: 1rem;
+}
+
+.ms-prose p,
+.ms-prose ul,
+.ms-prose ol,
+.ms-prose blockquote,
+.ms-prose pre,
+.ms-prose table {
+    margin: 0 0 1rem;
+}
+
+.ms-prose ul,
+.ms-prose ol {
+    padding-inline-start: 1.5rem;
+}
+
+.ms-prose li + li {
+    margin-top: 0.25rem;
+}
+
+.ms-prose a,
+.ms-link {
+    color: var(--ms-link);
+    text-decoration: underline;
+    text-underline-offset: 0.15em;
+}
+
+.ms-prose a:hover,
+.ms-link:hover {
+    color: var(--ms-link-hover);
+}
+
+.ms-prose blockquote {
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    background-color: var(--surface-sunken);
+    color: var(--text-2);
+}
+
+.ms-prose code {
+    padding: 0.1em 0.35em;
+    border-radius: 0.375rem;
+    background-color: var(--surface-sunken);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+}
+
+.ms-prose pre {
+    padding: 0.75rem 1rem;
+    border-radius: 0.75rem;
+    background-color: var(--surface-sunken);
+    overflow-x: auto;
+}
+
+.ms-prose pre code {
+    padding: 0;
+    background: none;
+}
+
+.ms-prose table {
+    display: block;
+    max-width: 100%;
+    border-collapse: collapse;
+    overflow-x: auto;
+}
+
+.ms-prose th,
+.ms-prose td {
+    padding: 0.375rem 0.75rem;
+    border: 1px solid var(--edge-strong);
+    text-align: start;
+}
+
+/* ---------- Notice and account ---------- */
+.ms-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    margin: 0 0 1.25rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--edge-strong);
+    border-radius: 0.75rem;
+    background-color: var(--info-soft);
+    color: var(--text-1);
+    font-size: 0.9375rem;
+    line-height: 1.55;
+}
+
+.ms-note-icon {
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-top: 0.125rem;
+    color: var(--info);
+}
+
+.ms-note-text {
+    min-width: 0;
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.ms-account {
+    margin: 0 0 1.5rem;
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--edge-strong);
+    border-radius: 0.75rem;
+    background-color: var(--surface-sunken);
+    text-align: start;
+}
+
+.ms-account dt {
+    color: var(--text-2);
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.ms-account dd {
+    margin: 0.25rem 0 0;
+    overflow-wrap: anywhere;
+}
+
+.ms-account-name {
+    display: block;
+    font-weight: 600;
+}
+
+.ms-account-email {
+    display: block;
+    color: var(--text-2);
+    font-size: 0.9375rem;
+}
+
+/* ---------- Actions ---------- */
+.ms-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    margin-top: 1.5rem;
+}
+
+.ms-actions-center {
+    justify-content: center;
+}
+
+@media (min-width: 40em) {
+    .ms-actions {
+        flex-flow: row wrap;
+        align-items: center;
+    }
+
+    .ms-actions-center {
+        justify-content: center;
+    }
+}
+
+.ms-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 2.75rem;
+    padding: 0.5rem 1.25rem;
+    border: 1px solid transparent;
+    border-radius: 0.75rem;
+    font: inherit;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    line-height: 1.25;
+    text-align: center;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.ms-button-primary,
+.ms-button-primary:visited {
+    background-color: var(--ms-button-fill);
+    color: var(--ms-button-text);
+}
+
+.ms-button-primary:hover {
+    background-color: var(--ms-button-fill-hover);
+    color: var(--ms-button-text);
+}
+
+.ms-button-secondary,
+.ms-button-secondary:visited {
+    border-color: var(--edge-strong);
+    border-color: var(--ms-control-border);
+    background-color: var(--surface-2);
+    color: var(--text-1);
+}
+
+.ms-button-secondary:hover {
+    background-color: var(--surface-3);
+    color: var(--text-1);
+}
+
+/* ---------- Landing ---------- */
+.ms-landing-brand {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    text-align: center;
+}
+
+.ms-landing-title {
+    margin: 0;
+    font-size: 1.875rem;
+    font-weight: 600;
+    line-height: 2.25rem;
+    overflow-wrap: anywhere;
+}
+
+.ms-landing-copy {
+    margin-bottom: 1.5rem;
+}
+
+/* ---------- Utilities ---------- */
+.d-none {
+    display: none !important;
+}
+
+.ms-visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    border: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .ms-button {
+        transition: none;
+    }
+}
+
+@media (forced-colors: active) {
+    .ms-panel,
+    .ms-note,
+    .ms-account,
+    .ms-button,
+    .ms-skip-link {
+        border-color: CanvasText;
+    }
+
+    :focus-visible {
+        outline-color: Highlight;
+    }
+}

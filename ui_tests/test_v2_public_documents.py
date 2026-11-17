@@ -17,6 +17,7 @@ Reader downloads: a reader may download when downloads are enabled and sees no D
 they are off; the read surface offers no management affordance either way: 0.261.186
 A link to a public document that no longer exists says so, and the header offers Classic tools for
 the legacy document upgrade rather than classic browsing: 0.261.188
+The legacy document upgrade is native now, so the header no longer offers Classic tools: 0.261.445
 A coloured tag chip keeps readable text whatever colour the tag was given: 0.261.188
 
 Exercises real components, stores and navigation with closed synthetic HTTP.
@@ -451,19 +452,16 @@ def test_refused_set_active_leaves_surface_functional(public_documents_ui):
     assert last_list(ui).path == "/api/public-workspaces/pub-b/documents"
 
 
-def test_classic_handoff(public_documents_ui):
+def test_documents_header_has_no_classic_tools_and_never_browses_classic(public_documents_ui):
     ui = public_documents_ui
     open_documents(ui)
-    # Public documents are fully native; the classic page remains only for the legacy document
-    # upgrade, so the header offers classic tools for that, as the group's does, never browsing.
-    link = ui.page.get_by_role("button", name="Open classic tools to upgrade legacy public workspace documents", exact=True)
-    expect(link).to_have_text("Classic tools")
-    expect(link).to_have_attribute("title", "Classic tools, including upgrading legacy documents")
+    # Public documents are fully native, including the legacy document upgrade (see
+    # test_v2_legacy_document_upgrade.py), so the header has no classic hand-off at all.
+    expect(ui.page.get_by_role("button", name="Open classic tools to upgrade legacy public workspace documents", exact=True)).to_have_count(0)
+    expect(ui.page.get_by_text("Classic tools", exact=True)).to_have_count(0)
     expect(explorer(ui).get_by_role("button", name=re.compile(r"browse", re.IGNORECASE))).to_have_count(0)
     expect(ui.page.get_by_role("main").get_by_text(re.compile(r"Browse in", re.IGNORECASE))).to_have_count(0)
-    link.click()
-    expect(ui.page).to_have_url(f"{ORIGIN}/public_workspaces")
-    assert ("/public_workspaces", "pub-a") in ui.classic_visits
+    assert not ui.classic_visits, "Public documents must never fall through to a classic page."
 
 
 def test_public_document_text_is_inert(public_documents_ui):

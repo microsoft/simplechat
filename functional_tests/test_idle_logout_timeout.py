@@ -157,7 +157,20 @@ def test_server_idle_timeout_wiring():
         f"Missing settings-source logging throttling markers: {missing_settings_source_logging_markers}"
     )
 
-    idle_settings_def = _find_top_level_function(app_tree, "get_idle_timeout_settings")
+    # app.py keeps get_idle_timeout_settings as a thin wrapper that resolves the request's
+    # settings. The parsing and normalization live in functions_idle_timeout so the V2
+    # bootstrap route, which app.py imports and which therefore cannot import app, enforces
+    # nothing different from what it tells the browser.
+    _, idle_module_tree = _parse_python_file("application", "single_app", "functions_idle_timeout.py")
+    idle_settings_def = _find_top_level_function(idle_module_tree, "get_idle_timeout_settings")
+    assert idle_settings_def is not None, "Missing get_idle_timeout_settings in functions_idle_timeout.py"
+    app_idle_wrapper = _find_top_level_function(app_tree, "get_idle_timeout_settings")
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "resolve_idle_timeout_settings"
+        for node in ast.walk(app_idle_wrapper)
+    ), "app.get_idle_timeout_settings no longer delegates to functions_idle_timeout"
     has_idle_timeout_default_get = False
     has_idle_warning_default_get = False
     for node in ast.walk(idle_settings_def):
@@ -176,8 +189,8 @@ def test_server_idle_timeout_wiring():
             if node.args[0].value == "idle_warning_minutes" and node.args[1].value == 28:
                 has_idle_warning_default_get = True
 
-    assert has_idle_timeout_default_get, "Missing settings.get('idle_timeout_minutes', 30) in get_idle_timeout_settings"
-    assert has_idle_warning_default_get, "Missing settings.get('idle_warning_minutes', 28) in get_idle_timeout_settings"
+    assert has_idle_timeout_default_get, "Missing settings.get('idle_timeout_minutes', 30) in functions_idle_timeout.get_idle_timeout_settings"
+    assert has_idle_warning_default_get, "Missing settings.get('idle_warning_minutes', 28) in functions_idle_timeout.get_idle_timeout_settings"
 
     has_include_source_get_settings = False
     has_record_settings_source_call = False

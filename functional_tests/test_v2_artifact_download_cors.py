@@ -26,7 +26,8 @@ def cors_client():
     tree = ast.parse(APP_FILE.read_text(encoding="utf-8"))
     hook = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "add_security_headers")
     hook.decorator_list = []
-    namespace = {"request": request}
+    # app.py imports the framing helper at module scope; this slice only needs "not an embed response".
+    namespace = {"request": request, "is_same_origin_framing_allowed": lambda: False}
     exec(compile(ast.Module(body=[hook], type_ignores=[]), str(APP_FILE), "exec"), namespace)
     app = Flask(__name__)
     app.after_request(namespace["add_security_headers"])

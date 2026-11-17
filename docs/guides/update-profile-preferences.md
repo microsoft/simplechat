@@ -65,6 +65,13 @@ lists them, so you can jump straight to a card. Preferences are grouped under
 **Appearance**, **Chat**, **Voice and audio**, **Notifications and alerts**, **Help and
 guidance**, **Memory and data**, **Connected accounts**, and **Diagrams and charts**. Most changes save as soon as you make them.
 
+The picture beside your name in the rail and at the top of **User Settings** is your Microsoft 365
+photo, which SimpleChat reads when it first sees you. If you change your photo in Microsoft 365,
+choose **Refresh photo** in the page header to fetch it again; both pictures change as soon as the
+new one arrives. If Microsoft 365 returns no photo, your initials are shown and a message says so.
+If the refresh fails, your current photo stays and a message says what went wrong, so you can try
+again. On a phone the button shows only its icon, and its name is still **Refresh photo**.
+
 Under **Voice and audio**, which cards appear depends on what your administrator has
 turned on:
 
@@ -187,6 +194,7 @@ Each card shows a status message after saving. Reload the app and confirm the pr
 | --- | --- | --- |
 | A preference card is missing | The admin disabled that feature | Ask whether the related capability can be enabled. |
 | Browser notifications do not appear | Browser permission or profile preference is off | Allow notifications and save the preference again. |
+| My picture did not change after I updated my Microsoft 365 photo | SimpleChat keeps the photo it read when it first saw you | Choose **Refresh photo** in the User Settings header in the new interface, or **Refresh Profile Image** on the Profile page in the classic one. |
 
 ## Related
 

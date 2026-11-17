@@ -1,7 +1,7 @@
 # test_public_document_fixture_parity.py
 """
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
-Version: 0.261.268
+Version: 0.261.445
 Implemented in: 0.261.179
 A generated artifact awaiting publication is held for managers and absent for everyone else
 (decision 27): 0.261.183
@@ -11,6 +11,7 @@ with the server's downloads-unavailable sentence: 0.261.186
 A released screened document's metadata change applies directly and returns the ordinary
 receipt: 0.261.230
 Metadata and re-tag receipts report the background search sync in `search_sync`: 0.261.268
+The list's legacy flag and the legacy document upgrade receipt are pinned to the server's: 0.261.445
 
 The V2 public Documents explorer mocks the network with three closed HTTP fixtures, which predate the
 per-route parity rule:
@@ -73,7 +74,7 @@ from ui_tests.fixtures.public_document_management import (  # noqa: E402
     DOCUMENT_ACTIONS, DOWNLOAD_HEADERS, DOWNLOADS_UNAVAILABLE_ERROR, OPERATION_UNAVAILABLE_ERROR, PUBLIC_ARCHIVE_NAME,
     PublicDocumentManagementFixture, attachment, batch_error, bulk_tag_result, delete_result, metadata_result,
     operation_path, propagation_incomplete, queue_result, tag_created, tag_result, tag_vocabulary_conflict,
-    tag_vocabulary_refusal, upload_refusal, upload_result,
+    tag_vocabulary_refusal, upgrade_failure, upgrade_legacy_result, upload_refusal, upload_result,
 )
 from ui_tests.fixtures.public_document_collaboration import (  # noqa: E402
     COLLABORATION_MISSING, COLLABORATION_STATUS_REFUSED, FAILED_HANDOFF_ERRORS, STATE_CONFLICT,
@@ -84,6 +85,7 @@ import test_public_document_publication as publication_suite  # noqa: E402
 from test_public_document_read_apis import environment, get, workspace  # noqa: E402,F401  (environment is a pytest fixture)
 from test_public_document_management import StoreFailure, lose_the_vocabulary_patch, management  # noqa: E402,F401  (management is a pytest fixture)
 from test_public_document_publication import publication, publication_modules  # noqa: E402,F401  (pytest fixtures)
+from test_public_legacy_document_upgrade_route import install_upgrade_seams  # noqa: E402
 
 
 WORKSPACE = "pub-a"
@@ -111,7 +113,7 @@ ARTIFACT_UI_KEYS = {
     "generated_artifact_promotion_status", "generated_artifact_requested_by_user_id",
     "generated_artifact_requested_by_display_name", "generated_artifact_requested_at",
 }
-LIST_UI_KEYS = {"documents", "total_count", "page", "page_size", "file_downloads_enabled"}
+LIST_UI_KEYS = {"documents", "total_count", "page", "page_size", "file_downloads_enabled", "needs_legacy_update_check"}
 FACET_UI_KEYS = {"total", "untagged", "processing", "errors", "recent", "shared_with_me", "by_tag", "by_classification"}
 TAG_UI_KEYS = {"name", "count", "color"}
 VERSIONS_UI_KEYS = {"document_id", "public_workspace_id", "versions"}
@@ -330,6 +332,22 @@ def test_read_list_shape_parity(reads):
     assert set(served) == set(stored)
     for document_id in ("same-document", "processing-report", "failed-report", "team-01", "team-02"):
         assert_row_parity(f"list row {document_id}", served[document_id], stored[document_id])
+
+
+def test_read_list_legacy_flag_parity(reads):
+    """The list says whether a current document the viewer may see predates progress tracking, as the
+    server does: a document with no `percentage_complete`."""
+    env = reads
+
+    def both():
+        real = get(env, READS, page_size=100).get_json()["needs_legacy_update_check"]
+        _status, payload = fixture_read(env.fixture, READS, page_size="100")
+        return real, payload["needs_legacy_update_check"]
+
+    assert both() == (False, False)
+    del env.source.records["same-document"]["percentage_complete"]
+    next(row for row in env.fixture.documents[WORKSPACE] if row["id"] == "same-document").pop("percentage_complete")
+    assert both() == (True, True)
 
 
 @pytest.mark.parametrize("document_id", ["same-document", "processing-report", "failed-report"])
@@ -605,6 +623,34 @@ def test_queue_receipt_parity(manage, resource, mode, partial):
     )
     served = fixture_receipt(env.fixture, "POST", resource, response=expected, status=207 if partial else 202, body=body)
     assert_receipt_parity(f"{resource} partial={partial}", served, real)
+
+
+@pytest.fixture
+def upgrading(manage):  # noqa: F811 - the manager's harness, with two stored documents that predate progress tracking
+    env = manage
+    for identifier in ("same-document", "notes-document"):
+        del env.source.records[identifier]["percentage_complete"]
+    install_upgrade_seams(env)
+    return env
+
+
+@pytest.mark.parametrize("scenario", ["upgraded", "partial", "limited"])
+def test_upgrade_legacy_receipt_parity(upgrading, scenario):
+    """The legacy upgrade says what it upgraded, names each document it could not update, and says
+    when it stopped at its per-request limit with older documents still to do."""
+    env = upgrading
+    upgraded, errors, remaining, status = 2, [], False, 200
+    if scenario == "partial":
+        env.failing.add("same-document")
+        file_name = env.source.records["same-document"]["file_name"]
+        upgraded, errors, status = 1, [upgrade_failure("same-document", file_name)], 207
+    elif scenario == "limited":
+        env.scoped_monkeypatch.setattr(env.upgrade_module, "MAX_LEGACY_UPGRADE_DOCUMENTS", 1)
+        upgraded, remaining = 1, True
+    real = env.client.post(f"{READS}/upgrade_legacy")
+    expected = upgrade_legacy_result(upgraded, errors=errors, remaining=remaining, public_workspace_id=WORKSPACE)
+    served = fixture_receipt(env.fixture, "POST", "upgrade_legacy", response=expected, status=status)
+    assert_receipt_parity(f"upgrade legacy {scenario}", served, real)
 
 
 def test_upload_receipt_parity(manage):

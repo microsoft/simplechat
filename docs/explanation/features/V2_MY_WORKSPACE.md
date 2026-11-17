@@ -48,6 +48,12 @@ Compact screens open filters/details in the existing modal surfaces and keep
 selected-file operations in a compact Actions picker. See
 [V2 Group Document Browsing](V2_GROUP_DOCUMENT_BROWSING.md).
 
+**Legacy document upgrade added in version:** 0.261.445. When the personal document
+list reports documents stored before progress tracking, the Documents explorer shows
+an **Update older documents** notice with **Update now** and **Maybe later**; **Update now**
+calls the classic `POST /api/documents/upgrade_legacy` route and reads the list again.
+See [V2 Legacy Document Upgrade](V2_LEGACY_DOCUMENT_UPGRADE.md).
+
 ### Dependencies
 
 | Dependency | Purpose |
@@ -185,7 +191,7 @@ What each section supports in this release:
 
 | Section | Available now |
 |---|---|
-| Documents | Upload, search, filter by tag, delete |
+| Documents | Upload, search, filter by tag, delete, and update older documents (documents uploaded before progress tracking) from a notice in the explorer |
 | File sources | Native create/edit, credentials or saved identities, test/browse, selected paths, filters, tags, schedules, sync now, run history, delete |
 | Prompts | Full create, edit and delete |
 | Agents | Full-page authoring for all permitted agent types, models, knowledge, actions, instructions, and templates; use in chat |

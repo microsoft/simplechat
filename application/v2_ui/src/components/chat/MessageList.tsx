@@ -962,6 +962,7 @@ function MessageBubbleInner({
             key={artifact.artifact_message_id || artifact.document_id || artifact.export_run_id || `artifact-${index}`}
             artifact={artifact}
             conversationId={message.conversation_id}
+            messageId={message.id}
         />
     ));
 

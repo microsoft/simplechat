@@ -176,6 +176,18 @@ Field-level normalization delegates where an implementation already exists:
 bounds enforced by `normalize_key_vault_secret_reminder_config`. `front_door_url` is
 validated rather than silently blanked, so a refused URL is reported on the field.
 
+## Idle session warning
+
+**Implemented in version:** 0.261.445
+
+Editing the four Idle Session Timeout settings works as described above. Since 0.261.445 the
+same settings also drive the V2 interface itself: the bootstrap payload carries them,
+normalized by the helper the server enforces them with, under `session.idle_timeout`, and V2
+warns before the sign-out and reports activity to the server as the classic pages do. Before
+that, V2 users were signed out at the timeout without a warning, and active users too. The
+fields' help text and the cross-field rule are unchanged. See
+[V2 Idle Session Warning](V2_IDLE_SESSION_WARNING.md).
+
 ## File structure
 
 ```

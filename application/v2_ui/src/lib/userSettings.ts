@@ -170,8 +170,10 @@ export interface UserSettings {
     /**
      * The user's Microsoft Graph profile photo, as a data URI.
      *
-     * Read-only here. The server fetches it once and caches it on the settings document
-     * when the user is first seen; nothing in either interface writes it back.
+     * Read-only here. The server fetches it when the user is first seen and caches it on the
+     * settings document. "Refresh photo" on the Settings page asks the server to fetch it again
+     * (`/api/profile/image/refresh`) and puts the answer into the store with `setProfileImage`.
+     * It is never written back through the settings route.
      */
     profileImage?: string | null;
 

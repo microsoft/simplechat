@@ -28,6 +28,15 @@ interface UserSettingsState {
     load: () => Promise<void>;
     /** Apply a change locally and schedule it to be written. */
     update: (partial: UserSettings) => void;
+    /**
+     * Replace the profile photo this tab shows, without writing anything.
+     *
+     * "Refresh photo" asks the server to fetch the photo again, and the server stores it as
+     * part of answering. `update` would post the photograph back a second time, through a
+     * debounced write that can also roll it back, so the new photo takes this separate way in.
+     * `null` is no photo, which draws the initials.
+     */
+    setProfileImage: (image: string | null) => void;
     /** Write any pending changes now, e.g. before navigating away. */
     flush: () => Promise<void>;
 }
@@ -151,6 +160,10 @@ export const useUserSettingsStore = create<UserSettingsState>((set, get) => {
                 saveTimer = null;
             }
             await queueWrite();
+        },
+
+        setProfileImage: (image) => {
+            set((state) => ({ settings: { ...state.settings, profileImage: image } }));
         },
     };
 });

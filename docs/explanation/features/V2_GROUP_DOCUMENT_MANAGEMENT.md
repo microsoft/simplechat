@@ -163,6 +163,20 @@ Review deletion intent and the exact file-source/conversation confirmation
 before proceeding. Changing groups or navigating away does not silently
 discard a draft or pretend that an in-flight write was cancelled.
 
+### Updating older documents
+
+From version **0.261.445**, a group's Owner, Admin and DocumentManager can update
+documents stored before progress tracking from the Documents explorer, with
+`POST /api/groups/<group_id>/documents/upgrade_legacy`, a member of the immutable
+target family. The explorer offers it when the list says documents are old and
+the group's `document_management` hint includes `edit_metadata`, so it never
+appears for an ordinary member or in a locked, upload-disabled or inactive
+group. The route names its group in the path and authorizes as a metadata edit,
+again before each document; it never reads the saved active group, which the
+classic `POST /api/group_documents/upgrade_legacy` does. The Documents header
+no longer has a **Classic tools** button. See
+[V2 Legacy Document Upgrade](V2_LEGACY_DOCUMENT_UPGRADE.md).
+
 ## Verification and limitations
 
 Backend coverage exercises operation/role/status combinations, immutable

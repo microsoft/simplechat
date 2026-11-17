@@ -30,6 +30,8 @@ M3A covers browsing only: reading the document list, facets, tags, a single
 document, and its version history. Upload, metadata editing, tags mutation,
 downloads, extraction, reprocessing, deletion, sharing, and artifact approval
 are not part of this slice, and the interface offers no affordance for them.
+(From version **0.261.445** the workspace's **Tags** section reads and
+administers the vocabulary natively; see [V2 Public Tags](V2_PUBLIC_TAGS.md).)
 
 ## Addressing a workspace
 

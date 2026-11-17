@@ -3,9 +3,10 @@
 **Implemented in version: 0.261.277** (layout); **0.261.278** (voice, audio and retention);
 **0.261.279** (fact memory and Microsoft 365); **0.261.280** (guided tours and Latest Features);
 **0.261.296** (Open on Groups and Public rows);
-**0.261.374** (workflow authorization names, visibility, and Open)
+**0.261.374** (workflow authorization names, visibility, and Open);
+**0.261.445** (Refresh photo)
 
-Current version: **0.261.374**, tracked in `application/single_app/config.py`.
+Current version: **0.261.445**, tracked in `application/single_app/config.py`.
 
 ## Overview
 
@@ -21,6 +22,8 @@ Profile page in stages:
 4. Guided tours and the Latest Features shortcut (0.261.280).
 5. Opening a group or public workspace from its row, as the classic page's **Manage** link
    does (0.261.296).
+6. Re-reading the Microsoft 365 profile photo from the page header, as the classic page's
+   **Refresh Profile Image** button does (0.261.445).
 
 Dependencies: the V2 React interface (`application/v2_ui`) and the user settings API
 (`/api/user/settings`).
@@ -190,6 +193,46 @@ route and its body key, and where a row opens.
 - Rows wrap the way the directory rows do. On a narrow screen the buttons move below the name,
   and the role and status badges keep their width.
 
+### Profile photo
+
+The rail's account control and the Settings header show the user's Microsoft Graph profile
+photo. The server reads it once, when the user is first seen, and caches it on the settings
+document as a data URI; `components/layout/UserAvatar.tsx` draws it from the user settings store
+(`settings.profileImage`), with initials when there is none or it cannot be decoded.
+
+Since **0.261.445** the header has a **Refresh photo** control, for a user who has changed their
+Microsoft 365 photo. It calls the route behind the classic page's **Refresh Profile Image** button,
+`POST /api/profile/image/refresh` (`route_frontend_profile.py`), which reads the photo from
+Microsoft Graph, stores it, and answers `{ success, message, profileImage }`, with
+`profileImage: null` when Graph returned no photo (the server then also removes the one it had).
+
+- The control is a header action (`PageHeader` `actions`) named **Refresh photo**. While the
+  request runs it is disabled, marked `aria-busy` and shows a spinner, and a second activation
+  sends no second request. When it finishes, focus returns to it. At phone width it is an
+  icon-only 44 px button that keeps its accessible name.
+- `lib/profileImage.ts` makes the call through `lib/apiClient.ts`, so the same-origin rules and the
+  `X-SimpleChat-UI: v2` header apply, and reads the answer. `lib/useProfilePhotoRefresh.ts` holds
+  the running state and the message.
+- The new photo goes into the store with `setProfileImage` (`stores/userSettingsStore.ts`), which
+  the rail avatar and the header both read, so both change when the server answers. It is a local
+  update only: the server has already stored the photo, so it is **not** posted back through
+  `/api/user/settings` (which would send the photograph twice, through a debounced write that can
+  also roll it back). A later failed save of another preference does not bring the old photo back.
+- **No photo** is an answer, not an error: both avatars fall back to initials and the status says
+  "Microsoft 365 did not return a photo, so your initials are shown." The server cannot tell "no
+  photo" from a Graph failure, so a Graph outage reads this way too, as it does on the classic page.
+- A photo that could not be decoded no longer hides the next one: `UserAvatar` remembers which
+  picture failed rather than only that one did.
+- The outcome is said in a status region that is always on the page (empty between outcomes, so
+  it is announced when it changes) and, for a failure, an alert. A failure keeps the photo on
+  screen and is described by what failed: a dropped connection, an ended session (the existing
+  sign-in notice also appears) or any other fault. The words are fixed sentences. The photograph
+  is never logged, shown as text, or copied into an error, and nothing the server sends back for a
+  failure is shown.
+
+Differences from classic: the outcome is a status line under the header, not a toast, and the
+status text is V2's own rather than the server's `message`.
+
 ### Violations visibility
 
 The Violations tab is always listed, as on the classic Profile page. When neither
@@ -208,7 +251,9 @@ The key is allowed in `route_backend_users.py` and in `WRITABLE_USER_SETTING_KEY
 ## Usage
 
 Open **User Settings** from the account menu. Use the button at the top of the rail to
-collapse or expand it, and the **On this page** index to move between cards.
+collapse or expand it, and the **On this page** index to move between cards. If you have
+changed your Microsoft 365 photo, choose **Refresh photo** in the page header to fetch it
+again.
 
 ## Testing and validation
 
@@ -236,6 +281,17 @@ collapse or expand it, and the **On this page** index to move between cards.
   isn't active (the group page activates it once), on the active group (no activation), and on
   a public workspace (no activation), plus the row layout in both themes at desktop and phone
   widths.
+- `functional_tests/test_v2_profile_photo_refresh.py` and its node checks
+  (`test_v2_profile_photo_refresh_logic.ts`): the route, its gates and the three answer fields;
+  the control, busy state and status regions; the photograph never logged, shown or posted back;
+  how the answer is read, the failure words, the request (one empty-bodied POST through the API
+  client with the V2 header), a session the server ended, and the store update, including that a
+  later failed save of another preference does not bring the old photo back.
+- `ui_tests/test_v2_profile_photo_refresh.py`: against the built SPA, the control's name, busy
+  state, double activation and keyboard use; a new photo replacing the picture in the rail and the
+  header without a settings write; no photo falling back to initials in both; a photo that could not
+  be decoded giving way to the next; a failure, an unreadable answer, a dropped connection and an
+  ended session; the messages' contrast in both themes; and a phone.
 - Related fixes: [Feedback My Routes Filter Unpack Fix](../fixes/FEEDBACK_MY_FILTER_UNPACK_FIX.md)
   and [Personal Retention Default Value Fix](../fixes/PERSONAL_RETENTION_DEFAULT_VALUE_FIX.md).
 
@@ -246,3 +302,7 @@ workspaces tabs do not show it.
 
 The Microsoft 365 workflow sign-in returns to the classic Profile page
 (`/profile?m365_connection=connected`), because the callback route redirects there.
+
+**Refresh photo** shares the classic route's limits. The server reads the photo with the
+signed-in user's Microsoft Graph token and reports any failed read as "no photo", removing the
+photo it had stored, so a Graph outage can clear a photo that a second refresh would restore.

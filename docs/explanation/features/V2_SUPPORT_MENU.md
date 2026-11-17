@@ -5,6 +5,8 @@
 **Native Agents shortcut updated in version: 0.261.305**, recorded in
 `application/single_app/config.py`.
 
+**Workflow activity shortcuts open the V2 page in version: 0.261.445.**
+
 ## Overview
 
 Administrators configure the Support menu in Admin Settings: whether it appears, its name,
@@ -112,13 +114,17 @@ one to a V2 route when V2 has rebuilt the page:
 | `/workspace#workspace-tutorial-launch` | `/workspace`, starting the workspace guided tour |
 | `/profile` | `/settings`, or `/settings?tab=stats` and `?tab=violations` for those tabs |
 | `/group_workspaces`, `/public_workspaces`, `/public_directory`, `/approvals` | `/groups`, `/public`, `/public/directory`, `/approvals` |
+| `/workflow-activity`, with or without `conversationId`, `workflowId`, `runId`, `scope` and `groupId` | The V2 [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md), with the query rebuilt from the ids it can read |
 | `/support/latest-features`, `/support/send-feedback` | The V2 Support pages |
 
-Anything else on the site, such as workflow activity, opens as written
-in the classic interface. http(s) links open in a new tab. Every V2 destination is a constant
-from an allowlist, so a router target can never be built from catalogue data (#1698).
-Classic and external links go through `safeLatestFeatureHref`, which refuses script URLs,
-`//host`, backslashes, and dot segments.
+Anything else on the site, such as the admin pages, opens as written in the classic
+interface. http(s) links open in a new tab. Every V2 destination is a constant from an
+allowlist, so a router target can never be built from catalogue data (#1698). The one
+exception is workflow activity, which carries a query: its path is rebuilt by
+`buildWorkflowActivityPath` from ids that passed the page's own checks, and the allowlist
+accepts it only in exactly that form. A shortcut whose ids or scope the page cannot read
+is not given to the router and opens as written. Classic and external links go through
+`safeLatestFeatureHref`, which refuses script URLs, `//host`, backslashes, and dot segments.
 
 ### Configuration
 
@@ -201,7 +207,7 @@ Features**. V2 and classic users see the same menu.
 
 - Classic-only behaviour carried in a shortcut, such as `feature_action` opening a dialog,
   has no V2 counterpart. The shortcut lands on the closest V2 page.
-- Workflow activity is not rebuilt in V2, so its shortcuts open the classic
-  interface. Agents shortcuts open the [native V2 catalogue](V2_AGENTS_CATALOG.md).
+- Workflow activity shortcuts open the [V2 Workflow Activity page](V2_WORKFLOW_ACTIVITY.md).
+  Agents shortcuts open the [native V2 catalogue](V2_AGENTS_CATALOG.md).
 - No email is sent by the server. The user sends the draft from their own mail app, as on
   the classic page.

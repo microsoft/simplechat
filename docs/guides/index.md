@@ -61,6 +61,7 @@ for those explanations.
 | [Generate images]({{ '/guides/generate-images/' | relative_url }}) | Use the chat Image control to request AI-generated images. | Users |
 | [Review and edit orchestration plans]({{ '/guides/review-and-edit-orchestration-plans/' | relative_url }}) | Inspect proposed source and tool operations before approving a plan. | Users |
 | [Create files with orchestration]({{ '/guides/create-files-with-orchestration/' | relative_url }}) | Ask for a deliverable, review the plan, and inspect the generated file rather than treating generation as verification. | Users |
+| [Reuse a generated file]({{ '/guides/reuse-generated-files/' | relative_url }}) | Add a file a reply created to a workspace, or turn a generated Markdown file into a PowerPoint deck. | Users |
 | [Microsoft 365 data and approvals]({{ '/guides/microsoft-365-conversation-data/' | relative_url }}) | Understand which identity accesses Microsoft 365 and when an operation needs approval. | Users |
 | [Merge files in chat]({{ '/guides/merge-files/' | relative_url }}) | Combine several CSV or Excel files into one CSV or Excel file, even when their columns differ. | Users |
 
@@ -106,6 +107,7 @@ Reading a stored result explains a past run; it does not rerun its sources.
 | --- | --- | --- |
 | [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}) | Save a repeatable multi-step task that can run manually or on a schedule. | Workflow owners |
 | [Trigger a workflow]({{ '/guides/trigger-a-workflow/' | relative_url }}) | Run a workflow now, schedule future runs, and inspect run activity. | Workflow owners |
+| [View workflow activity]({{ '/guides/view-workflow-activity/' | relative_url }}) | Watch a run as a timeline, cancel it, and review the email or invitation it saved. | Workflow owners |
 | [Ask about workflow results]({{ '/guides/ask-about-workflow-results/' | relative_url }}) | Ask chat about a finished workflow run's stored result without running it again. | Workflow owners |
 
 ## Application pipelines and concepts

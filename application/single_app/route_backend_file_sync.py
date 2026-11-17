@@ -315,6 +315,23 @@ def register_route_backend_file_sync(bp):
         except Exception as error:
             return _map_exception(error)
 
+    @bp.route('/api/admin/file-sync/<scope_type>/<scope_id>/source-options', methods=['GET'])
+    @swagger_route(security=get_auth_security())
+    @login_required
+    @admin_required
+    @enabled_required("enable_file_sync")
+    def api_admin_file_sync_source_options(scope_type, scope_id):
+        # The editor options of the group, public and personal source routes, for a target an
+        # administrator manages on its behalf: the source types it may offer and the identities
+        # of that target the server would accept for each.
+        try:
+            if request.args or request.get_data():
+                raise FileSyncPublicValidationError("This request does not accept parameters or a body.")
+            _, target_scope_id = _require_admin_target_context(scope_type, scope_id)
+            return jsonify(build_file_sync_source_options(scope_type, target_scope_id, get_settings())), 200
+        except Exception as error:
+            return _map_exception(error)
+
     @bp.route('/api/admin/file-sync/<scope_type>/<scope_id>/sources/browse', methods=['POST'])
     @swagger_route(security=get_auth_security())
     @login_required

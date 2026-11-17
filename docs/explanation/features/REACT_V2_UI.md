@@ -13,6 +13,8 @@ opt-in editor representation while leaving classic callers compatible.
 **Implemented in version:** 0.261.003
 **Personal agent/action authoring:** 0.261.096 (`application/single_app/config.py`)
 **Native Agents catalogue:** 0.261.305 (`application/single_app/config.py`)
+**Classic page parity registry:** 0.261.445 (`application/single_app/ui_route_map.json`),
+described in [V2 Classic Page Parity](V2_CLASSIC_PAGE_PARITY.md)
 **Deployer version:** 1.0.26
 
 **Responsive mobile layout implemented in version: 0.261.323**, recorded in
@@ -100,7 +102,7 @@ application/v2_ui/                     source (React + TypeScript)
   src/lib/          apiClient, sse, endpoints, types, enhancedCitations, syntax highlighting
   src/stores/       uiStore (theme, rail), bootstrapStore, chatStore
   src/components/   layout/, ui/, chat/
-  src/pages/        ChatPage, AdminSettingsPage, WorkspacePage, PlaceholderPage
+  src/pages/        one file per page (App.tsx lists the routes): ChatPage, WorkspacePage, SettingsPage, AdminSettingsPage, ...
         │
         │  vite build
         ▼
@@ -174,11 +176,27 @@ title. A link naming a conversation that has been deleted, or that belongs to so
 reports that it cannot be opened and falls back to an empty chat; leaving the failure in
 place would strand the parameter in the URL and reproduce the same error on every refresh.
 
-**Back to classic UI** in the account menu carries the open conversation across as
-`/chats?conversationId=<id>`, so crossing between the two interfaces keeps your place.
+**Back to classic UI** in the account menu opens the classic counterpart of the page you are on,
+or the classic chat page for a page that has none, and carries the open conversation across as
+`/chats?conversationId=<id>` so crossing between the two interfaces keeps your place. The link
+also carries `ui=classic`, the escape pair that tells the server's classic-to-V2 redirect to
+leave that one request alone ([V2 Interface Selection Prerequisites](V2_INTERFACE_SELECTION_PREREQUISITES.md)).
 
-Server-generated links — notifications, workflow runs, document sources — still point at the
-classic `/chats`. They are not interface-aware.
+Server-generated links still name classic pages. The server writes `/chats?conversationId=` into
+notifications and workflow runs, `/chats?conversation_id=` into document sources, and
+`/group_workspaces`, `/workspace`, `/profile?tab=…` and similar paths elsewhere. V2 translates
+those in the browser instead of following them out of the interface: `lib/notificationLinks.ts`
+reads a notification's link and `lib/latestFeatureShortcuts.ts` reads a Latest Features
+shortcut, and each opens the matching V2 route. A link to a page V2 has no version of opens the
+classic page.
+
+The server can translate them too, but only once an interface is selected, and nothing in it
+chooses one yet. The one map from classic pages to V2 routes, with its query and fragment
+translation, is the page parity registry (`application/single_app/ui_route_map.json`, described in
+[V2 Classic Page Parity](V2_CLASSIC_PAGE_PARITY.md)). A disabled-by-default `before_request` hook
+(`functions_ui_redirect.py`) reads it to answer a classic page `GET` with a redirect to its V2
+page, and it does nothing while `functions_ui_mode.get_ui_mode()` answers classic, which it does
+for everyone today.
 
 ## API surface
 
@@ -385,8 +403,8 @@ nobody can see.
 ### The account menu
 
 The avatar pinned to the bottom of the rail opens everything about your account rather than
-about your work: **User Settings**, **Admin Settings** for administrators, **Back to classic
-UI** and **Sign out**. Admin Settings is here rather than in the primary list above, which
+about your work: **User Settings**, **Admin Settings** for administrators, **Notifications** (with
+the unread count), **Back to classic UI** and **Sign out**. Admin Settings is here rather than in the primary list above, which
 is the list of places you work; the classic interface draws the same line, keeping App
 Settings under an Admin heading in its own account dropdown. The administration entry is
 still gated on the caller's role, and `/admin` refuses a non-administrator on its own.
@@ -433,6 +451,17 @@ Wired to the live APIs:
   download and a link to the raw file, and a conversation badge showing the group or public
   workspace the conversation is working in
 - The administrator-configured web search and AI notices
+- Shared conversations: opening, replying in and managing a conversation several people share,
+  with a participants panel, an invitation banner and live updates (see
+  [V2 Shared Conversations](V2_SHARED_CONVERSATIONS.md) and
+  [V2 Shared Conversation Experience](V2_COLLABORATION_UX.md))
+- The conversation's workspace scope lock, shown as a badge beside the title and in the
+  conversation details, and locked or unlocked from either; the document picker carries a
+  notice that unlocks a locked conversation (`PATCH /api/conversations/<id>/scope_lock`)
+- **Add to workspace** and, for Markdown files, **Create PowerPoint** on a finished generated
+  file's card, beside Download and View (`POST /api/chat_artifacts/promote`)
+- A guided Chat tour and Workspace tour, started from the page header and switched off in
+  Preferences, all at once or one at a time
 
 The SSE reader in `src/lib/sse.ts` reproduces the framing rules of
 `static/js/chat/chat-streaming.js` exactly, including the repair for frames whose blank-line
@@ -896,10 +925,10 @@ target rules, the lane table and the confirmation heuristic.
 
 ### Admin settings
 
-The server-rendered admin page nests 14 groups → 46 tabs → 96 sections, so finding a single
+The server-rendered admin page nests 15 groups → 49 tabs → 109 sections, so finding a single
 toggle can take several clicks through two levels of tabs.
 
-V2 flattens the same structure: a slim category rail for the 14 groups, a single scrollable
+V2 flattens the same structure: a slim category rail for the 15 groups, a single scrollable
 pane of sections, and a search box that matches across every section, tab, group, setting
 key, label and help string at once. Pressing `/` focuses search from anywhere on the page.
 Typing `retention` or `data lifecycle` both find the retention settings.
@@ -914,16 +943,17 @@ described yet.
 
 **Declared fields.** `admin_settings_fields.py` maps a section id to an ordered list of
 fields, each carrying the type, label, help text, default, bounds, options and visibility
-dependency a generic renderer needs. Everything in the Appearance group is described this
-way, which is what allows V2 to show titles, colour pickers, selects, ranges, markdown
-editors, image uploads and repeatable lists rather than switches alone.
+dependency a generic renderer needs. Declarations exist for all but one of the 109 sections
+(`standard-citations-section` has none), which is what allows V2 to show titles, colour
+pickers, selects, ranges, numbers, text and secret inputs, markdown editors, image uploads and
+repeatable lists rather than switches alone.
 
 **The `enable_*` fallback.** A section with no declaration is still discovered by scanning
 the settings document for booleans and matching each key to a section by shared word stems.
 Anything unmatched is collected under "Other capabilities" rather than hidden, because a
 silently missing toggle is worse than a misfiled one. This is how the whole page originally
-worked; it stays so undescribed groups keep functioning, and it retires one group at a time
-as each is described.
+worked; it remains as the safety net for an `enable_*` switch no declaration claims, so a
+setting added to the server shows up here before anyone has described it.
 
 A key that has a declared field is excluded from the fallback scan, so a setting is never
 rendered twice.
@@ -974,6 +1004,9 @@ listed but not editable, because they are defined in code.
 Saving a workspace type or the run hour reschedules the next run as the classic form does. See
 [V2 Admin Data Lifecycle Settings](V2_ADMIN_DATA_LIFECYCLE_SETTINGS.md).
 
+The other groups are described the same way, and most have a feature document of their own
+among the `V2_ADMIN_*.md` files beside this one.
+
 #### Keeping the two interfaces in step
 
 The schema is a second description of settings the server-rendered panes also describe, so
@@ -1001,14 +1034,27 @@ renders the new controls without a front-end change. A field type the renderer d
 implement is caught by `test_v2_admin_field_renderer_coverage.py` rather than silently
 drawing nothing.
 
-Groups that still rely on the fallback scan link to the classic admin page for the settings
-that need more than a switch. That link is now shown only for those groups, since it is
-misleading once a group is fully described.
+A group that still relies on the fallback scan shows a note under its sections saying that
+switches listed by their setting name have no description yet and save exactly as stored. A
+link from one section to another (a related-section link, a prerequisite notice, a Latest
+Features shortcut) moves within the page whenever V2 draws the target; only a target V2 does
+not draw opens the classic admin page, in a new tab, on the tab that holds it.
 
 ### Workspace
 
-Personal documents: list, search, tag filter, upload, processing status and delete, against
-`/api/documents` and `/api/documents/tags`.
+`/workspace` is the personal workspace, `/groups` and `/groups/:groupId` are group workspaces,
+and `/public` and `/public/:workspaceId` are public workspaces. A personal or group workspace
+has Documents, Tags, File sources, Prompts, Agents, Actions, Workflows, Identities and
+Endpoints sections; a public workspace has Documents, Tags, File sources, Prompts and
+Identities, because it never has agents, actions, workflows or endpoints. A group or public
+workspace adds the management sections Members, Settings, Activity and Statistics, which
+include deleting the workspace. A section the user cannot use is shown greyed out or locked
+with the reason, rather than left out without explanation.
+
+Documents lists, searches, filters by tag, uploads, shows processing status and deletes, against
+`/api/documents` and `/api/documents/tags` (the group and public equivalents for those scopes).
+See [V2 My Workspace](V2_MY_WORKSPACE.md) for the arrangement; the group and public sections each
+have their own feature document (`V2_GROUP_*.md` and `V2_PUBLIC_*.md`).
 
 ### Personal settings
 
@@ -1022,8 +1068,7 @@ screen; the title reads "User Settings" rather than "Settings" because the accou
 offers Admin Settings a line beneath it.
 
 Each tab is registered once in `components/settings/tabs.tsx` and owns its own component,
-which is what lets the remaining tabs be built without touching the page shell, the router
-or the sidebar.
+which is what lets a tab be added without touching the page shell, the router or the sidebar.
 
 Two things about `/api/user/settings` shape the client:
 
@@ -1046,9 +1091,12 @@ gives the user no way to discover the failure.
 Tabs whose capability is disabled are hidden rather than shown empty — their endpoints fail
 in that state, so they could only ever render an error. The same applies within the
 Preferences tab: a section is offered only when its capability is on, **and** only when this
-interface actually acts on the setting. Several classic preferences drive V1-only surfaces
-(its tutorial buttons, its sidebar hide-control style); offering them here would either do
-nothing visible or silently change the other interface, so they stay on the classic page.
+interface actually acts on the setting. Several classic preferences drive surfaces only the
+classic interface has (its sidebar hide-control style, for example); offering them here would
+either do nothing visible or silently change the other interface, so they stay on the classic
+page. The guided tours are different: V2 has its own Chat and Workspace tours, so the
+Preferences tab offers them under Help and guidance, sharing the classic `showTutorialButtons`
+switch and adding a choice per tour.
 
 Text size is shared. `data-font-size` on `<html>` and its five percentages are taken verbatim
 from `static/css/styles.css`, so a size chosen in either interface means the same in both,
@@ -1080,8 +1128,11 @@ The account menu offers one destination for personal settings. It previously off
 Settings here and Profile in the classic interface — which was a choice nobody had the
 information to make, since the classic profile page held the settings *and* the activity
 stats. With Stats rebuilt, the Profile entry has nothing left to lead to and is gone. The
-`/profile?tab=groups` and `/profile?tab=public-workspaces` links inside the Groups and Public
-tabs remain: those are the fallback for tabs V2 has not rebuilt, not profile navigation.
+Groups and Public tabs are native lists too, with search, paging, **Set active** and **Open**
+(which goes to the V2 group or public workspace); none of them links to a classic profile tab.
+The page parity registry records `/profile` as `/v2/settings`, with each classic tab value
+mapped to a V2 tab, for the future interface selector.
+
 ## Agents catalogue
 
 The rail's **Agents** entry opens the native catalogue at `/v2/agents`. It includes
@@ -1259,15 +1310,22 @@ imported in a test environment.
   microphone and speech output needs Azure Speech configured in the tenant. Both were
   verified structurally — correct controls, correct gating, correct requests and payloads —
   but neither actual capture nor actual playback has been exercised.
-- Collaboration, workflow activity, scope lock and the chat tutorial are not wired. Tabular
-  runs are: generated exports, durable run progress, the staged-work progress lane and the
-  large-run confirmation all work, and are described in
-  [V2 Tabular Analysis](V2_TABULAR_ANALYSIS.md). "Add to Workspace" and "Create PowerPoint"
-  on a generated artifact are the remaining gaps there.
-- Stream reattachment (`/api/chat/stream/reattach/{id}`) is not used; a dropped connection
-  surfaces an error rather than silently resuming.
-- Admin settings edits boolean capabilities only.
-- Group and public workspaces are not rebuilt.
-- The bundle is ~711 KB raw / ~213 KB gzipped, dominated by React, the markdown pipeline
-  and syntax highlighting grammars. It is not code-split, because the chat page needs
-  nearly all of it on first paint.
+- **Dropped streams recover for personal conversations only.** A chat stream that drops
+  makes one attempt to reattach through `/api/chat/stream/reattach/{id}`, and opening a
+  conversation whose answer is still generating attaches to it. A shared conversation and an
+  orchestrated turn have no reattach endpoint, so a dropped connection there is reported as an
+  error rather than resumed.
+- **Some pages are server-rendered in both interfaces.** Sign-in and sign-out, the OAuth and
+  Teams callbacks, the Microsoft 365 connection result, the Terms of Use page shown before
+  sign-in and the home page for visitors without an application role have to work before
+  there is a V2 session, and `/v2` needs a signed-in user with the User role. Swagger UI is a
+  developer tool that belongs to neither interface.
+- **A page can still hand part of its job to a classic page.**
+  [V2 Classic Page Parity](V2_CLASSIC_PAGE_PARITY.md) lists every classic page against its V2
+  route: a `partial` row names the part of an otherwise native page that still opens a classic
+  one, and a `gap` row is a classic page with no V2 route yet. Read that table rather than a
+  list here, which would go stale as pages are rebuilt.
+- **The bundle is one large file.** A local build of this tree produced a single main
+  JavaScript file of about 5 MB raw and 1.4 MB gzipped; the figure to trust is the one
+  `npm run build` prints. Pages are not lazy-loaded (only the development alert lab is), so the
+  first load carries the code for every page.

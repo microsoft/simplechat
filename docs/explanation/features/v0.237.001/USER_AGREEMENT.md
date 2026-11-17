@@ -217,7 +217,19 @@ To test the feature:
 7. Accept and verify the upload proceeds
 8. Check Activity Logs for acceptance entry
 
+## React V2 interface
+
+**Implemented in version:** 0.261.445
+
+The React V2 interface asks for the same agreement before the same uploads. It calls the same two routes
+with the same parameters (`personal` and `chat` send workspace id `default`; `group` and `public` send the
+workspace's id), so an acceptance made in either interface counts for once-per-day acceptance in the
+other. Where V2 differs on purpose: a check or an acceptance that fails holds the upload instead of letting
+it through, and the agreement is rendered as Markdown without raw HTML. See
+[V2 User Agreement Gate](../V2_USER_AGREEMENT_GATE.md).
+
 ## Related Features
 
+- [V2 User Agreement Gate](../V2_USER_AGREEMENT_GATE.md) - The same agreement in the React V2 interface
 - [Activity Logging](../v0.229.001/ACTION_LOGGING_AND_CITATION.md) - Acceptance tracking
 - [Public Workspaces](../v0.229.001/PUBLIC_WORKSPACES.md) - Workspace types

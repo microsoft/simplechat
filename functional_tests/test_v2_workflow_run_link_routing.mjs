@@ -1,13 +1,16 @@
 // test_v2_workflow_run_link_routing.mjs
-// Version: 0.261.251
+// Version: 0.261.445
 // Implemented in: 0.261.251
+// Workflow activity opens in V2 as of: 0.261.445
 // Executes where V2 opens a workflow run from a link: the run deep link (workflowRunHref and
 // v2WorkflowRunPath) in personal and group workspaces, the bell's reading of 6b-1's notices about a
-// chat-started run, and the workflow alert card's Open run. A notice opens the run in V2 only when
-// its link and its own metadata agree on the workspace, the workflow and the run. A Microsoft 365
-// notice, a notice that names its workspace only through `group_id`, an unknown workspace and an id
-// a path can't carry all keep the classic page or no link, never a guessed V2 address. The notice
-// shapes are pinned against the server modules that write them.
+// chat-started run, and the workflow alert card's Open run. A classic `/workflow-activity` link opens
+// the V2 workflow-activity page with the query it carries, whatever the notice says about itself,
+// a Microsoft 365 notice included, and one whose ids or scope the page cannot read is reported rather
+// than opened. A notice that carries no link opens its run in the Workflows section only when its own
+// metadata names the workspace, the workflow and the run; a Microsoft 365 notice, a notice that names
+// its workspace only through `group_id`, an unknown workspace and an id a path can't carry get no link,
+// never a guessed V2 address. The notice shapes are pinned against the server modules that write them.
 
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -35,6 +38,9 @@ const PERSONAL = { type: 'personal' };
 const GROUP = { type: 'group', groupId: 'grp-1' };
 const PERSONAL_RUN = '/workspace/workflows?workflow_id=wf-1&run_id=run-1';
 const GROUP_RUN = '/groups/grp-1/workflows?workflow_id=wf-1&run_id=run-1';
+// The V2 workflow-activity page, as 6b-1's own link and the server's group links name it.
+const PERSONAL_ACTIVITY = '/workflow-activity?workflowId=wf-1&runId=run-1&scope=personal';
+const GROUP_ACTIVITY = '/workflow-activity?workflowId=wf-1&runId=run-1&scope=group&groupId=grp-1';
 const NO_LINK = { target: null, error: null };
 const INVALID_LINK = 'This notification has an invalid link. Open the destination directly.';
 
@@ -83,10 +89,6 @@ function resolve(overrides) {
 
 function routeTo(path) {
     return { target: { kind: 'route', path }, error: null };
-}
-
-function classicAt(href, groupId = null) {
-    return { target: { kind: 'classic', href, groupId }, error: null };
 }
 
 function alert(metadata) {
@@ -176,27 +178,30 @@ test('v2WorkflowRunPath opens a run only in a known workspace, with ids a link c
     }
 });
 
-test("6b-1's notice about a run it couldn't post opens the run in V2", () => {
-    assert.deepEqual(resolve({}), routeTo(PERSONAL_RUN));
+test("6b-1's notice about a run it couldn't post opens the run's activity in V2", () => {
+    assert.deepEqual(resolve({}), routeTo(PERSONAL_ACTIVITY));
     // The expired notice is the same link with another title and delivery status.
     assert.deepEqual(resolve({
         title: '"Weekly digest" didn\'t finish in time to post to chat',
         metadata: { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'personal', delivery_status: 'expired' },
-    }), routeTo(PERSONAL_RUN));
-    // A trailing slash, the link's own fragment and extra parameters change nothing.
-    assert.deepEqual(resolve({ link_url: `/workflow-activity/?${new URLSearchParams({ workflowId: 'wf-1', runId: 'run-1', scope: 'personal', tab: 'x' })}#top` }), routeTo(PERSONAL_RUN));
-    // Ids the link encodes are decoded once and encoded again for V2.
+    }), routeTo(PERSONAL_ACTIVITY));
+    // The page reads the link's own query, so extra parameters ride along and the fragment and the
+    // trailing slash, which it does not read, do not.
+    assert.deepEqual(
+        resolve({ link_url: `/workflow-activity/?${new URLSearchParams({ workflowId: 'wf-1', runId: 'run-1', scope: 'personal', tab: 'x' })}#top` }),
+        routeTo(`${PERSONAL_ACTIVITY}&tab=x`),
+    );
+    // Ids the link encodes stay encoded as it wrote them.
     assert.deepEqual(resolve({
         link_url: activityLink('wf 1&x', 'run=1'),
         metadata: { workflow_id: 'wf 1&x', run_id: 'run=1', workflow_scope: 'personal' },
-    }), routeTo('/workspace/workflows?workflow_id=wf+1%26x&run_id=run%3D1'));
-    // A notice that wrote no ids takes the link's own.
-    assert.deepEqual(resolve({ metadata: { workflow_scope: 'personal' } }), routeTo(PERSONAL_RUN));
-    // `group_id` only names the group classic makes active; it does not move a personal run.
+    }), routeTo('/workflow-activity?workflowId=wf+1%26x&runId=run%3D1&scope=personal'));
+    // What the notice wrote about itself does not decide where its link goes.
+    assert.deepEqual(resolve({ metadata: { workflow_scope: 'personal' } }), routeTo(PERSONAL_ACTIVITY));
     assert.deepEqual(resolve({
         link_context: { group_id: 'grp-9' },
         metadata: { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'personal', group_id: 'grp-9' },
-    }), routeTo(PERSONAL_RUN));
+    }), routeTo(PERSONAL_ACTIVITY));
 });
 
 test("6b-1's delivered-result notice still opens the chat it posted into", () => {
@@ -212,71 +217,94 @@ test("6b-1's delivered-result notice still opens the chat it posted into", () =>
     assert.deepEqual(resolved, { target: { kind: 'conversation', conversationId: 'conv-1' }, error: null });
 });
 
-test('a group run opens in V2 only when the link and the notice name the same group', () => {
+test("a group run's link opens the group's activity page, and the group the link names is the one it reads", () => {
     const groupLink = activityLink('wf-1', 'run-1', { scope: 'group', groupId: 'grp-1' });
     const groupMetadata = { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'group', workflow_group_id: 'grp-1' };
-    assert.deepEqual(resolve({ link_url: groupLink, metadata: groupMetadata }), routeTo(GROUP_RUN));
-
-    // Another group, a group named only through `group_id`, or a group the link doesn't name stays classic.
-    const classicGroup = [
+    assert.deepEqual(resolve({ link_url: groupLink, metadata: groupMetadata }), routeTo(GROUP_ACTIVITY));
+    // A link names its own group; what the notice says about another one does not move it.
+    for (const metadata of [
         { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'group', workflow_group_id: 'grp-2' },
         { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'group', group_id: 'grp-1' },
-        { workflow_id: 'wf-1', run_id: 'run-1', group_id: 'grp-1' },
         { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'personal' },
-    ];
-    for (const metadata of classicGroup) {
-        const expected = classicAt(groupLink, typeof metadata.group_id === 'string' ? metadata.group_id : null);
-        assert.deepEqual(resolve({ link_url: groupLink, metadata }), expected, JSON.stringify(metadata));
+    ]) {
+        assert.deepEqual(resolve({ link_url: groupLink, metadata }), routeTo(GROUP_ACTIVITY), JSON.stringify(metadata));
     }
+    // A group the link leaves out is the reader's active group, which the server resolves.
     const unnamedGroup = activityLink('wf-1', 'run-1', { scope: 'group' });
-    assert.deepEqual(resolve({ link_url: unnamedGroup, metadata: groupMetadata }), classicAt(unnamedGroup));
+    assert.deepEqual(resolve({ link_url: unnamedGroup, metadata: groupMetadata }), routeTo(unnamedGroup));
+    // A group id the page cannot carry is reported, not opened.
     const badGroup = activityLink('wf-1', 'run-1', { scope: 'group', groupId: 'grp/1' });
-    assert.deepEqual(resolve({ link_url: badGroup, metadata: { ...groupMetadata, workflow_group_id: 'grp/1' } }), classicAt(badGroup));
+    assert.deepEqual(resolve({ link_url: badGroup, metadata: { ...groupMetadata, workflow_group_id: 'grp/1' } }), { target: null, error: INVALID_LINK });
 });
 
-test('a workflow-activity link the notice does not agree with keeps the classic page', () => {
-    const cases = [
-        // No workspace in the link, or one V2 doesn't know.
-        [`/workflow-activity?${new URLSearchParams({ workflowId: 'wf-1', runId: 'run-1' })}`, {}],
-        [activityLink('wf-1', 'run-1', { scope: 'public' }), {}],
-        [activityLink('wf-1', 'run-1', { scope: '' }), {}],
-        // No workspace in the notice, or another one.
-        [activityLink('wf-1', 'run-1'), { metadata: { workflow_id: 'wf-1', run_id: 'run-1' } }],
-        [activityLink('wf-1', 'run-1'), { metadata: { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'public' } }],
-        [activityLink('wf-1', 'run-1'), { metadata: { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'group', workflow_group_id: 'grp-1' } }],
-        // Another workflow or run than the notice wrote.
-        [activityLink('wf-1', 'run-1'), { metadata: { workflow_id: 'wf-2', run_id: 'run-1', workflow_scope: 'personal' } }],
-        [activityLink('wf-1', 'run-1'), { metadata: { workflow_id: 'wf-1', run_id: 'run-2', workflow_scope: 'personal' } }],
-        // A missing id, or one a link must not carry.
-        [`/workflow-activity?${new URLSearchParams({ workflowId: 'wf-1', scope: 'personal' })}`, {}],
-        [`/workflow-activity?${new URLSearchParams({ runId: 'run-1', scope: 'personal' })}`, {}],
-        [activityLink('wf/1', 'run-1'), { metadata: { workflow_scope: 'personal' } }],
-        [activityLink('wf-1', ' run-1'), { metadata: { workflow_scope: 'personal' } }],
-    ];
-    for (const [link, overrides] of cases) {
-        assert.deepEqual(resolve({ link_url: link, ...overrides }), classicAt(link), link);
+test('a workflow-activity link is judged by its own query, and the page reads whatever it names', () => {
+    // A workspace, a workflow or a run left out, or the personal default spelled out or not, is still the page.
+    for (const link of [
+        `/workflow-activity?${new URLSearchParams({ workflowId: 'wf-1', runId: 'run-1' })}`,
+        `/workflow-activity?${new URLSearchParams({ workflowId: 'wf-1', scope: 'personal' })}`,
+        `/workflow-activity?${new URLSearchParams({ runId: 'run-1', scope: 'personal' })}`,
+        activityLink('wf-1', 'run-1', { scope: '' }),
+        '/workflow-activity',
+    ]) {
+        assert.deepEqual(resolve({ link_url: link }), routeTo(link), link);
+    }
+    // Whatever the notice says about another workspace, workflow or run, its link decides.
+    for (const metadata of [
+        { workflow_id: 'wf-1', run_id: 'run-1' },
+        { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'public' },
+        { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'group', workflow_group_id: 'grp-1' },
+        { workflow_id: 'wf-2', run_id: 'run-1', workflow_scope: 'personal' },
+        { workflow_id: 'wf-1', run_id: 'run-2', workflow_scope: 'personal' },
+    ]) {
+        assert.deepEqual(resolve({ link_url: PERSONAL_ACTIVITY, metadata }), routeTo(PERSONAL_ACTIVITY), JSON.stringify(metadata));
+    }
+    // A scope the page does not know, or an id a link must not carry, is reported.
+    for (const link of [
+        activityLink('wf-1', 'run-1', { scope: 'public' }),
+        activityLink('wf/1', 'run-1'),
+        activityLink('wf-1', ' run-1'),
+        activityLink('wf-1', 'run-1', { groupId: 'grp\\1' }),
+    ]) {
+        assert.deepEqual(resolve({ link_url: link }), { target: null, error: INVALID_LINK }, link);
     }
 });
 
-test('a Microsoft 365 notice about a workflow run keeps the classic page wherever its action id was written', () => {
+test('a Microsoft 365 notice about a workflow run opens the activity page that draws its saved action', () => {
     const link = activityLink('wf-1', 'run-1');
     const metadata = { workflow_id: 'wf-1', run_id: 'run-1', workflow_scope: 'personal' };
     for (const value of ['act-1', '', null]) {
         assert.deepEqual(
             resolve({ link_url: link, metadata: { ...metadata, m365_pending_action_id: value } }),
-            classicAt(link),
+            routeTo(PERSONAL_ACTIVITY),
             `metadata ${JSON.stringify(value)}`,
         );
         assert.deepEqual(
             resolve({ link_url: link, metadata, link_context: { m365_pending_action_id: value } }),
-            classicAt(link),
+            routeTo(PERSONAL_ACTIVITY),
             `link context ${JSON.stringify(value)}`,
         );
     }
-    // Its group, when it names one, is still the one classic makes active.
+    // The group it names is no longer made active on the way: V2 pages name their own workspace.
     assert.deepEqual(
         resolve({ link_url: link, metadata, link_context: { m365_pending_action_id: 'act-1', group_id: 'grp-3' } }),
-        classicAt(link, 'grp-3'),
+        routeTo(PERSONAL_ACTIVITY),
+    );
+    // The server's own link for a workflow action names the run and the group it ran in, as the page reads it.
+    const runtime = serverSource('functions_m365_runtime.py');
+    const start = runtime.indexOf('    def notify_delivery(action):');
+    assert.ok(start >= 0, 'The server no longer defines notify_delivery.');
+    const delivery = runtime.slice(start, runtime.indexOf('@contextmanager', start));
+    for (const line of [
+        '"workflowId": action["workflow_id"], "runId": action["run_id"],',
+        '"scope": "group" if context.get("group_id") else "personal",',
+        'query["groupId"] = context["group_id"]',
+        'link_url = f"/workflow-activity?{urlencode(query)}"',
+    ]) {
+        assert.ok(delivery.includes(line), line);
+    }
+    assert.deepEqual(
+        resolve({ link_url: GROUP_ACTIVITY, metadata: { ...metadata, workflow_scope: 'group', m365_pending_action_id: 'act-1' } }),
+        routeTo(GROUP_ACTIVITY),
     );
 });
 

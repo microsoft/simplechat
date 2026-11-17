@@ -6,7 +6,8 @@
 // one card for the tab and this fills it. What an administrator gets from it is a guided
 // tour of each release -- what changed, why it matters, how to roll it out -- with
 // shortcuts that open the settings involved. A shortcut jumps to the matching card when
-// V2 draws one, and opens the classic tab when the work still lives there.
+// V2 draws one, which it does for every tab the shipped catalogue names; one written ahead
+// of its V2 section opens the classic tab instead, in a new tab so unsaved edits survive.
 
 import { useMemo, useState } from 'react';
 import { ArrowUpRight } from 'lucide-react';
@@ -60,12 +61,14 @@ function FeatureShortcut({
             <a
                 className={latestFeatureActionClass}
                 href={safeClassicAdminTabHref(target.tab)}
-                title={`${action.description ? `${action.description} ` : ''}Opens the classic admin page.`}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={`${action.description ? `${action.description} ` : ''}Opens the classic admin page in a new tab.`}
             >
                 <Icon size={13} aria-hidden="true" />
                 {action.label}
                 <ArrowUpRight size={12} aria-hidden="true" className="text-text-3" />
-                <span className="sr-only"> (classic admin page)</span>
+                <span className="sr-only"> (classic admin page, opens in a new tab)</span>
             </a>
         );
     }

@@ -1,9 +1,10 @@
 # test_group_settings_context_seam.py
 """
 Functional test for the group settings decision in the selected-group context.
-Version: 0.261.165
+Version: 0.261.445
 Implemented in: 0.261.154
 Unrecognized statuses fail closed for the profile and logo: 0.261.157
+The manage sections stay open to an Owner or Admin in every status: 0.261.445
 
 The selected-group context (``GET /api/v2/workspaces/group/<group_id>``) publishes
 ``settings_management`` so the V2 workspace can offer group settings without another
@@ -158,15 +159,18 @@ def test_manage_sections_follow_the_settings_decisions_and_refusal_text(environm
     manager = ROLES[actor] in ("Owner", "Admin")
     viewable = status in VIEWABLE_STATUSES
 
-    assert sections["settings"]["enabled"] is (viewable and manager)
-    assert sections["activity"]["enabled"] is (viewable and "view_activity" in management["operations"])
-    assert sections["statistics"]["enabled"] is (viewable and "view_stats" in management["operations"])
+    # An Owner or Admin keeps all three in every status (0.261.445): the settings and insight routes
+    # check no status, and a status that bars viewing closes the profile and logo inside Settings.
+    assert sections["settings"]["enabled"] is manager
+    assert sections["activity"]["enabled"] is ("view_activity" in management["operations"])
+    assert sections["statistics"]["enabled"] is ("view_stats" in management["operations"])
+    assert sections["activity"]["enabled"] is sections["statistics"]["enabled"] is manager
 
     for section_id in ("settings", "activity", "statistics"):
         entry = sections[section_id]
-        if not viewable:
-            assert entry["reason"] == STATUS_REASONS[status]
-        elif manager:
+        if manager:
             assert entry["reason"] is None
+        elif not viewable:
+            assert entry["reason"] == STATUS_REASONS[status]
         else:
             assert entry["reason"] == GROUP_MANAGER_REQUIRED_TEXT

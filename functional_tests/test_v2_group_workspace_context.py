@@ -2,11 +2,12 @@
 """
 Selected-group context authorization, safe projection, and activation contracts.
 
-Version: 0.261.185
+Version: 0.261.445
 Implemented in: 0.261.126
 Shared shell and native delegation integration: 0.261.127
 Members navigation section (M7B): 0.261.155
 The real public download predicate behind the public settings_management (M10C): 0.261.185
+The Owner and Admins keep the Manage sections in every status: 0.261.445
 
 The real context module and Flask route body run against isolated service seams.
 Existing group-role/status and Flask authentication definitions execute unchanged.
@@ -282,7 +283,13 @@ def test_statuses_never_advertise_unavailable_operations(environment, status, vi
     if status != "active":
         assert all(not section["can_manage"] for section in body["sections"].values())
     if not view:
-        assert all(not section["enabled"] and section["reason"] for section in body["sections"].values())
+        # The Owner keeps the Manage sections in every status (see the manager test below); every
+        # other section is closed with the status's reason.
+        content = {key: section for key, section in body["sections"].items() if key not in MANAGE_SECTIONS}
+        assert content and all(not section["enabled"] and section["reason"] for section in content.values())
+
+
+MANAGE_SECTIONS = ("members", "settings", "activity", "statistics")
 
 
 @pytest.mark.parametrize("user_id,manager", [
@@ -292,24 +299,56 @@ def test_statuses_never_advertise_unavailable_operations(environment, status, vi
     ("active", True), ("locked", True), ("upload_disabled", True),
     ("inactive", False), ("unexpected-status", False),
 ])
-def test_members_section_is_open_to_every_member_in_a_viewable_group(environment, user_id, manager, status, viewable):
+def test_members_section_is_open_to_every_member_in_a_viewable_group_and_to_managers_in_any_status(
+    environment, user_id, manager, status, viewable,
+):
     """M7B: Members sits in the group-only "manage" group. Every member may open it whenever the
     group is viewable, and only the Owner and Admins manage it, in an active group, like every
-    other section. It is navigation only: the membership hints stay in the member list."""
+    other section. From 0.261.445 the Owner and Admins keep it in every status, so an inactive or
+    unrecognized group no longer sends them to the classic manage page. It is navigation only: the
+    membership hints stay in the member list."""
     environment.records["group-a"]["status"] = status
     response = read_as(environment, user_id)
     body = response.get_json()
     assert response.status_code == 200
     members = body["sections"]["members"]
+    opened = viewable or manager
     assert members["group"] == "manage"
-    assert members["enabled"] is viewable
+    assert members["enabled"] is opened
     assert members["can_manage"] is (viewable and manager and status == "active")
-    if viewable:
+    if opened:
         assert members["reason"] is None
     else:
         assert members["reason"] and members["reason"] == body["sections"]["documents"]["reason"]
     assert "membership_management" not in body
     assert "pendingUsers" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("user_id,manager", [
+    ("owner", True), ("admin", True), ("manager", False), ("reader", False),
+])
+@pytest.mark.parametrize("status", ["active", "locked", "upload_disabled", "inactive", "unexpected-status"])
+def test_managers_keep_every_manage_section_in_every_status(environment, user_id, manager, status):
+    """The classic manage page keeps an Owner's and an Admin's members, activity, statistics and
+    settings in a locked or inactive group, and the routes behind them check no status, so the
+    context keeps all four open for them while every content section follows the status. Anyone
+    else still meets the status or role reason."""
+    environment.records["group-a"]["status"] = status
+    body = read_as(environment, user_id).get_json()
+    sections = body["sections"]
+    viewable = status in ("active", "locked", "upload_disabled")
+    for section_id in MANAGE_SECTIONS:
+        entry = sections[section_id]
+        assert entry["group"] == "manage"
+        if manager:
+            assert entry["enabled"] is True and entry["reason"] is None
+            assert entry["can_manage"] is (status == "active" and section_id in ("members", "settings"))
+        elif viewable:
+            assert entry["enabled"] is (section_id == "members")
+        else:
+            assert entry["enabled"] is False and entry["reason"] == sections["documents"]["reason"]
+    assert sections["documents"]["enabled"] is viewable
+    assert body["can_manage_workspace"] is manager
 
 
 def test_members_section_needs_no_capability_setting(environment):

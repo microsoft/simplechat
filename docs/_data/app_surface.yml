@@ -8,7 +8,7 @@ counts:
   actions: 34
   chat_controls: 47
   sub_elements: 3
-  app_pages: 31
+  app_pages: 33
   feature_surfaces: 25
 capabilities:
 - key: enable_action_ai_assistant
@@ -1243,6 +1243,10 @@ app_pages:
 - template: control_center.html
   slug: control-center
   route_url: /admin/control-center
+- template: custom_page_embed_base.html
+  slug: custom-page-embed-base
+- template: custom_page_embed_shell.html
+  slug: custom-page-embed-shell
 - template: custom_page_shell.html
   slug: custom-page-shell
 - template: group_workspaces.html
