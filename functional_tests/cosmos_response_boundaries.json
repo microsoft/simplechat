@@ -14321,10 +14321,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "response-unused",
-      "contract": "_complete_document_search_sync_pass: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_complete_document_search_sync_pass: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -14340,10 +14340,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "response-unused",
-      "contract": "_delete_document_search_sync_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_delete_document_search_sync_record: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -14359,10 +14359,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_get_document_family_items_from_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_get_document_family_items_from_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14387,10 +14387,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Bookkeeping review: final and partial counts use version/scoped Search keys plus acknowledged mutations; Cosmos activity-log points remain mapping consumers. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_process_document_upload_background_impl: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Bookkeeping review: final and partial counts use version/scoped Search keys plus acknowledged mutations; Cosmos activity-log points remain mapping consumers. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14412,10 +14412,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_query_current_xsd_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_query_current_xsd_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14435,10 +14435,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_document_for_search_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_read_document_for_search_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14458,10 +14458,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_read_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_read_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14481,10 +14481,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_rebase_document_after_fenced_acl_projection: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_rebase_document_after_fenced_acl_projection: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14504,10 +14504,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_replace_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_replace_document_search_sync_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14542,10 +14542,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_upsert_document_and_sync_access_index: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_upsert_document_and_sync_access_index: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14565,10 +14565,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "_workspace_file_name_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "_workspace_file_name_exists: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14588,10 +14588,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "create_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "create_document: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14636,10 +14636,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "Excel revision cleanup consumes installed-SDK CosmosDict point documents as mappings, checks owner/scope and ETag before native-artifact deletion, and preserves conditional document deletion. The real deletion owner is exercised for personal/group/public SDK responses and stale ETag failure; no strict top-level dict/JSON consumer was added.",
+      "contract": "Excel revision cleanup consumes installed-SDK CosmosDict point documents as mappings, checks owner/scope and ETag before native-artifact deletion, and preserves conditional document deletion. The real deletion owner is exercised for personal/group/public SDK responses and stale ETag failure; no strict top-level dict/JSON consumer was added. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_excel_document_delete_sdk_contract.py::test_real_delete_owner_handles_sdk_points_and_scope_bound_native_cleanup",
@@ -14663,10 +14663,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "delete_document_revision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "delete_document_revision: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14686,10 +14686,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "delete_from_blob_storage: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "delete_from_blob_storage: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14719,10 +14719,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "detect_doc_type: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "detect_doc_type: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14742,10 +14742,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "extract_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "extract_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14765,10 +14765,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_chat_upload_workspace_documents_for_collaboration: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_chat_upload_workspace_documents_for_collaboration: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14793,10 +14793,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_chat_upload_workspace_documents_for_conversation: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_chat_upload_workspace_documents_for_conversation: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14816,10 +14816,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_document_metadata: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14839,10 +14839,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_metadata_for_citations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_document_metadata_for_citations: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14862,10 +14862,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_document_record: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14885,10 +14885,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_version: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_document_version: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14908,10 +14908,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_document_versions: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_document_versions: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14931,10 +14931,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_documents_shared_with_group: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_documents_shared_with_group: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14954,10 +14954,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_documents_shared_with_user: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_documents_shared_with_user: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -14977,10 +14977,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_latest_version: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_latest_version: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15000,10 +15000,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_shared_groups_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_shared_groups_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15023,10 +15023,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_shared_users_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_shared_users_for_document: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15046,10 +15046,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "get_workspace_tags: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "get_workspace_tags: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15069,10 +15069,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "is_document_shared_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "is_document_shared_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15092,10 +15092,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "is_document_shared_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "is_document_shared_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15115,10 +15115,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "process_due_document_search_metadata_syncs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "process_due_document_search_metadata_syncs: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15138,10 +15138,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "propagate_tags_to_blob_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "propagate_tags_to_blob_metadata: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15161,10 +15161,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "response-unused",
-      "contract": "queue_group_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "queue_group_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -15180,10 +15180,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "response-unused",
-      "contract": "queue_personal_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "queue_personal_workspace_upload_from_temp_file: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "source-review",
       "tests": []
     },
@@ -15199,10 +15199,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "request_document_search_metadata_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "request_document_search_metadata_sync: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15222,10 +15222,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "share_document_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "share_document_with_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15245,10 +15245,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "share_document_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "share_document_with_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15273,10 +15273,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "sync_chat_upload_workspace_attachment_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "sync_chat_upload_workspace_attachment_status: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15296,10 +15296,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "unshare_document_from_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "unshare_document_from_group: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15319,10 +15319,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "unshare_document_from_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "unshare_document_from_user: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15342,10 +15342,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "Workspace-scoped query rows are plain dictionaries. Status predicates only interpret strings; filenames cannot force success/failure or rewrite screening copy. Strict update returns the SDK saved mapping to mapping-compatible callers; read/write ETags, operation guards, access projection and screening holds are preserved. Runtime evidence exercises personal/group/public status writes with installed-SDK point responses and plain query rows. Bookkeeping review: only an exact legacy metadata warning is retired after a successful outcome; that transition uses the existing ETag-conditional storage helper. SDK mappings, query rows, scope and concurrent-state checks remain intact. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "Workspace-scoped query rows are plain dictionaries. Status predicates only interpret strings; filenames cannot force success/failure or rewrite screening copy. Strict update returns the SDK saved mapping to mapping-compatible callers; read/write ETags, operation guards, access projection and screening holds are preserved. Runtime evidence exercises personal/group/public status writes with installed-SDK point responses and plain query rows. Bookkeeping review: only an exact legacy metadata warning is retired after a successful outcome; that transition uses the existing ETag-conditional storage helper. SDK mappings, query rows, scope and concurrent-state checks remain intact. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15368,10 +15368,10 @@
           }
         ],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "upgrade_legacy_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "upgrade_legacy_documents: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
@@ -15391,10 +15391,10 @@
         ],
         "queries": [],
         "batches": [],
-        "module_sha256": "e0262c638d3292404adcaa48086ceef5fb0b1d9fdf35dcb36a0bc80f3859e940"
+        "module_sha256": "1cf4f61bf6d6b3024cbe8c3205d69bf7e7d99f84fe7dd6afa96c6067b185689b"
       },
       "classification": "sdk-compatible",
-      "contract": "upload_to_blob: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained.",
+      "contract": "upload_to_blob: point documents use Mapping field reads/JSON encoding/metadata projections; batch status/body lists are separate, never top-level-normalized as documents. Strict domain sinks remain with their storage owners. Workspace outcome review: existing mapping/query consumers and conditional write contracts are retained; representative module runtime behavior is covered with installed-SDK point responses, including ETags and scope propagation. Review renewed for 0.261.405: exact owner AST, referenced import bindings, and SDK point/query/batch operations are unchanged. Module-only Excel helper/caller additions do not change this response consumer; existing specific runtime/source evidence is retained. Speech 0.261.450 review: only get_speech_synthesis_config changed; owner AST, imports and consumers are unchanged. Existing representative owner-runtime SDK regressions were rerun successfully; no exhaustive storage coverage is claimed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_content_screening_upload_only_intake.py::test_model_generated_metadata_applies_without_a_hold",
