@@ -2,8 +2,8 @@
 # test_orchestration_crash_diagnostics.py
 """
 Functional test for orchestration crash diagnostics.
-Version: 0.261.447
-Implemented in: 0.261.447
+Version: 0.261.454
+Implemented in: 0.261.451
 
 This test ensures that an unexpected orchestration failure reaches telemetry with its
 exception class and application code location, and without the exception message.

@@ -2,8 +2,8 @@
 # test_orchestration_prepared_relate_planning_crash_fix.py
 """
 Functional test for the prepared calculation planning crash fix.
-Version: 0.261.450
-Implemented in: 0.261.450
+Version: 0.261.454
+Implemented in: 0.261.454
 
 This test ensures that a plan with a prepared multi-file calculation, which carries no
 relational program at planning time, passes the planning-time header check instead of

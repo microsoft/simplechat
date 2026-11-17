@@ -2,8 +2,8 @@
 """
 Report how chat orchestration behaved in a deployed application, from its telemetry.
 
-Version: 0.261.447
-Implemented in: 0.261.447
+Version: 0.261.454
+Implemented in: 0.261.451
 
 The scorecard reads the content-free orchestration events the application already sends to
 Application Insights and reports, for each application version seen in the period:

@@ -1,8 +1,8 @@
 # Orchestration crash diagnostics
 
-Version: **0.261.447**
+Version: **0.261.451**
 
-Fixed/Implemented in version: **0.261.447** (`application/single_app/config.py`).
+Fixed/Implemented in version: **0.261.451** (`application/single_app/config.py`).
 
 ## Issue description
 

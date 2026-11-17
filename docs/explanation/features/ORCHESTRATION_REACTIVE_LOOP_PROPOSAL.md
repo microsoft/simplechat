@@ -1,16 +1,20 @@
 # Orchestration Harness Review and Reactive Loop Proposal
 
-**Version: 0.261.450** (review of the code at 0.261.446)
+**Version: 0.261.454** (review of the code at 0.261.446)
 
-0.261.449 was deployed and tested overnight on 17 November 2026. A planning crash that
+Versions below were renumbered after Development was merged, because Development had used
+0.261.448 to 0.261.450 for other work. Deployed builds keep the number they ran under in
+telemetry: Phase 2 ran as 0.261.449 and the crash fix as 0.261.450.
+
+Phase 2 was deployed and tested overnight on 17 November 2026. A planning crash that
 predates this work ended 18 of 40 requests, so the phases below are not yet measured. The
-crash is fixed in 0.261.450: see `../fixes/ORCHESTRATION_PREPARED_RELATE_PLANNING_CRASH_FIX.md`.
+crash is fixed in 0.261.454: see `../fixes/ORCHESTRATION_PREPARED_RELATE_PLANNING_CRASH_FIX.md`.
 
 Implemented so far:
 
-- Phase 0 (0.261.447): crash diagnostics and the telemetry scorecard. The live-model scenario suite is not built.
-- Phase 1 (0.261.448): correction feedback for the prepared tabular calculation path only. See `../fixes/ORCHESTRATION_PROGRAM_CORRECTION_FEEDBACK_FIX.md`.
-- Phase 2 (0.261.449): intent patterns and scenario wording removed, prompt sections sent by capability, three plan fields derived, corrections named. Strict structured output moved to Phase 3. See `../fixes/ORCHESTRATION_PLANNER_HEURISTICS_AND_DERIVATION_FIX.md`.
+- Phase 0 (0.261.451): crash diagnostics and the telemetry scorecard. The live-model scenario suite is not built.
+- Phase 1 (0.261.452): correction feedback for the prepared tabular calculation path only. See `../fixes/ORCHESTRATION_PROGRAM_CORRECTION_FEEDBACK_FIX.md`.
+- Phase 2 (0.261.453): intent patterns and scenario wording removed, prompt sections sent by capability, three plan fields derived, corrections named. Strict structured output moved to Phase 3. See `../fixes/ORCHESTRATION_PLANNER_HEURISTICS_AND_DERIVATION_FIX.md`.
 
 Status: proposal for discussion.
 

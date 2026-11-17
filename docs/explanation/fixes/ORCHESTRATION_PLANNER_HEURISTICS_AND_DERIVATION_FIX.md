@@ -1,8 +1,8 @@
 # Orchestration planner: heuristics removed, fields derived, corrections named
 
-Version: **0.261.449**
+Version: **0.261.453**
 
-Fixed/Implemented in version: **0.261.449** (`application/single_app/config.py`).
+Fixed/Implemented in version: **0.261.453** (`application/single_app/config.py`).
 
 This is Phase 2 of the [reactive loop proposal](../features/ORCHESTRATION_REACTIVE_LOOP_PROPOSAL.md).
 

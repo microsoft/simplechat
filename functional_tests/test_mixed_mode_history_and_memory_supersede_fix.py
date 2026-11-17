@@ -220,7 +220,7 @@ def test_superseded_memory_guidance_across_manual_and_orchestration():
 
     assert 'intentional profile update, not a note inconsistency' in fact_memory_source
     assert 'never repeat, mention, quote, contrast, or flag obsolete names, call signs, or roles' in fact_memory_source
-    # Reworded in 0.261.449: the same rule, stated without scenario wording.
+    # Reworded in 0.261.453: the same rule, stated without scenario wording.
     assert 'the saved memory is current: use it, and do not repeat or point out the' in composition_source
     assert 'an earlier assistant message disagree, use current saved memory' in planner_source
     assert 'Fixed/Implemented in version: **0.261.379**' in fix_doc_source

@@ -1,13 +1,13 @@
 # Orchestration planning crash on prepared multi-file calculations
 
-Version: **0.261.450**
+Version: **0.261.454**
 
-Fixed/Implemented in version: **0.261.450** (`application/single_app/config.py`).
+Fixed/Implemented in version: **0.261.454** (`application/single_app/config.py`).
 
 ## Issue description
 
 Planning ended with "Planning failed" and no plan for requests that calculate across more
-than one tabular file. In the overnight test of 0.261.449 (17 November 2026, 03:00 to 12:27
+than one tabular file. In the overnight test of Phase 2, deployed as 0.261.449 before renumbering (17 November 2026, 03:00 to 12:27
 UTC) 18 of 40 planning requests ended this way:
 
 | Crash | Count |
@@ -17,7 +17,7 @@ UTC) 18 of 40 planning requests ended this way:
 
 The same `KeyError` appears under 0.261.444, and is the likely cause of the earlier
 unidentified crash in conversation `d38474f4`. It was found through the crash site logging
-added in 0.261.447.
+added in 0.261.451.
 
 ## Root cause
 
@@ -55,11 +55,11 @@ Files modified:
   - No orchestration module reads a name it never binds. This check would have caught the
     `NameError` and covers all `functions_orchestration*.py` files and the route.
   - The step shape diagnostics record a misplaced argument and only count an invented field.
-- `application/single_app/config.py`: version 0.261.450.
+- `application/single_app/config.py`: version 0.261.454.
 
-## Overnight result for 0.261.449
+## Overnight result for Phase 2 (deployed as 0.261.449)
 
-| Measure | 9-16 Nov baseline | 0.261.449 overnight |
+| Measure | 9-16 Nov baseline | Overnight |
 | --- | --- | --- |
 | Planning requests | 181 | 40 |
 | Planning crashes | not identifiable | 18 |
