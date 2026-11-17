@@ -3,13 +3,16 @@
 Backend routes for speech-to-text functionality.
 """
 from config import *
+from functions_appinsights import log_event
 from functions_authentication import login_required, user_required, get_current_user_id
 from functions_settings import get_settings
 from functions_debug import debug_print
 from swagger_wrapper import swagger_route, get_auth_security
 import azure.cognitiveservices.speech as speechsdk
+import logging
 import os
 import tempfile
+import threading
 
 try:
     from pydub import AudioSegment
@@ -58,8 +61,6 @@ def register_route_backend_speech(bp):
                 'error': 'Empty audio file'
             }), 400
         
-        print(f"[DEBUG] Received audio file: {audio_file.filename}")
-        
         # Save audio to temporary WAV file
         temp_audio_path = None
         
@@ -68,8 +69,6 @@ def register_route_backend_speech(bp):
             with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
                 audio_file.save(temp_audio.name)
                 temp_audio_path = temp_audio.name
-            
-            print(f"[DEBUG] Audio saved to: {temp_audio_path}")
             
             # Get speech configuration using existing helper
             from functions_documents import _get_speech_config
@@ -86,10 +85,9 @@ def register_route_backend_speech(bp):
             # Get speech config
             speech_config = _get_speech_config(settings, speech_endpoint, speech_locale)
             
-            print("[DEBUG] Speech config obtained successfully")
+            log_event("[SPEECH] Speech config obtained successfully.", debug_only=True)
             
             # WAV files can use direct file input
-            print(f"[DEBUG] Using WAV file directly: {temp_audio_path}")
             audio_config = speechsdk.AudioConfig(filename=temp_audio_path)
             
             # Create speech recognizer
@@ -107,46 +105,57 @@ def register_route_backend_speech(bp):
                 
                 # Use continuous recognition for longer audio files
                 all_results = []
-                done = False
+                done = threading.Event()
+                failed = threading.Event()
                 
                 def handle_recognized(evt):
                     """Handle recognized speech events"""
-                    if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech:
-                        debug_print(f"[SPEECH] Recognized: {evt.result.text}")
+                    if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech and evt.result.text:
                         all_results.append(evt.result.text)
                 
                 def handle_canceled(evt):
                     """Handle cancellation events"""
-                    nonlocal done
-                    debug_print(f"[SPEECH] Canceled: {evt}")
                     if evt.reason == speechsdk.CancellationReason.Error:
-                        debug_print(f"[SPEECH] Error details: {evt.error_details}")
-                    done = True
+                        failed.set()
+                        log_event(
+                            "[SPEECH] Speech SDK recognition failed.",
+                            extra={"reason": "speech_sdk_canceled"},
+                            level=logging.ERROR,
+                        )
+                    elif evt.reason != speechsdk.CancellationReason.EndOfStream:
+                        failed.set()
+                        log_event(
+                            "[SPEECH] Speech SDK recognition was interrupted.",
+                            extra={"reason": "speech_sdk_interrupted"},
+                            level=logging.ERROR,
+                        )
+                    done.set()
                 
                 def handle_session_stopped(evt):
                     """Handle session stopped events"""
-                    nonlocal done
                     debug_print("[SPEECH] Session stopped")
-                    done = True
+                    done.set()
                 
                 # Connect callbacks
                 speech_recognizer.recognized.connect(handle_recognized)
                 speech_recognizer.canceled.connect(handle_canceled)
                 speech_recognizer.session_stopped.connect(handle_session_stopped)
                 
-                # Start continuous recognition
-                speech_recognizer.start_continuous_recognition()
-                
-                # Wait for completion (timeout after 120 seconds)
-                import time
-                timeout = 120
-                elapsed = 0
-                while not done and elapsed < timeout:
-                    time.sleep(0.1)
-                    elapsed += 0.1
-                
-                # Stop recognition
-                speech_recognizer.stop_continuous_recognition()
+                try:
+                    speech_recognizer.start_continuous_recognition()
+                    completed = done.wait(timeout=120)
+                finally:
+                    speech_recognizer.stop_continuous_recognition()
+
+                if failed.is_set():
+                    raise RuntimeError("Speech recognition failed. Please try again.")
+                if not completed:
+                    log_event(
+                        "[SPEECH] Speech SDK recognition timed out.",
+                        extra={"reason": "speech_sdk_timeout"},
+                        level=logging.ERROR,
+                    )
+                    raise TimeoutError("Speech recognition timed out. Please try again.")
                 
                 debug_print(f"[SPEECH] Recognition complete. Recognized {len(all_results)} segments")
                 
@@ -180,15 +189,21 @@ def register_route_backend_speech(bp):
                         
                         debug_print("[SPEECH] Speech recognizer cleanup complete")
                 except Exception as recognizer_cleanup_error:
-                    print(f"[DEBUG] Error during recognizer cleanup: {recognizer_cleanup_error}")
+                    log_event(
+                        "[SPEECH] Error during recognizer cleanup.",
+                        extra={"error_type": type(recognizer_cleanup_error).__name__},
+                        level=logging.WARNING,
+                    )
                 
         except Exception as e:
-            print(f"Error transcribing audio: {e}")
-            import traceback
-            traceback.print_exc()
+            log_event(
+                "[SPEECH] Failed to transcribe audio.",
+                extra={"error_type": type(e).__name__},
+                level=logging.ERROR,
+            )
             return jsonify({
                 'success': False,
-                'error': str(e)
+                'error': 'Failed to transcribe audio. Please try again.'
             }), 500
             
         finally:
@@ -199,9 +214,13 @@ def register_route_backend_speech(bp):
                     import time
                     time.sleep(0.3)
                     os.remove(temp_audio_path)
-                    print(f"[DEBUG] Cleaned up temp file: {temp_audio_path}")
+                    debug_print("[SPEECH] Cleaned up temporary audio.")
                 except PermissionError as perm_error:
                     # If still locked, schedule for deletion on next boot or ignore
-                    print(f"[DEBUG] Temp file still locked, will be cleaned by OS: {temp_audio_path}")
+                    log_event("[SPEECH] Temporary audio file still locked.", level=logging.WARNING)
                 except Exception as cleanup_error:
-                    print(f"[DEBUG] Error cleaning up temporary files: {cleanup_error}")
+                    log_event(
+                        "[SPEECH] Error cleaning up temporary audio.",
+                        extra={"error_type": type(cleanup_error).__name__},
+                        level=logging.WARNING,
+                    )

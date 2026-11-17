@@ -28,6 +28,21 @@ redirect_from:
 
 Speech is the place where managed identity setup becomes very specific. The most important rule is simple: the regional endpoint that works with keys is not enough for managed identity. You need the resource-specific custom-subdomain endpoint so Azure can evaluate RBAC against the correct Speech resource.
 
+## Azure Government
+
+For Government resources, use the resource-specific endpoint from the Government
+portal, such as `https://<resource-name>.cognitiveservices.azure.us`, and set
+`AZURE_ENVIRONMENT=usgovernment`. The configured Speech location must match the
+resource, for example `usgovvirginia`. The public-cloud `.azure.com` examples below
+are not Government endpoint examples.
+
+Version **0.261.065** preserves this endpoint for managed-identity voice discovery
+and synthesis. Chat dictation continues to use the Speech SDK on this main-based
+branch. Service failures and incomplete recognition timeouts return an error
+rather than accepting partial text as a successful transcription. See the
+[Government Speech fix](../explanation/fixes/AZURE_GOVERNMENT_SPEECH_FIX.md) for
+verification scope and deployment limitations.
+
 <section class="latest-release-card-grid">
     <article class="latest-release-card">
         <div class="latest-release-card-icon"><i class="bi bi-globe2"></i></div>
