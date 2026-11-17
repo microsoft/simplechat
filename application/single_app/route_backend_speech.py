@@ -13,8 +13,8 @@ import azure.cognitiveservices.speech as speechsdk
 import logging
 import os
 import tempfile
+import threading
 import time
-import traceback
 
 try:
     from pydub import AudioSegment
@@ -40,41 +40,56 @@ def _transcribe_wav_with_speech_sdk(temp_audio_path, settings, speech_endpoint, 
         debug_print("[SPEECH] Starting continuous recognition for longer audio...")
 
         all_results = []
-        done = False
+        done = threading.Event()
+        failed = threading.Event()
 
         def handle_recognized(evt):
             """Handle recognized speech events"""
             if evt.result.reason == speechsdk.ResultReason.RecognizedSpeech and evt.result.text:
-                debug_print(f"[SPEECH] Recognized: {evt.result.text}")
                 all_results.append(evt.result.text.strip())
 
         def handle_canceled(evt):
             """Handle cancellation events"""
-            nonlocal done
-            debug_print(f"[SPEECH] Canceled: {evt}")
             if evt.reason == speechsdk.CancellationReason.Error:
-                debug_print(f"[SPEECH] Error details: {evt.error_details}")
-            done = True
+                failed.set()
+                log_event(
+                    "[SPEECH] Speech SDK recognition failed.",
+                    extra={"failure_code": "speech_sdk_canceled"},
+                    level=logging.ERROR,
+                )
+            elif evt.reason != speechsdk.CancellationReason.EndOfStream:
+                failed.set()
+                log_event(
+                    "[SPEECH] Speech SDK recognition was interrupted.",
+                    extra={"failure_code": "speech_sdk_interrupted"},
+                    level=logging.ERROR,
+                )
+            done.set()
 
         def handle_session_stopped(evt):
             """Handle session stopped events"""
-            nonlocal done
             debug_print("[SPEECH] Session stopped")
-            done = True
+            done.set()
 
         speech_recognizer.recognized.connect(handle_recognized)
         speech_recognizer.canceled.connect(handle_canceled)
         speech_recognizer.session_stopped.connect(handle_session_stopped)
 
-        speech_recognizer.start_continuous_recognition()
+        try:
+            speech_recognizer.start_continuous_recognition()
+            completed = done.wait(timeout=120)
+        finally:
+            speech_recognizer.stop_continuous_recognition()
 
-        timeout = 120
-        elapsed = 0.0
-        while not done and elapsed < timeout:
-            time.sleep(0.05)
-            elapsed += 0.05
-
-        speech_recognizer.stop_continuous_recognition()
+        if failed.is_set():
+            raise RuntimeError("Speech recognition failed. Please try again.")
+        if not completed:
+            log_event(
+                "[SPEECH] Speech SDK recognition timed out.",
+                extra={"failure_code": "speech_sdk_timeout"},
+                level=logging.ERROR,
+            )
+            raise TimeoutError("Speech recognition timed out. Please try again.")
         debug_print(f"[SPEECH] Recognition complete. Recognized {len(all_results)} segments")
         return [segment for segment in all_results if segment]
     finally:
@@ -215,7 +230,6 @@ def register_route_backend_speech(bp):
                 extra={"user_id": user_id, "error_type": type(e).__name__},
                 level=logging.ERROR,
             )
-            traceback.print_exc()
             return jsonify({
                 'success': False,
                 'error': 'Failed to transcribe audio. Please try again.'
