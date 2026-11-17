@@ -77,6 +77,10 @@ def normalize_terms_of_use_return_path(value, fallback="/"):
         return fallback
     if "\\" in candidate or not candidate.startswith("/") or candidate.startswith("//"):
         return fallback
+    # Werkzeug's redirect and browsers drop a TAB, CR or LF inside a URL, so "/<TAB>/host" would be
+    # sent as "//host", another site. No control character belongs in a local path.
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+        return fallback
     return candidate
 
 
