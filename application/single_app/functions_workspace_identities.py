@@ -751,6 +751,8 @@ def validate_action_proxy_identity_reference(
 
 def _get_action_identity_auth_types_for_plugin(action_data: Dict[str, Any]) -> Set[str]:
     plugin_type = _normalize_text((action_data or {}).get("type"), 80).lower()
+    if plugin_type == "bitbucket":
+        return {"bearer_token", "username_password"}
     if plugin_type in ACTION_IDENTITY_SQL_TYPES:
         return ACTION_IDENTITY_SQL_AUTH_TYPES
     if plugin_type in ACTION_IDENTITY_OPENAPI_TYPES:
@@ -872,6 +874,9 @@ def _apply_action_identity_auth(action_data: Dict[str, Any], identity_auth: Dict
 
     additional_fields["identity_auth_type"] = auth_type
     action["additionalFields"] = additional_fields
+    if plugin_type == "bitbucket":
+        if additional_fields.get("auth_method") != auth_type:
+            raise ValueError("The Bitbucket identity must match the configured token authentication method.")
 
     if plugin_type in ACTION_IDENTITY_SQL_TYPES:
         _apply_sql_action_identity_auth(action_auth, additional_fields, identity_auth)

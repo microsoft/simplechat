@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from agent_interaction_contracts import AgentInteractionRequired
 
 from functions_action_manifest import get_action_origin, resolve_action_type
+from functions_bitbucket_operations import normalize_bitbucket_manifest, policy_fingerprint
 from functions_yamcs_operations import (
     normalize_yamcs_auth_method,
     normalize_yamcs_server_url,
@@ -118,7 +119,39 @@ class YamcsCredentialAdapter:
         return list(slots)
 
 
-ADAPTERS = {"yamcs": YamcsCredentialAdapter()}
+class BitbucketCredentialAdapter:
+    slots = {"service": {"username_password", "bearer_token"}}
+
+    @staticmethod
+    def validate(manifest, slots):
+        normalized = normalize_bitbucket_manifest(manifest)
+        method = normalized["additionalFields"]["auth_method"]
+        service = slots.get("service")
+        if method == "oauth" or not service or service["auth_type"] != method:
+            raise ValueError("Bitbucket personal credentials must match the token authentication method.")
+        auth = manifest.get("auth") or {}
+        if manifest.get("identity_id") or any(auth.get(key) for key in ("key", "identity", "tenantId")):
+            raise ValueError("Personal Bitbucket credentials cannot include shared credentials.")
+
+    @staticmethod
+    def destination(manifest):
+        normalized = normalize_bitbucket_manifest(manifest)
+        return {"endpoint": normalized["endpoint"], "policy": policy_fingerprint(normalized)}
+
+    @staticmethod
+    def inject(manifest, slot, auth):
+        manifest["auth"] = {
+            "type": "username_password" if auth["auth_type"] == "username_password" else "key",
+            "identity": auth.get("username", ""),
+            "key": auth["password"] if auth["auth_type"] == "username_password" else auth["secret"],
+        }
+
+    @staticmethod
+    def rejected_slots(manifest, error):
+        return ["service"] if getattr(error, "status", None) == 401 else []
+
+
+ADAPTERS = {"yamcs": YamcsCredentialAdapter(), "bitbucket": BitbucketCredentialAdapter()}
 
 
 def credential_slots(manifest):

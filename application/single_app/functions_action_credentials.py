@@ -126,7 +126,8 @@ def safe_request(item, manifest):
     context = request_conversation(item)
     requirements = [
         {"slot": slot, "auth_type": auth_type,
-         "label": "Proxy sign-in" if slot == "proxy" else "YAMCS sign-in"}
+         "label": "Proxy sign-in" if slot == "proxy" else (
+             "Bitbucket sign-in" if resolve_action_type(manifest) == "bitbucket" else "YAMCS sign-in")}
         for slot, auth_type in item["requirements"].items()
     ]
     result = {
