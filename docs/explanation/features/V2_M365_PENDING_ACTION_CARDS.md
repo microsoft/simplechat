@@ -53,7 +53,7 @@ A card taken from message history is checked against the server before Send is a
 
 ### The card
 
-The same `PendingActionCard` is used inline in chat, in the Approvals detail pane and, since 0.261.445, on the V2 [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md), beside the run whose activity stands for the saved action, so a card behaves the same wherever it is drawn. It shows recipients, times, location, the first five rendered body lines, and a status. HTML bodies retain safe prose formatting and links through the locally vendored DOMPurify boundary; executable content, styles, remote images and embeds are removed. **Show More** / **Show Less** appears only for overflowing or server-shortened content. Its controls are described in [chat controls](../../reference/chat-controls.md#microsoft-365-outgoing-action-cards):
+The same `PendingActionCard` is used inline in chat, in the Approvals detail pane and, since 0.261.448, on the V2 [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md), beside the run whose activity stands for the saved action, so a card behaves the same wherever it is drawn. It shows recipients, times, location, the first five rendered body lines, and a status. HTML bodies retain safe prose formatting and links through the locally vendored DOMPurify boundary; executable content, styles, remote images and embeds are removed. **Show More** / **Show Less** appears only for overflowing or server-shortened content. Its controls are described in [chat controls](../../reference/chat-controls.md#microsoft-365-outgoing-action-cards):
 
 An email awaiting review says **Ready to review — not sent**. Preparation and sending are separate outcomes: a later failed report does not discard the draft or mark it sent. After the owner sends, **Accepted for sending — recipient delivery is not confirmed** is the primary result. New draft-send actions send the actual Outlook draft; their sent-message link appears only after it is verified. Older retained-draft actions keep their compatibility behavior and an explicitly labeled retained-draft link. Conflict and unknown-outcome warnings remain, and nothing is sent or replayed automatically by the browser.
 
@@ -81,7 +81,7 @@ A notification link that names a saved action, such as `/chats?conversationId=<i
 
 The Approvals detail pane's **Open conversation** link uses the same address.
 
-Notices about a Microsoft 365 action inside a workflow run open the V2 [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md) (0.261.445), which draws the action beside the run with this same card, told only what the activity snapshot said so that Send and Cancel still check the saved version against the server first.
+Notices about a Microsoft 365 action inside a workflow run open the V2 [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md) (0.261.448), which draws the action beside the run with this same card, told only what the activity snapshot said so that Send and Cancel still check the saved version against the server first.
 
 ### File structure
 

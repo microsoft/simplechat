@@ -1,8 +1,8 @@
 # test_group_legacy_document_upgrade_route.py
 """
 Functional test for the group workspace legacy document upgrade route.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 ``POST /api/groups/<group_id>/documents/upgrade_legacy`` backfills a group's documents that
 predate progress tracking. The classic route does the same for the saved active group, so a V2
@@ -99,7 +99,7 @@ def actor(env, oid):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 @pytest.mark.parametrize("oid", ["owner", "admin", "manager"])

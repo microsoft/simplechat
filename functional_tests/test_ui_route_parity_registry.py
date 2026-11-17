@@ -2,8 +2,8 @@
 # test_ui_route_parity_registry.py
 """
 Guard for the classic to V2 page route registry.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 ``application/single_app/ui_route_map.json`` maps every classic (server-rendered) page route to
 the V2 (React, /v2) route that replaces it. The interface selector will read it to redirect
@@ -123,7 +123,7 @@ PLAN_REF_RE = re.compile(r"Phase \d+(?: \(.+\))?")
 PARTIAL_BY_DESIGN_KEYS = frozenset({"home", "terms-of-use"})
 # Pages whose V2 work is still being finished. Their notes describe the hand-off as it stood when the
 # registry was written, so a stale one is reported as a warning until the page is flipped. Every page
-# is finished at 0.261.445, so the list is empty; a new unfinished page is added here with its row.
+# is finished at 0.261.448, so the list is empty; a new unfinished page is added here with its row.
 PARTIAL_UNFINISHED_KEYS = frozenset()
 EXPECTED_PARTIAL_KEYS = PARTIAL_BY_DESIGN_KEYS | PARTIAL_UNFINISHED_KEYS
 # What a partial row's notes must contain so the hand-off is named, not implied.
@@ -448,7 +448,7 @@ def fail(title, lines, advice=""):
 # ---------------------------------------------------------------------------
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_registry_loads_and_every_row_is_well_formed():

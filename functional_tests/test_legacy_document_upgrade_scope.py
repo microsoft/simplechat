@@ -1,8 +1,8 @@
 # test_legacy_document_upgrade_scope.py
 """
 Functional test for the scope-explicit legacy document upgrade.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The classic upgrade routes backfill the saved active group or public workspace, and the public
 path of ``upgrade_legacy_documents`` writes through its personal branch, so a V2 workspace that
@@ -110,7 +110,7 @@ def seed_group(env):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_group_scope_upgrades_only_the_named_groups_legacy_documents(env):

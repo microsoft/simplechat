@@ -1,8 +1,8 @@
 # test_v2_artifact_actions.py
 """
 Browser regressions for "Add to workspace" and "Create PowerPoint" on V2 generated-artifact cards.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Classic's generated-artifact card offers both actions; the V2 card offered only Download and View.
 The V2 actions call the same two routes: ``POST /api/chat_artifacts/promote`` (an explicit
@@ -195,7 +195,7 @@ SEED = r"""
     const H = window.ArtifactHarness;
     H.stores.bootstrap.useBootstrapStore.setState({
         data: {
-            version: '0.261.445',
+            version: '0.261.448',
             user: {id: 'user-1', display_name: 'Riley Chen', roles: []},
             features: seed.features,
             branding: {app_title: 'Contoso Chat'},

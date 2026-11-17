@@ -1,6 +1,6 @@
 # V2 Modern Standalone Pages
 
-**Implemented in version: 0.261.445**
+**Implemented in version: 0.261.448**
 
 ## Overview
 
@@ -298,7 +298,7 @@ button settings. No new setting was added.
   `test_access_denied_message_feature.py`, `test_m365_routes.py`, `test_m365_runtime_imports.py`,
   `ui_tests/test_m365_connection_result_page.py`).
 
-Results at version 0.261.445: the functional test passes 69 checks and the UI test passes 71 in Chromium
+Results at version 0.261.448: the functional test passes 69 checks and the UI test passes 71 in Chromium
 (light and dark, desktop, 390 px and 320 px). The lowest rendered text contrast measured on the
 Acceptable Use Policy page is 6.76:1 in light mode and 9.47:1 in dark mode. Two sensitivity checks showed
 the tests do their job: removing the long-word wrapping from the stylesheet fails the layout test with a

@@ -2,8 +2,8 @@
 # test_v2_workflow_activity_gates.py
 """
 Functional test that the V2 Workflow Activity page is behind the same gates as the classic page.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The V2 page at /v2/workflow-activity has no page route of its own to gate. It is served as part of
 the SPA, and everything it shows comes from GET /api/{user|group}/workflows/activity and the event
@@ -236,7 +236,7 @@ class Gates:
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_personal_activity_is_gated_by_the_same_rules_on_the_page_and_in_the_api():

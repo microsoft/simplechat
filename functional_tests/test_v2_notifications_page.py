@@ -2,8 +2,8 @@
 # test_v2_notifications_page.py
 """
 Functional test for the V2 Notifications page and the server-side filters behind it.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The browser suite (ui_tests/test_v2_notifications_page.py) drives the page against a stand-in
 server. On its own it cannot notice the stand-in drifting away from route_backend_notifications.py,
@@ -301,7 +301,7 @@ def run_probe():
 
 def test_version_is_at_least_the_implementing_release():
     """The page is present from the version it was implemented in onwards."""
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
     print("  ok  application version is at or beyond the implementing release")
 
 

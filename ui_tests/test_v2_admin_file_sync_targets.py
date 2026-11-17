@@ -2,8 +2,8 @@
 # test_v2_admin_file_sync_targets.py
 """
 Browser coverage for managing File Sync sources on behalf of another workspace in V2.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The classic File Sync card has a block for each kind of workspace: search for a user, a group
 or a public workspace, or paste an ID, then open that target's sources. The V2 card now has the

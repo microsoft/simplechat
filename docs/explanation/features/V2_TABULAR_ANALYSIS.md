@@ -242,7 +242,7 @@ where it was saved, a preview and a download.
 offers Continue or Cancel where the server allows them. It replaces itself with the finished
 files.
 
-**Keeping or reusing a finished file.** Since **0.261.445** a finished card also offers **Add to
+**Keeping or reusing a finished file.** Since **0.261.448** a finished card also offers **Add to
 workspace**, which saves the file into a personal, group or public workspace, and, on a Markdown
 file, **Create PowerPoint**. These were first left out because they depended on the classic
 export module; they are described in

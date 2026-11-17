@@ -11930,7 +11930,7 @@
         "module_sha256": "2a1ae5bcc26aede6d1363e17ae5018d32f986b0224cf037ac4c5a06e06e8a6a4"
       },
       "classification": "sdk-compatible",
-      "contract": "_list_cosmos_custom_pages_source: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Re-reviewed 0.261.445: the module gained the V2 embed helpers only; this owner's body and storage call are unchanged. Owner-runtime evidence lists plain rows through the real owner, strips the service's underscore fields, and reports a missing container as an empty list.",
+      "contract": "_list_cosmos_custom_pages_source: query rows/pages are plain JSON, not Cosmos point wrappers. Nested domain shape checks therefore need no point-response repair. Re-reviewed 0.261.448: the module gained the V2 embed helpers only; this owner's body and storage call are unchanged. Owner-runtime evidence lists plain rows through the real owner, strips the service's underscore fields, and reports a missing container as an empty list.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_custom_pages_cosmos_sdk_responses.py::test_listing_normalizes_plain_query_rows_and_reports_a_missing_container_as_empty"
@@ -11951,7 +11951,7 @@
         "module_sha256": "2a1ae5bcc26aede6d1363e17ae5018d32f986b0224cf037ac4c5a06e06e8a6a4"
       },
       "classification": "response-unused",
-      "contract": "delete_custom_page: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Re-reviewed 0.261.445: this owner's body and storage call are unchanged. Owner-runtime evidence deletes through the real owner, reports a missing or unsafe page as False, and invalidates the cached catalog only after a real delete.",
+      "contract": "delete_custom_page: point response values are discarded; query rows, if present, are separate plain SDK JSON. Existing write errors remain visible. Re-reviewed 0.261.448: this owner's body and storage call are unchanged. Owner-runtime evidence deletes through the real owner, reports a missing or unsafe page as False, and invalidates the cached catalog only after a real delete.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_custom_pages_cosmos_sdk_responses.py::test_delete_custom_page_ignores_the_point_response_and_reports_a_missing_page"
@@ -11972,7 +11972,7 @@
         "module_sha256": "2a1ae5bcc26aede6d1363e17ae5018d32f986b0224cf037ac4c5a06e06e8a6a4"
       },
       "classification": "sdk-compatible",
-      "contract": "get_custom_page: the installed SDK's CosmosDict point response is consumed through Mapping reads only: the underscore fields are dropped and the metadata is rebuilt as a new plain dictionary before it reaches the JSON contract, so no wrapper, ETag or strict domain sink crosses the boundary. Re-reviewed 0.261.445: the module gained the V2 embed helpers only; this owner's body and storage call are unchanged. Owner-runtime evidence reads a real SDK-shaped point response through the real owner and reports a missing page as None.",
+      "contract": "get_custom_page: the installed SDK's CosmosDict point response is consumed through Mapping reads only: the underscore fields are dropped and the metadata is rebuilt as a new plain dictionary before it reaches the JSON contract, so no wrapper, ETag or strict domain sink crosses the boundary. Re-reviewed 0.261.448: the module gained the V2 embed helpers only; this owner's body and storage call are unchanged. Owner-runtime evidence reads a real SDK-shaped point response through the real owner and reports a missing page as None.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_custom_pages_cosmos_sdk_responses.py::test_get_custom_page_reads_an_sdk_point_response_into_plain_metadata"
@@ -11993,7 +11993,7 @@
         "module_sha256": "2a1ae5bcc26aede6d1363e17ae5018d32f986b0224cf037ac4c5a06e06e8a6a4"
       },
       "classification": "sdk-compatible",
-      "contract": "save_custom_page: the upsert is written from freshly normalized plain metadata and its CosmosDict response is consumed through Mapping reads only (underscore fields dropped, a new plain dictionary returned). Strict domain sinks remain with their storage owners. Re-reviewed 0.261.445: the module gained the V2 embed helpers only; this owner's body and storage call are unchanged. Owner-runtime evidence saves through the real owner against an SDK-shaped upsert response, checks that only plain metadata is written and that invalid metadata never reaches the container.",
+      "contract": "save_custom_page: the upsert is written from freshly normalized plain metadata and its CosmosDict response is consumed through Mapping reads only (underscore fields dropped, a new plain dictionary returned). Strict domain sinks remain with their storage owners. Re-reviewed 0.261.448: the module gained the V2 embed helpers only; this owner's body and storage call are unchanged. Owner-runtime evidence saves through the real owner against an SDK-shaped upsert response, checks that only plain metadata is written and that invalid metadata never reaches the container.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_custom_pages_cosmos_sdk_responses.py::test_save_custom_page_returns_plain_metadata_from_an_sdk_upsert_response"
@@ -31876,7 +31876,7 @@
         "module_sha256": "fa7b1fce05cf461ce1634c8d0df34c9dd198a0d07cc339f30f1bc6384e12de3c"
       },
       "classification": "sdk-compatible",
-      "contract": "Access-checked personal/group SDK point responses are consumed only via Mapping.get; a new plain dictionary projects id, name and scope for jsonify. No raw workflow, strict domain validator, metadata or ETag crosses the response boundary. Re-reviewed 0.261.445: module AST changes are limited to the modern connection-result template choice (render_page and one template constant); this owner's body and storage call are unchanged and its owner-runtime evidence was re-executed.",
+      "contract": "Access-checked personal/group SDK point responses are consumed only via Mapping.get; a new plain dictionary projects id, name and scope for jsonify. No raw workflow, strict domain validator, metadata or ETag crosses the response boundary. Re-reviewed 0.261.448: module AST changes are limited to the modern connection-result template choice (render_page and one template constant); this owner's body and storage call are unchanged and its owner-runtime evidence was re-executed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_m365_routes.py::test_workflow_authorization_sdk_contract"
@@ -31897,7 +31897,7 @@
         "module_sha256": "fa7b1fce05cf461ce1634c8d0df34c9dd198a0d07cc339f30f1bc6384e12de3c"
       },
       "classification": "sdk-compatible",
-      "contract": "Unchanged partition-bound query consumes plain SDK JSON rows through jsonify, continuation and CSRF fields; dependency-light identifier imports introduce no strict point-response sink. Re-reviewed 0.261.445: module AST changes are limited to the modern connection-result template choice (render_page and one template constant); this owner's body and storage call are unchanged and its owner-runtime evidence was re-executed.",
+      "contract": "Unchanged partition-bound query consumes plain SDK JSON rows through jsonify, continuation and CSRF fields; dependency-light identifier imports introduce no strict point-response sink. Re-reviewed 0.261.448: module AST changes are limited to the modern connection-result template choice (render_page and one template constant); this owner's body and storage call are unchanged and its owner-runtime evidence was re-executed.",
       "evidence_scope": "owner-runtime",
       "tests": [
         "functional_tests/test_m365_chat_connection_persistence.py::test_waiting_request_route_consumes_plain_query_rows"

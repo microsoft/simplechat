@@ -1,8 +1,8 @@
 # test_v2_workflow_activity.py
 """
 Browser regressions for the V2 Workflow Activity page (/v2/workflow-activity).
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Exercises the real page, its timeline, detail panel and Microsoft 365 action card, the chat
 header's activity link and a workflow's run history, bundled by fixtures/workflow_activity. Only
@@ -63,7 +63,7 @@ from ui_tests.fixtures.v2_workflow_activity_stubs import (  # noqa: E402
 
 pytestmark = pytest.mark.ui
 
-IMPLEMENTED_IN = "0.261.445"
+IMPLEMENTED_IN = "0.261.448"
 FIXTURE = ROOT / "ui_tests" / "fixtures" / "workflow_activity"
 BUNDLE = FIXTURE / "harness.bundle.js"
 V2_SOURCE = ROOT / "application" / "v2_ui" / "src"
@@ -113,7 +113,7 @@ SEED = r"""
     const H = window.ActivityHarness;
     H.stores.bootstrap.useBootstrapStore.setState({
         data: {
-            version: '0.261.445',
+            version: '0.261.448',
             user: {id: 'user-1', display_name: 'Riley Chen', roles: []},
             features: seed.features,
             branding: {app_title: 'Contoso Chat'},

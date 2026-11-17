@@ -13,7 +13,7 @@ only those workspaces, so a follow-up question cannot quietly start drawing on a
 documents. This change gives V2 the classic modal's other half: reading what the lock covers and
 choosing to lift or restore it.
 
-Implemented in version **0.261.445**.
+Implemented in version **0.261.448**.
 
 ### Dependencies
 

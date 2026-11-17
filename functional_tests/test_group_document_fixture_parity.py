@@ -1,13 +1,13 @@
 # test_group_document_fixture_parity.py
 """
 Per-route shape parity between the M2 group document UI fixtures and the real routes.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.161
 A tag vocabulary conflict is pinned from the etag pre-check and from a lost patch: 0.261.167
 A bulk tagging batch or metadata save that meets it is refused whole, with no document written: 0.261.168
 A released screened document's metadata change applies directly and returns the ordinary receipt: 0.261.230
 Metadata and re-tag receipts report the background search sync; only the access index fails a save: 0.261.268
-The list's legacy flag and the legacy document upgrade receipt are pinned to the server's: 0.261.445
+The list's legacy flag and the legacy document upgrade receipt are pinned to the server's: 0.261.448
 
 The V2 group Documents explorer mocks the network with three closed HTTP fixtures, which predate
 the per-route parity rule:

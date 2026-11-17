@@ -1,8 +1,8 @@
 # test_v2_workspace_delete_fixture_parity.py
 """
 Parity between the V2 browser fixtures' owner-delete answers and the real delete routes.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The V2 group and public workspace Settings danger zones delete the workspace natively: they read the
 document count, confirm, and send the owner's `DELETE /api/groups/<id>` or

@@ -2,14 +2,14 @@
 """M11 public end-to-end journeys: the role x status x File-Sync matrix, mid-session
 transitions, Settings activation and the classic handoff, driven through the real SPA.
 
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.185
 The classic handoff follows the Documents header's renamed Classic tools button: 0.261.188
-The Documents header has no classic handoff now that the legacy document upgrade is native: 0.261.445
+The Documents header has no classic handoff now that the legacy document upgrade is native: 0.261.448
 A locked overview entry is outlined, never faded, and its text stays readable: 0.261.188
 The overview describes what a public workspace offers, and its Manage group who manages it: 0.261.188
 A status that bars viewing keeps the owner's and admins' Manage sections, and a document manager's
-Statistics, in the rail: 0.261.445
+Statistics, in the rail: 0.261.448
 
 These journeys are the public twin of test_v2_group_journeys.py. They ride one composite
 public store (public_journeys_ui) across the whole public surface in one session and assert

@@ -2,8 +2,8 @@
 # test_v2_idle_session_warning.py
 """
 Functional test for the V2 idle-session warning.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The server signs a session out when nothing has refreshed it for the administrator's
 timeout, and only a page load or the heartbeat route refreshes it. V2 is one page load followed
@@ -75,7 +75,7 @@ def idle():
 # ---------------------------------------------------------------------------
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 @pytest.mark.parametrize("settings,expected", [

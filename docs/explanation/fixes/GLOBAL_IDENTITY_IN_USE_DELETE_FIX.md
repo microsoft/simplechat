@@ -1,4 +1,4 @@
-# Global Identity In-Use Delete Fix (v0.261.445)
+# Global Identity In-Use Delete Fix (v0.261.448)
 
 ## Issue
 
@@ -15,7 +15,7 @@ list, and the V2 identities section reads exactly that to say what still uses
 an identity. Without it, V2 could not offer administrators the same
 help in the Global Identities section it gives every other scope.
 
-Fixed in version: **0.261.445**, tracked in `application/single_app/config.py`.
+Fixed in version: **0.261.448**, tracked in `application/single_app/config.py`.
 
 ## Root cause
 

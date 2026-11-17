@@ -134,7 +134,7 @@ See [Uploading and managing documents]({{ '/guides/upload-and-manage-documents/'
 
 ### React V2 workspace scope lock
 
-Implemented in version: **0.261.445** (`application/single_app/config.py`).
+Implemented in version: **0.261.448** (`application/single_app/config.py`).
 A conversation locks itself to the workspaces behind its first grounded reply, and the
 **Documents** picker then lists only those workspaces. V2 shows that lock and, where it is
 allowed, lets you unlock it or lock it again, so a conversation that locked to the wrong
@@ -910,7 +910,7 @@ for recorded context and associated documents.
 
 ## Generated file actions (V2 interface)
 
-These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They sit on a generated-file card in the thread, beside **Download** and **View**, and carry over the classic card's **Add to Workspace** and **Create PowerPoint** buttons. Implemented in version **0.261.445** (`application/single_app/config.py`). The rules behind each control are written up in `docs/explanation/features/V2_GENERATED_ARTIFACT_ACTIONS.md`.
+These controls exist only in the V2 interface, so they are not part of the generated inventory above, which is taken from the classic chat page. They sit on a generated-file card in the thread, beside **Download** and **View**, and carry over the classic card's **Add to Workspace** and **Create PowerPoint** buttons. Implemented in version **0.261.448** (`application/single_app/config.py`). The rules behind each control are written up in `docs/explanation/features/V2_GENERATED_ARTIFACT_ACTIONS.md`.
 
 | Control | What it does | Why you would use it | Enabled by |
 | --- | --- | --- | --- |

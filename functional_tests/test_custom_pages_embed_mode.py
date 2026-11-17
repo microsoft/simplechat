@@ -2,8 +2,8 @@
 # test_custom_pages_embed_mode.py
 """
 Functional test for custom pages shown inside V2 (embed mode).
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The V2 interface shows a custom page by framing a chrome-less, same-origin copy of it:
 `/custom/<slug>?embed=1`. The classic route must not change, and the one relaxation the framing
@@ -77,7 +77,7 @@ def _chrome_in(body):
 
 
 def test_the_version_carries_the_embed_mode():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_embed_document_has_no_classic_chrome_and_carries_the_page():

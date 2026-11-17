@@ -53,7 +53,7 @@ IMPLEMENTED_IN = "0.261.195"
 
 # The files this feature added. Notification text passes through all of them on its way to
 # the screen, and none of them has any reason to load or link anything off-site. The
-# Notifications page and the row it shares with the panel (0.261.445) are among them.
+# Notifications page and the row it shares with the panel (0.261.448) are among them.
 NOTIFICATION_SOURCES = [
     "components/layout/NotificationBell.tsx",
     "components/layout/NotificationPanel.tsx",

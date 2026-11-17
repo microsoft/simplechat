@@ -1,10 +1,10 @@
 # test_v2_group_classic_handoffs.py
 """
 M8A classic handoff cleanup for the native V2 group workspace.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.153
 A workflow's resource segment is its editor page, no longer a redirect to the workflow query: 0.261.271
-No hand-off to classic is left in the group workspace for any role or status: 0.261.445
+No hand-off to classic is left in the group workspace for any role or status: 0.261.448
 
 Every group workspace section is native now, so the V2 group pages must stop sending people to
 classic where classic offers nothing more. This suite pins that the "Classic" availability labels

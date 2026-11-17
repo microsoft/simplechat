@@ -1,7 +1,7 @@
 // test_v2_workflow_run_link_routing.mjs
-// Version: 0.261.445
+// Version: 0.261.448
 // Implemented in: 0.261.251
-// Workflow activity opens in V2 as of: 0.261.445
+// Workflow activity opens in V2 as of: 0.261.448
 // Executes where V2 opens a workflow run from a link: the run deep link (workflowRunHref and
 // v2WorkflowRunPath) in personal and group workspaces, the bell's reading of 6b-1's notices about a
 // chat-started run, and the workflow alert card's Open run. A classic `/workflow-activity` link opens

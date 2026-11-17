@@ -1,4 +1,4 @@
-# V2 Workflow Activity (v0.261.445)
+# V2 Workflow Activity (v0.261.448)
 
 ## Overview
 
@@ -14,7 +14,7 @@ executions, loops and decisions), but no page for the thought and tool-call time
 card beside a run. Every link that used to open workflow activity, a notification, a Support shortcut,
 the chat header, a run in a workflow's history, left V2 for the classic page.
 
-Implemented in version: **0.261.445**, tracked in `application/single_app/config.py`.
+Implemented in version: **0.261.448**, tracked in `application/single_app/config.py`.
 
 No setting, API route, database container or package is added, and the server is unchanged. The page
 reads the same endpoints the classic page reads.

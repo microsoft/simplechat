@@ -8,7 +8,7 @@ The V2 Control Center is a permission-aware administration pane for managing Sim
 **Groups implemented in version:** 0.261.282
 **Activity Logs implemented in version:** 0.261.284
 **Public Workspaces implemented in version:** 0.261.283
-**Refresh controls implemented in version:** 0.261.445 (the **Refresh data** strip; see [V2 Control Center Refresh](V2_CONTROL_CENTER_REFRESH.md))
+**Refresh controls implemented in version:** 0.261.448 (the **Refresh data** strip; see [V2 Control Center Refresh](V2_CONTROL_CENTER_REFRESH.md))
 **Current version:** 0.261.301 (Dashboard reorganized with named rankings and plain-language definitions; Chat with this dashboard through the Control Center action)
 
 **Dependencies:** React 18, TypeScript, Vite, Flask session authentication, and the existing Control Center APIs.
@@ -21,7 +21,7 @@ The Control Center is a distinct React route (`/control-center` and `/control-ce
 
 ### Refresh data strip
 
-Since 0.261.445 every section sits under a **Refresh data** strip, drawn only for `can_manage_users` because the two routes behind it are `control_center_required('admin')`. It reads `GET /api/admin/control-center/refresh-status` to show when the stored user and group metrics were last refreshed and when the daily refresh runs next, and **Refresh data** posts `POST /api/admin/control-center/refresh`, reports how many users and groups were updated (a run that skipped any is a warning), re-reads the status and reloads the section on screen (the Dashboard asks the server to bypass its 90-second cache with `force_refresh=1`). The route covers users and groups only; public workspace figures are read from stored records. The unreachable `SectionPlaceholder` branch of `ControlCenterPage.tsx`, with its link to the classic Control Center, was removed in the same change. See [V2 Control Center Refresh](V2_CONTROL_CENTER_REFRESH.md).
+Since 0.261.448 every section sits under a **Refresh data** strip, drawn only for `can_manage_users` because the two routes behind it are `control_center_required('admin')`. It reads `GET /api/admin/control-center/refresh-status` to show when the stored user and group metrics were last refreshed and when the daily refresh runs next, and **Refresh data** posts `POST /api/admin/control-center/refresh`, reports how many users and groups were updated (a run that skipped any is a warning), re-reads the status and reloads the section on screen (the Dashboard asks the server to bypass its 90-second cache with `force_refresh=1`). The route covers users and groups only; public workspace figures are read from stored records. The unreachable `SectionPlaceholder` branch of `ControlCenterPage.tsx`, with its link to the classic Control Center, was removed in the same change. See [V2 Control Center Refresh](V2_CONTROL_CENTER_REFRESH.md).
 
 ## Dashboard
 

@@ -167,7 +167,7 @@ Let's start with personal document uploads:
 
 ### If a user agreement is required
 
-Fixed/Implemented in version: **0.261.445** (`application/single_app/config.py`).
+Fixed/Implemented in version: **0.261.448** (`application/single_app/config.py`).
 
 When your administrator requires a user agreement for the workspace you are uploading to (personal,
 group or public), the React V2 interface shows it before any file is sent. It appears whether you use

@@ -38,7 +38,7 @@ The journeys tested in this suite:
 - **Status changes (J4):** locking the group removes the write controls from
   Documents, Prompts, Identities, Endpoints, File sources and Members after the
   page revalidates, and the header shows the status. An inactive group shows the
-  server's reason. From 0.261.445, an inactive group or one whose status isn't
+  server's reason. From 0.261.448, an inactive group or one whose status isn't
   recognized bars the content sections but keeps its owner's and admins'
   Manage sections (Members, Settings, Activity and Statistics), and
   **Manage group (classic)** is gone for every status.
@@ -51,7 +51,7 @@ The journeys tested in this suite:
   link and an off-page document link are covered by the per-section tests the
   table names.
 - **The classic surface stays in step (J8):** a change made in classic shows in
-  V2 after the page regains focus. Until 0.261.445 this journey also covered a
+  V2 after the page regains focus. Until 0.261.448 this journey also covered a
   classic round trip, a link that confirmed the group before leaving V2; the
   last such link, Settings' **Delete group (classic)**, is now a native delete.
   The journey deletes the group in V2 while another tab moved the active group,
@@ -64,7 +64,7 @@ The journeys tested in this suite:
   the active group.
 - **The role, status and section matrix (J10):** for each of the four roles and
   five statuses, every section, including the four Manage sections from
-  0.261.445, is present or locked exactly as the server's context says, and the
+  0.261.448, is present or locked exactly as the server's context says, and the
   overview lists the locked sections with the server's reason. For an inactive
   or unrecognized-status group it also asserts, independently of the fixture,
   that an owner or admin keeps every Manage section and nobody else keeps any.
@@ -119,7 +119,7 @@ When it was added, the suite passed 44 tests on three consecutive runs, with
 the one strict `xfail` expected, and the picker pin passed 8. From 0.261.162 it
 passes all 45, with no `xfail`. From 0.261.165 it also covers the Settings
 delete link (J8), the Settings editor (J9) and the unknown-status case of J4.
-From 0.261.445 J8 covers the native Settings delete instead of the classic
+From 0.261.448 J8 covers the native Settings delete instead of the classic
 link.
 
 - J11 checks the join request and the owner's approval separately; the

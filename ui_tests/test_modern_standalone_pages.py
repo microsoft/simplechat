@@ -1,8 +1,8 @@
 # test_modern_standalone_pages.py
 """
 UI test for the modern standalone pages.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The signed-out and no-role landing pages, the Acceptable Use Policy, the rate-limit (429)
 page and the Microsoft 365 sign-in result stay server-rendered, so each has a modern variant
@@ -159,7 +159,7 @@ def landing_markdown(text=LANDING_TEXT):
 
 @pytest.fixture(scope="module")
 def pages():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
     return {
         "landing-signed-out": render_modern("modern/landing.html", landing_html=landing_markdown()),
         "landing-no-role": render_modern(

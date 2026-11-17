@@ -5,7 +5,7 @@
 Fixed/Implemented in version: **0.261.315**, recorded in
 `application/single_app/config.py`. Refs [#1722, row 5](https://github.com/microsoft/simplechat/issues/1722).
 The administrator's **global** identities in Admin Settings use the same editor since
-**0.261.445**; see [Global identities in Admin Settings](#global-identities-in-admin-settings).
+**0.261.448**; see [Global identities in Admin Settings](#global-identities-in-admin-settings).
 
 Personal users can create and edit reusable identities without leaving V2.
 Group and public managers retain their existing native authoring workflows.
@@ -95,7 +95,7 @@ references before deleting it.
 
 ## Global identities in Admin Settings
 
-**Implemented in version: 0.261.445.**
+**Implemented in version: 0.261.448.**
 
 Global identities are the deployment's own saved credentials. File Sync and
 Actions reuse them by name, so the secret itself never travels with a
@@ -103,7 +103,7 @@ configuration, and each one keeps its secret in Key Vault when Key Vault is
 configured. They are not accounts for signing in to SimpleChat.
 
 Administrators open **Admin Settings > Security > Global Identities** and use
-**New identity**, **Edit** and **Delete** on a row. Until 0.261.445 the V2
+**New identity**, **Edit** and **Delete** on a row. Until 0.261.448 the V2
 section was a read-only list that sent the administrator to the classic admin
 page for all three, so a deployment could not run on V2 alone.
 
@@ -165,7 +165,7 @@ a global action still references is refused with **409** and
 `{"kind": "action", "id": ..., "name": ...}`. Nothing is removed, and the
 section lists the actions under "“Name” is still in use, so it was not deleted".
 
-Until 0.261.445 this refusal answered **400** with only a sentence, which is the
+Until 0.261.448 this refusal answered **400** with only a sentence, which is the
 status of a malformed request, so a client could neither recognise it nor name
 what used the identity. See
 [Global identity in-use delete fix](../fixes/GLOBAL_IDENTITY_IN_USE_DELETE_FIX.md).

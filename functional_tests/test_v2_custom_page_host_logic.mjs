@@ -2,8 +2,8 @@
 //
 // Runtime test for how V2 decides what to show for a custom page, and for the two messages
 // it exchanges with the embedded page.
-// Version: 0.261.445
-// Implemented in: 0.261.445
+// Version: 0.261.448
+// Implemented in: 0.261.448
 //
 // A custom page is a server-rendered document, so V2 shows a chrome-less copy of it in a frame.
 // The decisions that matter are all small and all easy to get subtly wrong: which pages may be

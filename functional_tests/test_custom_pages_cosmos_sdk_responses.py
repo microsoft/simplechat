@@ -2,8 +2,8 @@
 #!/usr/bin/env python3
 """
 Functional test for the custom page storage owners against SDK-shaped Cosmos responses.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The pinned azure-cosmos SDK answers a point read or an upsert with a ``CosmosDict`` and a query
 with plain dictionaries. functions_custom_pages reads those responses through Mapping access and
@@ -167,7 +167,7 @@ def test_delete_custom_page_ignores_the_point_response_and_reports_a_missing_pag
 if __name__ == "__main__":
     from test_support.versioning import assert_app_version_at_least
 
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
     tests = [
         test_get_custom_page_reads_an_sdk_point_response_into_plain_metadata,
         test_save_custom_page_returns_plain_metadata_from_an_sdk_upsert_response,

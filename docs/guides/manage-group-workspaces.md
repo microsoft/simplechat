@@ -267,7 +267,7 @@ roles allowed to manage group workflows. From version
 Sync finds changes, or to sync first before each run. From **0.261.144**,
 workflow alerts are set up in the same editor; see [Create a workflow]({{ '/guides/create-a-workflow/' | relative_url }}).
 From version **0.261.153** every section of the group workspace is native, so
-none of them sends you to the classic page. From version **0.261.445**, the
+none of them sends you to the classic page. From version **0.261.448**, the
 legacy-document upgrade is native as well. When some of the group's documents
 were uploaded with an older version, owners, admins and document managers of an
 active group see an **Update older group documents** notice at the top of
@@ -279,7 +279,7 @@ afterwards. The **Classic tools** button is gone.
 
 From version **0.261.165**, a group's settings, activity and statistics are
 native too (see **Settings, activity and statistics** below). From version
-**0.261.445** the last exits to classic are gone: **Manage group (classic)** no
+**0.261.448** the last exits to classic are gone: **Manage group (classic)** no
 longer appears for any status, because the owner and admins of a locked,
 inactive or unrecognized-status group keep Members, Settings, Activity and
 Statistics in V2, and **Delete group** deletes natively. The classic manage page
@@ -324,7 +324,7 @@ email, and filter by role.
 - Anyone except the owner can **Leave this group**.
 - In a locked, inactive or unrecognized-status group, owners and admins still
   see Members, but **Add member** and **Import CSV** are off and a note says why
-  (from version **0.261.445**). Changing roles, removing members and reviewing
+  (from version **0.261.448**). Changing roles, removing members and reviewing
   requests still work. Other members are told Members isn't available in an
   inactive group.
 
@@ -332,7 +332,7 @@ email, and filter by role.
 
 From version **0.261.165**, **Settings**, **Activity** and **Statistics** sit
 under **Manage** beside Members. They're for the group's owner and admins; other
-members see them locked, with the reason. From version **0.261.445** they stay
+members see them locked, with the reason. From version **0.261.448** they stay
 available to the owner and admins when the group is locked, inactive or has an
 unrecognized status, with the name, description, colour and logo read-only and
 the reason shown.
@@ -354,7 +354,7 @@ the reason shown.
   you to confirm, says that every member loses access right away and that the
   group's conversations, prompts, agents, actions and other saved items are left
   behind rather than deleted with it, and then deletes the group and takes you
-  back to your groups (from version **0.261.445**; before, it opened the classic
+  back to your groups (from version **0.261.448**; before, it opened the classic
   page). Save or discard any unsaved settings edits first. If the delete is
   refused, the dialog says why and you can try again.
 - **Activity** lists the group's recent events: what happened, who did it and

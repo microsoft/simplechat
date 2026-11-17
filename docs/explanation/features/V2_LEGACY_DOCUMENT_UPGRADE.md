@@ -9,7 +9,7 @@ personal and group documents. The V2 Documents explorer now does the same for **
 group and public** documents, without leaving V2, and the "Classic tools" button that sent group
 and public users to the classic page is gone.
 
-**Implemented in version:** `0.261.445` (`application/single_app/config.py`)
+**Implemented in version:** `0.261.448` (`application/single_app/config.py`)
 
 **Dependencies**
 

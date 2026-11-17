@@ -4,7 +4,7 @@ Browser regressions for the V2 notification bell, its panel and desktop notifica
 Version: 0.261.307
 Implemented in: 0.261.195
 Notices about a chat-started run's results open the run in V2: 0.261.251
-Workflow-activity links open the V2 workflow-activity page, with the query they carry: 0.261.445
+Workflow-activity links open the V2 workflow-activity page, with the query they carry: 0.261.448
 Notices about a Microsoft 365 pending action open its card in V2 chat, not classic chat: 0.261.307
 
 Exercises the real rail, bell, panel, chat page, preferences tab, stores and notification

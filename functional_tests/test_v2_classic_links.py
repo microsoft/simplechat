@@ -2,8 +2,8 @@
 # test_v2_classic_links.py
 """
 Functional test for the V2 side of the classic to V2 redirect.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The server redirects a classic URL to V2, and V2 has two jobs of its own: a browser keeps a URL fragment
 across a redirect, so ``/workspace#documents-tab`` arrives as ``/v2/workspace#documents-tab`` and V2 must
@@ -223,7 +223,7 @@ FORWARD_CASES = build_forward_cases()
 # ---------------------------------------------------------------------------
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_the_cases_cover_the_registry():

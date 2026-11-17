@@ -2,8 +2,8 @@
 # test_ui_return_urls.py
 """
 Functional test for the addresses the server builds to send a person back into the application.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The server writes some classic addresses itself: the Microsoft 365 sign-in return URLs, the page it lands a
 chat sign-in on, the Teams success path, the landing page after login, and the Terms of Use return path.
@@ -90,7 +90,7 @@ def modern_decision(path, query_string="", **overrides):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 # ---------------------------------------------------------------------------

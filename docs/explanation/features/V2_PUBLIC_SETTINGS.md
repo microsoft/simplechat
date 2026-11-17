@@ -6,10 +6,10 @@ From version **0.261.185**, a public workspace's Owner and Admins manage its
 profile, logo, file downloads and retention in V2, read its recent activity,
 and chart and export its statistics, in the **Settings**, **Activity** and
 **Statistics** sections beside **Members** under **Manage**. From version
-**0.261.445** the Owner also deletes an empty workspace from a danger zone in
+**0.261.448** the Owner also deletes an empty workspace from a danger zone in
 Settings, natively, so V2 no longer hands off to the classic page for it.
 
-Also from version **0.261.445**, the sections stay available in a locked,
+Also from version **0.261.448**, the sections stay available in a locked,
 inactive or unrecognized-status workspace, as they do on the classic manage
 page: the Owner and Admins keep Settings and Activity, and every stored role
 (including a DocumentManager) keeps Statistics. Before, V2 closed all three
@@ -39,7 +39,7 @@ The server decides, and V2 follows its `settings_management` hint:
 
 ## Locked, inactive and unrecognized-status workspaces
 
-Version **0.261.445**. The routes behind Settings, Activity and Statistics check
+Version **0.261.448**. The routes behind Settings, Activity and Statistics check
 no status except for the profile and logo, and the classic manage page shows an
 inactive workspace to its Owner and Admins with only a status alert, so V2 keeps
 the sections for them. The workspace context reports `settings`, `activity` and
@@ -155,7 +155,7 @@ classic file name.
   export, and the danger zone -- the count gate, the confirmation, every refusal
   and its retry, a dropped connection, an already deleted workspace, a second
   click, unsaved edits and the administrator's workspace label -- on desktop and
-  mobile. From version **0.261.445** it also covers an inactive and an
+  mobile. From version **0.261.448** it also covers an inactive and an
   unrecognized-status workspace: the Owner and Admins keep the three sections
   with a read-only profile and logo, working downloads, retention and danger
   zone, a document manager keeps only Statistics, a reader keeps none, a

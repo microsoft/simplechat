@@ -2,8 +2,8 @@
 # test_v2_scope_lock_edit.py
 """
 Functional test for editing a conversation's workspace scope lock from the V2 chat.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 V2 drew a conversation's scope lock in the chat header and gave no way to change it, while
 classic locks and unlocks it through ``PATCH /api/conversations/<id>/scope_lock``. The V2 control
@@ -76,7 +76,7 @@ def _route_source():
 def test_version_is_at_least_the_implementing_release():
     """The application carries at least the version scope lock editing arrived in."""
     print("Testing the application version...")
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_the_route_is_what_the_client_expects():

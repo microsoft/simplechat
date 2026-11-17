@@ -1,9 +1,9 @@
 // test_v2_navigation_groups_logic.mjs
 //
 // Runtime test for the V2 rail's administrator-configured navigation groups.
-// Version: 0.261.445
+// Version: 0.261.448
 // Implemented in: 0.261.047
-// Updated in: 0.261.445 (same-tab custom pages that V2 embeds are router links)
+// Updated in: 0.261.448 (same-tab custom pages that V2 embeds are router links)
 //
 // Custom Pages and External Links are configured in Admin Settings and had no
 // representation in the V2 rail at all, so a deployment that had set them up saw none of

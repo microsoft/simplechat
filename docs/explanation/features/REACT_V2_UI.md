@@ -13,7 +13,7 @@ opt-in editor representation while leaving classic callers compatible.
 **Implemented in version:** 0.261.003
 **Personal agent/action authoring:** 0.261.096 (`application/single_app/config.py`)
 **Native Agents catalogue:** 0.261.305 (`application/single_app/config.py`)
-**Classic page parity registry:** 0.261.445 (`application/single_app/ui_route_map.json`),
+**Classic page parity registry:** 0.261.448 (`application/single_app/ui_route_map.json`),
 described in [V2 Classic Page Parity](V2_CLASSIC_PAGE_PARITY.md)
 **Deployer version:** 1.0.26
 

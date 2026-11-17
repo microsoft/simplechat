@@ -12,7 +12,7 @@ The V2 Control Center now has a **Refresh data** strip under its header. It says
 last refreshed and when the daily refresh runs next, and **Refresh data** runs it now, reports what
 it covered, and reloads the section on screen.
 
-**Implemented in version:** **0.261.445** (`application/single_app/config.py`)
+**Implemented in version:** **0.261.448** (`application/single_app/config.py`)
 
 **Dependencies:** `route_backend_control_center.py` (the two existing routes below),
 `functions_authentication.py` (`control_center_required`), `functions_control_center_schedule.py`

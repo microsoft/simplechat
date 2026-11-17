@@ -2,8 +2,8 @@
 //
 // Runtime test for the V2 "Refresh photo" control: how the server's answer is read, what is said
 // when it fails, what the request looks like, and how the new photo enters the settings store.
-// Version: 0.261.445
-// Implemented in: 0.261.445
+// Version: 0.261.448
+// Implemented in: 0.261.448
 //
 // The judgement calls here do not show in a screenshot: that "no photo" is an answer and not an
 // error, that a failure is reported in fixed words and never in the server's (which for a

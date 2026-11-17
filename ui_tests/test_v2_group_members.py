@@ -1,9 +1,9 @@
 # test_v2_group_members.py
 """
 Production-SPA coverage for the native V2 group Members section.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.155
-An inactive or unknown group's owners and admins keep Members, with adding turned off and explained: 0.261.445
+An inactive or unknown group's owners and admins keep Members, with adding turned off and explained: 0.261.448
 
 Exercises the real Members section -- a section of the group WorkspaceShell in its Manage group,
 built on the M7B native membership routes -- against closed synthetic HTTP. The fixture

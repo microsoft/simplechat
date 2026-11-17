@@ -90,7 +90,7 @@ conversation.
 
 ## Use the Notifications page in the V2 interface
 
-Since **0.261.445** (`application/single_app/config.py`), V2 has a full Notifications page for finding a notification the bell's panel no longer shows. Open it from **View all notifications** at the bottom of the bell's panel, or from **Notifications** at the top of the account menu at the foot of the navigation rail, where a badge shows how many are unread. On a phone, open the navigation menu first.
+Since **0.261.448** (`application/single_app/config.py`), V2 has a full Notifications page for finding a notification the bell's panel no longer shows. Open it from **View all notifications** at the bottom of the bell's panel, or from **Notifications** at the top of the account menu at the foot of the navigation rail, where a badge shows how many are unread. On a phone, open the navigation menu first.
 
 1. Choose **All**, **Unread**, or **Read**.
 2. Type in **Search notifications** to find a notification by words in its title or message. The list updates a moment after you stop typing, or when you press Enter. Select the X in the box to clear it.

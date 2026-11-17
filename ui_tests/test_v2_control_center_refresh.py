@@ -2,8 +2,8 @@
 # test_v2_control_center_refresh.py
 """
 Browser coverage for the V2 Control Center "Refresh data" strip.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The Users and Groups views read stored snapshots of each user's and group's activity, which a
 refresh recalculates. The classic Control Center had a button for it and a readout of the last

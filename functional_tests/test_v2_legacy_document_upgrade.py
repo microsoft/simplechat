@@ -1,8 +1,8 @@
 # test_v2_legacy_document_upgrade.py
 """
 Functional test for the V2 "update older documents" notice in the Documents explorer.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Classic offers an "Update older documents" alert for personal and group documents. V2 detected
 none of it: personal had no notice, and group and public sent the user to a "Classic tools"
@@ -92,7 +92,7 @@ def _route_rule(path, name):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_every_list_producer_writes_the_flag_the_explorer_reads():
@@ -245,7 +245,7 @@ def test_the_typescript_logic_checks_pass():
 
 def test_the_feature_is_documented():
     doc = _read(FEATURE_DOC)
-    assert "0.261.445" in doc and "upgrade_legacy" in doc
+    assert "0.261.448" in doc and "upgrade_legacy" in doc
 
 
 if __name__ == "__main__":

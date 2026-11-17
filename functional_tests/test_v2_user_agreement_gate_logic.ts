@@ -3,8 +3,8 @@
 // Runtime test for the V2 user agreement client: how a scope is named to the server, when an upload is
 // asked about at all, how an answer is read, what the two routes are sent, and, for the gate hook, when
 // `pending` is raised and that it is lowered on every way a gate can end.
-// Version: 0.261.445
-// Implemented in: 0.261.445
+// Version: 0.261.448
+// Implemented in: 0.261.448
 //
 // The judgement calls here do not show in a screenshot: that chat and personal uploads name the
 // workspace `default` exactly as classic does (so a once-a-day acceptance made in either interface

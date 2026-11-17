@@ -165,7 +165,7 @@ discard a draft or pretend that an in-flight write was cancelled.
 
 ### Updating older documents
 
-From version **0.261.445**, a group's Owner, Admin and DocumentManager can update
+From version **0.261.448**, a group's Owner, Admin and DocumentManager can update
 documents stored before progress tracking from the Documents explorer, with
 `POST /api/groups/<group_id>/documents/upgrade_legacy`, a member of the immutable
 target family. The explorer offers it when the list says documents are old and

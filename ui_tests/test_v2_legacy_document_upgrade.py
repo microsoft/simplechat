@@ -1,8 +1,8 @@
 # test_v2_legacy_document_upgrade.py
 """
 Closed, real-SPA browser scenarios for the native legacy document upgrade.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Documents stored before progress tracking have no percentage_complete, and every document list
 says so in needs_legacy_update_check. The V2 Documents explorer shows an "Update older documents"

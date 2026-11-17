@@ -1,7 +1,7 @@
 # test_public_document_fixture_parity.py
 """
 Per-route shape parity between the M9B public document UI fixtures and the real routes.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.179
 A generated artifact awaiting publication is held for managers and absent for everyone else
 (decision 27): 0.261.183
@@ -11,7 +11,7 @@ with the server's downloads-unavailable sentence: 0.261.186
 A released screened document's metadata change applies directly and returns the ordinary
 receipt: 0.261.230
 Metadata and re-tag receipts report the background search sync in `search_sync`: 0.261.268
-The list's legacy flag and the legacy document upgrade receipt are pinned to the server's: 0.261.445
+The list's legacy flag and the legacy document upgrade receipt are pinned to the server's: 0.261.448
 
 The V2 public Documents explorer mocks the network with three closed HTTP fixtures, which predate the
 per-route parity rule:

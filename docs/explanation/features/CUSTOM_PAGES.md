@@ -1,6 +1,6 @@
 # Custom Pages
 
-Current version: **0.261.445**
+Current version: **0.261.448**
 
 Implemented in version: **0.242.023**
 
@@ -36,7 +36,7 @@ Authenticated custom page navigation fix implemented in version: **0.242.040**
 
 Admin Settings Open action implemented in version: **0.250.106**
 
-V2 embed mode (`?embed=1`, `supports_embed`, the `/v2/custom/<slug>` host page) implemented in version: **0.261.445**
+V2 embed mode (`?embed=1`, `supports_embed`, the `/v2/custom/<slug>` host page) implemented in version: **0.261.448**
 
 ## Overview
 

@@ -2,8 +2,8 @@
 """
 Browser coverage for custom pages shown inside V2.
 
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Custom pages are trusted server-rendered documents, and the classic interface wraps each one in
 its own navigation. They cannot become React pages, so V2 frames the chrome-less copy the server
@@ -64,7 +64,7 @@ STATIC_ROOT = REPO_ROOT / "application" / "single_app" / "static"
 SPA_INDEX = STATIC_ROOT / "v2" / "index.html"
 ARTIFACTS = REPO_ROOT / "ui_tests" / "artifacts" / "v2_custom_pages"
 ORIGIN = "http://simplechat.test"
-VERSION = "0.261.445"
+VERSION = "0.261.448"
 
 # The Content-Security-Policy of config.SECURITY_HEADERS, as far as it bears on framing and on what
 # an embedded page may load. functional_tests/test_custom_pages_embed_mode.py checks every directive

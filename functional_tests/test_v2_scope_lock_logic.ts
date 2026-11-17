@@ -1,8 +1,8 @@
 // test_v2_scope_lock_logic.ts
 //
 // Runtime test for the V2 scope lock rules.
-// Version: 0.261.445
-// Implemented in: 0.261.445
+// Version: 0.261.448
+// Implemented in: 0.261.448
 //
 // The companion test, test_v2_scope_lock_edit.py, asserts that the client sends what the route
 // reads and that the pieces are wired together. Those are source assertions. This file executes

@@ -2,8 +2,8 @@
 """
 Browser regressions for the V2 Notifications page: filters, search, numbered paging and the
 entry points that lead to it.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Classic's `/notifications` page filters and searches only the page it has fetched, so its totals
 and page links describe the wrong list. The V2 page sends the read filter and the search to the
@@ -394,7 +394,7 @@ SEED = r"""
     const H = window.NotificationsPageHarness;
     H.stores.bootstrap.useBootstrapStore.setState({
         data: {
-            version: '0.261.445',
+            version: '0.261.448',
             user: {id: 'user-1', display_name: 'Riley Chen', roles: []},
             features: {},
             branding: {app_title: 'Contoso Chat'},

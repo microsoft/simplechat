@@ -17,7 +17,7 @@ Reader downloads: a reader may download when downloads are enabled and sees no D
 they are off; the read surface offers no management affordance either way: 0.261.186
 A link to a public document that no longer exists says so, and the header offers Classic tools for
 the legacy document upgrade rather than classic browsing: 0.261.188
-The legacy document upgrade is native now, so the header no longer offers Classic tools: 0.261.445
+The legacy document upgrade is native now, so the header no longer offers Classic tools: 0.261.448
 A coloured tag chip keeps readable text whatever colour the tag was given: 0.261.188
 
 Exercises real components, stores and navigation with closed synthetic HTTP.

@@ -1,6 +1,6 @@
 # V2 Idle Session Warning
 
-**Implemented in version: 0.261.445**, tracked in `application/single_app/config.py`.
+**Implemented in version: 0.261.448**, tracked in `application/single_app/config.py`.
 
 ## Overview
 

@@ -1,11 +1,11 @@
 # test_group_context_fixture_parity.py
 """
 Parity between the group workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.157
 The screening_management hint: 0.261.174
 The workflow_management hint: 0.261.178
-The Manage sections stay open to an Owner or Admin in every status: 0.261.445
+The Manage sections stay open to an Owner or Admin in every status: 0.261.448
 
 Every group browser suite builds its selected-group context from
 `ui_tests/fixtures/group_workspace.py::group_context`, directly or through a per-section fixture that
@@ -232,7 +232,7 @@ def test_the_reason_constants_are_the_servers_texts(modelled):
         fixture_module.GROUP_STATUS_UNKNOWN_REASON
     )
     # A caller who isn't a manager is told the status's reason on every Manage section; an Owner or
-    # Admin keeps them open (0.261.445).
+    # Admin keeps them open (0.261.448).
     assert real_context(modelled, "User", "inactive")["sections"]["members"]["reason"] == (
         fixture_module.GROUP_INACTIVE_REASON
     )

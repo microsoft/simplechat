@@ -74,7 +74,7 @@ file upload. If pasting does not provide a file, use **Attach a file** instead.
 
 ## Accept the user agreement first
 
-Fixed/Implemented in version: **0.261.445**
+Fixed/Implemented in version: **0.261.448**
 (`application/single_app/config.py`).
 
 Some organizations require people to accept a user agreement before they upload files. When an

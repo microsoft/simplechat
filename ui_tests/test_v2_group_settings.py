@@ -1,11 +1,11 @@
 # test_v2_group_settings.py
 """
 Production-SPA coverage for the native V2 group Settings, Activity and Statistics sections.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.165
 An unrecognized status is explained with the server's own sentence: 0.261.188
 The danger zone deletes the group natively, and an inactive or unknown group's owner and admins keep
-these sections with no classic handoff: 0.261.445
+these sections with no classic handoff: 0.261.448
 
 Exercises the real Settings, Activity and Statistics sections -- the M7C sections of the group
 WorkspaceShell's Manage group -- against closed synthetic HTTP. The fixture

@@ -2,8 +2,8 @@
 # test_notifications_status_and_search_filters.py
 """
 Functional test for the notification list's server-side read filter and search.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The V2 Notifications page filters by All, Unread and Read and searches the list. Classic does
 both on the page it has fetched, so its totals and its paging describe the unfiltered list.
@@ -264,7 +264,7 @@ def route_client(inbox, user_id=READER):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_the_read_filter_splits_the_list_without_changing_its_order(mixed):

@@ -2,8 +2,8 @@
 # test_ui_mode_seam.py
 """
 Functional test for the interface-mode seam.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 ``functions_ui_mode.get_ui_mode`` is the single place that decides whether a request is
 served the classic (legacy) or the modern (V2) interface. Until the interface selector
@@ -24,7 +24,7 @@ ui_mode = import_app_module("functions_ui_mode")
 
 
 def test_default_mode_is_classic_for_every_caller():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
     assert ui_mode.get_ui_mode() == ui_mode.UI_MODE_CLASSIC
     assert ui_mode.get_ui_mode({"anything": True}, {"anything": True}) == ui_mode.UI_MODE_CLASSIC

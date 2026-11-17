@@ -48,7 +48,7 @@ Compact screens open filters/details in the existing modal surfaces and keep
 selected-file operations in a compact Actions picker. See
 [V2 Group Document Browsing](V2_GROUP_DOCUMENT_BROWSING.md).
 
-**Legacy document upgrade added in version:** 0.261.445. When the personal document
+**Legacy document upgrade added in version:** 0.261.448. When the personal document
 list reports documents stored before progress tracking, the Documents explorer shows
 an **Update older documents** notice with **Update now** and **Maybe later**; **Update now**
 calls the classic `POST /api/documents/upgrade_legacy` route and reads the list again.

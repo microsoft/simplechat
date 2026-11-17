@@ -4,9 +4,9 @@
 **0.261.279** (fact memory and Microsoft 365); **0.261.280** (guided tours and Latest Features);
 **0.261.296** (Open on Groups and Public rows);
 **0.261.374** (workflow authorization names, visibility, and Open);
-**0.261.445** (Refresh photo)
+**0.261.448** (Refresh photo)
 
-Current version: **0.261.445**, tracked in `application/single_app/config.py`.
+Current version: **0.261.448**, tracked in `application/single_app/config.py`.
 
 ## Overview
 
@@ -23,7 +23,7 @@ Profile page in stages:
 5. Opening a group or public workspace from its row, as the classic page's **Manage** link
    does (0.261.296).
 6. Re-reading the Microsoft 365 profile photo from the page header, as the classic page's
-   **Refresh Profile Image** button does (0.261.445).
+   **Refresh Profile Image** button does (0.261.448).
 
 Dependencies: the V2 React interface (`application/v2_ui`) and the user settings API
 (`/api/user/settings`).
@@ -200,7 +200,7 @@ photo. The server reads it once, when the user is first seen, and caches it on t
 document as a data URI; `components/layout/UserAvatar.tsx` draws it from the user settings store
 (`settings.profileImage`), with initials when there is none or it cannot be decoded.
 
-Since **0.261.445** the header has a **Refresh photo** control, for a user who has changed their
+Since **0.261.448** the header has a **Refresh photo** control, for a user who has changed their
 Microsoft 365 photo. It calls the route behind the classic page's **Refresh Profile Image** button,
 `POST /api/profile/image/refresh` (`route_frontend_profile.py`), which reads the photo from
 Microsoft Graph, stores it, and answers `{ success, message, profileImage }`, with

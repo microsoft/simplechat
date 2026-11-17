@@ -182,7 +182,7 @@ unrelated conversation's background lookup.
 
 ### Staying signed in during a long session
 
-Fixed/Implemented in version: **0.261.445** (`application/single_app/config.py`).
+Fixed/Implemented in version: **0.261.448** (`application/single_app/config.py`).
 If your administrator has turned on **Sign out inactive users**, SimpleChat signs
 you out after a period without activity, and warns you first. After you have been
 idle for the warning time, a **Session expiring soon** dialog counts down the time

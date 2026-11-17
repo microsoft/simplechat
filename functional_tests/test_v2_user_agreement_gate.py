@@ -2,8 +2,8 @@
 # test_v2_user_agreement_gate.py
 """
 Functional test for the V2 user agreement gate.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 An administrator can require a user agreement before files are uploaded
 (``enable_user_agreement``). Classic enforces it in the browser through
@@ -141,7 +141,7 @@ def _positions(source, markers, where):
 def test_version_is_at_least_the_implementing_release():
     """The application carries at least the version the V2 gate arrived in."""
     print("Testing the application version...")
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_the_client_calls_the_routes_with_the_names_the_route_reads():
@@ -590,7 +590,7 @@ def test_the_feature_documentation_is_present_and_names_every_gated_entry_point(
     """The feature page exists, carries the version, and lists the entry points the test above enumerates."""
     print("\nTesting the feature documentation...")
     text = _read(FEATURE_DOC)
-    assert "0.261.445" in text
+    assert "0.261.448" in text
     for relative in GATED_ENTRY_POINTS:
         assert Path(relative).name in text, f"{relative} is not described in {FEATURE_DOC.name}"
     for needle in ("/api/user_agreement/check", "/api/user_agreement/accept", "fails closed", "once per day"):

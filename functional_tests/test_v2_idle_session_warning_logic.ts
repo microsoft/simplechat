@@ -4,8 +4,8 @@
 // throttles, the warning's countdown and the ways it ends. The controller is run against a
 // fake clock and fake timers, so a thirty-minute timeout takes microseconds and every boundary
 // can be asserted to the millisecond.
-// Version: 0.261.445
-// Implemented in: 0.261.445
+// Version: 0.261.448
+// Implemented in: 0.261.448
 //
 // The judgement calls here do not show in a screenshot: that the warning opens at the same
 // minute classic opens it, that continued activity is reported to the server once a minute and

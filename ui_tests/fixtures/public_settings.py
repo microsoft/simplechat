@@ -1,9 +1,9 @@
 # public_settings.py
 """
 Closed M10C public workspace Settings, Activity and Statistics HTTP fixtures for the real V2 SPA.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.185
-The owner's DELETE of the workspace is served natively, not trapped: 0.261.445
+The owner's DELETE of the workspace is served natively, not trapped: 0.261.448
 
 The fixture serves the native public settings and insights family the V2 Settings, Activity and
 Statistics sections read and write -- `GET /api/public-workspaces/<w>/settings`,

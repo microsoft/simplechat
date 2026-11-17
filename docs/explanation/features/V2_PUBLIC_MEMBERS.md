@@ -10,7 +10,7 @@ page.
 Implemented in version **0.261.179**. The routes are described in
 [Public Membership APIs](PUBLIC_MEMBERSHIP_APIS.md). An inactive,
 unrecognized-status or locked workspace's Owner and Admins keep the section:
-**0.261.445**.
+**0.261.448**.
 
 ## Who sees what
 
@@ -18,7 +18,7 @@ unrecognized-status or locked workspace's Owner and Admins keep the section:
   the Owner and Admins can manage members, and that's what the context's
   `membership_management` hint and each member's `member_actions` say. The
   section never decides on a client role check.
-- From version **0.261.445** the Owner and Admins also keep it in an `inactive`
+- From version **0.261.448** the Owner and Admins also keep it in an `inactive`
   workspace, or one whose status isn't recognized, as the classic manage page
   keeps the member list for them. Everyone else, a DocumentManager included, is
   told the section isn't available, with the status as the reason, as before.
@@ -48,7 +48,7 @@ Public differences from groups:
 
 ## Locked, inactive and unrecognized-status workspaces
 
-Version **0.261.445**. Adding a member and changing a role need an `active` or
+Version **0.261.448**. Adding a member and changing a role need an `active` or
 `upload_disabled` workspace, and the server's membership policy withholds both
 in a `locked`, `inactive` or unrecognized-status one. Removing a member,
 reviewing requests to join and, for the Owner, transferring ownership are
@@ -87,7 +87,7 @@ Center.
   `GroupMembersSection` and `PublicMembersSection` are thin wrappers around it.
   The group wrapper's props, markup and behaviour are unchanged, and the group
   Members suite passes with no edits.
-- From version **0.261.445** `PublicMembersSection` takes the workspace's status
+- From version **0.261.448** `PublicMembersSection` takes the workspace's status
   from the context and passes the note for it to the section. The section
   offers a role select, and a bulk role change, only when the member list's own
   `change_role` operation is present as well as the row's action, because the
@@ -97,7 +97,7 @@ Center.
 - `lib/groupMembership.ts` has `createPublicMembershipClient` beside
   `createGroupMembershipClient`, sharing the response readers.
 - The public context lists `members` in its **Manage** group; from version
-  **0.261.445** it keeps it open for the Owner and Admins in every status.
+  **0.261.448** it keeps it open for the Owner and Admins in every status.
 
 ## Create a public workspace
 
@@ -110,7 +110,7 @@ and the creator becomes the Owner.
 
 - `ui_tests/test_v2_public_members.py`: the section for each role and status,
   add, import, role changes, removal, requests, transfer, and the absence of
-  Leave. From version **0.261.445** it also covers a locked, an
+  Leave. From version **0.261.448** it also covers a locked, an
   upload-disabled, an inactive and an unrecognized-status workspace: the note
   in place of the add controls and the role selects, removal and the requests
   working there, the hand-over that closes the section for the former Owner, a

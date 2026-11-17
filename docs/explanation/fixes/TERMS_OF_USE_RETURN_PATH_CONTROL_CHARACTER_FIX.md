@@ -1,4 +1,4 @@
-# Terms Of Use Return Path Control Character Fix (v0.261.445)
+# Terms Of Use Return Path Control Character Fix (v0.261.448)
 
 ## Issue
 
@@ -11,7 +11,7 @@ choosing **Accept and continue** sent the person off the site.
 
 The problem was found by the security review of this release. The code predates it.
 
-Fixed in version: **0.261.445**, tracked in `application/single_app/config.py`.
+Fixed in version: **0.261.448**, tracked in `application/single_app/config.py`.
 
 ## Root cause
 

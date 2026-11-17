@@ -50,7 +50,7 @@ Use tags when folders and file names are not enough: a document can belong to a 
 
 ## Manage tags in the V2 interface
 
-In the V2 interface the tag vocabulary lives in its own **Tags** section beside **Documents** in the workspace navigation, for your own workspace, for a group and, from version **0.261.445**, for a public workspace.
+In the V2 interface the tag vocabulary lives in its own **Tags** section beside **Documents** in the workspace navigation, for your own workspace, for a group and, from version **0.261.448**, for a public workspace.
 
 1. Open the workspace and choose **Tags**.
 2. Type a name in **New tag**, choose a colour and select **Create**. Names are trimmed and stored in lowercase.

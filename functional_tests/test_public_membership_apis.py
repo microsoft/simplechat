@@ -1,10 +1,10 @@
 # test_public_membership_apis.py
 """
 Functional tests for the immutable-target native public workspace membership APIs.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.179 (requester-side request/cancel added in 0.261.184)
 Status: the member list, requests, removal and an ownership transfer stay open to an owner and an admin
-in every status, and only adding a member and changing a role are withheld: 0.261.445
+in every status, and only adding a member and changing a role are withheld: 0.261.448
 
 The real public membership logic module, its route registrar, the pure policy and
 disclosure projectors, and the real ``get_user_role_in_public_workspace`` resolver run
@@ -721,7 +721,7 @@ def test_transfer_to_the_current_owner_writes_nothing(environment):
 
 # ---------------------------------------------------------------------------
 # Status: what the V2 Members section of a locked, inactive or unrecognized-status workspace relies on
-# (0.261.445). The classic manage page keeps the member list, removal, the requests and an ownership
+# (0.261.448). The classic manage page keeps the member list, removal, the requests and an ownership
 # transfer for an owner and an admin whatever the status, and the V2 Members section keeps them for the
 # same callers, so the routes must keep answering them; only adding a member and changing a role need an
 # active or upload-disabled workspace, and the member list's hint must withhold exactly those.

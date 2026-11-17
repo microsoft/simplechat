@@ -1,10 +1,10 @@
 # test_v2_public_members.py
 """
 Production-SPA coverage for the native V2 public workspace Members section (M10A).
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.179
 An owner or admin keeps Members in a locked, inactive or unrecognized-status workspace, with adding,
-importing and role changes withheld and explained: 0.261.445
+importing and role changes withheld and explained: 0.261.448
 
 Exercises the real Members section -- the shared, scope-driven section (`MembersSection.tsx`) given
 the public scope by `PublicMembersSection.tsx` -- in its public "Manage" group, against closed

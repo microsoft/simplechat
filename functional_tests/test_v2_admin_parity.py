@@ -3,8 +3,8 @@
 """
 Functional test for the V2 admin links, the Control Center refresh strip, Duplicate on global
 agents and actions, and File Sync sources managed for another workspace.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 V2 Admin Settings and the V2 Control Center used to send an administrator to the classic page for
 things V2 drew itself, and lacked four classic operations: refreshing the Control Center's stored
@@ -96,7 +96,7 @@ def test_the_typescript_logic_checks_pass():
     """Link routing, refresh wording, copies without credentials and the File Sync adapter."""
     print("Testing the admin parity logic (TypeScript)...")
 
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
     if not toolchain_present():
         return
     assert LOGIC_TS.exists(), "The TypeScript logic checks are missing"
@@ -198,7 +198,7 @@ def test_every_latest_feature_admin_shortcut_lands_in_v2():
         {},
         resolve_endpoint_url=lambda endpoint: f"/x/{endpoint}",
         resolve_static_url=lambda path: f"/static/{path}",
-        version="0.261.445",
+        version="0.261.448",
     )
     actions = [
         {"admin_tab": action.get("admin_tab"), "admin_section": action.get("admin_section")}

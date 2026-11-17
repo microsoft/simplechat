@@ -1,8 +1,8 @@
 # test_v2_workflow_run_history_layout.py
 """
 UI tests for a run in a workflow's run history, in the V2 Workflows workbench, on a phone.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 A finished personal run's row holds the run's status and times, the Open activity link to the
 Workflow Activity page, and, while the administrator's chat-results setting is on, Ask in chat. On a

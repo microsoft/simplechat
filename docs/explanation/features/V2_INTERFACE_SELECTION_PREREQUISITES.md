@@ -1,6 +1,6 @@
 # V2 Interface Selection Prerequisites
 
-**Implemented in version: 0.261.445**, recorded in `application/single_app/config.py`.
+**Implemented in version: 0.261.448**, recorded in `application/single_app/config.py`.
 
 ## Overview
 
@@ -317,7 +317,7 @@ to arrive at `/v2/chat?conversationId=abc`, then use the account menu's **Back t
 - `functional_tests/test_ui_route_parity_registry.py` guards the registry (no `gap` rows, an explicit `partial` list).
 - `functional_tests/test_modern_standalone_pages.py` covers `index()` with the shared test and the escape pair.
 
-Results at version 0.261.445: `test_ui_redirect_edge.py` passes 157 checks (the fresh-process probe of the real
+Results at version 0.261.448: `test_ui_redirect_edge.py` passes 157 checks (the fresh-process probe of the real
 web application takes about 25 seconds), `test_ui_return_urls.py` 8, `test_v2_classic_links.py` 9 (which run 18
 TypeScript checks under node, including every row of the registry against the server's resolvers),
 `test_ui_route_parity_registry.py` 45, `test_modern_standalone_pages.py` 69, and `ui_tests/test_v2_classic_links.py`

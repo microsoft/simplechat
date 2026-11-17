@@ -2,8 +2,8 @@
 # test_v2_admin_global_identities.py
 """
 Browser coverage for creating, editing and deleting Global Identities in V2 Admin Settings.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Global Identities used to be a read-only list that sent an administrator to the classic admin page
 to change one. The section is now the identities workbench the workspaces use, bound to the admin

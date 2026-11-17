@@ -176,7 +176,7 @@ class ExamplePythonDashboard(CustomPageExtension):
 
 ## Custom Pages in the V2 Interface
 
-Available from version 0.261.445.
+Available from version 0.261.448.
 
 SimpleChat has the classic interface and the V2 interface under `/v2`. Custom Pages are server-rendered pages, so they are not rebuilt in V2. V2 shows each one inside its own content area instead, with its navigation rail still on screen. Choosing **Handbook** in the V2 rail opens `/v2/custom/handbook`, and the page itself is still served from `/custom/handbook`. The classic interface is unchanged.
 

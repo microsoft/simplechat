@@ -1,7 +1,7 @@
 # public_workspace.py
 """
 Closed HTTP fixtures for the real V2 public workspace shell.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.132
 Every context carries the server's document_management hint, as build_public_workspace_context
 sends it: 0.261.167
@@ -12,9 +12,9 @@ Its identities and sync sections and their management hints, gated on File Sync:
 The context carries the native membership hint and its Members manage section: 0.261.179
 Every context carries the server's settings_management hint (M10C): 0.261.185
 Its Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.185
-Its Tags section opens, as the group's does: 0.261.445
+Its Tags section opens, as the group's does: 0.261.448
 Its Manage sections stay open in every status to the people the classic manage page keeps them for
-(the owner and admins; statistics also for a document manager): 0.261.445
+(the owner and admins; statistics also for a document manager): 0.261.448
 
 The public surface mirrors the group shell. Its documents, tags and prompts sections are open, and a
 manager role can be granted document management, the generated-artifact review and prompt

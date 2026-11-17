@@ -219,7 +219,7 @@ To test the feature:
 
 ## React V2 interface
 
-**Implemented in version:** 0.261.445
+**Implemented in version:** 0.261.448
 
 The React V2 interface asks for the same agreement before the same uploads. It calls the same two routes
 with the same parameters (`personal` and `chat` send workspace id `default`; `group` and `public` send the

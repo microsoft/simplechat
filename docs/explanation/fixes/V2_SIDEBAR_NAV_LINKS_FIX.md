@@ -51,7 +51,7 @@ URL.
 
 Custom Pages, External Links, Latest Features and **Back to classic UI** were deliberately
 plain anchors to server-rendered or third-party pages when this fix shipped, and they were
-unchanged by it. Since 0.261.445 a same-tab custom page that the server marks embeddable is
+unchanged by it. Since 0.261.448 a same-tab custom page that the server marks embeddable is
 a router link that opens inside V2; see
 [V2_CUSTOM_PAGES.md](../features/V2_CUSTOM_PAGES.md). The workspace section rail is also
 unchanged. It already passes its links through

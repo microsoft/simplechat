@@ -150,7 +150,7 @@ Open **Admin Settings** in V2 and choose **Operations**. Administrator documenta
 ## Known limitations
 
 - The Document Access Index diagnostics switch links to the DAI Metrics card within Admin
-  Settings. Until **0.261.445** it was marked `classic_only` on the belief that only the
+  Settings. Until **0.261.448** it was marked `classic_only` on the belief that only the
   classic card drew the diagnostics; the V2 card draws the manual backfill and reset controls
   and the shadow validation figures too.
 - Application Insights global logging and Swagger still need an App Service restart; V2

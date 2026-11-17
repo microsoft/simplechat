@@ -2,8 +2,8 @@
 # test_modern_standalone_pages.py
 """
 Functional test for the modern standalone pages.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The Acceptable Use Policy, the rate-limit (429) page, the landing page for signed-out and
 no-role visitors, and the Microsoft 365 sign-in result stay server-rendered, so each has a
@@ -269,7 +269,7 @@ def modern_mode(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_default_interface_renders_every_classic_page_with_its_original_context(pages):
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
     pages.bundle_available = True
 
     for user in (SIGNED_OUT, NO_ROLE, APP_USER, ADMIN_USER):

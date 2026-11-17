@@ -2,12 +2,12 @@
 """
 Selected-group context authorization, safe projection, and activation contracts.
 
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.126
 Shared shell and native delegation integration: 0.261.127
 Members navigation section (M7B): 0.261.155
 The real public download predicate behind the public settings_management (M10C): 0.261.185
-The Owner and Admins keep the Manage sections in every status: 0.261.445
+The Owner and Admins keep the Manage sections in every status: 0.261.448
 
 The real context module and Flask route body run against isolated service seams.
 Existing group-role/status and Flask authentication definitions execute unchanged.
@@ -304,7 +304,7 @@ def test_members_section_is_open_to_every_member_in_a_viewable_group_and_to_mana
 ):
     """M7B: Members sits in the group-only "manage" group. Every member may open it whenever the
     group is viewable, and only the Owner and Admins manage it, in an active group, like every
-    other section. From 0.261.445 the Owner and Admins keep it in every status, so an inactive or
+    other section. From 0.261.448 the Owner and Admins keep it in every status, so an inactive or
     unrecognized group no longer sends them to the classic manage page. It is navigation only: the
     membership hints stay in the member list."""
     environment.records["group-a"]["status"] = status

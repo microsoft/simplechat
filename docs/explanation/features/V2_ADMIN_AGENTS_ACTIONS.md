@@ -267,7 +267,7 @@ Enable Agents  (enable_semantic_kernel, default off)
 - Since **0.261.271**, global agents and actions are authored in V2 with the
   same editors workspaces use, and the separate **Global agent delegation** card
   is gone: a **Call agent** action is an ordinary global action. Since
-  **0.261.445** both lists also offer **Duplicate**, which opens the editor on an
+  **0.261.448** both lists also offer **Duplicate**, which opens the editor on an
   unsaved, disabled copy without the original's stored credentials (see
   [V2 Admin Global Agents and Actions](V2_ADMIN_GLOBAL_AGENTS_ACTIONS.md#duplicate)).
 - `functions_document_actions` reaches `config.py` and a live Cosmos client, so

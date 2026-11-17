@@ -1,8 +1,8 @@
 # test_v2_scope_lock.py
 """
 Browser regressions for locking and unlocking a conversation's workspace scope in the V2 chat.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 V2 drew a conversation's scope lock in the chat header and gave no way to change it. The lock is
 now a button that opens a dialog, reachable from the header, the conversation details and the
@@ -278,7 +278,7 @@ SEED = r"""
     const H = window.ScopeLockHarness;
     H.stores.bootstrap.useBootstrapStore.setState({
         data: {
-            version: '0.261.445',
+            version: '0.261.448',
             user: {id: 'user-1', display_name: 'Riley Chen', roles: []},
             features: seed.features,
             branding: {app_title: 'Contoso Chat'},

@@ -4,7 +4,7 @@ title: "View workflow activity"
 description: "Watch a workflow run as a timeline, cancel it, and review the email or invitation it saved."
 section: "Guides"
 audience: user
-version: "0.261.445"
+version: "0.261.448"
 ---
 
 ## What this does

@@ -1,8 +1,8 @@
 // test_v2_classic_links_logic.ts
 //
 // Runtime test for lib/classicLinks.ts: the V2 side of the classic to V2 redirect.
-// Version: 0.261.445
-// Implemented in: 0.261.445
+// Version: 0.261.448
+// Implemented in: 0.261.448
 //
 // Three promises that do not show in a screenshot are executed here:
 //

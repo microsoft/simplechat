@@ -1,8 +1,8 @@
 # custom_page_embed_render.py
 """Render the real custom page embed templates without standing up Azure.
 
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The embed shell is a Jinja document, so the cheapest honest way to test it is to render the real
 files. This builds a minimal Flask application that serves the same ``templates`` and ``static``
@@ -27,7 +27,7 @@ EMBED_BASE_TEMPLATE = "custom_page_embed_base.html"
 CLASSIC_SHELL_TEMPLATE = "custom_page_shell.html"
 
 
-def build_embed_app(version="0.261.445"):
+def build_embed_app(version="0.261.448"):
     """Return a Flask app that can render the embed templates and build their asset URLs."""
     app = Flask(
         "custom_page_embed_probe",

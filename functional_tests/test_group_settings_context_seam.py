@@ -1,10 +1,10 @@
 # test_group_settings_context_seam.py
 """
 Functional test for the group settings decision in the selected-group context.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.154
 Unrecognized statuses fail closed for the profile and logo: 0.261.157
-The manage sections stay open to an Owner or Admin in every status: 0.261.445
+The manage sections stay open to an Owner or Admin in every status: 0.261.448
 
 The selected-group context (``GET /api/v2/workspaces/group/<group_id>``) publishes
 ``settings_management`` so the V2 workspace can offer group settings without another
@@ -159,7 +159,7 @@ def test_manage_sections_follow_the_settings_decisions_and_refusal_text(environm
     manager = ROLES[actor] in ("Owner", "Admin")
     viewable = status in VIEWABLE_STATUSES
 
-    # An Owner or Admin keeps all three in every status (0.261.445): the settings and insight routes
+    # An Owner or Admin keeps all three in every status (0.261.448): the settings and insight routes
     # check no status, and a status that bars viewing closes the profile and logo inside Settings.
     assert sections["settings"]["enabled"] is manager
     assert sections["activity"]["enabled"] is ("view_activity" in management["operations"])

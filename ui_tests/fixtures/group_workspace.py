@@ -17,7 +17,7 @@ keys them: 0.261.172
 The group screening hint, granted by the screening routes' own roles: 0.261.174
 The group workflow hint, and workflow routes answered by their own role rules: 0.261.178
 The Manage sections stay open to an Owner or Admin in every status, and the Settings danger zone's
-DELETE of the group is served natively: 0.261.445
+DELETE of the group is served natively: 0.261.448
 
 The shell fixture also serves the immutable native `/api/groups/<group_id>/actions[...]`,
 `/agents[...]`, `/identities[...]` and `/model-endpoints[...]` families -- plus the group

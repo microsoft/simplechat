@@ -1,15 +1,15 @@
 # test_public_context_fixture_parity.py
 """
 Parity between the public workspace context the V2 browser fixtures serve and the real builder.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.168
 settings_management, the public settings decision (M10C): 0.261.185
 the Settings, Activity and Statistics manage sections and the settings switches (M10C R5): 0.261.185
 Reader downloads: the M3A read fixture models a downloads-off workspace, so its seeded context is
 held against the server's for that same per-workspace switch (a reader gets no download): 0.261.186
-The Tags section opens like Documents: 0.261.445
+The Tags section opens like Documents: 0.261.448
 The Manage sections stay open to the owner and admins in every status, and Statistics to every stored
-role, as the classic manage page keeps them: 0.261.445
+role, as the classic manage page keeps them: 0.261.448
 
 Every public browser suite builds its selected-workspace context from
 `ui_tests/fixtures/public_workspace.py::public_context`, directly or through the per-suite fixtures
@@ -251,7 +251,7 @@ def test_the_reason_constants_are_the_servers_texts(public):
         fixture_module.PUBLIC_STATUS_UNKNOWN_REASON
     )
     # A caller the Manage sections stay closed to is told the status's reason; the Owner and Admins
-    # keep them open in every status (0.261.445).
+    # keep them open in every status (0.261.448).
     assert real_context(public, "User", "inactive")["sections"]["members"]["reason"] == (
         fixture_module.PUBLIC_INACTIVE_REASON
     )
@@ -285,7 +285,7 @@ MEMBERSHIP_HINT = {
     ("Admin", "locked"): ["review_requests", "remove_member"],
     ("Owner", "inactive"): ["review_requests", "remove_member", "transfer_ownership"],
     # An inactive or unrecognized status closes adding and role changes, as a locked one does, and keeps
-    # removing members, reviewing requests and, for the owner, transferring ownership (0.261.445).
+    # removing members, reviewing requests and, for the owner, transferring ownership (0.261.448).
     ("Admin", "inactive"): ["review_requests", "remove_member"],
     ("Owner", "archived"): ["review_requests", "remove_member", "transfer_ownership"],
     ("Admin", "archived"): ["review_requests", "remove_member"],
@@ -306,7 +306,7 @@ def test_the_membership_hint_is_the_policy(public, role, status):
 @pytest.mark.parametrize("status", STATUSES)
 @pytest.mark.parametrize("role", list(ROLE_USERS))
 def test_the_tags_section_opens_like_documents(public, role, status):
-    """From 0.261.445 the Tags section is native: every reader of a viewable workspace browses the
+    """From 0.261.448 the Tags section is native: every reader of a viewable workspace browses the
     vocabulary and a manager of an active workspace maintains it, exactly as for Documents, and the
     fixture serves the server's section."""
     sections = real_context(public, role, status)["sections"]
@@ -324,7 +324,7 @@ def test_the_tags_section_opens_like_documents(public, role, status):
 @pytest.mark.parametrize("role", list(ROLE_USERS))
 def test_the_members_section_opens_in_a_viewable_status_and_to_managers_in_any_status(public, role, status):
     """Members is a manage-group section every member may open when the workspace is viewable, and the
-    Owner and Admins keep in every status (0.261.445), as the classic manage page keeps it for them; its
+    Owner and Admins keep in every status (0.261.448), as the classic manage page keeps it for them; its
     can_manage is navigation only, set for a manager of an active workspace, like the server's."""
     members = real_context(public, role, status)["sections"]["members"]
     viewable = status in ("active", "locked", "upload_disabled")
@@ -384,7 +384,7 @@ def test_the_settings_hint_follows_the_deployment_switches(public, changes, oper
 # The Settings, Activity and Statistics sections the native context adds beside Members (M10C R5).
 # Each opens by the public settings decision -- Settings and Activity to the owner or an admin,
 # Statistics to any stored role -- in every status, since the routes behind them check none and the
-# classic manage page keeps them (0.261.445); before that, only in a status that lets the caller view
+# classic manage page keeps them (0.261.448); before that, only in a status that lets the caller view
 # the workspace. Only Settings carries can_manage, for a manager of an active workspace; it is
 # navigation only.
 MANAGE_SECTION_RULES = {
@@ -421,7 +421,7 @@ def test_the_settings_activity_and_statistics_sections_follow_the_decision(publi
 @pytest.mark.parametrize("status", ("inactive", "archived"))
 @pytest.mark.parametrize("role", list(ROLE_USERS))
 def test_a_status_that_bars_viewing_keeps_only_the_managers_manage_sections(public, role, status):
-    """Pins 0.261.445 independently of the fixture: in an inactive or unrecognized-status workspace the
+    """Pins 0.261.448 independently of the fixture: in an inactive or unrecognized-status workspace the
     content sections and the document permissions are closed for everyone, the Owner and Admins keep
     Members, Settings, Activity and Statistics, a document manager keeps only Statistics, and a plain
     reader keeps none; the status is the reason wherever a section stays closed."""

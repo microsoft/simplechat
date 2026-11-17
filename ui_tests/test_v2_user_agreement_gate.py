@@ -2,9 +2,9 @@
 """
 Browser regressions for the V2 user agreement gate: the agreement an administrator requires before a
 user uploads files, shown before the chat composer or the documents explorer sends anything.
-Version: 0.261.445
-Implemented in: 0.261.445
-Send held while a file waits on the agreement (the race a reviewer found): 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
+Send held while a file waits on the agreement (the race a reviewer found): 0.261.448
 
 The real chat composer editor, the whole chat composer with its Send control, and the real documents
 explorer (personal, group and public scope, built from the real adapters) run in Chromium, bundled by
@@ -519,7 +519,7 @@ SEED = """(spec) => {
     H.stores.bootstrap.useBootstrapStore.setState({
         loading: false,
         data: {
-            version: '0.261.445',
+            version: '0.261.448',
             user: { id: 'viewer-1', display_name: 'Viewer', is_admin: false, roles: ['User'] },
             branding: { app_title: 'SimpleChat' },
             features: {

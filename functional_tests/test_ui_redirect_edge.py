@@ -2,8 +2,8 @@
 # test_ui_redirect_edge.py
 """
 Functional test for the classic to V2 edge redirect.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 When the modern interface is selected, a GET of a classic page is answered with a 302 to its V2
 counterpart, so notification links, emails and bookmarks keep working. ``functions_ui_mode``
@@ -95,7 +95,7 @@ OTHER_ROWS = [row for row in ROUTE_MAP.routes if not row.resolvable and "GET" in
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 # ---------------------------------------------------------------------------

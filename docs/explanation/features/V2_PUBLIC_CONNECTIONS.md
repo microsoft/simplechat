@@ -29,7 +29,7 @@ scope-specific routes and permissions. See
 - In an `inactive` workspace, or one whose status isn't recognized, the
   sections are unavailable, as Documents, Tags and Prompts are. Unlike the
   Manage sections (Members, Settings, Activity and Statistics), which the
-  Owner and Admins keep there from version **0.261.445**, these two stay closed
+  Owner and Admins keep there from version **0.261.448**, these two stay closed
   because their routes refuse that status; see
   [V2 Public Settings](V2_PUBLIC_SETTINGS.md).
 - When File Sync isn't enabled for the workspace, a manager sees "Identities

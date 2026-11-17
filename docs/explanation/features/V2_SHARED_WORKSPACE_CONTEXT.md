@@ -46,7 +46,7 @@ depending on the first page of a membership list.
 | `workspace` | Allowlisted name, description, owner display/email, normalized color, and a local versioned logo URL. |
 | `role`, `status` | Effective group role and lifecycle state; unknown stored states are reported as `unknown`. |
 | `can_manage_workspace` | Whether the role permits workspace-level management. |
-| `sections` | Shared Knowledge/Automation/Connections grouping, availability, management eligibility, and unavailable reasons for each known section. From version **0.261.155** it also reports `members` in a group-only `manage` group: available to every member while the group can be viewed, with `can_manage` for navigation only. See [V2 Group Members](V2_GROUP_MEMBERS.md). From version **0.261.165** the `manage` group also reports `settings`, `activity` and `statistics`, open to the Owner and Admins while the group can be viewed and otherwise locked with "Only the group owner or an admin can do this."; which controls they offer comes from `settings_management`. See [V2 Group Settings, Activity and Statistics](V2_GROUP_SETTINGS.md). From version **0.261.445** all four `manage` sections stay open to the Owner and Admins in every status, including `inactive` and an unrecognized status, as the classic manage page keeps them; everyone else is unchanged. |
+| `sections` | Shared Knowledge/Automation/Connections grouping, availability, management eligibility, and unavailable reasons for each known section. From version **0.261.155** it also reports `members` in a group-only `manage` group: available to every member while the group can be viewed, with `can_manage` for navigation only. See [V2 Group Members](V2_GROUP_MEMBERS.md). From version **0.261.165** the `manage` group also reports `settings`, `activity` and `statistics`, open to the Owner and Admins while the group can be viewed and otherwise locked with "Only the group owner or an admin can do this."; which controls they offer comes from `settings_management`. See [V2 Group Settings, Activity and Statistics](V2_GROUP_SETTINGS.md). From version **0.261.448** all four `manage` sections stay open to the Owner and Admins in every status, including `inactive` and an unrecognized status, as the classic manage page keeps them; everyone else is unchanged. |
 | `native_delegation` | Eligibility for the already-shipped Call agent interface, which does not depend on the personal-kernel flag required by the full legacy authoring tabs. |
 | `document_permissions` | Distinct view, chat, upload, edit, delete, and download eligibility. |
 | `document_queries` | Actual current query capabilities, not a promise that personal explorer features already work for groups. |
@@ -89,7 +89,7 @@ assignment, and administrator restrictions.
 
 The table is about the content sections. The group's **Manage** sections
 (`members`, `settings`, `activity`, `statistics`) are a separate rule, from
-version **0.261.445**: the Owner and Admins keep all four in every status,
+version **0.261.448**: the Owner and Admins keep all four in every status,
 including `inactive` and `unknown`, because the classic manage page keeps them
 and the native routes behind them check the status only where it matters. The
 membership routes refuse an add outside `active` and `upload_disabled`, so the
@@ -166,7 +166,7 @@ another group.
 Available-but-unported sections showed a Classic label and a working handoff,
 not a false disabled-by-administrator state. From version **0.261.153** every
 group section is native, so no section carries the Classic label or hands off
-to classic; from version **0.261.445** the last two exits are gone as well (the
+to classic; from version **0.261.448** the last two exits are gone as well (the
 header's **Manage group (classic)** button and the Settings danger zone's
 classic delete), and every public section is native too, including **Tags**. A section URL with an item segment that the section doesn't
 support, such as `/v2/groups/<group_id>/prompts/<id>`, opens the section itself.
@@ -301,7 +301,7 @@ and Activity for the Owner and Admins, Statistics for any stored role), and the
 context carries `settings_management`, as the group context does. See
 [V2 Public Settings](V2_PUBLIC_SETTINGS.md).
 
-From version **0.261.445**, the public **Manage** sections are a separate rule
+From version **0.261.448**, the public **Manage** sections are a separate rule
 from the content sections' status table above, as the group's are. The Owner and
 Admins keep `members`, `settings` and `activity` in every status, including
 `locked`, `inactive` and `unknown`, and every stored role (Owner, Admin and
@@ -320,7 +320,7 @@ included (their routes refuse an inactive or unrecognized status), stay closed
 when the workspace can't be viewed. See [V2 Public Settings](V2_PUBLIC_SETTINGS.md)
 and [V2 Public Members](V2_PUBLIC_MEMBERS.md).
 
-From version **0.261.445**, the public `tags` section is available to anyone who
+From version **0.261.448**, the public `tags` section is available to anyone who
 can view the workspace and managed by an active Owner, Admin or DocumentManager,
 as Documents is, instead of being closed with a classic card. The vocabulary's
 write controls come from the `manage_tags` operation in `document_management`.

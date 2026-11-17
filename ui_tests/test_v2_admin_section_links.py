@@ -2,8 +2,8 @@
 # test_v2_admin_section_links.py
 """
 Browser coverage for the Admin Settings links that used to leave V2.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 A link to a section stays inside V2 whenever V2 draws the section, and opens the classic tab that
 holds it, in a new tab, only for a section V2 never draws. The classic page reads the address

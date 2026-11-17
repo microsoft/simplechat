@@ -2,8 +2,8 @@
 # test_v2_workflow_activity.py
 """
 Functional test for the V2 Workflow Activity page (/v2/workflow-activity).
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 This test ensures the V2 page is what the classic `/workflow-activity` page is, in React: it takes the
 same query, reads the same snapshot and stream and calls the same cancel route, shows the same header,
@@ -76,7 +76,7 @@ def own_sources():
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
     print("  ok  application version is at or beyond the implementing release")
 
 

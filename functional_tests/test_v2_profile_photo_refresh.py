@@ -2,8 +2,8 @@
 # test_v2_profile_photo_refresh.py
 """
 Functional test for "Refresh photo" on the V2 User Settings page.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The profile photo is read from Microsoft Graph once, when a user is first seen, and cached on
 their settings document. Classic has a "Refresh Profile Image" button that asks the server to
@@ -62,7 +62,7 @@ def _nested_function(tree, outer, name):
 
 
 def test_version_is_at_least_the_implementing_release():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_the_control_calls_the_route_classic_calls_with_the_answer_it_reads():

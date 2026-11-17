@@ -1,8 +1,8 @@
 # v2_workflow_activity_stubs.py
 """
 Workflow-activity snapshots and event-stream bodies for the V2 Workflow Activity page's browser tests.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The page reads one snapshot object from `GET /api/{user|group}/workflows/activity` and the same
 object again, whole, on every frame of the stream beside it. The snapshots here are built by the

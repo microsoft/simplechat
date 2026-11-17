@@ -83,7 +83,7 @@ reloads them. Locked cards and Settings, Activity, and Statistics stay uncounted
   Owners, Admins and DocumentManagers could. From version **0.261.167**, an empty workspace tells them who
   can add documents, or why no one can right now, rather than sending them to
   the classic page.
-- **Update older documents** (version **0.261.445**). When some documents were
+- **Update older documents** (version **0.261.448**). When some documents were
   uploaded before progress tracking, the workspace's Owner, Admins and
   DocumentManagers see an **Update older public workspace documents** notice at
   the top of Documents while the workspace is active. **Update now** updates
@@ -142,7 +142,7 @@ From version **0.261.185**, the Owner and Admins manage the workspace's
 **Settings** (name, description, color and logo for the Owner; file downloads
 and retention for both), read its **Activity**, and chart and export its
 **Statistics**, which DocumentManagers can also see, under **Manage**. From
-version **0.261.445** the Owner also deletes the workspace in V2, from the
+version **0.261.448** the Owner also deletes the workspace in V2, from the
 bottom of Settings. It shows how many current documents the workspace holds and
 won't delete one that still holds any; for an empty one it asks you to confirm,
 says that everyone loses access right away and that its prompts, identities and
@@ -152,7 +152,7 @@ first; if the delete is refused, the dialog says why and you can try again. See
 [Workspaces settings]({{ '/admin/workspaces/' | relative_url }}) and
 [Data Lifecycle settings]({{ '/admin/data-lifecycle/' | relative_url }}).
 
-From version **0.261.445**, an Owner or Admin can keep managing a public
+From version **0.261.448**, an Owner or Admin can keep managing a public
 workspace in V2 after an administrator has made it inactive, or when it has a
 status SimpleChat doesn't recognize, so there's no need to go to the classic
 page for it. **Members**, **Settings**, **Activity** and **Statistics** stay
@@ -172,7 +172,7 @@ To change them, ask an administrator to make the workspace active again in
 Control Center. The classic page doesn't have these limits for the profile and
 for adding members.
 
-From version **0.261.445**, a public workspace's **Tags** are in V2 as well, under
+from version **0.261.448**, a public workspace's **Tags** are in V2 as well, under
 **Documents** in the workspace navigation. Everyone who can read the workspace
 can browse its tags and see how many documents carry each one. Owners, Admins
 and DocumentManagers of an active workspace can also create, recolour, rename,

@@ -14,7 +14,7 @@ administrator routes that name the target, so the editor, connection test, folde
 now, run history and deletion behave as they do there. The V2 File Sync page used to say the
 classic page's administrator-managed source search had no V2 equivalent yet; it now has one.
 
-**Implemented in version:** **0.261.445** (`application/single_app/config.py`)
+**Implemented in version:** **0.261.448** (`application/single_app/config.py`)
 
 **Dependencies:** `route_backend_file_sync.py` (the administrator routes),
 `route_backend_workspace_identities.py` (identities of a target), `functions_file_sync.py`, the

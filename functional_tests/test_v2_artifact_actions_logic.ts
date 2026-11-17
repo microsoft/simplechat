@@ -1,8 +1,8 @@
 // test_v2_artifact_actions_logic.ts
 //
 // Runtime test for the V2 generated-artifact actions: "Add to workspace" and "Create PowerPoint".
-// Version: 0.261.445
-// Implemented in: 0.261.445
+// Version: 0.261.448
+// Implemented in: 0.261.448
 //
 // The companion test, test_v2_artifact_actions.py, asserts that the client sends what the two
 // routes read and that the card is wired to the actions. Those are source assertions. This file

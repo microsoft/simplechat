@@ -2,8 +2,8 @@
 # test_v2_global_identities.py
 """
 Functional test for Global Identities in V2 Admin Settings.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 The Global Identities section used to be a read-only list that sent an administrator to the classic
 admin page to add, edit or delete one. It is now the same identities workbench the workspaces use,
@@ -92,7 +92,7 @@ def test_the_typescript_logic_checks_pass():
     """URLs, bodies, refusals, scope validation, the gates, and the other scopes unchanged."""
     print("Testing the global identities logic (TypeScript)...")
 
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
     if not toolchain_present():
         return
     assert LOGIC_TS.exists(), "The TypeScript logic checks are missing"

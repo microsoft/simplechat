@@ -1,8 +1,8 @@
 # test_v2_idle_session_warning.py
 """
 Browser coverage for the V2 idle-session warning.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Serve the real built SPA through Playwright request interception with a closed API boundary,
 and control the page's clock. Check that the warning opens at the administrator's warning
@@ -94,7 +94,7 @@ class IdleFixture:
 
     def bootstrap(self):
         payload = {
-            "version": "0.261.445",
+            "version": "0.261.448",
             "user": {"id": "user-1", "display_name": "Test User", "email": "test.user@contoso.test",
                      "is_admin": False, "roles": ["User"]},
             "branding": {"app_title": "SimpleChat", "show_logo": False, "hide_app_title": False},

@@ -1,12 +1,12 @@
 # test_v2_public_settings.py
 """
 Production-SPA coverage for the native V2 public workspace Settings, Activity and Statistics sections.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.185
 An unrecognized status is explained with the server's own sentence: 0.261.188
-The danger zone deletes the workspace natively instead of handing off to classic: 0.261.445
+The danger zone deletes the workspace natively instead of handing off to classic: 0.261.448
 An owner or admin keeps these sections in an inactive or unrecognized-status workspace, and a document
-manager keeps Statistics: 0.261.445
+manager keeps Statistics: 0.261.448
 
 Exercises the real Settings, Activity and Statistics sections -- the M10C sections of the public
 WorkspaceShell's Manage group, the shared M7C components driven by the public scope -- against closed
@@ -613,7 +613,7 @@ def test_settings_where_the_status_bars_viewing_fits_every_layout(public_setting
 
 
 def test_a_status_that_bars_viewing_after_load_keeps_the_section_and_regates_the_profile(public_settings_ui):
-    """Before 0.261.445 an owner whose workspace went inactive while Settings was open lost the whole
+    """Before 0.261.448 an owner whose workspace went inactive while Settings was open lost the whole
     section on the next context read, and the draft with it. Now the section stays, the save is refused
     with the status, the profile re-gates read-only with the draft kept, and Discard clears it."""
     ui = public_settings_ui

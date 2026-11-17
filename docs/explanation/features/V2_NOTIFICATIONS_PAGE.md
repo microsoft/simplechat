@@ -1,4 +1,4 @@
-# V2 Notifications Page (v0.261.445)
+# V2 Notifications Page (v0.261.448)
 
 ## Overview
 
@@ -8,7 +8,7 @@ choose once and keep. Until this release V2 had only the bell's panel, which lis
 the newest notices 20 at a time and has no way to find last week's, so its footer
 sent you to the classic page.
 
-Implemented in version: **0.261.445**, tracked in
+Implemented in version: **0.261.448**, tracked in
 `application/single_app/config.py`. Phase 1 of the
 [V2 classic page parity](V2_CLASSIC_PAGE_PARITY.md) plan.
 

@@ -5,7 +5,7 @@
 **Native Agents shortcut updated in version: 0.261.305**, recorded in
 `application/single_app/config.py`.
 
-**Workflow activity shortcuts open the V2 page in version: 0.261.445.**
+**Workflow activity shortcuts open the V2 page in version: 0.261.448.**
 
 ## Overview
 

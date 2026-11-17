@@ -13,7 +13,7 @@ or a generated outline to become slides, had to switch to the classic interface.
 Both actions are now on the V2 card, using the routes the classic card already used and V2's own
 dialog, toast and download machinery.
 
-Implemented in version **0.261.445**.
+Implemented in version **0.261.448**.
 
 ### Dependencies
 

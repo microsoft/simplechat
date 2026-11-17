@@ -1,8 +1,8 @@
 # test_v2_profile_photo_refresh.py
 """
 Browser coverage for "Refresh photo" on the V2 User Settings page.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Serve the real built SPA through Playwright request interception with a closed API
 boundary. Check that the control has an accessible name, shows a busy state and takes only one
@@ -119,7 +119,7 @@ class PhotoFixture:
 
     def bootstrap(self):
         return {
-            "version": "0.261.445",
+            "version": "0.261.448",
             "user": {"id": "user-1", "display_name": "Test User", "email": "test.user@contoso.test",
                      "is_admin": False, "roles": ["User"]},
             "branding": {"app_title": "SimpleChat", "show_logo": False, "hide_app_title": False},

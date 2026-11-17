@@ -1,8 +1,8 @@
 # test_v2_public_tags.py
 """
 Production-SPA coverage for the native V2 public workspace Tags section.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Public Tags used to hand off to classic: the public context closed the section and the page showed a
 classic card. It is native now -- the same vocabulary editor the group workspace uses, run against the

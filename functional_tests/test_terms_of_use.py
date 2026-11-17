@@ -2,10 +2,10 @@
 # test_terms_of_use.py
 """
 Functional test for Terms of Use recurrence and persistence helpers.
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.250.055
 Redirect hardening updated in: 0.250.057
-Return path control-character hardening in: 0.261.445
+Return path control-character hardening in: 0.261.448
 
 This test ensures Terms of Use hashes, redirect validation,
 pre-auth session acceptance, and user-settings persistence behave consistently.

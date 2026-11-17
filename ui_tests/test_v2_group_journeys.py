@@ -1,11 +1,11 @@
 # test_v2_group_journeys.py
 """M8 group workspace end-to-end journeys, on the real built SPA.
 
-Version: 0.261.445
+Version: 0.261.448
 Implemented in: 0.261.161
 The workflow editor is a routed page whose draft freezes the group switcher, as Settings does: 0.261.271
 No journey hands off to classic any more: the group is deleted natively and an inactive group's
-managers keep their Manage sections: 0.261.445
+managers keep their Manage sections: 0.261.448
 
 These ride one composite group store (`group_journeys_ui`) that answers the
 directory, membership, prompt, document-collaboration and native-authoring routes

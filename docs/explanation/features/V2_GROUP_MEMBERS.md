@@ -9,7 +9,7 @@ sees who belongs to the group and can leave it.
 
 Implemented in version: **0.261.155**, tracked in
 `application/single_app/config.py`. An inactive or unrecognized-status group's
-owner and admins keep the section: **0.261.445**.
+owner and admins keep the section: **0.261.448**.
 
 Dependencies:
 - the group membership routes from version 0.261.151
@@ -30,7 +30,7 @@ The selected-group context reports it as `sections.members`, in the `manage`
 group:
 - it's available to every member while the group's status lets them view it:
   `active`, `locked` and `upload_disabled`;
-- from version 0.261.445 it's also available to the **owner and admins** of an
+- from version 0.261.448 it's also available to the **owner and admins** of an
   `inactive` group or one with an unrecognized status, as the classic manage
   page keeps the member list for them;
 - for everyone else it's unavailable in an `inactive` group, or one with an
@@ -127,7 +127,7 @@ section: the membership routes check the group's status only for an add.
 
 ## Known limitations
 
-- **Inactive groups:** since version 0.261.445 an inactive or unrecognized-status
+- **Inactive groups:** since version 0.261.448 an inactive or unrecognized-status
   group's owner and admins keep Members, with adding and importing turned off
   and explained. Other members of such a group are unchanged: Members is
   unavailable to them, with the status as the reason.

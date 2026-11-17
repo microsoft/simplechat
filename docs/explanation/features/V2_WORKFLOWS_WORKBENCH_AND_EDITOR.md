@@ -50,7 +50,7 @@ in `theme.css`). No new packages, settings, API routes, or browser asset sources
 | `application/v2_ui/src/components/ui/SectionCard.tsx` | Admin's section card for surfaces outside Admin: header band, icon, title, facts, status chip. |
 | `application/v2_ui/src/components/workflows/WorkflowField.tsx` | Field rows, read-only values, paired switches, and the primary and dependent emphasis, built on `.admin-field`. |
 | `application/v2_ui/src/lib/workflowRunLink.ts` | `workflowListHref`, `workflowEditorHref` and the existing run links. |
-| `application/v2_ui/src/components/workflowActivity/WorkflowActivityLinks.tsx` | **Activity**, in the selected workflow's header, and **Open activity** on each run in the Runs tab. Both open the [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md) in a new tab (0.261.445). |
+| `application/v2_ui/src/components/workflowActivity/WorkflowActivityLinks.tsx` | **Activity**, in the selected workflow's header, and **Open activity** on each run in the Runs tab. Both open the [Workflow Activity page](V2_WORKFLOW_ACTIVITY.md) in a new tab (0.261.448). |
 
 `WorkflowFlowDialog.tsx` is removed: the Flow tab shows the saved definition with the same
 read-only `WorkflowFlowView`.

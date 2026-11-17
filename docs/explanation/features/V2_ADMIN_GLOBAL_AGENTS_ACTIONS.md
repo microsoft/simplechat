@@ -17,7 +17,7 @@ removed: a Call agent action is an ordinary global action with the **Call agent*
 type, and a global agent attaches it in its editor like any other action.
 
 **Implemented in version:** 0.261.271 (`application/single_app/config.py`); Duplicate was added in
-**0.261.445**
+**0.261.448**
 
 **Dependencies:** `functions_workspace_authoring.py` (the shared editor engine),
 `functions_global_editor_access.py`, `route_backend_v2_admin_agents_actions.py`,
@@ -238,9 +238,9 @@ document.
 - `application/v2_ui/src/components/workspace/EditorLayout.tsx` (new)
 - `application/v2_ui/src/components/workspace/WorkspaceEditorFrame.tsx` (redesigned)
 - `application/v2_ui/src/pages/AdminGlobalEditorPages.tsx` (new)
-- `application/v2_ui/src/lib/adminDuplicate.ts` (new, 0.261.445): the copy's name, display name,
+- `application/v2_ui/src/lib/adminDuplicate.ts` (new, 0.261.448): the copy's name, display name,
   credential-free record and notice
-- `application/v2_ui/src/lib/workspaceEditorDrafts.ts` (0.261.445): `seedDuplicateEditorDraft`
+- `application/v2_ui/src/lib/workspaceEditorDrafts.ts` (0.261.448): `seedDuplicateEditorDraft`
 
 ## Usage instructions
 

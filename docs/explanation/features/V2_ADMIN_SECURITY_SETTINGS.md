@@ -178,9 +178,9 @@ validated rather than silently blanked, so a refused URL is reported on the fiel
 
 ## Idle session warning
 
-**Implemented in version:** 0.261.445
+**Implemented in version:** 0.261.448
 
-Editing the four Idle Session Timeout settings works as described above. Since 0.261.445 the
+Editing the four Idle Session Timeout settings works as described above. Since 0.261.448 the
 same settings also drive the V2 interface itself: the bootstrap payload carries them,
 normalized by the helper the server enforces them with, under `session.idle_timeout`, and V2
 warns before the sign-out and reports activity to the server as the classic pages do. Before

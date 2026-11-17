@@ -14,7 +14,7 @@ Only a section V2 never draws opens the classic page, in a new tab, on the tab t
 that address carries the classic escape pair (`ui=classic`) so it keeps opening the classic page
 once the classic-to-V2 redirect is switched on.
 
-**Implemented in version:** **0.261.445** (`application/single_app/config.py`)
+**Implemented in version:** **0.261.448** (`application/single_app/config.py`)
 
 **Dependencies:** `admin_settings_nav.py` (the navigation), `admin_settings_fields.py` (the field
 schema), the V2 Admin Settings page and the Latest Features catalogue

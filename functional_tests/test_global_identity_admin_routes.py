@@ -1,12 +1,12 @@
 # test_global_identity_admin_routes.py
 """
 The administrator's global identity routes, as V2 Admin Settings calls them.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 V2 creates, edits and deletes global identities through
 ``/api/admin/workspace-identities/global/identities``. Those are the older routes: a record
-carries no ``etag`` and no ``identity_actions``, and until 0.261.445 a delete refused because a
+carries no ``etag`` and no ``identity_actions``, and until 0.261.448 a delete refused because a
 global action still used the identity answered ``400`` with a sentence and nothing else, which is
 the status of a malformed request and gives a client nothing to list. The strict personal, group
 and public routes have always answered that refusal as ``409`` with ``error_code`` and the
@@ -192,7 +192,7 @@ def create_global(env, name="Reporting API key", **fields):
 
 
 def test_version():
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_a_global_identity_round_trips_with_the_shape_the_v2_adapter_reads(routes):

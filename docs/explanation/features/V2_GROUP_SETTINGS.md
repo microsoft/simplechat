@@ -6,13 +6,13 @@ Group owners and admins can now manage a group's profile, logo, download policy
 and retention in V2, read its recent activity, and chart and export its
 statistics, without leaving for the classic manage page. The three views sit
 with **Members** in the **Manage** part of the group workspace navigation.
-From version **0.261.445** the owner also deletes an empty group from a danger
+From version **0.261.448** the owner also deletes an empty group from a danger
 zone in Settings, natively, and an inactive, locked or unrecognized-status
 group's owner and admins keep all four Manage sections, so V2 no longer hands
 off to classic from the group workspace.
 
 Implemented in version **0.261.165**. The native delete and the managers'
-access to inactive groups: **0.261.445**.
+access to inactive groups: **0.261.448**.
 
 Dependencies:
 - the native group settings, activity and statistics routes from version
@@ -49,7 +49,7 @@ Settings, Activity and Statistics as sections of the **Manage** group.
   - A locked control says why.
 
 The header no longer has a **Manage group (classic)** button for any status:
-there is nothing left that it opened. Before version 0.261.445 it appeared for
+there is nothing left that it opened. Before version 0.261.448 it appeared for
 an inactive group or one whose status wasn't recognized, because those groups
 had no native Manage sections.
 

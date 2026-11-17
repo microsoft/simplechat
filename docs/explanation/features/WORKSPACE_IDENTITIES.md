@@ -61,7 +61,7 @@ In V2, **Identities** opens the native shared credential dialog instead of a
 Bootstrap classic-page modal. Personal users and authorized shared-workspace
 managers can create identities without opening a classic workspace.
 Administrators manage global identities with the same dialog in
-**Admin Settings > Security > Global Identities** (since 0.261.445); see
+**Admin Settings > Security > Global Identities** (since 0.261.448); see
 [V2 Workspace Identities](V2_WORKSPACE_IDENTITIES.md#global-identities-in-admin-settings).
 
 Action setup now uses the same identity catalog. Personal actions can use personal identities, group actions can use identities from the active group, and global actions can use global identities. Public workspace identities are not exposed to actions. Action manifests store only `identity_id` and `auth.type = "identity"`; runtime code resolves secrets through `functions_workspace_identities.py` so credentials are not copied into action records.

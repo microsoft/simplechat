@@ -184,7 +184,7 @@ Phase 6b-2 (0.261.251) filled in all three; see
   activity page instead (below); this run history is where a workflow notice with no
   link of its own, and a workflow alert card's **Open run**, lead.
   - A `/workflow-activity` link opens the V2 [Workflow Activity
-    page](V2_WORKFLOW_ACTIVITY.md) (0.261.445), with the query it carries
+    page](V2_WORKFLOW_ACTIVITY.md) (0.261.448), with the query it carries
     (`conversationId`, `workflowId`, `runId`, `scope`, `groupId`) kept whole. The page
     reads the same query the classic page does, so what the notice says about its own
     workflow, run or workspace no longer decides where the link goes. A link whose ids

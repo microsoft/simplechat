@@ -11,10 +11,10 @@ public workspace is administered without leaving V2.
 Tags was the last public content section that still pointed at the classic
 page: V2 listed it, but the server's public context kept it closed, so the
 vocabulary of a public workspace could only be administered on the classic
-public workspace page. From version **0.261.445** it is the group workspace's
+public workspace page. From version **0.261.448** it is the group workspace's
 tag editor running against the public workspace's own tag routes.
 
-Implemented in version **0.261.445**, tracked in
+Implemented in version **0.261.448**, tracked in
 `application/single_app/config.py`.
 
 Dependencies:

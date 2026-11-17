@@ -2,8 +2,8 @@
 """
 Browser regressions for the V2 side of the classic to V2 redirect: a classic fragment that survives the
 server's redirect, and "Back to classic UI" from every page that has a classic counterpart.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 A server never sees the part of a URL after ``#``, but a browser keeps it across a redirect, so
 ``/workspace#documents-tab`` arrives in V2 as ``/v2/workspace#documents-tab``. V2 replaces it, once and
@@ -262,7 +262,7 @@ SEED = r"""
     const H = window.ClassicLinksHarness;
     H.stores.bootstrap.useBootstrapStore.setState({
         data: {
-            version: '0.261.445',
+            version: '0.261.448',
             user: {id: 'user-1', display_name: 'Riley Chen', roles: []},
             features: {},
             branding: {app_title: 'Contoso Chat'},

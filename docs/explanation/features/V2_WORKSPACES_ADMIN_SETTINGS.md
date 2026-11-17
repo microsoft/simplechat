@@ -38,7 +38,7 @@ about settings that were filed in the wrong place.
 | `file_download_allowed_public_workspace_ids` | Not rendered | Declared (`id_list`) |
 | `require_shared_conversation_file_approval` | Not rendered | Declared |
 | `max_file_size_mb` | Not rendered | Declared, and moved to Knowledge |
-| Global Identities | Empty tab | List (editable in V2 since 0.261.445; see [V2 Workspace Identities](V2_WORKSPACE_IDENTITIES.md#global-identities-in-admin-settings)), moved to Security |
+| Global Identities | Empty tab | List (editable in V2 since 0.261.448; see [V2 Workspace Identities](V2_WORKSPACE_IDENTITIES.md#global-identities-in-admin-settings)), moved to Security |
 
 Separately, none of the ten `require_member_of_*` settings rendered anywhere in V2, for the
 same reason: the fallback scan only ever sees `enable_*` keys. All ten are now declared in
@@ -150,7 +150,7 @@ No configuration is required. Administrators open **Admin settings** in the V2 i
 find the Workspaces group fully populated, Maximum File Size under Knowledge, and Global
 Identities under Security.
 
-Global Identities are edited in place in V2 since 0.261.445: the list became the identities workbench
+Global Identities are edited in place in V2 since 0.261.448: the list became the identities workbench
 with New identity, Edit and Delete, and no longer links to the server-rendered admin page. When this
 change shipped the list was read-only and linked to the classic page for creating and editing, because
 the classic editor handles Key Vault round-tripping and per-auth-type field sets and rebuilding it was
@@ -193,5 +193,5 @@ python .\functional_tests\test_docs_app_surface_coverage.py
 
 - The assignment pickers summarise a selection as a count and resolve names only through search. There is no endpoint that turns a set of ids back into names in bulk, and the server-rendered page has the same constraint.
 - The group picker calls `/api/groups/discover`, which is gated on `enable_group_workspaces`. With group workspaces disabled the picker reports that the search is unavailable, which matches the server-rendered behaviour.
-- Global Identities were read-only in V2 when this change shipped; since 0.261.445 they can be created, edited and deleted there.
+- Global Identities were read-only in V2 when this change shipped; since 0.261.448 they can be created, edited and deleted there.
 - The roster shows only declared role requirements. All ten are declared today, so it is complete, but a new role gate added without a schema entry would be absent from it — and from the rest of V2 — until it is declared.

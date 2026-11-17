@@ -2,8 +2,8 @@
 # test_v2_artifact_actions.py
 """
 Functional test for "Add to workspace" and "Create PowerPoint" on V2 generated-artifact cards.
-Version: 0.261.445
-Implemented in: 0.261.445
+Version: 0.261.448
+Implemented in: 0.261.448
 
 Classic's generated-artifact card offers both actions; the V2 card offered only Download and View
 (``V2_TABULAR_ANALYSIS.md`` recorded them as not carried over). The V2 actions call the same two
@@ -72,7 +72,7 @@ def _function_source(source, name):
 def test_version_is_at_least_the_implementing_release():
     """The application carries at least the version the artifact actions arrived in."""
     print("Testing the application version...")
-    assert_app_version_at_least("0.261.445")
+    assert_app_version_at_least("0.261.448")
 
 
 def test_the_promote_route_is_what_the_client_calls():
