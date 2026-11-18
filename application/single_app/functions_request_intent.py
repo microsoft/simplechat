@@ -148,37 +148,6 @@ def request_intent_gating_suspended():
         _gating_suspended.reset(token)
 
 
-def nominate_side_effect_actions(user_message):
-    """Report which actions the existing keyword detectors would start for this message."""
-    # Imported here because the detector modules import this module to consult the decision.
-    from functions_generated_file_exports import get_requested_artifact_formats
-    from functions_tabular_orchestration import (
-        question_requests_tabular_exhaustive_row_output,
-        question_requests_tabular_generated_output,
-        question_requests_tabular_hierarchical_analysis,
-    )
-
-    if not _normalize_message(user_message):
-        return {}
-
-    with request_intent_gating_suspended():
-        formats = list(get_requested_artifact_formats(user_message) or [])
-        export_run = bool(question_requests_tabular_generated_output(user_message))
-        analysis_run = bool(question_requests_tabular_hierarchical_analysis(user_message))
-        row_output_run = bool(question_requests_tabular_exhaustive_row_output(user_message))
-
-    nominated = {}
-    if formats:
-        nominated[ACTION_FILE_EXPORT] = {"formats": formats}
-    if export_run or analysis_run or row_output_run:
-        nominated[ACTION_BACKGROUND_RUN] = {
-            "full_export": export_run,
-            "full_analysis": analysis_run,
-            "per_row_output": row_output_run,
-        }
-    return nominated
-
-
 def _parse_json_object(text):
     raw_text = str(text or "").strip()
     if not raw_text:
@@ -314,6 +283,7 @@ def assess_request_intent(create_completion, model, user_message, nominated, pri
 def resolve_request_intent(
     user_message,
     *,
+    nominate_actions=None,
     settings=None,
     mode=None,
     create_completion=None,
@@ -322,6 +292,10 @@ def resolve_request_intent(
     suppressed_actions=None,
 ):
     """Build the per-action decision for one user message.
+
+    ``nominate_actions`` is the keyword detector pass (``nominate_side_effect_actions`` in
+    ``functions_tabular_orchestration``). It is passed in so this module does not depend on
+    the detector modules, which consult it.
 
     Order of authority: an explicit user override for this turn, then an explicit opt-out
     in the message, then the model check for actions the keywords nominated. A model check
@@ -335,7 +309,7 @@ def resolve_request_intent(
     check_mode = normalize_request_intent_check_mode(settings, mode=mode)
     suppressed = {action for action in (suppressed_actions or ()) if action in REQUEST_INTENT_ACTIONS}
     opted_out = explicit_side_effect_opt_out(user_message)
-    nominated = nominate_side_effect_actions(user_message)
+    nominated = dict(nominate_actions(user_message) or {}) if callable(nominate_actions) else {}
     if not nominated and not opted_out and not suppressed:
         return None
 

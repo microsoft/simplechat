@@ -36,6 +36,7 @@ from functions_generated_file_exports import (  # noqa: E402
 )
 from functions_tabular_orchestration import (  # noqa: E402
     get_tabular_generated_output_formats,
+    nominate_side_effect_actions,
     question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis,
 )
@@ -78,6 +79,7 @@ def make_model(reply=None, error=None, calls=None):
 def resolve(prompt, reply=None, error=None, mode="active", calls=None, **kwargs):
     return request_intent.resolve_request_intent(
         prompt,
+        nominate_actions=nominate_side_effect_actions,
         mode=mode,
         create_completion=make_model(reply=reply, error=error, calls=calls),
         model="test-model",
@@ -126,7 +128,7 @@ def test_model_verdict_blocks_known_misfires():
     reply = '{"file_export": "not_wanted", "formats": [], "background_run": "not_wanted", "reason": "forbidden"}'
     for prompt in MISFIRING_PROMPTS:
         reset()
-        nominated = request_intent.nominate_side_effect_actions(prompt)
+        nominated = nominate_side_effect_actions(prompt)
         assert FILE in nominated, f"Expected keywords to nominate a file export for: {prompt}"
         decision = resolve(prompt, reply=reply)
         request_intent.bind_request_intent(decision, conversation_id="conv-1")
@@ -193,7 +195,9 @@ def test_missing_model_keeps_keyword_behavior():
     print("Testing a path with no model keeps today's keyword behavior...")
     reset()
     prompt = GENUINE_PROMPTS[0]
-    decision = request_intent.resolve_request_intent(prompt, mode="active", create_completion=None, model=None)
+    decision = request_intent.resolve_request_intent(
+        prompt, nominate_actions=nominate_side_effect_actions, mode="active", create_completion=None, model=None,
+    )
     assert decision["permissions"] == {FILE: ALLOWED, BACKGROUND: ALLOWED}, decision
     assert decision["sources"][FILE] == request_intent.SOURCE_UNCHECKED
     print("  passed")
@@ -213,7 +217,8 @@ def test_parameter_rejection_retries_with_defaults():
         return types.SimpleNamespace(choices=[types.SimpleNamespace(message=message)])
 
     decision = request_intent.resolve_request_intent(
-        GENUINE_PROMPTS[0], mode="active", create_completion=create_completion, model="reasoning-model",
+        GENUINE_PROMPTS[0], nominate_actions=nominate_side_effect_actions, mode="active",
+        create_completion=create_completion, model="reasoning-model",
     )
     assert len(calls) == 2 and "max_tokens" not in calls[1], calls
     assert decision["permissions"][FILE] == ALLOWED, decision

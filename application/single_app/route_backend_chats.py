@@ -145,6 +145,7 @@ from functions_tabular_orchestration import (
     build_tabular_legacy_post_tool_fallback_decision as _shared_build_tabular_legacy_post_tool_fallback_decision,
     get_tabular_generated_output_format as _shared_get_tabular_generated_output_format,
     get_tabular_generated_output_task_type as _shared_get_tabular_generated_output_task_type,
+    nominate_side_effect_actions as _shared_nominate_side_effect_actions,
     question_requests_tabular_exhaustive_row_output as _shared_question_requests_tabular_exhaustive_row_output,
     question_requests_tabular_generated_output as _shared_question_requests_tabular_generated_output,
     question_requests_tabular_hierarchical_analysis as _shared_question_requests_tabular_hierarchical_analysis,
@@ -8506,6 +8507,7 @@ def resolve_chat_turn_request_intent(
 
         decision = resolve_request_intent(
             user_message,
+            nominate_actions=_shared_nominate_side_effect_actions,
             settings=settings,
             create_completion=create_completion,
             model=gpt_model,
