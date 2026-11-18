@@ -150,6 +150,7 @@ from admin_settings_secret_utils import (
     resolve_admin_settings_secret_value,
 )
 from functions_ai_connections import supports_model_capability
+from functions_color_schemes import ColorSchemeError, normalize_color_scheme
 from functions_ai_notice import (
     AI_NOTICE_MAX_MESSAGE_LENGTH,
     normalize_ai_notice_frequency,
@@ -736,6 +737,39 @@ ADMIN_SETTINGS_FIELDS = {
             "label": "Enable Left Nav by Default",
             "help": "Users can still toggle the sidebar individually.",
             "default": True,
+        },
+        {
+            # Saved through the settings PATCH and validated by
+            # _COMPONENT_VALUE_VALIDATORS. None means the SimpleChat default colors.
+            "key": "v2_color_scheme",
+            "type": "component",
+            "component": "color-scheme-editor",
+            "label": "Color scheme",
+            "help": "The colors everyone sees in light mode and dark mode in the modern interface. Changes show in the preview before you save.",
+            "default": None,
+        },
+        {
+            "key": "allow_user_custom_color_modes",
+            "type": "switch",
+            "label": "Let users create a custom color mode",
+            "help": "On by default. When off, users choose only Light, Dark, or Match system.",
+            "default": True,
+        },
+        {
+            "key": "allow_user_theme_cards",
+            "type": "switch",
+            "label": "Allow Theme Card sharing and import",
+            "help": "Users can download their color mode as a Theme Card image and import cards others share. Every card is checked before it is applied, and edited cards are rejected.",
+            "default": True,
+            "depends_on": {"key": "allow_user_custom_color_modes", "equals": True},
+        },
+        {
+            "key": "require_readable_custom_colors",
+            "type": "switch",
+            "label": "Require readable contrast (WCAG AA)",
+            "help": "A custom color mode can't be saved if its text falls below 4.5:1 against its background.",
+            "default": True,
+            "depends_on": {"key": "allow_user_custom_color_modes", "equals": True},
         },
     ],
     "classification-banner-section": [
@@ -10119,6 +10153,14 @@ def _validate_extraction_model_selection(value):
     }, None
 
 
+def _validate_color_scheme(value):
+    """Return ``(scheme, error)`` for the V2 light and dark color scheme."""
+    try:
+        return normalize_color_scheme(value), None
+    except ColorSchemeError as error:
+        return None, str(error)
+
+
 # Component-backed keys that are saved through the settings PATCH. A component
 # normally owns its own persistence, so the type-driven path refuses a write to one;
 # these are the exceptions. Each validator returns ``(value, error)``, which is what
@@ -10127,6 +10169,7 @@ def _validate_extraction_model_selection(value):
 _COMPONENT_VALUE_VALIDATORS = {
     "retention_policy_execution_hour": _validate_retention_execution_hour,
     "document_classification_categories": _normalize_document_classification_categories,
+    "v2_color_scheme": _validate_color_scheme,
     "metadata_extraction_model": _validate_extraction_model_name,
     "metadata_extraction_model_selection": _validate_extraction_model_selection,
     "multimodal_vision_model": _validate_extraction_model_name,

@@ -2,6 +2,23 @@
 
 For feature-focused and fix-focused drill-downs by version, see [Features by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/features) and [Fixes by Version](https://github.com/microsoft/simplechat/tree/main/docs/explanation/fixes).
 
+### **(v0.261.452)**
+
+#### New Features
+
+*   **V2 Custom Color Schemes**
+    *   Administrators set the colors the modern interface uses in light mode and dark mode under Admin Settings > Appearance > Appearance. A table shows the Light and Dark value of each of eleven colors (accent, text on accent, page background, panels, borders, primary and secondary text, and four status colors), with a contrast badge on every color that carries text and live previews of both modes. A low-contrast warning suggests a nearby readable color but does not block the save. **Reset to SimpleChat default** returns to the shipped colors, and saving repaints everyone's interface.
+    *   Users choose **Light**, **Dark**, **Match system** or **Custom** in Settings > Preferences > Color mode. Custom starts from the organization's colors and applies to the whole interface, with no flash of the default colors on load. The sidebar's dark mode toggle still works, and a light or dark choice made in the classic interface is still honoured.
+    *   Three new switches, all on by default: **Let users create a custom color mode**, **Allow Theme Card sharing and import**, and **Require readable contrast (WCAG AA)**. With custom modes off, Custom is hidden, a saved custom mode stops applying, and the server refuses it.
+    *   Every color is reduced to a plain `#RRGGBB` value on the server before it is stored, through the admin settings PATCH and the user settings route. CSS expressions, URLs, unknown color names and over-long names are refused. Contrast is judged on the ratio as displayed, to one decimal place.
+    *   (Ref: `functions_color_schemes.py`, `admin_settings_fields.py`, `route_backend_users.py`, `colorScheme.ts`, `useColorSchemeRuntime.ts`, `ColorSchemeEditor.tsx`, `ColorModeCard.tsx`, `docs/explanation/features/V2_CUSTOM_COLOR_SCHEMES.md`)
+
+*   **Theme Cards**
+    *   A custom color mode can be shared as a Theme Card: a PNG with the mode's name, a stripe of its colors and a QR code drawn in those colors. **Copy as text code** gives the same thing as text. Importing reads the code stored in the PNG, or the QR code when that copy is missing (a screenshot, or an image Teams recompressed). The card is previewed with the checks it passed, and nothing changes until the user saves. Administrators can import a card into the light or dark column of the color scheme.
+    *   Cards import on any SimpleChat deployment. Each carries an open checksum, so a card edited after it was made is refused, and its colors are validated again on save. The image never leaves the browser.
+    *   Adds two pinned V2 dependencies: `qrcode-generator@1.4.4` and `jsqr@1.4.0`.
+    *   (Ref: `themeCardImage.ts`, `ThemeCardDialogs.tsx`, `functional_tests/test_theme_card_code_format.py`)
+
 ### **(v0.261.448)**
 
 #### New Features

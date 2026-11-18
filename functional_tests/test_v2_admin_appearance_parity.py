@@ -49,6 +49,18 @@ APPEARANCE_PANES = {
     "custom-pages": ("custom-pages-section", "external-links-section"),
 }
 
+# Appearance fields that exist only in the modern interface, each with what reads it. These
+# are not missing from V1 by accident: custom color schemes apply to V2 only, so the classic
+# panes have no control for them. Adding a key here needs a reader named beside it.
+V2_ONLY_APPEARANCE_FIELDS = {
+    # Read by useColorSchemeRuntime from the V2 bootstrap settings.
+    "v2_color_scheme",
+    # Read by useColorSchemeRuntime and enforced by route_backend_users.py.
+    "allow_user_custom_color_modes",
+    "allow_user_theme_cards",
+    "require_readable_custom_colors",
+}
+
 FIELD_NAME_RE = re.compile(r'\sname="([^"]+)"')
 JINJA_RE = re.compile(r"\{\{|\{%")
 
@@ -155,7 +167,7 @@ def test_schema_does_not_invent_appearance_fields():
         if section_id not in appearance_sections:
             continue
         key = field.get("key")
-        if not key:
+        if not key or key in V2_ONLY_APPEARANCE_FIELDS:
             continue
         legacy = fields_module.LEGACY_FIELD_NAMES.get(key, [key])
         if not any(name in v1_names for name in legacy):

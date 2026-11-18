@@ -10,6 +10,7 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { useBootstrapStore } from './stores/bootstrapStore';
 import { useUserSettingsStore } from './stores/userSettingsStore';
 import { initializeTheme, hydrateUiPreferences } from './stores/uiStore';
+import { useColorSchemeRuntime } from './lib/useColorSchemeRuntime';
 import { startImageApprovalTracking } from './lib/imageProposalResume';
 import { useNotificationRuntime } from './lib/useNotificationRuntime';
 import { useSafetyWarningRuntime } from './lib/useSafetyWarningRuntime';
@@ -118,6 +119,8 @@ function BootError({ message, authExpired }: { message: string; authExpired: boo
 
 export function App() {
     const { data, loading, error, authExpired, load } = useBootstrapStore();
+    // Administrator and user colors, applied to the whole interface.
+    useColorSchemeRuntime();
     const refreshBootstrapWhenStale = useBootstrapStore((state) => state.refreshWhenStale);
     const loadUserSettings = useUserSettingsStore((state) => state.load);
     const fontSize = useUserSettingsStore(
