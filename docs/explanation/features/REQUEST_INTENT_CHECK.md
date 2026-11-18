@@ -132,4 +132,4 @@ To send a turn with actions withheld from a client, add `"suppress_side_effects"
 - One extra short model call runs on messages that nominate an action. The call has a 12 second timeout.
 - With a background run withheld, a large spreadsheet is answered in the foreground and may be only partly covered. The model is instructed to state its coverage.
 - The turn registry is in process memory. It is sufficient because a decision is only consulted while its own request is running; it is not shared across workers.
-- **Answer in chat instead** resends the text shown in the user's message bubble, which adds a second copy of the prompt to the conversation.
+- **Answer in chat instead** resends the original prompt as a new message, which adds a second copy of it to the conversation. The prompt text is kept in page memory; it is not read back from the rendered message.

@@ -103,6 +103,9 @@ let selectedComparisonTargetIds = [];
 const comparisonPickerPlacements = new Map();
 const chatWorkspaceUploadPolls = new Map();
 const chatWorkspaceUploadCompletionWatchers = new Map();
+// Original text of each user prompt by message id, kept in memory so a prompt can be resent
+// without reading rendered text back out of the page.
+const userPromptTextByMessageId = new Map();
 const COMPARISON_PICKER_FIELD_NAMES = ['scope', 'tags', 'document'];
 const DOCUMENT_ACTION_NONE = 'none';
 const DOCUMENT_ACTION_ANALYZE = 'analyze';
@@ -5438,8 +5441,8 @@ function renderReplyQuoteHtml(fullMessageObject = null) {
     while (userMessage && !userMessage.classList.contains('user-message')) {
       userMessage = userMessage.previousElementSibling;
     }
-    const messageText = userMessage?.querySelector('.message-text');
-    const promptText = String(messageText?.innerText || messageText?.textContent || '').trim();
+    const userMessageId = String(userMessage?.getAttribute('data-message-id') || '').trim();
+    const promptText = String(userPromptTextByMessageId.get(userMessageId) || '').trim();
     if (!promptText) {
       showToast('Could not find the original request. Send it again and ask for the answer in chat.', 'warning');
       return;
@@ -6003,6 +6006,10 @@ export function appendMessage(
   isNewMessage = false
 ) {
   if (!chatbox || sender === "System") return;
+
+  if (sender === "You" && messageId && typeof messageContent === "string") {
+    userPromptTextByMessageId.set(String(messageId), messageContent);
+  }
 
   const messageDiv = document.createElement("div");
   messageDiv.classList.add("mb-2", "message");
@@ -7939,6 +7946,10 @@ function isUserMessageStreamingActionDisabled(action) {
 
 // Helper function to update user message ID after backend response
 export function updateUserMessageId(tempId, realId, options = {}) {
+  if (tempId && realId && userPromptTextByMessageId.has(String(tempId))) {
+    userPromptTextByMessageId.set(String(realId), userPromptTextByMessageId.get(String(tempId)));
+    userPromptTextByMessageId.delete(String(tempId));
+  }
   const { refreshExpandedMetadata = false } = options;
   console.log(`🔄 Updating message ID: ${tempId} -> ${realId}`);
 
