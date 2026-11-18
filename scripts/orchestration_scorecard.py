@@ -43,6 +43,9 @@ PROGRESS = '[ORCHESTRATION_PROGRESS] Progress recorded.'
 MESSAGES = (REQUEST, CORRECTION, NOT_PLANNED, PLANNING_CRASH, OUTCOME, PROGRESS)
 # A recovery is logged when applied and again when its step finishes; count the second.
 PROGRESS_APPLIED = 'applied'
+# A new attempt started without the user's sign-off is logged once, when it is prepared. How
+# it ended is the outcome of the later attempt, reported under "Later attempts".
+CONTINUATION_PREFIX = 'continue_'
 UNKNOWN_VERSION = 'unknown'
 
 
@@ -61,7 +64,8 @@ def build_query(days):
         "error_type = tostring(customDimensions.sc_error_type), "
         "error_site = tostring(customDimensions.sc_error_site), "
         "recovery = tostring(customDimensions.sc_recovery), "
-        "progress_outcome = tostring(customDimensions.sc_progress_outcome) "
+        "progress_outcome = tostring(customDimensions.sc_progress_outcome), "
+        "attempt = toint(customDimensions.sc_attempt_index) "
         "| order by timestamp asc"
     )
 
@@ -108,7 +112,7 @@ def summarize(rows):
         'first_seen': None, 'requests': 0, 'not_planned': 0, 'planning_crashes': 0,
         'corrections': 0, 'runs': 0, 'completed': 0, 'waiting': 0,
         'rejection_rules': Counter(), 'run_failures': Counter(), 'crash_sites': Counter(),
-        'recoveries': Counter(),
+        'recoveries': Counter(), 'later_attempts': Counter(),
     })
     for row in rows:
         version = row['version'] if row['m'] == OUTCOME and row['version'] else version_at(row['timestamp'])
@@ -129,7 +133,8 @@ def summarize(rows):
             ] += 1
         elif message == PROGRESS:
             outcome = row.get('progress_outcome') or 'unspecified'
-            if outcome != PROGRESS_APPLIED:
+            continued = (row.get('recovery') or '').startswith(CONTINUATION_PREFIX)
+            if outcome != PROGRESS_APPLIED or continued:
                 record['recoveries'][
                     f"{row.get('failure_code') or 'unspecified'} -> "
                     f"{row.get('recovery') or 'none'}: {outcome}"
@@ -139,6 +144,12 @@ def summarize(rows):
                 record['waiting'] += 1
                 continue
             record['runs'] += 1
+            try:
+                attempt = int(row.get('attempt') or 1)
+            except (TypeError, ValueError):
+                attempt = 1
+            if attempt > 1:
+                record['later_attempts'][row['outcome'] or 'unspecified'] += 1
             if row['outcome'] == 'completed':
                 record['completed'] += 1
             else:
@@ -166,6 +177,7 @@ def render(summary):
     for title, field in (
         ('Plan rejection rules', 'rejection_rules'), ('Run failures', 'run_failures'),
         ('Planning crashes', 'crash_sites'), ('Step recoveries', 'recoveries'),
+        ('Later attempts, by outcome', 'later_attempts'),
     ):
         total = Counter()
         for record in summary.values():

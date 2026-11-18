@@ -20,14 +20,16 @@ recovery codes), so entries are safe to log and to keep with the run.
 
 The loop is off unless ``enable_chat_orchestration_reactive_loop`` is set.
 
-Version: 0.261.457
+Version: 0.261.458
 Implemented in: 0.261.457
 """
 
 import logging
 
 from functions_appinsights import log_event, workflow_log_context
-from functions_orchestration_registry import DEPENDENCY_PLAN_CONTRACT_VERSION, get_capability
+from functions_orchestration_registry import (
+    DEPENDENCY_PLAN_CONTRACT_VERSION, external_effect_capability_ids, get_capability,
+)
 
 REACTIVE_LOOP_SETTING = 'enable_chat_orchestration_reactive_loop'
 ROUND_LIMIT_SETTING = 'chat_orchestration_max_recovery_rounds'
@@ -35,6 +37,8 @@ DEFAULT_ROUND_LIMIT = 2
 MAX_ROUND_LIMIT = 5
 
 RECOVERY_ACCEPT_PARTIAL_INPUT = 'accept_partial_input'
+RECOVERY_CONTINUE_ATTEMPT = 'continue_attempt'
+RECOVERY_CONTINUE_AVAILABLE = 'continue_available_information'
 
 OUTCOME_APPLIED = 'applied'
 OUTCOME_RECOVERED = 'recovered'
@@ -92,6 +96,79 @@ def partial_input_accepted(context, step_id, producer_step_id):
     """Whether a recovery let this step read that producer's partial result."""
     accepted = getattr(context, 'accepted_partial_inputs', None)
     return isinstance(accepted, set) and (step_id, producer_step_id) in accepted
+
+
+def _failed_steps(record):
+    return frozenset(
+        (step.get('step_id'), (step.get('failure') or {}).get('code'))
+        for step in (record or {}).get('execution_steps') or []
+        if isinstance(step, dict) and step.get('status') == 'failed'
+    )
+
+
+def automatic_continuation(record, recovery, settings, *, parent=None):
+    """Whether a failed attempt may be followed by the next one without the user's sign-off.
+
+    The user approved a plan; the next attempt is admitted here only while it stays inside that
+    approval. It is one of the two successors the server already defines for a failed attempt:
+    the same plan run again from its failed step, or the server-derived plan that answers from
+    what was retrieved. Neither adds a capability or a source. An attempt that would run an
+    external action again, or that needs the user's confirmation, is never continued here.
+
+    Returns ``(decision, reason)``: a decision dict with ``kind``, ``recovery``, ``round`` and
+    ``round_limit``, or ``None`` with the server code for why not.
+    """
+    if not reactive_loop_enabled(settings) or not isinstance(record, dict) or not isinstance(recovery, dict):
+        return None, 'disabled'
+    if record.get('status') != 'failed' or record.get('cancellation_requested_at'):
+        return None, 'not_failed'
+    if recovery.get('eligible') is True:
+        kind, recovery_id = 'retry', RECOVERY_CONTINUE_ATTEMPT
+    elif recovery.get('can_use_available_information') is True:
+        kind, recovery_id = 'available_information', RECOVERY_CONTINUE_AVAILABLE
+    else:
+        return None, 'not_eligible'
+    if recovery.get('requires_confirmation') is not False:
+        return None, 'confirmation_required'
+    rerun = set(recovery.get('retry_step_ids') or ())
+    effects = external_effect_capability_ids()
+    if any(
+        step.get('step_id') in rerun and step.get('capability_id') in effects
+        for step in (record.get('plan') or {}).get('steps') or [] if isinstance(step, dict)
+    ):
+        return None, 'external_effect'
+    limit = round_limit(settings)
+    rounds = max(0, int(record.get('attempt_index') or 1) - 1)
+    if rounds >= limit:
+        return None, OUTCOME_ROUND_LIMIT
+    if record.get('retry_of_run_id'):
+        # The attempt before this one failed the same steps for the same reasons: another
+        # attempt of the same kind would be a third. Unreadable history is treated the same.
+        if not isinstance(parent, dict) or parent.get('id') != record['retry_of_run_id']:
+            return None, OUTCOME_STALLED
+        failed = _failed_steps(record)
+        if failed and failed == _failed_steps(parent):
+            return None, OUTCOME_STALLED
+    return {'kind': kind, 'recovery': recovery_id, 'round': rounds + 1, 'round_limit': limit}, None
+
+
+def log_automatic_continuation(decision, reason, record, *, successor_run_id=None):
+    """One ledger line per automatic successor, or per refusal of one. Server codes only."""
+    failure = record.get('failure') if isinstance(record.get('failure'), dict) else {}
+    log_event(
+        f'{_LOG_PREFIX} Progress recorded.',
+        level=logging.INFO if decision else logging.WARNING,
+        extra={
+            **workflow_log_context(
+                run_id=successor_run_id or record.get('id'), conversation_id=record.get('conversation_id'),
+            ),
+            'stage': 'automatic_continuation', 'failure_code': failure.get('code'),
+            'capability_id': failure.get('capability_id'),
+            'recovery': (decision or {}).get('recovery'),
+            'progress_outcome': OUTCOME_APPLIED if decision else reason,
+            'round': (decision or {}).get('round'), 'round_limit': (decision or {}).get('round_limit'),
+        },
+    )
 
 
 class ProgressLedger:

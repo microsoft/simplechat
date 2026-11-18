@@ -33,11 +33,11 @@
                         <input type="checkbox" class="form-check-input" id="enable_chat_orchestration_reactive_loop" name="enable_chat_orchestration_reactive_loop" aria-describedby="orchestration-reactive-loop-help" {% if settings.get('enable_chat_orchestration_reactive_loop', false) %}checked{% endif %} />
                         <label class="form-check-label" for="enable_chat_orchestration_reactive_loop">Recover from step failures</label>
                     </div>
-                    <p class="form-text" id="orchestration-reactive-loop-help">When a step fails for a reason the server has a defined recovery for, apply it and run the step again instead of failing the run. Recoveries stay inside the approved plan.</p>
+                    <p class="form-text" id="orchestration-reactive-loop-help">When a step fails for a reason the server has a defined recovery for, apply it and run the step again instead of failing the run. Recoveries stay inside the approved plan. A run that still fails is followed by one more attempt without asking, when that attempt keeps the approved plan, repeats no external action and does not repeat the same failure.</p>
                     <div class="mb-4">
                         <label class="form-label" for="chat_orchestration_max_recovery_rounds">Maximum step recoveries per run</label>
                         <input type="number" class="form-control" id="chat_orchestration_max_recovery_rounds" name="chat_orchestration_max_recovery_rounds" min="0" max="5" step="1" value="{{ settings.get('chat_orchestration_max_recovery_rounds', 2) }}" aria-describedby="orchestration-recovery-rounds-help" />
-                        <div class="form-text" id="orchestration-recovery-rounds-help">Default: 2. Recoveries one run may apply before a failed step fails the run. Zero applies none.</div>
+                        <div class="form-text" id="orchestration-recovery-rounds-help">Default: 2. Recoveries one run may apply before a failed step fails the run, and attempts that may follow a failed run without asking. Zero applies none.</div>
                     </div>
                     <div class="form-check form-switch mb-2">
                         <input type="checkbox" class="form-check-input" id="enable_chat_orchestration_completeness_check" name="enable_chat_orchestration_completeness_check" aria-describedby="orchestration-completeness-help" {% if settings.get('enable_chat_orchestration_completeness_check', true) %}checked{% endif %} />

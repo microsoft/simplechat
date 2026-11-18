@@ -1,10 +1,11 @@
-# Orchestration progress ledger and step recoveries
+# Orchestration progress ledger, step recoveries and automatic continuation
 
-Version: **0.261.457**
+Version: **0.261.458**
 
-Implemented in version: **0.261.457**. Off by default.
+Implemented in version: **0.261.457** (ledger and step recovery), **0.261.458** (automatic
+continuation). Off by default.
 
-This is the first part of Phase 3 of the
+This is the first and second part of Phase 3 of the
 [reactive loop proposal](ORCHESTRATION_REACTIVE_LOOP_PROPOSAL.md). It is not the whole of
 Phase 3: see "Not done".
 
@@ -46,6 +47,45 @@ In the 17-18 November run this failure ended 7 of 34 failed or partial runs. Eac
 document analysis had covered every source and reported limitations, and the answer step,
 planned before any result existed, had declared it would accept only a complete input.
 
+### Automatic continuation (0.261.458)
+
+A run that still ends failed can be followed by its next attempt without the user's sign-off.
+The decision was the project owner's (18 November 2026): a change that stays inside what the
+user approved continues by itself; anything else waits for the user.
+
+The next attempt is one of the two successors the server already defined for a failed attempt,
+which until now needed a click:
+
+| Successor | What changes | Ledger code |
+| --- | --- | --- |
+| The same plan, run again from its failed step | Nothing in the plan. Completed steps are reused from their checkpoints | `continue_attempt` |
+| The server-derived plan that answers from what was retrieved | Only the failed answer steps, which may now read partial inputs and must state the limits | `continue_available_information` |
+
+Neither adds a capability or a source, so both are inside the approved plan by construction.
+`automatic_continuation` in `functions_orchestration_progress.py` admits one only when all of
+these hold:
+
+- the setting is on and the attempt is failed, not cancelled and not stopped by the user;
+- the server's recovery projection says that successor is eligible;
+- no confirmation is required, and no step that would run again can act outside the plan
+  (`external_effects` in the capability registry);
+- the attempt number is within the recovery limit;
+- the attempt did not fail the same steps for the same reasons as the attempt before it
+  (a stall). History that cannot be read counts as a stall.
+
+How it runs:
+
+1. The run detail route adds `recovery.auto_continue` (`kind`: `retry` or
+   `available_information`) when the decision is yes.
+2. The V2 client, for an attempt that ended while that tab was following it, reads the
+   detail and calls the existing retry route with `automatic: true`. Opening an old
+   conversation never starts work.
+3. The retry route makes the decision again for an `automatic` request and refuses with
+   `automatic_continuation_unavailable` when it is no. A clicked retry is not held to this
+   rule. The flag is removed before the shared retry preparation, so both kinds are prepared
+   and fenced by the same code.
+4. The new attempt runs as any retry does: new run, new binding, inherited checkpoints.
+
 ### Bounds
 
 - Round limit: `chat_orchestration_max_recovery_rounds` (0 to 5, default 2). Zero applies none.
@@ -53,6 +93,8 @@ planned before any result existed, had declared it would accept only a complete 
 - More than one admitted recovery is recorded as `ambiguous` and nothing is applied. There
   is no model-chosen recovery yet.
 - Cancellation and the step and run time budgets are checked before each further attempt.
+- The same limit bounds automatic attempts: with the default of 2, a request has at most its
+  first attempt and two that follow without asking.
 
 ### Configuration
 
@@ -73,7 +115,15 @@ unchanged and does not bound recoveries.
 `ambiguous`), `round`, `round_limit`, `capability_id`, `producer_capability_id` and the hashed
 run, conversation and step identifiers. All values are server codes.
 
-`scripts/orchestration_scorecard.py` reports them per version under "Step recoveries".
+An automatic continuation logs the same message with `stage` `automatic_continuation`,
+`recovery` (`continue_attempt` or `continue_available_information`), `progress_outcome`
+`applied`, and the failure code of the attempt it follows. A refused automatic request logs
+the reason as `progress_outcome`.
+
+`scripts/orchestration_scorecard.py` reports them per version under "Step recoveries", and
+reports how attempts after the first ended under "Later attempts, by outcome". The completion
+column counts every attempt as a run, so a failed attempt followed by a completed one shows as
+one of two completed.
 
 When a run records any entry, its saved result carries `progress_ledger`.
 
@@ -86,6 +136,9 @@ When a run records any entry, its saved result carries `progress_ledger`.
   `route_frontend_admin_settings.py`, `templates/admin/_panes/chat-orchestration.html`
 - `scripts/orchestration_scorecard.py`
 - `functional_tests/test_orchestration_progress_ledger.py` (new)
+- `application/single_app/route_backend_orchestration.py` (run detail and retry routes)
+- `application/v2_ui/src/lib/orchestration.ts`, `orchestrationController.ts`
+- `functional_tests/test_orchestration_automatic_continuation.py` (new)
 
 ## Usage instructions
 
@@ -108,16 +161,26 @@ To measure the change, run the same scenarios with the setting off and then on.
     unchanged, and the result equals that of a plan which declared the input partial.
   - Round limit zero, stall detection, registry admission, bounded settings, and that no
     source text reaches the ledger or its logs.
-- Not deployed and not measured against a live model.
+- `functional_tests/test_orchestration_automatic_continuation.py`: 17 passed. Each condition
+  above, the limit, the stall rule, the log line, the scorecard, that a click is not held to
+  the rule, and that only the controller starts a continuation.
+- The V2 client type-checks. Its script tests were not run: this checkout has no installed
+  client packages.
+- Not deployed, not run in a browser and not measured against a live model.
 
 ### Limitations and not done
 
 - **One recovery.** Only the partial-input refusal is recoverable. Calculation failures
   (15 `result_invalid`, 4 `calculation_program_invalid` in the same run) are not covered here;
   the prepared calculation path has its own correction loop from Phase 1.
-- **No plan revision during a run.** Changing the plan means a new run, with new approval
-  and admission checks, and is route-level work. It also needs the open decision in the
-  proposal: whether a change inside the approved scope needs the user's sign-off.
+- **No model-written plan revision.** The automatic successors are server-defined: the same
+  plan, or the one derived plan change. A plan the model rewrites after seeing a failure is
+  not built. It needs a third kind of successor in the retry fences (today a successor's plan
+  must equal its parent's, or the one the server derives from it), a planner call that keeps
+  completed steps fixed, and a scope check on capabilities, sources and deliverables. That
+  work should be tested against a live model as it is built.
+- **A repeat that cannot succeed costs one attempt.** A failure whose cause is fixed in the
+  plan fails the same way once more before the stall rule stops it.
 - **No model-chosen recovery.** Where a failure has more than one valid recovery the choice
   belongs to a model with the results in view. None is defined yet.
 - **No strict structured output and no server-derived bindings.** Both remain in Phase 3.

@@ -92,6 +92,8 @@ export interface OrchestrationRecovery {
     can_use_available_information?: boolean;
     /** Only a server-confirmed checker checkpoint may use the check-only recovery label. */
     retry_scope?: 'check' | 'step';
+    /** The server's decision that the next attempt stays inside the approved plan and may start unasked. */
+    auto_continue?: { kind: 'retry' | 'available_information' };
 }
 
 /** The server's check, after a run, of whether the answer shows a chart or diagram the user asked for. */
@@ -151,6 +153,8 @@ export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRec
     if (typeof data.source_run_id !== 'string' || typeof data.eligible !== 'boolean') return undefined;
     const ids = (value: unknown): string[] => Array.isArray(value)
         ? value.filter((id): id is string => typeof id === 'string') : [];
+    const autoKind = recordOf(data.auto_continue).kind;
+    const autoContinueKind = autoKind === 'retry' || autoKind === 'available_information' ? autoKind : undefined;
     return {
         eligible: data.eligible,
         source_run_id: data.source_run_id,
@@ -164,6 +168,7 @@ export function normalizeOrchestrationRecovery(value: unknown): OrchestrationRec
         requires_confirmation: data.requires_confirmation !== false,
         ...(data.can_use_available_information === true ? { can_use_available_information: true } : {}),
         ...(data.retry_scope === 'check' || data.retry_scope === 'step' ? { retry_scope: data.retry_scope } : {}),
+        ...(autoContinueKind ? { auto_continue: { kind: autoContinueKind } } : {}),
     };
 }
 
@@ -1208,6 +1213,8 @@ export async function prepareOrchestrationRetry(
         expected_version: string;
         confirm_external_effects: boolean;
         use_available_information?: boolean;
+        /** Nobody clicked: the server then applies its own rule for continuing unasked. */
+        automatic?: boolean;
     },
 ): Promise<PersistedRun> {
     const payload = await api.post<{ run: PersistedRun }>(

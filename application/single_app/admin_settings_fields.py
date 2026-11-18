@@ -4608,7 +4608,10 @@ ADMIN_SETTINGS_FIELDS = {
                 "When a step fails for a reason the server has a defined recovery for, apply it and "
                 "run the step again instead of failing the run. Recoveries stay inside the approved "
                 "plan: they add no capability, source or action. Today this covers an answer step "
-                "whose earlier work finished with limitations; the answer then states those limits."
+                "whose earlier work finished with limitations; the answer then states those limits. "
+                "A run that still fails is followed by one more attempt without asking, when that "
+                "attempt keeps the approved plan, repeats no external action and does not repeat "
+                "the same failure."
             ),
             "default": False,
             "depends_on": {"key": "enable_chat_orchestration", "equals": True},

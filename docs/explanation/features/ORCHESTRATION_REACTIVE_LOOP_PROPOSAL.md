@@ -1,6 +1,6 @@
 # Orchestration Harness Review and Reactive Loop Proposal
 
-**Version: 0.261.457** (review of the code at 0.261.446)
+**Version: 0.261.458** (review of the code at 0.261.446)
 
 Versions below were renumbered after Development was merged, because Development had used
 0.261.448 to 0.261.450 for other work. Deployed builds keep the number they ran under in
@@ -17,7 +17,8 @@ Implemented so far:
 - Phase 2 (0.261.453): intent patterns and scenario wording removed, prompt sections sent by capability, three plan fields derived, corrections named. Strict structured output moved to Phase 3. See `../fixes/ORCHESTRATION_PLANNER_HEURISTICS_AND_DERIVATION_FIX.md`.
 
 - Fix (0.261.456): a multi-file calculation planned without its preparation step is rejected in planning; the prompt now matches the capability. See `../fixes/ORCHESTRATION_PREPARED_CALCULATION_BINDING_FIX.md`.
-- Phase 3, first part (0.261.457, off by default): progress ledger and one typed step recovery inside a run. Plan revision during a run, model-chosen recoveries, strict structured output and server-derived bindings are not built. See `ORCHESTRATION_PROGRESS_LEDGER.md`.
+- Phase 3, first part (0.261.457, off by default): progress ledger and one typed step recovery inside a run. Model-chosen recoveries, strict structured output and server-derived bindings are not built. See `ORCHESTRATION_PROGRESS_LEDGER.md`.
+- Phase 3, second part (0.261.458, same setting): a failed run is followed by its next attempt without sign-off when that attempt stays inside the approved plan. The successors are the two the server already defined; a plan the model rewrites after a failure is not built.
 
 Second test run, 17-18 November 2026 (deployed as 0.261.450, 90 requests): no planning
 crashes; 2 requests could not be planned (25 of 181 in the baseline); 1 second-round
@@ -136,6 +137,6 @@ Recommendation: build the loop in the existing engine and borrow the Magentic le
 
 ## 4. Open decisions
 
-1. Whether mid-run plan changes within the approved scope need user sign-off, or only scope growth does.
+1. Decided 18 November 2026: a change inside the approved scope continues without sign-off; scope growth, external actions and anything needing confirmation wait for the user.
 2. Round, stall and retry limits, and whether administrators can set them.
 3. Whether Phase 1 ships before the Phase 0 suite exists.

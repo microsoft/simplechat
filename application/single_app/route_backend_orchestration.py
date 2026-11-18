@@ -211,6 +211,9 @@ from functions_orchestration_planner import (
     resolve_conversation_request,
 )
 from functions_orchestration_models import resolve_orchestration_model
+from functions_orchestration_progress import (
+    automatic_continuation, log_automatic_continuation, reactive_loop_enabled,
+)
 from functions_orchestration_registry import (
     DEPENDENCY_PLAN_CONTRACT_VERSION,
     CapabilityResolutionError,
@@ -2188,6 +2191,23 @@ def _current_workflow_planning(record, user_id, settings, conversation_id=None):
     return refresh_workflow_planning_privacy(stored, conversation, user_id)
 
 
+def _automatic_continuation(record, recovery, user_id, settings):
+    """The server's decision on following a failed attempt without the user's sign-off."""
+    if not reactive_loop_enabled(settings) or record.get('status') != PLAN_STATUS_FAILED:
+        return None, 'disabled'
+    parent = None
+    if record.get('retry_of_run_id'):
+        try:
+            parent = get_orchestration_run(
+                record['retry_of_run_id'], user_id,
+                conversation_id=record.get('conversation_id'), strict=True,
+            )
+        except AzureError:
+            # History that cannot be read is treated as a repeat: nothing continues by itself.
+            parent = None
+    return automatic_continuation(record, recovery, settings, parent=parent)
+
+
 def _validate_retry_context(record, user_id, settings, *, preparing=False):
     """Rebuild the same authorized execution inputs without invoking a model."""
     conversation_id = record['conversation_id']
@@ -3967,6 +3987,15 @@ def register_route_backend_orchestration(bp):
             return jsonify({'error': 'User not authenticated'}), 401
         data = request.get_json(silent=True)
         conversation_id = data.get('conversation_id') if isinstance(data, dict) else None
+        # ``automatic`` is the client saying nobody clicked. The server then decides whether
+        # this attempt may be followed without sign-off; a click is never held to that rule.
+        automatic = False
+        if isinstance(data, dict) and 'automatic' in data:
+            if type(data['automatic']) is not bool:
+                return jsonify({'error': 'Invalid retry request.', 'code': 'invalid_request'}), 400
+            automatic = data['automatic']
+            data = {key: value for key, value in data.items() if key != 'automatic'}
+        continued = {}
 
         def validate_retry(record):
             if _is_workflow_replay_run(record):
@@ -3974,6 +4003,22 @@ def register_route_backend_orchestration(bp):
                     _workflow_replay_run_message(),
                     code=WORKFLOW_REPLAY_RUN_MANAGED_CODE, status_code=409,
                 )
+            if automatic:
+                decision, reason = _automatic_continuation(
+                    record, recovery_projection(record), user_id, settings,
+                )
+                if decision is not None and (
+                    (decision['kind'] == 'available_information')
+                    != (data.get('use_available_information') is True)
+                ):
+                    decision, reason = None, 'not_eligible'
+                if decision is None:
+                    log_automatic_continuation(None, reason, record)
+                    raise RecoveryError(
+                        'This attempt is not continued automatically. Review it and retry if you want to.',
+                        code='automatic_continuation_unavailable',
+                    )
+                continued.update(decision=decision, record=record)
             return _validate_retry_context(record, user_id, settings, preparing=True)
 
         try:
@@ -3983,6 +4028,10 @@ def register_route_backend_orchestration(bp):
                 validate=validate_retry,
                 message_container=cosmos_messages_container,
             )
+            if continued:
+                log_automatic_continuation(
+                    continued['decision'], None, continued['record'], successor_run_id=child['id'],
+                )
             return jsonify({'run': _run_detail_row(child)}), 200
         except RecoveryError as exc:
             payload = {'error': exc.message, 'code': exc.code}
@@ -4394,6 +4443,11 @@ def register_route_backend_orchestration(bp):
                 record, lambda: _authorize_context_conversation(record['conversation_id'], user_id),
             )
             public = _run_detail_row(record)
+            decision, _reason = _automatic_continuation(
+                record, public.get('recovery'), user_id, get_settings(),
+            )
+            if decision is not None:
+                public['recovery'] = {**public['recovery'], 'auto_continue': {'kind': decision['kind']}}
         except (ConversationContextError, PermissionError) as exc:
             log_event(
                 '[ORCHESTRATION_RUNS] Current access did not permit a saved run projection.',

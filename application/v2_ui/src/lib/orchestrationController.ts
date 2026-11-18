@@ -1388,6 +1388,9 @@ async function executeSavedPlan(
                 if (status === 'completed') {
                     announceRunReply(conversationId, runId, terminal);
                 }
+                if (status === 'failed') {
+                    void continueFailedRunAutomatically(conversationId, runId);
+                }
                 // Generated images are saved as their own conversation messages, which the
                 // answer's image cards show. Reading the saved thread brings them in.
                 if (doneFrameHasGeneratedImages(event)) {
@@ -1525,8 +1528,44 @@ export async function continueSavedInteraction(
 const reconciliationTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const recoverySubmissions = new Map<string, {
     id: string; version: string; confirmed: boolean; unresolved: boolean; availableInformation: boolean;
+    automatic?: boolean;
 }>();
 const recoveryLocks = new Set<string>();
+/** Attempts this tab already asked the server to continue; each is asked at most once. */
+const automaticContinuations = new Set<string>();
+
+/**
+ * Follow a failed attempt with the next one when the server says it may start unasked.
+ *
+ * Only an attempt that ended while this tab was following it is considered, so opening an old
+ * conversation never starts work. The server decides: the next attempt must stay inside the
+ * approved plan, repeat no external action, be within the recovery limit and not repeat the
+ * failure of the attempt before it. When it declines, or anything here fails, the failed
+ * attempt and its own recovery controls are left exactly as they were.
+ */
+async function continueFailedRunAutomatically(conversationId: string, runId: string): Promise<void> {
+    const key = scopeKey(conversationId, runId);
+    if (automaticContinuations.has(key)) return;
+    automaticContinuations.add(key);
+    const shownError = useOrchestrationStore.getState().runRecovery[runId]?.error ?? null;
+    try {
+        let record = await loadOrchestrationRecovery(conversationId, runId);
+        // The terminal frame can arrive just before the server releases the attempt it ended.
+        for (let check = 0; check < 4 && record && (isOrchestrationRunPending(record)
+            || normalizeOrchestrationRecovery(record.recovery)?.reason_code === 'execution_live'); check += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            record = await loadOrchestrationRecovery(conversationId, runId);
+        }
+        const decision = normalizeOrchestrationRecovery(record?.recovery)?.auto_continue;
+        if (!decision) return;
+        const result = await retryOrchestrationRun(
+            conversationId, runId, undefined, decision.kind === 'available_information', true,
+        );
+        if (!result.started) useOrchestrationStore.getState().updateRunRecovery(runId, { error: shownError });
+    } catch {
+        useOrchestrationStore.getState().updateRunRecovery(runId, { error: shownError });
+    }
+}
 
 /**
  * Start a prepared retry without waiting for it to finish.
@@ -1649,6 +1688,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
             if (status === 'completed' && tracked && !tracked.resumed) {
                 announceRunReply(conversationId, runId, event);
             }
+            const continueUnasked = status === 'failed' && Boolean(tracked) && !tracked?.resumed;
             const chat = useChatStore.getState();
             const otherRun = Object.values(current.inFlight)
                 .some((run) => run.conversationId === conversationId && run.runId !== runId);
@@ -1671,6 +1711,7 @@ export async function reconcileOrchestrationRun(conversationId: string, runId: s
                         : 'This run ended without a linked conversation message. Review its saved status and recovery options.',
                 });
             }
+            if (continueUnasked) void continueFailedRunAutomatically(conversationId, runId);
             return;
         }
         current.updateRunRecovery(runId, {
@@ -1711,6 +1752,7 @@ export async function retryOrchestrationRun(
     runId: string,
     confirmedVersion?: string,
     useAvailableInformation = false,
+    automatic = false,
 ): Promise<{ confirmationRequired?: boolean; version?: string; started?: boolean }> {
     const key = scopeKey(conversationId, runId);
     const store = useOrchestrationStore.getState();
@@ -1758,7 +1800,7 @@ export async function retryOrchestrationRun(
         }
         const confirmed = recovery.requires_confirmation && confirmedVersion === recovery.expected_version;
         const submission = previous?.unresolved ? previous
-            : { id: makeTurnId(), version: recovery.expected_version ?? '', confirmed, unresolved: true, availableInformation };
+            : { id: makeTurnId(), version: recovery.expected_version ?? '', confirmed, unresolved: true, availableInformation, automatic };
         recoverySubmissions.set(key, submission);
         const child = await prepareOrchestrationRetry(runId, {
             conversation_id: conversationId,
@@ -1766,6 +1808,7 @@ export async function retryOrchestrationRun(
             expected_version: submission.version,
             confirm_external_effects: submission.confirmed,
             ...(submission.availableInformation ? { use_available_information: true } : {}),
+            ...(submission.automatic ? { automatic: true } : {}),
         });
         submission.unresolved = false;
         const plan = normalizePlan(child.plan);
