@@ -5,10 +5,10 @@ counts:
   admin_groups: 15
   admin_tabs: 49
   admin_sections: 109
-  actions: 34
+  actions: 35
   chat_controls: 47
   sub_elements: 3
-  app_pages: 33
+  app_pages: 34
   feature_surfaces: 26
 capabilities:
 - key: enable_action_ai_assistant
@@ -968,6 +968,9 @@ actions:
 - slug: azure-maps-openlayers
   module: azure_maps_openlayers_plugin.py
   class_name: AzureMapsOpenLayersPlugin
+- slug: bitbucket
+  module: bitbucket_plugin.py
+  class_name: BitbucketPlugin
 - slug: blob-storage
   module: blob_storage_plugin.py
   class_name: BlobStoragePlugin
@@ -1234,6 +1237,9 @@ app_pages:
 - template: approvals.html
   slug: approvals
   route_url: /approvals
+- template: bitbucket_connection.html
+  slug: bitbucket-connection
+  route_url: /bitbucket/connect
 - template: chats.html
   slug: chats
   route_url: /chats

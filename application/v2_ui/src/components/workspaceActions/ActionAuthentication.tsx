@@ -97,6 +97,7 @@ export function ActionAuthentication(props: ActionConnectorProps & { definition:
         </EditorPanelFieldset>
     ) : null;
 
+    if (draft.type === 'bitbucket') return <p className="text-sm text-text-2">Configure Bitbucket authentication and your private connection in Configuration. Shared credentials are never substituted for a failed personal connection.</p>;
     if (native.internal) return (
         <p className="text-sm text-text-2">
             {draft.auth.type === 'user'

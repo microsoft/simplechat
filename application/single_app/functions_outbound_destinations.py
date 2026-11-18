@@ -21,7 +21,7 @@ _NAT64 = ipaddress.ip_network("64:ff9b::/96")
 _HOST_LABEL = re.compile(r"[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?")
 _NUMERIC_HOST = re.compile(r"(?:[0-9.]+|0x[0-9a-f]+)", re.IGNORECASE)
 _HTTP_ACTION_TYPES = {
-    "openapi", "rocksdb", "yamcs", "tableau", "databricks", "azure_maps_openlayers", "azure_function", "mcp",
+    "openapi", "rocksdb", "yamcs", "tableau", "databricks", "azure_maps_openlayers", "azure_function", "mcp", "bitbucket",
 }
 
 

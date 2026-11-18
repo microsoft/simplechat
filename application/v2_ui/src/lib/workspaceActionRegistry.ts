@@ -137,6 +137,12 @@ const internalUtility = (type: string, help: string): ActionNativeDefinition => 
 
 /** Native controls supplement, never replace, the governed catalogue and its schemas. */
 export const NATIVE_ACTION_TYPES: Record<string, ActionNativeDefinition> = {
+    bitbucket: {
+        fields: [], identityTypes: ['bearer_token', 'username_password'],
+        defaults: { endpoint: '', auth: { type: 'user', identity: '', key: '' },
+            additionalFields: { edition: 'data_center', auth_method: 'oauth', repositories: [] } },
+        help: 'Read repository source and compare permitted branches using Bitbucket OAuth or token identities.',
+    },
     openapi: { fields: [], identityTypes: ['api_key', 'bearer_token', 'username_password'], defaults: {
         auth: { type: 'key', key: '' }, additionalFields: { auth_method: 'none', openapi_source_type: 'content' },
     } },

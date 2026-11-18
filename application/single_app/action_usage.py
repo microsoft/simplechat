@@ -129,7 +129,7 @@ def action_usage_target(manifest):
     connector_types = {
         "mcp": "mcp", "openapi": "openapi", "databricks": "databricks",
         "databrickstable": "databricks_table", "snowflake": "snowflake",
-        "tableau": "tableau", "yamcs": "yamcs",
+        "tableau": "tableau", "yamcs": "yamcs", "bitbucket": "bitbucket",
     }
     action_type = connector_types.get(compact_type, declared_type)
     fields = manifest.get("additionalFields")

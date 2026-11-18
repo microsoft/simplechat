@@ -43,6 +43,7 @@ import { ChatDefaultModel } from '../components/admin/ChatDefaultModel';
 import { CapabilityModelPicker } from '../components/admin/CapabilityModelPicker';
 import { ChatModeNotice } from '../components/admin/ChatModeNotice';
 import { ClassificationCategoriesEditor } from '../components/admin/ClassificationCategoriesEditor';
+import { ColorSchemeEditor } from '../components/admin/ColorSchemeEditor';
 import { ConnectionTest } from '../components/admin/ConnectionTest';
 import { ControlCenterAccessMatrix } from '../components/admin/ControlCenterAccessMatrix';
 import { ConversationCacheMetrics } from '../components/admin/ConversationCacheMetrics';
@@ -188,6 +189,7 @@ import {
 import { useScaleStatusStore } from '../stores/scaleStatusStore';
 import type { CatalogConnectionTarget } from '../lib/modelCatalog';
 import type { AdminNavGroup, Json } from '../lib/types';
+
 
 /** One fallback row: an `enable_*` key with no declared field. */
 interface CapabilityRow {
@@ -2009,6 +2011,17 @@ export function AdminSettingsPage({ focusSection }: { focusSection?: string } = 
                             disabled={saving}
                             onStoredSettingsChange={mergeStoredSettings}
                             onOpenSection={goToSection}
+                        />
+                    );
+                case 'color-scheme-editor':
+                    return (
+                        <ColorSchemeEditor
+                            key={key}
+                            field={field}
+                            value={value}
+                            error={error}
+                            disabled={saving}
+                            onChange={(next) => field.key && setValue(field.key, next)}
                         />
                     );
                 case 'document-classification-categories':
