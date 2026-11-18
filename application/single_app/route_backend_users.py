@@ -32,6 +32,11 @@ from functions_legacy_action_management import (
     legacy_action_management_view,
     legacy_action_snapshots,
 )
+from functions_color_schemes import (
+    ColorSchemeError,
+    normalize_color_mode,
+    normalize_custom_color_mode,
+)
 from functions_message_visual_styles import (
     VisualStyleError,
     sanitize_visual_style,
@@ -582,6 +587,9 @@ def register_route_backend_users(bp):
                     # Default colours for diagrams and charts rendered in the V2 chat. A block
                     # someone recolours individually stores its own style on the message.
                     'v2MermaidStyle', 'v2ChartStyle',
+                    # V2 color mode: light, dark, system or custom, and the user's own
+                    # custom colors. Validated below against the administrator's rules.
+                    'v2ColorMode', 'v2CustomColorMode',
                     LATEST_FEATURES_HIDDEN_VERSION_SETTING,
                     # Microphone permission settings
                     'microphonePermissionPreference', 'microphonePermissionState',
@@ -678,6 +686,30 @@ def register_route_backend_users(bp):
                         )
                     except VisualStyleError as style_error:
                         return jsonify({"error": f"Invalid {style_key}: {style_error}"}), 400
+
+                # Custom colors end up in a stylesheet in the browser, so they are reduced to
+                # the fixed set of #RRGGBB tokens, and refused outright when an administrator
+                # has turned custom color modes off.
+                if "v2ColorMode" in settings_to_update or "v2CustomColorMode" in settings_to_update:
+                    app_settings = get_settings() or {}
+                    custom_allowed = app_settings.get("allow_user_custom_color_modes", True) is not False
+                    try:
+                        if "v2ColorMode" in settings_to_update:
+                            color_mode = normalize_color_mode(settings_to_update["v2ColorMode"])
+                            if color_mode == "custom" and not custom_allowed:
+                                raise ColorSchemeError("Custom color modes are turned off.")
+                            settings_to_update["v2ColorMode"] = color_mode
+                        if "v2CustomColorMode" in settings_to_update:
+                            if settings_to_update["v2CustomColorMode"] is not None and not custom_allowed:
+                                raise ColorSchemeError("Custom color modes are turned off.")
+                            settings_to_update["v2CustomColorMode"] = normalize_custom_color_mode(
+                                settings_to_update["v2CustomColorMode"],
+                                require_readable=app_settings.get(
+                                    "require_readable_custom_colors", True
+                                ) is not False,
+                            )
+                    except ColorSchemeError as color_error:
+                        return jsonify({"error": f"Invalid color mode: {color_error}"}), 400
 
                 for boolean_key in (
                     "chatCompletionAudioEnabled",

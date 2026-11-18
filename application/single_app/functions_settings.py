@@ -1811,6 +1811,11 @@ def get_settings(use_cosmos=False, include_source=False):
         'ai_notice_message': '',
         'ai_notice_frequency': 'non_dismissible',
         'enable_dark_mode_default': False,
+        # V2 color customization. None keeps the SimpleChat default palette.
+        'v2_color_scheme': None,
+        'allow_user_custom_color_modes': True,
+        'allow_user_theme_cards': True,
+        'require_readable_custom_colors': True,
         'enable_left_nav_default': True,
         'ui_mode_policy': 'both',
         'ui_default_mode': 'modern',

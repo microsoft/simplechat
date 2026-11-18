@@ -33,6 +33,10 @@ export interface UserSettings {
     preferredUiMode?: 'classic' | 'modern';
     /** Shared with the classic interface, so the two agree on light/dark. */
     darkModeEnabled?: boolean;
+    /** V2 color mode. `custom` uses `v2CustomColorMode` when an administrator allows it. */
+    v2ColorMode?: 'light' | 'dark' | 'system' | 'custom';
+    /** The user's own colors: eleven #RRGGBB values validated by the server. */
+    v2CustomColorMode?: { name: string; base: 'light' | 'dark'; colors: Record<string, string> } | null;
     fontSizePreference?: FontSizePreference;
     sidebarToggleStyle?: SidebarToggleStyle;
     showTutorialButtons?: boolean;
@@ -223,6 +227,9 @@ export const WRITABLE_USER_SETTING_KEYS = [
     'v2ChatWidth',
     'v2MermaidStyle',
     'v2ChartStyle',
+    // V2 color mode and custom colors, both validated by functions_color_schemes.py.
+    'v2ColorMode',
+    'v2CustomColorMode',
     // Shared with the classic interface rather than namespaced: a nav group collapsed in
     // one interface should stay collapsed in the other.
     'sidebarMenuState',
