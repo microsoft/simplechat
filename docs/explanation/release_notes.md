@@ -19,6 +19,23 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Adds two pinned V2 dependencies: `qrcode-generator@1.4.4` and `jsqr@1.4.0`.
     *   (Ref: `themeCardImage.ts`, `ThemeCardDialogs.tsx`, `functional_tests/test_theme_card_code_format.py`)
 
+### **(v0.261.451)**
+
+#### New Features
+
+*   **Read-Only Bitbucket Repository Review Action**
+    *   Review source files and compare branches from self-hosted Bitbucket Data Center or Bitbucket Cloud in chat, without writing to repositories or posting reviews.
+    *   Configure allowed repositories and fixed or unrestricted branches per repository in Classic or V2. Both branches in a comparison must satisfy the action's restrictions; users choose repositories and branches conversationally.
+    *   Connect through per-user Bitbucket OAuth, saved identities or private token credentials. Smart-card/SSO sign-in takes place through Bitbucket's browser authentication; SimpleChat and Microsoft 365 tokens, session cookies and SSH keys are not forwarded.
+    *   OAuth requires deployment configuration for an HTTPS callback and a persistent token-encryption key. Live provider and smart-card acceptance testing remains deployment-specific.
+    *   (Ref: `functions_bitbucket_operations.py`, `functions_bitbucket_connections.py`, `bitbucket_plugin.py`, `BitbucketActionConfiguration.tsx`, `docs/explanation/features/BITBUCKET_REPOSITORY_ACTION.md`, [#1949](https://github.com/microsoft/simplechat/pull/1949))
+
+#### Bug Fixes
+
+*   **Bitbucket Configuration Error Responses**
+    *   Malformed Bitbucket configuration, including missing dictionary keys, returns a safe HTTP 400 response instead of being mistaken for an unavailable action. Unavailable or unauthorized actions retain HTTP 404 responses.
+    *   (Ref: `route_backend_bitbucket.py`, `functional_tests/test_bitbucket_routes.py`, `docs/explanation/fixes/BITBUCKET_ERROR_BOUNDARY_FIX.md`, [#1949](https://github.com/microsoft/simplechat/pull/1949))
+
 ### **(v0.261.448)**
 
 #### New Features
@@ -121,7 +138,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
     *   Yamcs actions and Test Yamcs Connection now honor the selected TLS verification setting even when an environment CA bundle is configured.
     *   Initial login and token renewal use the same configured TLS policy and timeout as action requests. Verification remains enabled by default, with no automatic insecure retry.
     *   Existing organization CA support, deployment settings, destination guards, and personal credential recovery are unchanged.
-    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `route_backend_plugins.py`, [Yamcs TLS Setting Fix](fixes/YAMCS_TLS_VERIFY_ENV_OVERRIDE_FIX.md), [#1934](https://github.com/microsoft/simplechat/issues/1934), main fix [#1937](https://github.com/microsoft/simplechat/pull/1937))
+    *   (Ref: `functions_yamcs_operations.py`, `yamcs_plugin.py`, `route_backend_plugins.py`, `docs/explanation/fixes/YAMCS_TLS_VERIFY_ENV_OVERRIDE_FIX.md`, [#1934](https://github.com/microsoft/simplechat/issues/1934), main fix [#1937](https://github.com/microsoft/simplechat/pull/1937))
 
 ### **(v0.261.441)**
 
@@ -130,7 +147,7 @@ For feature-focused and fix-focused drill-downs by version, see [Features by Ver
 *   **Custom Favicon Persistence Across Instances**
     *   Restores the saved custom favicon when an instance starts and reconciles it before serving the favicon, preventing fresh or scaled-out instances from displaying the bundled icon instead in classic and V2 interfaces.
     *   Preserves existing favicon versioning and works with Redis-backed settings or direct Cosmos reads. Changed files are replaced atomically; unchanged icons are not rewritten.
-    *   (Ref: `app.py`, `ensure_custom_favicon_file_exists()`, [Custom Favicon Persistence Fix](fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md), [#1932](https://github.com/microsoft/simplechat/issues/1932), main fix [#1935](https://github.com/microsoft/simplechat/pull/1935))
+    *   (Ref: `app.py`, `ensure_custom_favicon_file_exists()`, `docs/explanation/fixes/CUSTOM_FAVICON_PERSISTENCE_FIX.md`, [#1932](https://github.com/microsoft/simplechat/issues/1932), main fix [#1935](https://github.com/microsoft/simplechat/pull/1935))
 
 ### **(v0.261.424)**
 
